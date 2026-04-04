@@ -1,6 +1,6 @@
 // server/routes/chat.ts
 import { Router, Request, Response } from 'express';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, createPartFromUri, Part } from '@google/genai';
 import { validateChatRequest } from '../middleware/validation.js';
 
 const router = Router();
@@ -66,7 +66,7 @@ router.post('/chat', async (req: Request, res: Response) => {
     return;
   }
 
-  const { message, history = [] } = req.body;
+  const { message, history = [], fileContext } = req.body;
 
   // SSE headers
   // X-Accel-Buffering: no disables Apache/Nginx buffering — critical for streaming to work in production
@@ -82,7 +82,15 @@ router.post('/chat', async (req: Request, res: Response) => {
       history: history,
     });
 
-    const stream = await chat.sendMessageStream({ message });
+    // Build message parts — prepend file part only for the CURRENT message (not history)
+    // Injecting into history would send the same PDF reference N times, wasting tokens
+    const messageParts: Part[] = [];
+    if (fileContext?.uri && fileContext?.mimeType) {
+      messageParts.push(createPartFromUri(fileContext.uri, fileContext.mimeType));
+    }
+    messageParts.push({ text: message });
+
+    const stream = await chat.sendMessageStream({ message: messageParts });
 
     for await (const chunk of stream) {
       if (chunk.text) {
@@ -94,8 +102,13 @@ router.post('/chat', async (req: Request, res: Response) => {
     res.write('data: [DONE]\n\n');
   } catch (err) {
     console.error('[chat] Gemini API error:', err);
-    // Friendly error per CONTEXT.md — no technical details exposed to client
-    res.write(`data: ${JSON.stringify({ error: true, message: "I'm having trouble connecting. Please try again in a moment." })}\n\n`);
+    // Detect expired file URI (Gemini returns 404 when Files API URI has expired or been deleted)
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const isExpiredFile = errMsg.includes('404') || errMsg.toLowerCase().includes('file not found');
+    const clientMessage = isExpiredFile
+      ? 'The uploaded document has expired. Please upload it again to continue document Q&A.'
+      : "I'm having trouble connecting. Please try again in a moment.";
+    res.write(`data: ${JSON.stringify({ error: true, message: clientMessage })}\n\n`);
   } finally {
     res.end();
   }
