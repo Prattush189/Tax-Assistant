@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 ## Current Position
 
 Phase: 1 of 6 (Express Backend + API Key Migration)
-Plan: 0 of ? in current phase
-Status: Ready to plan
-Last activity: 2026-04-04 — Roadmap created; all 27 v1 requirements mapped to 6 phases
+Plan: 1 of 4 in current phase
+Status: In progress
+Last activity: 2026-04-04 — Plan 01-01 complete: Express server foundation with security middleware
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [█░░░░░░░░░] 4% (1/4 plans in phase 1)
 
 ## Performance Metrics
 
@@ -46,6 +46,9 @@ Recent decisions affecting current work:
 - Roadmap: Architecture refactor (Phase 2) before new features — prevents monolith from becoming unmanageable
 - Roadmap: Tax calculator (Phase 3) is client-side only — no new backend dependencies needed
 - Roadmap: Dashboard (Phase 4) builds on stable calculator output — charts with real data only
+- 01-01: Port 4001 chosen to avoid common port conflicts on shared hosting (MySQL :3306, dev :3000/:4000, Nginx :8080)
+- 01-01: server/tsconfig.json uses Node16 moduleResolution; root tsconfig preserved for Vite (bundler resolution)
+- 01-01: CSP frameAncestors wildcard initially; tighten to specific embedding domain in Phase 6
 
 ### Pending Todos
 
@@ -60,5 +63,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-04-04
-Stopped at: Phase 1 context gathered
-Resume file: .planning/phases/01-express-backend-api-key-migration/01-CONTEXT.md
+Stopped at: Completed 01-01-PLAN.md
+Resume file: .planning/phases/01-express-backend-api-key-migration/01-02-PLAN.md

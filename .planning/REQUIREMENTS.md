@@ -10,7 +10,7 @@ Requirements for milestone v1.0. Each maps to roadmap phases.
 ### Backend & Security
 
 - [ ] **BACK-01**: Express server proxies all Gemini API calls — API key never reaches client bundle
-- [ ] **BACK-02**: Server applies CORS, Helmet (CSP + frame-ancestors), and rate limiting on all /api/* routes
+- [x] **BACK-02**: Server applies CORS, Helmet (CSP + frame-ancestors), and rate limiting on all /api/* routes
 - [ ] **BACK-03**: Server accepts PDF/image file uploads via multer with 10MB size limit and MIME type validation
 - [ ] **BACK-04**: Vite dev server proxies /api/* requests to Express; production Express serves built Vite assets
 
@@ -91,7 +91,7 @@ Deferred to future release. Tracked but not in current roadmap.
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | BACK-01 | Phase 1 | Pending |
-| BACK-02 | Phase 1 | Pending |
+| BACK-02 | Phase 1 | Complete |
 | BACK-03 | Phase 1 | Pending |
 | BACK-04 | Phase 1 | Pending |
 | ARCH-01 | Phase 2 | Pending |
