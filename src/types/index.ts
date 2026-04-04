@@ -9,7 +9,31 @@ export interface UploadResponse {
   filename: string;
   mimeType: string;
   sizeBytes: number;
+  fileUri: string;             // Gemini Files API URI — session only, never persisted
+  extractedData: DocumentSummary;
+}
+
+export interface DocumentSummary {
+  documentType: string | null;
+  financialYear: string | null;
+  employerName: string | null;
+  employeeName: string | null;
+  pan: string | null;
+  grossSalary: number | null;
+  standardDeduction: number | null;
+  taxableSalary: number | null;
+  tdsDeducted: number | null;
+  deductions80C: number | null;
+  deductions80D: number | null;
+  otherDeductions: number | null;
   summary: string;
+}
+
+export interface DocumentContext {
+  filename: string;
+  mimeType: string;
+  fileUri: string;
+  extractedData: DocumentSummary;
 }
 
 // Shape expected by /api/chat server route
