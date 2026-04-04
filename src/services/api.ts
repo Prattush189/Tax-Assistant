@@ -1,10 +1,11 @@
-import { Message, UploadResponse, HistoryItem } from '../types';
+import { Message, UploadResponse, HistoryItem, DocumentContext } from '../types';
 
 export async function sendChatMessage(
   message: string,
   history: Message[],
   onChunk: (text: string) => void,
-  onError: (msg: string) => void
+  onError: (msg: string) => void,
+  fileContext?: { uri: string; mimeType: string }
 ): Promise<void> {
   const conversationHistory: HistoryItem[] = history.map(m => ({
     role: m.role,
@@ -17,6 +18,7 @@ export async function sendChatMessage(
     body: JSON.stringify({
       message,
       history: conversationHistory,
+      fileContext: fileContext ?? null,
     }),
   });
 
