@@ -33,10 +33,10 @@ Requirements for milestone v1.0. Each maps to roadmap phases.
 
 ### Visualization & Dashboard
 
-- [ ] **VIZ-01**: User sees waterfall chart showing income → deductions → taxable income → tax flow
+- [x] **VIZ-01**: User sees waterfall chart showing income → deductions → taxable income → tax flow
 - [x] **VIZ-02**: User sees additional chart types (line, stacked bar, composed) in AI chat responses
 - [x] **VIZ-03**: User can view an interactive tax dashboard summarizing income breakdown, tax liability, deductions, and regime comparison
-- [ ] **VIZ-04**: Regime comparison displayed as rich side-by-side table with slab-by-slab breakdown
+- [x] **VIZ-04**: Regime comparison displayed as rich side-by-side table with slab-by-slab breakdown
 
 ### Document Handling
 
@@ -105,10 +105,10 @@ Deferred to future release. Tracked but not in current roadmap.
 | CALC-05 | Phase 3 | Complete |
 | CALC-06 | Phase 3 | Complete |
 | CALC-07 | Phase 3 | Complete |
-| VIZ-01 | Phase 4 | Pending |
+| VIZ-01 | Phase 4 | Complete |
 | VIZ-02 | Phase 4 | Complete |
 | VIZ-03 | Phase 4 | Complete |
-| VIZ-04 | Phase 4 | Pending |
+| VIZ-04 | Phase 4 | Complete |
 | DOC-01 | Phase 5 | Pending |
 | DOC-02 | Phase 5 | Pending |
 | DOC-03 | Phase 5 | Pending |

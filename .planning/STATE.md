@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 ## Current Position
 
 Phase: 4 of 6 (Enhanced Visualizations Dashboard)
-Plan: 2 of ? in current phase (04-02 complete)
-Status: In progress — 04-02 complete, ready for 04-03
-Last activity: 2026-04-04 — Plan 04-02 complete: ChartRenderer extended with line/stacked-bar/composed chart types; SYSTEM_INSTRUCTION updated with all 5 chart type schemas
+Plan: 3 of ? in current phase (04-03 complete)
+Status: In progress — 04-03 complete, phase 4 visualization goals achieved
+Last activity: 2026-04-04 — Plan 04-03 complete: TaxWaterfallChart + TaxSummaryCards + full DashboardView with RegimeComparison; VIZ-01/VIZ-03/VIZ-04 satisfied
 
-Progress: [████████░░] 50% (phases 1-3 done, phase 4 plan 2 of ? complete)
+Progress: [█████████░] 55% (phases 1-3 done, phase 4 plan 3 of ? complete)
 
 ## Performance Metrics
 
@@ -38,6 +38,7 @@ Progress: [████████░░] 50% (phases 1-3 done, phase 4 plan 2 
 | Phase 02-component-architecture P02 | 8 | 2 tasks | 3 files |
 | Phase 03-tax-calculator P01 | 2 | 2 tasks | 5 files |
 | Phase 04-enhanced-visualizations-dashboard P01 | 3 | 2 tasks | 3 files |
+| Phase 04-enhanced-visualizations-dashboard P03 | 1 | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -88,6 +89,9 @@ Recent decisions affecting current work:
 - [Phase 04-02]: renderChart() switch replaces ternary in ChartRenderer — open to new chart types with a new case, no restructuring needed
 - [Phase 04-02]: line type defaults to ['value'] key if chartData.lines absent — consistent with bar chart's hardcoded 'value'
 - [Phase 04-02]: composed uses i+3 color offset for line series — avoids color collision with bar series in same chart
+- [Phase 04-03]: Waterfall uses stacked BarChart with transparent spacer bar and Cell-per-entry fill — verified pattern from RESEARCH.md
+- [Phase 04-03]: DashboardView is purely derived from context reads (no new state/useEffect) — all tax data flows from TaxCalculatorContext
+- [Phase 04-03]: RegimeComparison reused in DashboardView for VIZ-04 slab-by-slab table — no duplicate implementation
 
 ### Pending Todos
 
@@ -102,5 +106,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-04-04
-Stopped at: Completed 04-02-PLAN.md — all tasks done, ready for 04-03
-Resume file: .planning/phases/04-enhanced-visualizations-dashboard/04-03-PLAN.md
+Stopped at: Completed 04-03-PLAN.md — all tasks done, phase 4 visual dashboard complete
+Resume file: .planning/phases/04-enhanced-visualizations-dashboard/ (check for next plan)
