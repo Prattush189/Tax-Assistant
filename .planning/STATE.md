@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-04-04)
 
 **Core value:** Users get accurate, visual, step-by-step answers to Indian tax questions — from simple queries to complex calculations with document analysis.
-**Current focus:** Phase 1 — Express Backend + API Key Migration
+**Current focus:** Phase 2 — Component Architecture
 
 ## Current Position
 
-Phase: 1 of 6 (Express Backend + API Key Migration)
-Plan: 4 of 4 in current phase
-Status: In progress — awaiting human verification checkpoint (Task 2)
-Last activity: 2026-04-04 — Plan 01-04 Task 1 complete: PM2 ecosystem config, DEPLOY.md, .env.example updated; human-verify checkpoint pending
+Phase: 2 of 6 (Component Architecture)
+Plan: 1 of 5 in current phase (02-01 complete)
+Status: In progress — 02-01 complete, ready for 02-02
+Last activity: 2026-04-04 — Plan 02-01 complete: src/types/index.ts, src/lib/utils.ts, src/services/api.ts created
 
-Progress: [████░░░░░░] 15% (4/4 plans in phase 1, checkpoint pending)
+Progress: [█████░░░░░] 20% (phase 1 done, phase 2 plan 1 of 5 complete)
 
 ## Performance Metrics
 
@@ -56,6 +56,9 @@ Recent decisions affecting current work:
 - [Phase 01-04]: ecosystem.config.cjs uses .cjs extension because PM2 uses CommonJS require() even in ESM projects
 - [Phase 01-04]: GEMINI_API_KEY excluded from ecosystem.config.cjs — must be in server .env only
 - [Phase 01-04]: Apache ProxyPass scoped to /api/* only; static files served via DocumentRoot dist/
+- [Phase 02-01]: api.ts uses callbacks (onChunk/onError) rather than React state — service layer stays framework-agnostic
+- [Phase 02-01]: SSE buffer accumulation (decoder stream:true + lines.pop()) copied verbatim from App.tsx — must not be simplified
+- [Phase 02-01]: HistoryItem conversion placed in api.ts — server API contract knowledge belongs in service layer
 
 ### Pending Todos
 
@@ -70,5 +73,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-04-04
-Stopped at: 01-04-PLAN.md Task 2 — checkpoint:human-verify (end-to-end functionality + bundle security check)
-Resume file: .planning/phases/01-express-backend-api-key-migration/01-04-PLAN.md (Task 2 resume after human approval)
+Stopped at: Completed 02-01-PLAN.md — all tasks done, ready for 02-02
+Resume file: .planning/phases/02-component-architecture/02-02-PLAN.md
