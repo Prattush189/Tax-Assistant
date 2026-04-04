@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 ## Current Position
 
 Phase: 2 of 6 (Component Architecture)
-Plan: 3 of 5 in current phase (02-03 complete)
-Status: In progress — 02-03 complete, ready for 02-04
-Last activity: 2026-04-04 — Plan 02-03 complete: src/components/chat/ChartRenderer.tsx, ChatInput.tsx, MessageBubble.tsx, ChatView.tsx created
+Plan: 4 of 5 in current phase (02-04 complete)
+Status: In progress — 02-04 complete, ready for 02-05
+Last activity: 2026-04-04 — Plan 02-04 complete: Sidebar.tsx, Header.tsx, CalculatorView.tsx, DashboardView.tsx created; App.tsx refactored to 58-line thin shell
 
-Progress: [███████░░░] 30% (phase 1 done, phase 2 plans 1-3 of 5 complete)
+Progress: [████████░░] 35% (phase 1 done, phase 2 plans 1-4 of 5 complete)
 
 ## Performance Metrics
 
@@ -66,6 +66,9 @@ Recent decisions affecting current work:
 - [Phase 02-03]: renderContent kept as unexported local function in MessageBubble — implementation detail, not a public API
 - [Phase 02-03]: Quick query buttons in empty state call setInput only (no immediate send) — matches App.tsx chat area behavior
 - [Phase 02-03]: COLORS constant kept local to ChartRenderer — chart-specific palette does not belong in shared module
+- [Phase 02-04]: quickQueries defined as local constant in Sidebar — not a prop (matches App.tsx pattern, sidebar owns its own quick query list)
+- [Phase 02-04]: Tab navigation placed in Header with border-b-2 active styling; hidden in plugin mode to keep plugin embed clean
+- [Phase 02-04]: App.tsx reduced to 58-line thin shell — only useTheme/usePluginMode hooks, activeView/isSidebarOpen state, layout composition
 
 ### Pending Todos
 
@@ -80,5 +83,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-04-04
-Stopped at: Completed 02-03-PLAN.md — all tasks done, ready for 02-04
-Resume file: .planning/phases/02-component-architecture/02-04-PLAN.md
+Stopped at: Completed 02-04-PLAN.md — all tasks done, ready for 02-05
+Resume file: .planning/phases/02-component-architecture/02-05-PLAN.md

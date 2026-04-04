@@ -19,7 +19,7 @@ Requirements for milestone v1.0. Each maps to roadmap phases.
 - [x] **ARCH-01**: App.tsx decomposed into feature components (Chat, Calculator, Dashboard, Documents, Layout)
 - [x] **ARCH-02**: Business logic extracted into custom hooks (useChat, useTheme, usePluginMode)
 - [x] **ARCH-03**: Single api.ts service module handles all /api/* fetch calls with typed responses
-- [ ] **ARCH-04**: App shell manages tab state (chat / calculator / dashboard) without React Router
+- [x] **ARCH-04**: App shell manages tab state (chat / calculator / dashboard) without React Router
 
 ### Tax Calculator
 
@@ -97,7 +97,7 @@ Deferred to future release. Tracked but not in current roadmap.
 | ARCH-01 | Phase 2 | Complete |
 | ARCH-02 | Phase 2 | Complete |
 | ARCH-03 | Phase 2 | Complete |
-| ARCH-04 | Phase 2 | Pending |
+| ARCH-04 | Phase 2 | Complete |
 | CALC-01 | Phase 3 | Pending |
 | CALC-02 | Phase 3 | Pending |
 | CALC-03 | Phase 3 | Pending |
