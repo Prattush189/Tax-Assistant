@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 ## Current Position
 
 Phase: 1 of 6 (Express Backend + API Key Migration)
-Plan: 1 of 4 in current phase
+Plan: 3 of 4 in current phase
 Status: In progress
-Last activity: 2026-04-04 — Plan 01-01 complete: Express server foundation with security middleware
+Last activity: 2026-04-04 — Plan 01-03 complete: upload endpoint with multer + Vite proxy + GEMINI_API_KEY removed from bundle
 
-Progress: [█░░░░░░░░░] 4% (1/4 plans in phase 1)
+Progress: [███░░░░░░░] 12% (3/4 plans in phase 1)
 
 ## Performance Metrics
 
@@ -34,6 +34,7 @@ Progress: [█░░░░░░░░░] 4% (1/4 plans in phase 1)
 - Trend: -
 
 *Updated after each plan completion*
+| Phase 01-express-backend-api-key-migration P03 | 2 | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -49,6 +50,9 @@ Recent decisions affecting current work:
 - 01-01: Port 4001 chosen to avoid common port conflicts on shared hosting (MySQL :3306, dev :3000/:4000, Nginx :8080)
 - 01-01: server/tsconfig.json uses Node16 moduleResolution; root tsconfig preserved for Vite (bundler resolution)
 - 01-01: CSP frameAncestors wildcard initially; tighten to specific embedding domain in Phase 6
+- [Phase 01-03]: multer memoryStorage chosen so Phase 5 can forward buffer directly to Gemini Files API without disk temp files
+- [Phase 01-03]: vite.config.ts converted to plain object after removing define block - loadEnv no longer needed since no client env vars remain
+- [Phase 01-03]: concurrently --kill-others-on-fail used so dev environment fails fast if either Vite or Express crashes
 
 ### Pending Todos
 
@@ -63,5 +67,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-04-04
-Stopped at: Completed 01-01-PLAN.md
-Resume file: .planning/phases/01-express-backend-api-key-migration/01-02-PLAN.md
+Stopped at: Completed 01-03-PLAN.md
+Resume file: .planning/phases/01-express-backend-api-key-migration/01-04-PLAN.md
