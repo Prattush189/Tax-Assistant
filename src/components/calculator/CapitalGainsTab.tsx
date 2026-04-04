@@ -1,3 +1,298 @@
+import { useState, useMemo } from 'react';
+import { cn } from '../../lib/utils';
+import { formatINR } from '../../lib/utils';
+import { calculateCapitalGains } from '../../lib/capitalGainsEngine';
+import { getTaxRules } from '../../data/taxRules';
+import type { CapitalGainsAssetType } from '../../types';
+
+type FY = '2025-26' | '2024-25';
+
+const ASSET_OPTIONS: { value: CapitalGainsAssetType; label: string }[] = [
+  { value: 'equity', label: 'Equity / Mutual Funds' },
+  { value: 'realEstate', label: 'Real Estate' },
+  { value: 'other', label: 'Other Assets' },
+];
+
+function NumberInput({
+  label,
+  value,
+  onChange,
+  hint,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  hint?: string;
+}) {
+  return (
+    <div>
+      <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+        {label}
+      </label>
+      {hint && <p className="text-xs text-slate-400 dark:text-slate-500 mb-1">{hint}</p>}
+      <div className="relative">
+        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500 text-sm">₹</span>
+        <input
+          type="number"
+          min="0"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="0"
+          className="w-full pl-7 pr-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+      </div>
+    </div>
+  );
+}
+
 export function CapitalGainsTab() {
-  return <div>Capital Gains — coming soon</div>;
+  const [fy, setFy] = useState<FY>('2025-26');
+  const [assetType, setAssetType] = useState<CapitalGainsAssetType>('equity');
+  const [salePrice, setSalePrice] = useState('');
+  const [purchasePrice, setPurchasePrice] = useState('');
+  const [holdingMonths, setHoldingMonths] = useState('');
+  const [acquisitionBeforeJuly2024, setAcquisitionBeforeJuly2024] = useState(false);
+  const [indexedCost, setIndexedCost] = useState('');
+
+  const result = useMemo(() => {
+    const sale = Number(salePrice) || 0;
+    const purchase = Number(purchasePrice) || 0;
+    const months = Number(holdingMonths) || 0;
+
+    if (sale <= 0 || purchase <= 0 || months <= 0) return null;
+
+    const rules = getTaxRules(fy);
+
+    return calculateCapitalGains(
+      {
+        assetType,
+        salePrice: sale,
+        purchasePrice: purchase,
+        holdingMonths: months,
+        acquisitionBeforeJuly2024,
+        indexedCost: indexedCost ? Number(indexedCost) : purchase,
+      },
+      rules,
+    );
+  }, [fy, assetType, salePrice, purchasePrice, holdingMonths, acquisitionBeforeJuly2024, indexedCost]);
+
+  return (
+    <div className="max-w-2xl">
+      {/* FY selector */}
+      <div className="mb-5">
+        <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Financial Year</p>
+        <div className="flex gap-3">
+          {(['2025-26', '2024-25'] as FY[]).map((f) => (
+            <label key={f} className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="cg-fy"
+                value={f}
+                checked={fy === f}
+                onChange={() => setFy(f)}
+                className="accent-blue-600"
+              />
+              <span className="text-sm text-slate-700 dark:text-slate-300">FY {f}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      {/* Asset type selector */}
+      <div className="mb-5">
+        <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Asset Type</p>
+        <div className="flex flex-wrap gap-2">
+          {ASSET_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => {
+                setAssetType(opt.value);
+                setAcquisitionBeforeJuly2024(false);
+                setIndexedCost('');
+              }}
+              className={cn(
+                'px-4 py-2 rounded-lg text-sm font-medium border transition-colors',
+                assetType === opt.value
+                  ? 'bg-blue-600 border-blue-600 text-white'
+                  : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:border-blue-400',
+              )}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Price and holding inputs */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+        <NumberInput label="Sale Price (₹)" value={salePrice} onChange={setSalePrice} />
+        <NumberInput label="Purchase Price (₹)" value={purchasePrice} onChange={setPurchasePrice} />
+      </div>
+      <div className="mb-5">
+        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+          Holding Period (months)
+        </label>
+        <input
+          type="number"
+          min="0"
+          value={holdingMonths}
+          onChange={(e) => setHoldingMonths(e.target.value)}
+          placeholder="0"
+          className="w-full md:w-40 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+      </div>
+
+      {/* Real estate: pre-July-2024 indexation option */}
+      {assetType === 'realEstate' && (
+        <div className="mb-5 border border-slate-200 dark:border-slate-700 rounded-xl p-4 bg-slate-50 dark:bg-slate-800/40">
+          <label className="flex items-center gap-2 cursor-pointer mb-3">
+            <input
+              type="checkbox"
+              checked={acquisitionBeforeJuly2024}
+              onChange={(e) => {
+                setAcquisitionBeforeJuly2024(e.target.checked);
+                if (!e.target.checked) setIndexedCost('');
+              }}
+              className="accent-blue-600"
+            />
+            <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+              Acquired before 23 July 2024
+            </span>
+          </label>
+          {acquisitionBeforeJuly2024 && (
+            <NumberInput
+              label="Indexed Cost (CII adjusted) (₹)"
+              value={indexedCost}
+              onChange={setIndexedCost}
+              hint="Leave blank to use purchase price if unsure"
+            />
+          )}
+        </div>
+      )}
+
+      {/* Result card */}
+      {result && (
+        <div className="border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 p-5">
+          {/* Gain type badge */}
+          <div className="flex items-center gap-3 mb-4">
+            <span
+              className={cn(
+                'px-3 py-1 rounded-full text-sm font-semibold',
+                result.gainType === 'LTCG'
+                  ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300'
+                  : 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300',
+              )}
+            >
+              {result.gainType}
+            </span>
+            <span className="text-sm text-slate-500 dark:text-slate-400">
+              {result.gainType === 'LTCG' ? 'Long-term capital gain' : 'Short-term capital gain'}
+            </span>
+          </div>
+
+          {/* Basic breakdown */}
+          <div className="space-y-2 text-sm mb-4">
+            <div className="flex justify-between">
+              <span className="text-slate-500 dark:text-slate-400">Raw gain</span>
+              <span className="font-medium text-slate-700 dark:text-slate-300">{formatINR(result.rawGain)}</span>
+            </div>
+            {result.exemptionApplied > 0 && (
+              <div className="flex justify-between">
+                <span className="text-slate-500 dark:text-slate-400">Annual exemption (₹1.25L)</span>
+                <span className="text-green-600 dark:text-green-400">- {formatINR(result.exemptionApplied)}</span>
+              </div>
+            )}
+            <div className="flex justify-between">
+              <span className="text-slate-500 dark:text-slate-400">Taxable gain</span>
+              <span className="font-medium text-slate-700 dark:text-slate-300">{formatINR(result.taxableGain)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-500 dark:text-slate-400">Tax rate</span>
+              <span className="font-medium text-slate-700 dark:text-slate-300">
+                {result.taxRate === 'slab'
+                  ? 'At slab rate (added to normal income)'
+                  : `${(result.taxRate * 100).toFixed(1)}%`}
+              </span>
+            </div>
+            <div className="flex justify-between border-t border-slate-100 dark:border-slate-700 pt-2 mt-2">
+              <span className="text-slate-700 dark:text-slate-200 font-semibold">Estimated tax</span>
+              <span className="font-bold text-slate-800 dark:text-slate-100">
+                {result.taxAmount !== null
+                  ? formatINR(result.taxAmount)
+                  : 'Added to income — calculate in Income Tax tab'}
+              </span>
+            </div>
+          </div>
+
+          {/* Indexation comparison (pre-July-2024 real estate) */}
+          {result.indexationOption && (
+            <div className="border-t border-slate-200 dark:border-slate-600 pt-4 mt-2">
+              <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3">
+                Indexation Comparison
+              </p>
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                {/* With Indexation */}
+                <div
+                  className={cn(
+                    'rounded-lg border p-3',
+                    result.indexationOption.recommendedOption === 'withIndexation'
+                      ? 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-900/20'
+                      : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40',
+                  )}
+                >
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">With Indexation (20%)</span>
+                    {result.indexationOption.recommendedOption === 'withIndexation' && (
+                      <span className="text-xs bg-green-200 dark:bg-green-800 text-green-800 dark:text-green-200 px-1.5 py-0.5 rounded font-semibold">
+                        Lower Tax
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs text-slate-500 dark:text-slate-400">
+                    Taxable: {formatINR(result.indexationOption.withIndexation.taxableGain)}
+                  </div>
+                  <div className="text-sm font-bold text-slate-700 dark:text-slate-200 mt-1">
+                    Tax: {formatINR(result.indexationOption.withIndexation.taxAmount)}
+                  </div>
+                </div>
+
+                {/* Without Indexation */}
+                <div
+                  className={cn(
+                    'rounded-lg border p-3',
+                    result.indexationOption.recommendedOption === 'withoutIndexation'
+                      ? 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-900/20'
+                      : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40',
+                  )}
+                >
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">Without Indexation (12.5%)</span>
+                    {result.indexationOption.recommendedOption === 'withoutIndexation' && (
+                      <span className="text-xs bg-green-200 dark:bg-green-800 text-green-800 dark:text-green-200 px-1.5 py-0.5 rounded font-semibold">
+                        Lower Tax
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs text-slate-500 dark:text-slate-400">
+                    Taxable: {formatINR(result.indexationOption.withoutIndexation.taxableGain)}
+                  </div>
+                  <div className="text-sm font-bold text-slate-700 dark:text-slate-200 mt-1">
+                    Tax: {formatINR(result.indexationOption.withoutIndexation.taxAmount)}
+                  </div>
+                </div>
+              </div>
+              <p className="text-xs text-slate-400 dark:text-slate-500">
+                Taxpayers who acquired property BEFORE 23 July 2024 may choose either option.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 87A note */}
+      <div className="mt-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3 text-xs text-amber-800 dark:text-amber-300">
+        Note: Section 87A rebate does NOT apply to LTCG (s.112A) or STCG (s.111A) tax. See the Income Tax tab for combined tax liability.
+      </div>
+    </div>
+  );
 }
