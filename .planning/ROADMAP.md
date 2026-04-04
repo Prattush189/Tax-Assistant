@@ -31,7 +31,13 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. File uploads up to 10MB are accepted by the server with MIME type validation
   4. A single `npm run dev` starts both Vite and Express; /api/* requests reach the Express server
   5. Production build serves both the React app and /api/* routes from a single Express process
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Express server scaffold with helmet, CORS, rate-limit middleware stack
+- [ ] 01-02-PLAN.md — /api/chat SSE streaming endpoint and App.tsx client migration
+- [ ] 01-03-PLAN.md — /api/upload multer endpoint, Vite proxy, npm dev script, bundle security check
+- [ ] 01-04-PLAN.md — PM2 ecosystem config, .env.example, Apache VirtualHost, human verification
 
 ### Phase 2: Component Architecture
 **Goal**: App.tsx is a thin shell; all business logic lives in hooks and all UI lives in feature components
@@ -96,7 +102,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Express Backend + API Key Migration | 0/? | Not started | - |
+| 1. Express Backend + API Key Migration | 0/4 | Not started | - |
 | 2. Component Architecture | 0/? | Not started | - |
 | 3. Tax Calculator | 0/? | Not started | - |
 | 4. Enhanced Visualizations + Dashboard | 0/? | Not started | - |
