@@ -6,21 +6,27 @@
 import { useState } from 'react';
 import { useTheme } from './hooks/useTheme';
 import { usePluginMode } from './hooks/usePluginMode';
+import { useChat } from './hooks/useChat';
 import { Sidebar } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
 import { ChatView } from './components/chat/ChatView';
 import { CalculatorView } from './components/calculator/CalculatorView';
 import { DashboardView } from './components/dashboard/DashboardView';
+import { DocumentsView } from './components/documents/DocumentsView';
 import { TaxCalculatorProvider } from './contexts/TaxCalculatorContext';
 import { cn } from './lib/utils';
 
-type ActiveView = 'chat' | 'calculator' | 'dashboard';
+type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'documents';
 
 export default function App() {
   const { isDarkMode, toggleTheme } = useTheme();
   const { isPluginMode } = usePluginMode();
   const [activeView, setActiveView] = useState<ActiveView>('chat');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  // Single useChat instance lifted to App — shared between ChatView and DocumentsView
+  // so that document context attached in DocumentsView flows correctly into chat send calls
+  const chatHook = useChat();
 
   return (
     <div className={cn(
@@ -45,9 +51,16 @@ export default function App() {
             onViewChange={setActiveView}
             onOpenSidebar={() => setIsSidebarOpen(true)}
           />
-          {activeView === 'chat' && <ChatView isPluginMode={isPluginMode} />}
+          {activeView === 'chat' && <ChatView isPluginMode={isPluginMode} chatHook={chatHook} />}
           {activeView === 'calculator' && <CalculatorView />}
           {activeView === 'dashboard' && <DashboardView />}
+          {activeView === 'documents' && (
+            <DocumentsView
+              activeDocument={chatHook.activeDocument}
+              onDocumentAttach={chatHook.attachDocument}
+              onDocumentDetach={chatHook.detachDocument}
+            />
+          )}
         </main>
       </TaxCalculatorProvider>
       {isSidebarOpen && !isPluginMode && (

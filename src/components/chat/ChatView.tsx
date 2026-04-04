@@ -13,10 +13,11 @@ const quickQueries = [
 
 interface ChatViewProps {
   isPluginMode: boolean;
+  chatHook: ReturnType<typeof useChat>;
 }
 
-export function ChatView({ isPluginMode: _isPluginMode }: ChatViewProps) {
-  const { messages, input, setInput, isLoading, messagesEndRef, send } = useChat();
+export function ChatView({ isPluginMode: _isPluginMode, chatHook }: ChatViewProps) {
+  const { messages, input, setInput, isLoading, messagesEndRef, send, activeDocument } = chatHook;
 
   return (
     <>
@@ -87,6 +88,7 @@ export function ChatView({ isPluginMode: _isPluginMode }: ChatViewProps) {
         isLoading={isLoading}
         onInputChange={setInput}
         onSend={send}
+        activeDocument={activeDocument}
       />
     </>
   );

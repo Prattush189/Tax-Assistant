@@ -1,7 +1,7 @@
 import { Menu, ShieldCheck, Calculator, Moon, Sun } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
-type ActiveView = 'chat' | 'calculator' | 'dashboard';
+type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'documents';
 
 interface HeaderProps {
   isPluginMode: boolean;
@@ -16,6 +16,7 @@ const tabs: { id: ActiveView; label: string }[] = [
   { id: 'chat', label: 'Chat' },
   { id: 'calculator', label: 'Calculator' },
   { id: 'dashboard', label: 'Dashboard' },
+  { id: 'documents', label: 'Documents' },
 ];
 
 export function Header({
