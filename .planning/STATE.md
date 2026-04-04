@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-04-04)
 
 **Core value:** Users get accurate, visual, step-by-step answers to Indian tax questions — from simple queries to complex calculations with document analysis.
-**Current focus:** Phase 4 — Enhanced Visualizations Dashboard
+**Current focus:** Phase 5 — Document Handling
 
 ## Current Position
 
-Phase: 4 of 6 (Enhanced Visualizations Dashboard)
-Plan: 3 of ? in current phase (04-03 complete)
-Status: In progress — 04-03 complete, phase 4 visualization goals achieved
-Last activity: 2026-04-04 — Plan 04-03 complete: TaxWaterfallChart + TaxSummaryCards + full DashboardView with RegimeComparison; VIZ-01/VIZ-03/VIZ-04 satisfied
+Phase: 5 of 6 (Document Handling)
+Plan: 1 of 3 in current phase (05-01 complete)
+Status: In progress — 05-01 complete, Gemini Files API pipeline implemented; 05-02 (DocumentsView UI) and 05-03 (chat fileContext) remaining
+Last activity: 2026-04-04 — Plan 05-01 complete: Gemini Files API pipeline in upload.ts, DocumentSummary/DocumentContext types; DOC-01/DOC-03/DOC-04 satisfied
 
-Progress: [█████████░] 55% (phases 1-3 done, phase 4 plan 3 of ? complete)
+Progress: [██████████] 60% (phases 1-4 done, phase 5 plan 1 of 3 complete)
 
 ## Performance Metrics
 
@@ -39,6 +39,8 @@ Progress: [█████████░] 55% (phases 1-3 done, phase 4 plan 3 
 | Phase 03-tax-calculator P01 | 2 | 2 tasks | 5 files |
 | Phase 04-enhanced-visualizations-dashboard P01 | 3 | 2 tasks | 3 files |
 | Phase 04-enhanced-visualizations-dashboard P03 | 1 | 2 tasks | 3 files |
+| Phase 05-document-handling P01 | 15 | 2 tasks | 2 files |
+| Phase 05-document-handling P02 | 2 | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -92,6 +94,11 @@ Recent decisions affecting current work:
 - [Phase 04-03]: Waterfall uses stacked BarChart with transparent spacer bar and Cell-per-entry fill — verified pattern from RESEARCH.md
 - [Phase 04-03]: DashboardView is purely derived from context reads (no new state/useEffect) — all tax data flows from TaxCalculatorContext
 - [Phase 04-03]: RegimeComparison reused in DashboardView for VIZ-04 slab-by-slab table — no duplicate implementation
+- [Phase 05-01]: Buffer-to-Blob wrapping: ai.files.upload() accepts Blob not raw Buffer — new Blob([req.file.buffer]) is mandatory
+- [Phase 05-01]: fileUri NOT deleted after summary: DOC-02 follow-up chat requires the URI; React state is the session boundary per DOC-04
+- [Phase 05-01]: Markdown fence stripping added before JSON.parse on Gemini extraction responses to prevent silent parse failures
+- [Phase 05-02]: Use SDK Part type for messageParts array — avoids type incompatibility with FileData.fileUri being optional in @google/genai SDK types
+- [Phase 05-02]: File part injected only into current message parts, not into chat history — prevents sending same PDF reference N times per multi-turn conversation
 
 ### Pending Todos
 
@@ -106,5 +113,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-04-04
-Stopped at: Completed 04-03-PLAN.md — all tasks done, phase 4 visual dashboard complete
-Resume file: .planning/phases/04-enhanced-visualizations-dashboard/ (check for next plan)
+Stopped at: Completed 05-01-PLAN.md — Gemini Files API pipeline in upload.ts, DocumentSummary/DocumentContext types; DOC-01/DOC-03/DOC-04 satisfied
+Resume file: .planning/phases/05-document-handling/05-02-PLAN.md
