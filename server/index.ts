@@ -66,7 +66,6 @@ app.use(express.json({ limit: '1mb' }));
 
 // 5. API routes
 app.use('/api', chatRouter);
-import uploadRouter from './routes/upload.js';
 app.use('/api', uploadRouter);
 
 // 6. Production static serving — Express serves Vite build output
