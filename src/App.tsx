@@ -286,14 +286,17 @@ export default function App() {
     "Calculate tax for 15L income",
   ];
 
-  const renderContent = (content: string) => {
+  const renderContent = (content: string, role: 'user' | 'model') => {
     const parts = content.split(/```json-chart([\s\S]*?)```/);
     return parts.map((part, index) => {
       if (index % 2 === 1) {
         return <ChartRenderer key={index} jsonString={part.trim()} />;
       }
       return (
-        <div key={index} className="markdown-body prose prose-slate dark:prose-invert max-w-none prose-sm sm:prose-base overflow-x-auto">
+        <div key={index} className={cn(
+          "markdown-body prose max-w-none prose-sm sm:prose-base overflow-x-auto",
+          role === 'user' ? 'prose-invert' : 'prose-slate dark:prose-invert'
+        )}>
           <Markdown remarkPlugins={[remarkGfm]}>{part}</Markdown>
         </div>
       );
@@ -465,7 +468,7 @@ export default function App() {
                         ? 'bg-indigo-600 text-white rounded-tr-none' 
                         : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 rounded-tl-none'
                     )}>
-                      {renderContent(msg.content)}
+                      {renderContent(msg.content, msg.role)}
                       <div className={cn("text-[10px] mt-2 opacity-50", msg.role === 'user' ? 'text-right' : '')}>
                         {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </div>
