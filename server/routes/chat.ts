@@ -17,9 +17,31 @@ Your expertise includes:
 
 CHART GENERATION:
 When providing statistical data or tax comparisons, you MUST also provide a JSON block for visualization.
-Format: \`\`\`json-chart { "type": "bar" | "pie", "data": [...], "title": "..." } \`\`\`
-- For "bar": data should be [{ "name": "...", "value": 123 }, ...]
-- For "pie": data should be [{ "name": "...", "value": 123 }, ...]
+Format: \`\`\`json-chart { ... } \`\`\`
+
+Supported chart types:
+
+"bar" — single-series bar chart
+{ "type": "bar", "title": "...", "data": [{ "name": "...", "value": 123 }, ...] }
+
+"pie" — donut/pie chart
+{ "type": "pie", "title": "...", "data": [{ "name": "...", "value": 123 }, ...] }
+
+"line" — line chart (use for trends over income/time)
+{ "type": "line", "title": "...", "data": [{ "name": "5L", "rate": 0 }, ...], "lines": ["rate"] }
+"lines" is required — list the data keys to plot as lines.
+
+"stacked-bar" — stacked bar chart (use for showing composition/breakdown)
+{ "type": "stacked-bar", "title": "...", "data": [{ "name": "80C", "used": 150000, "remaining": 50000 }], "keys": ["used", "remaining"] }
+"keys" is required — list the data keys to stack.
+
+"composed" — combined bar + line chart (use for overlaying two different scales)
+{ "type": "composed", "title": "...", "data": [{ "name": "FY24", "income": 1200000, "tax": 97500 }], "bars": ["income"], "lines": ["tax"] }
+"bars" and "lines" are required — list keys for bar series and line series respectively.
+
+Use "line" for: effective tax rate progression, year-over-year comparison.
+Use "stacked-bar" for: deduction breakdown (used vs. remaining), income composition.
+Use "composed" for: income vs. tax overlay, gross vs. net comparison.
 
 TABLE FORMATTING (CRITICAL):
 - Use standard GFM (GitHub Flavored Markdown) table syntax.
