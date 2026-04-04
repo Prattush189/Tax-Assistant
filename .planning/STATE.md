@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 ## Current Position
 
 Phase: 1 of 6 (Express Backend + API Key Migration)
-Plan: 3 of 4 in current phase
-Status: In progress
-Last activity: 2026-04-04 — Plan 01-03 complete: upload endpoint with multer + Vite proxy + GEMINI_API_KEY removed from bundle
+Plan: 4 of 4 in current phase
+Status: In progress — awaiting human verification checkpoint (Task 2)
+Last activity: 2026-04-04 — Plan 01-04 Task 1 complete: PM2 ecosystem config, DEPLOY.md, .env.example updated; human-verify checkpoint pending
 
-Progress: [███░░░░░░░] 12% (3/4 plans in phase 1)
+Progress: [████░░░░░░] 15% (4/4 plans in phase 1, checkpoint pending)
 
 ## Performance Metrics
 
@@ -53,6 +53,9 @@ Recent decisions affecting current work:
 - [Phase 01-03]: multer memoryStorage chosen so Phase 5 can forward buffer directly to Gemini Files API without disk temp files
 - [Phase 01-03]: vite.config.ts converted to plain object after removing define block - loadEnv no longer needed since no client env vars remain
 - [Phase 01-03]: concurrently --kill-others-on-fail used so dev environment fails fast if either Vite or Express crashes
+- [Phase 01-04]: ecosystem.config.cjs uses .cjs extension because PM2 uses CommonJS require() even in ESM projects
+- [Phase 01-04]: GEMINI_API_KEY excluded from ecosystem.config.cjs — must be in server .env only
+- [Phase 01-04]: Apache ProxyPass scoped to /api/* only; static files served via DocumentRoot dist/
 
 ### Pending Todos
 
@@ -67,5 +70,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-04-04
-Stopped at: Completed 01-03-PLAN.md
-Resume file: .planning/phases/01-express-backend-api-key-migration/01-04-PLAN.md
+Stopped at: 01-04-PLAN.md Task 2 — checkpoint:human-verify (end-to-end functionality + bundle security check)
+Resume file: .planning/phases/01-express-backend-api-key-migration/01-04-PLAN.md (Task 2 resume after human approval)
