@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 ## Current Position
 
 Phase: 5 of 6 (Document Handling)
-Plan: 3 of 4 in current phase (05-03 complete)
-Status: In progress — 05-03 complete, client service layer wired; 05-04 (DocumentsView UI) remaining
-Last activity: 2026-04-04 — Plan 05-03 complete: sendChatMessage extended with fileContext param; useChat gains activeDocument state with attach/detach; DOC-02 client side and DOC-04 satisfied
+Plan: 4 of 4 in current phase (05-04 complete)
+Status: Phase 5 complete — all 4 plans done; full document handling flow operational
+Last activity: 2026-04-04 — Plan 05-04 complete: DocumentsView UI with drag-and-drop upload, DocumentCard summary, Documents tab in Header, document badge in ChatInput; all DOC requirements observable from UI
 
-Progress: [██████████] 60% (phases 1-4 done, phase 5 plan 1 of 3 complete)
+Progress: [████████████] 75% (phases 1-5 done, phase 6 remaining)
 
 ## Performance Metrics
 
@@ -102,6 +102,9 @@ Recent decisions affecting current work:
 - [Phase 05-02]: File part injected only into current message parts, not into chat history — prevents sending same PDF reference N times per multi-turn conversation
 - [Phase 05-03]: activeDocument stored in React useState only — never written to localStorage or sessionStorage (DOC-04 requirement enforced)
 - [Phase 05-03]: fileContext param shape is { uri: string; mimeType: string } rather than DocumentContext — keeps service layer framework-agnostic per Phase 02-01 pattern
+- [Phase 05-04]: useChat lifted to App.tsx as single chatHook instance — ChatView receives it as prop to prevent dual-instance document context split where DocumentsView attach wouldn't flow to ChatView send
+- [Phase 05-04]: ChatView accepts chatHook: ReturnType<typeof useChat> prop — type-safe approach without prop drilling individual values
+- [Phase 05-04]: ChatInput textarea gets rounded-t-none when activeDocument badge shown — badge and textarea join visually as single connected element
 
 ### Pending Todos
 
@@ -116,5 +119,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-04-04
-Stopped at: Completed 05-03-PLAN.md — sendChatMessage fileContext param; useChat activeDocument state + attach/detach; DOC-02 client side and DOC-04 complete
-Resume file: .planning/phases/05-document-handling/05-04-PLAN.md
+Stopped at: Completed 05-04-PLAN.md — DocumentsView UI, DocumentCard, Documents tab, ChatInput badge; Phase 5 fully complete
+Resume file: .planning/phases/06-smart-assist-plugin/ (Phase 6 plans pending)
