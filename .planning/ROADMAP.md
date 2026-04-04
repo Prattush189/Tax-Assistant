@@ -82,7 +82,12 @@ Plans:
   2. AI chat responses can render line charts, stacked bar charts, and composed charts in addition to the existing bar and pie charts
   3. User can open a dashboard view showing income breakdown, tax liability, deductions used, and regime comparison in one screen
   4. Regime comparison displays a slab-by-slab side-by-side table showing tax at each bracket
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [ ] 04-01-PLAN.md — TaxCalculatorContext: shared income tax state + migrate IncomeTaxTab + wrap App.tsx
+- [ ] 04-02-PLAN.md — ChartRenderer extension (line, stacked-bar, composed) + AI system prompt update
+- [ ] 04-03-PLAN.md — TaxWaterfallChart, TaxSummaryCards, DashboardView full build
 
 ### Phase 5: Document Handling
 **Goal**: Users can upload Form 16 and other tax documents and ask follow-up questions about their contents in chat
@@ -116,6 +121,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 1. Express Backend + API Key Migration | 4/4 | Complete    | 2026-04-04 |
 | 2. Component Architecture | 4/4 | Complete    | 2026-04-04 |
 | 3. Tax Calculator | 3/3 | Complete    | 2026-04-04 |
-| 4. Enhanced Visualizations + Dashboard | 0/? | Not started | - |
+| 4. Enhanced Visualizations + Dashboard | 2/3 | In Progress|  |
 | 5. Document Handling | 0/? | Not started | - |
 | 6. Iframe Plugin Mode Hardening | 0/? | Not started | - |

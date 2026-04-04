@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-04-04)
 
 **Core value:** Users get accurate, visual, step-by-step answers to Indian tax questions — from simple queries to complex calculations with document analysis.
-**Current focus:** Phase 3 — Tax Calculator
+**Current focus:** Phase 4 — Enhanced Visualizations Dashboard
 
 ## Current Position
 
-Phase: 3 of 6 (Tax Calculator)
-Plan: 3 of 5 in current phase (03-03 complete)
-Status: In progress — 03-03 complete, ready for 03-04
-Last activity: 2026-04-04 — Plan 03-03 complete: CalculatorView tab shell, IncomeTaxTab (dual-regime useMemo), RegimeComparison (savings banner), CapitalGainsTab (indexation option), GstTab (current rates only)
+Phase: 4 of 6 (Enhanced Visualizations Dashboard)
+Plan: 2 of ? in current phase (04-02 complete)
+Status: In progress — 04-02 complete, ready for 04-03
+Last activity: 2026-04-04 — Plan 04-02 complete: ChartRenderer extended with line/stacked-bar/composed chart types; SYSTEM_INSTRUCTION updated with all 5 chart type schemas
 
-Progress: [████████░░] 46% (phases 1-2 done, phase 3 plans 1-3 of 5 complete)
+Progress: [████████░░] 50% (phases 1-3 done, phase 4 plan 2 of ? complete)
 
 ## Performance Metrics
 
@@ -82,6 +82,9 @@ Recent decisions affecting current work:
 - [Phase 03-03]: RegimeComparison is a pure display component receiving oldResult/newResult props — zero calculation logic
 - [Phase 03-03]: GstTab renders only [0, 5, 18, 40] standard + [3, 0.25] special rate buttons — no 12% or 28% UI options
 - [Phase 03-03]: CapitalGainsTab passes indexedCost || purchasePrice to engine — safe fallback when indexation checkbox checked but field empty
+- [Phase 04-02]: renderChart() switch replaces ternary in ChartRenderer — open to new chart types with a new case, no restructuring needed
+- [Phase 04-02]: line type defaults to ['value'] key if chartData.lines absent — consistent with bar chart's hardcoded 'value'
+- [Phase 04-02]: composed uses i+3 color offset for line series — avoids color collision with bar series in same chart
 
 ### Pending Todos
 
@@ -96,5 +99,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-04-04
-Stopped at: Completed 03-03-PLAN.md — all tasks done, ready for 03-04
-Resume file: .planning/phases/03-tax-calculator/03-04-PLAN.md
+Stopped at: Completed 04-02-PLAN.md — all tasks done, ready for 04-03
+Resume file: .planning/phases/04-enhanced-visualizations-dashboard/04-03-PLAN.md
