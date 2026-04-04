@@ -11,6 +11,7 @@ import { Header } from './components/layout/Header';
 import { ChatView } from './components/chat/ChatView';
 import { CalculatorView } from './components/calculator/CalculatorView';
 import { DashboardView } from './components/dashboard/DashboardView';
+import { TaxCalculatorProvider } from './contexts/TaxCalculatorContext';
 import { cn } from './lib/utils';
 
 type ActiveView = 'chat' | 'calculator' | 'dashboard';
@@ -34,19 +35,21 @@ export default function App() {
           onToggleTheme={toggleTheme}
         />
       )}
-      <main className="flex-1 flex flex-col relative min-w-0">
-        <Header
-          isPluginMode={isPluginMode}
-          isDarkMode={isDarkMode}
-          onToggleTheme={toggleTheme}
-          activeView={activeView}
-          onViewChange={setActiveView}
-          onOpenSidebar={() => setIsSidebarOpen(true)}
-        />
-        {activeView === 'chat' && <ChatView isPluginMode={isPluginMode} />}
-        {activeView === 'calculator' && <CalculatorView />}
-        {activeView === 'dashboard' && <DashboardView />}
-      </main>
+      <TaxCalculatorProvider>
+        <main className="flex-1 flex flex-col relative min-w-0">
+          <Header
+            isPluginMode={isPluginMode}
+            isDarkMode={isDarkMode}
+            onToggleTheme={toggleTheme}
+            activeView={activeView}
+            onViewChange={setActiveView}
+            onOpenSidebar={() => setIsSidebarOpen(true)}
+          />
+          {activeView === 'chat' && <ChatView isPluginMode={isPluginMode} />}
+          {activeView === 'calculator' && <CalculatorView />}
+          {activeView === 'dashboard' && <DashboardView />}
+        </main>
+      </TaxCalculatorProvider>
       {isSidebarOpen && !isPluginMode && (
         <div
           className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-40 lg:hidden"

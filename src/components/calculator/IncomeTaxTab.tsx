@@ -1,9 +1,7 @@
-import { useState, useMemo } from 'react';
 import { cn } from '../../lib/utils';
-import { calculateIncomeTax } from '../../lib/taxEngine';
-import { getTaxRules } from '../../data/taxRules';
 import type { AgeCategory } from '../../types';
 import { RegimeComparison } from './RegimeComparison';
+import { useTaxCalculator } from '../../contexts/TaxCalculatorContext';
 
 type FY = '2025-26' | '2024-25';
 
@@ -48,76 +46,17 @@ function NumberInput({
 }
 
 export function IncomeTaxTab() {
-  const [fy, setFy] = useState<FY>('2025-26');
-  const [grossSalary, setGrossSalary] = useState('');
-  const [otherIncome, setOtherIncome] = useState('');
-  const [ageCategory, setAgeCategory] = useState<AgeCategory>('below60');
-
-  const [showDeductions, setShowDeductions] = useState(false);
-  const [deductions, setDeductions] = useState({
-    section80C: '',
-    section80D_self: '',
-    section80D_parents: '',
-    section80CCD1B: '',
-    isSelfSenior: false,
-    isParentsSenior: false,
-  });
-
-  const [showHRA, setShowHRA] = useState(false);
-  const [hra, setHra] = useState({
-    actualHRA: '',
-    basicPlusDa: '',
-    rentPaid: '',
-    isMetroCity: false,
-  });
-
-  const results = useMemo(() => {
-    const rules = getTaxRules(fy);
-    const gross = Number(grossSalary) || 0;
-    const other = Number(otherIncome) || 0;
-
-    const hraInput = {
-      actualHRA: Number(hra.actualHRA) || 0,
-      basicPlusDa: Number(hra.basicPlusDa) || 0,
-      rentPaid: Number(hra.rentPaid) || 0,
-      isMetroCity: hra.isMetroCity,
-    };
-
-    const deductionInput = {
-      section80C: Number(deductions.section80C) || 0,
-      section80D_self: Number(deductions.section80D_self) || 0,
-      section80D_parents: Number(deductions.section80D_parents) || 0,
-      section80CCD1B: Number(deductions.section80CCD1B) || 0,
-      isSelfSenior: deductions.isSelfSenior,
-      isParentsSenior: deductions.isParentsSenior,
-    };
-
-    const oldResult = calculateIncomeTax(
-      {
-        grossSalary: gross,
-        otherIncome: other,
-        fy,
-        regime: 'old',
-        ageCategory,
-        deductions: deductionInput,
-        hra: hraInput,
-      },
-      rules,
-    );
-
-    const newResult = calculateIncomeTax(
-      {
-        grossSalary: gross,
-        otherIncome: other,
-        fy,
-        regime: 'new',
-        ageCategory,
-      },
-      rules,
-    );
-
-    return { oldResult, newResult };
-  }, [fy, grossSalary, otherIncome, ageCategory, deductions, hra]);
+  const {
+    fy, setFy,
+    grossSalary, setGrossSalary,
+    otherIncome, setOtherIncome,
+    ageCategory, setAgeCategory,
+    showDeductions, setShowDeductions,
+    deductions, setDeductions,
+    showHRA, setShowHRA,
+    hra, setHra,
+    oldResult, newResult,
+  } = useTaxCalculator();
 
   return (
     <div className="max-w-3xl">
@@ -274,8 +213,8 @@ export function IncomeTaxTab() {
 
       {/* Results */}
       <RegimeComparison
-        oldResult={results.oldResult}
-        newResult={results.newResult}
+        oldResult={oldResult}
+        newResult={newResult}
         fy={fy}
       />
     </div>
