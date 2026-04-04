@@ -1,6 +1,8 @@
 // server/index.ts
 import 'dotenv/config';
 import express from 'express';
+import chatRouter from './routes/chat.js';
+import uploadRouter from './routes/upload.js';
 import helmet from 'helmet';
 import cors from 'cors';
 import { rateLimit } from 'express-rate-limit';
@@ -62,11 +64,10 @@ app.use('/api', limiter);
 // 4. Body parsing — 1MB limit (chat history is text; no binary here)
 app.use(express.json({ limit: '1mb' }));
 
-// 5. API routes — imported in subsequent plans
-// TODO Plan 02: import chatRouter from './routes/chat.js';
-// TODO Plan 02: app.use('/api', chatRouter);
-// TODO Plan 03: import uploadRouter from './routes/upload.js';
-// TODO Plan 03: app.use('/api', uploadRouter);
+// 5. API routes
+app.use('/api', chatRouter);
+import uploadRouter from './routes/upload.js';
+app.use('/api', uploadRouter);
 
 // 6. Production static serving — Express serves Vite build output
 if (process.env.NODE_ENV === 'production') {
