@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 ## Current Position
 
 Phase: 2 of 6 (Component Architecture)
-Plan: 2 of 5 in current phase (02-02 complete)
-Status: In progress — 02-02 complete, ready for 02-03
-Last activity: 2026-04-04 — Plan 02-02 complete: src/hooks/useTheme.ts, src/hooks/usePluginMode.ts, src/hooks/useChat.ts created
+Plan: 3 of 5 in current phase (02-03 complete)
+Status: In progress — 02-03 complete, ready for 02-04
+Last activity: 2026-04-04 — Plan 02-03 complete: src/components/chat/ChartRenderer.tsx, ChatInput.tsx, MessageBubble.tsx, ChatView.tsx created
 
-Progress: [██████░░░░] 24% (phase 1 done, phase 2 plans 1-2 of 5 complete)
+Progress: [███████░░░] 30% (phase 1 done, phase 2 plans 1-3 of 5 complete)
 
 ## Performance Metrics
 
@@ -62,6 +62,10 @@ Recent decisions affecting current work:
 - [Phase 02-01]: HistoryItem conversion placed in api.ts — server API contract knowledge belongs in service layer
 - [Phase 02-02]: clearChat excludes window.confirm — confirmation is UI concern, hook simply resets state
 - [Phase 02-02]: chatContainerRef excluded from useChat — dead code in App.tsx (assigned but never read)
+- [Phase 02-03]: ChatView owns useChat() call internally — chat state does not flow through props from App.tsx, keeping concerns separated
+- [Phase 02-03]: renderContent kept as unexported local function in MessageBubble — implementation detail, not a public API
+- [Phase 02-03]: Quick query buttons in empty state call setInput only (no immediate send) — matches App.tsx chat area behavior
+- [Phase 02-03]: COLORS constant kept local to ChartRenderer — chart-specific palette does not belong in shared module
 
 ### Pending Todos
 
@@ -76,5 +80,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-04-04
-Stopped at: Completed 02-02-PLAN.md — all tasks done, ready for 02-03
-Resume file: .planning/phases/02-component-architecture/02-03-PLAN.md
+Stopped at: Completed 02-03-PLAN.md — all tasks done, ready for 02-04
+Resume file: .planning/phases/02-component-architecture/02-04-PLAN.md
