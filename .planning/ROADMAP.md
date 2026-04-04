@@ -48,7 +48,13 @@ Plans:
   2. Chat, calculator, and dashboard views are reachable via tab navigation without React Router
   3. All /api/* fetch calls originate from a single api.ts service module
   4. useChat, useTheme, and usePluginMode hooks encapsulate their respective state; no duplication in components
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+- [ ] 02-01-PLAN.md — Foundation modules: shared types, cn() utility, api.ts service layer
+- [ ] 02-02-PLAN.md — Custom hooks: useTheme, usePluginMode, useChat
+- [ ] 02-03-PLAN.md — Chat components: ChartRenderer, ChatInput, MessageBubble, ChatView
+- [ ] 02-04-PLAN.md — Layout components, placeholder stubs, and App.tsx thin shell refactor
 
 ### Phase 3: Tax Calculator
 **Goal**: Users can calculate and compare their tax liability across regimes, capital gains scenarios, and GST transactions
