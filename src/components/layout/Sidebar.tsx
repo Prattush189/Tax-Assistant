@@ -6,6 +6,7 @@ interface SidebarProps {
   onClose: () => void;
   isDarkMode: boolean;
   onToggleTheme: () => void;
+  onClearChat?: () => void;
 }
 
 const quickQueries = [
@@ -15,7 +16,7 @@ const quickQueries = [
   "Calculate tax for 15L income",
 ];
 
-export function Sidebar({ isOpen, onClose, isDarkMode, onToggleTheme }: SidebarProps) {
+export function Sidebar({ isOpen, onClose, isDarkMode, onToggleTheme, onClearChat }: SidebarProps) {
   return (
     <aside className={cn(
       "fixed inset-y-0 left-0 z-50 w-72 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 transform transition-transform duration-300 ease-in-out lg:relative lg:translate-x-0",
@@ -86,7 +87,12 @@ export function Sidebar({ isOpen, onClose, isDarkMode, onToggleTheme }: SidebarP
             {isDarkMode ? 'Light Mode' : 'Dark Mode'}
           </button>
           <button
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-900/20 rounded-lg transition-colors"
+            onClick={onClearChat}
+            disabled={!onClearChat}
+            className={cn(
+              "w-full flex items-center gap-2 px-3 py-2 text-sm rounded-lg transition-colors",
+              onClearChat ? "text-red-600 hover:bg-red-900/20" : "text-slate-400 cursor-not-allowed"
+            )}
           >
             <Trash2 className="w-4 h-4" />
             Clear Conversation
