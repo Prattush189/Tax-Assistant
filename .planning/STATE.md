@@ -37,6 +37,7 @@ Progress: [████████░░] 50% (phases 1-3 done, phase 4 plan 2 
 | Phase 01-express-backend-api-key-migration P03 | 2 | 2 tasks | 4 files |
 | Phase 02-component-architecture P02 | 8 | 2 tasks | 3 files |
 | Phase 03-tax-calculator P01 | 2 | 2 tasks | 5 files |
+| Phase 04-enhanced-visualizations-dashboard P01 | 3 | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -82,6 +83,8 @@ Recent decisions affecting current work:
 - [Phase 03-03]: RegimeComparison is a pure display component receiving oldResult/newResult props — zero calculation logic
 - [Phase 03-03]: GstTab renders only [0, 5, 18, 40] standard + [3, 0.25] special rate buttons — no 12% or 28% UI options
 - [Phase 03-03]: CapitalGainsTab passes indexedCost || purchasePrice to engine — safe fallback when indexation checkbox checked but field empty
+- [Phase 04-01]: TaxCalculatorProvider wraps <main> not just CalculatorView — ensures DashboardView can call useTaxCalculator() without throwing
+- [Phase 04-01]: setDeductions/setHra typed as React.Dispatch<SetStateAction<T>> so functional updater pattern in IncomeTaxTab works unchanged
 - [Phase 04-02]: renderChart() switch replaces ternary in ChartRenderer — open to new chart types with a new case, no restructuring needed
 - [Phase 04-02]: line type defaults to ['value'] key if chartData.lines absent — consistent with bar chart's hardcoded 'value'
 - [Phase 04-02]: composed uses i+3 color offset for line series — avoids color collision with bar series in same chart
