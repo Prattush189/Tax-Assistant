@@ -1,0 +1,72 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --color-primary: #f97316; /* orange-500 */
+  --color-primary-dark: #ea580c; /* orange-600 */
+}
+
+@layer base {
+  html, body, #root {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+  }
+
+  /* Custom scrollbar for dark mode */
+  .dark ::-webkit-scrollbar {
+    width: 8px;
+  }
+  .dark ::-webkit-scrollbar-track {
+    background: #1e293b; /* slate-800 */
+  }
+  .dark ::-webkit-scrollbar-thumb {
+    background: #475569; /* slate-600 */
+    border-radius: 4px;
+  }
+  .dark ::-webkit-scrollbar-thumb:hover {
+    background: #64748b; /* slate-500 */
+  }
+}
+
+.markdown-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.5rem 0;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  display: block;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.markdown-body th, .markdown-body td {
+  border: 1px solid #e2e8f0;
+  padding: 0.75rem 1rem;
+  text-align: left;
+}
+
+.dark .markdown-body th, .dark .markdown-body td {
+  border-color: #334155;
+}
+
+.markdown-body th {
+  background-color: #f8fafc;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.dark .markdown-body th {
+  background-color: #1e293b;
+  color: #f1f5f9;
+}
+
+.markdown-body tr:nth-child(even) {
+  background-color: #fcfcfc;
+}
+
+.dark .markdown-body tr:nth-child(even) {
+  background-color: #1e293b/30;
+}
