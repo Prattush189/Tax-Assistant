@@ -29,7 +29,7 @@ Requirements for milestone v1.0. Each maps to roadmap phases.
 - [ ] **CALC-04**: User sees regime recommendation with exact savings amount ("Switch to new regime, save X")
 - [ ] **CALC-05**: User can calculate capital gains (LTCG/STCG) for equity, mutual funds, and real estate with current rates
 - [ ] **CALC-06**: User can calculate GST breakdown (CGST+SGST or IGST) for a given amount, rate, and transaction type
-- [ ] **CALC-07**: Tax rules stored as versioned per-FY data files, not hardcoded constants
+- [x] **CALC-07**: Tax rules stored as versioned per-FY data files, not hardcoded constants
 
 ### Visualization & Dashboard
 
@@ -104,7 +104,7 @@ Deferred to future release. Tracked but not in current roadmap.
 | CALC-04 | Phase 3 | Pending |
 | CALC-05 | Phase 3 | Pending |
 | CALC-06 | Phase 3 | Pending |
-| CALC-07 | Phase 3 | Pending |
+| CALC-07 | Phase 3 | Complete |
 | VIZ-01 | Phase 4 | Pending |
 | VIZ-02 | Phase 4 | Pending |
 | VIZ-03 | Phase 4 | Pending |

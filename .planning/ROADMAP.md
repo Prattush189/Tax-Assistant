@@ -66,7 +66,12 @@ Plans:
   3. User sees a clear recommendation showing exactly how much they save by choosing the better regime
   4. User can calculate LTCG and STCG for equity, mutual funds, and real estate using current FY rates
   5. User can enter an amount, GST rate, and transaction type (intra/inter-state) and see the CGST+SGST or IGST split
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [ ] 03-01-PLAN.md — Calculator types, versioned tax rule data files (FY 2025-26 + FY 2024-25), and INR formatting utilities
+- [ ] 03-02-PLAN.md — Pure calculation engines: taxEngine.ts, capitalGainsEngine.ts, gstEngine.ts
+- [ ] 03-03-PLAN.md — UI components: CalculatorView tab shell, IncomeTaxTab, RegimeComparison, CapitalGainsTab, GstTab
 
 ### Phase 4: Enhanced Visualizations + Dashboard
 **Goal**: Tax data is presented through rich interactive charts; the calculator output drives a visual tax breakdown dashboard
@@ -110,7 +115,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 |-------|----------------|--------|-----------|
 | 1. Express Backend + API Key Migration | 4/4 | Complete    | 2026-04-04 |
 | 2. Component Architecture | 4/4 | Complete    | 2026-04-04 |
-| 3. Tax Calculator | 0/? | Not started | - |
+| 3. Tax Calculator | 1/3 | In Progress|  |
 | 4. Enhanced Visualizations + Dashboard | 0/? | Not started | - |
 | 5. Document Handling | 0/? | Not started | - |
 | 6. Iframe Plugin Mode Hardening | 0/? | Not started | - |

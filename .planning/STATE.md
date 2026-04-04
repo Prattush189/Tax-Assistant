@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-04-04)
 
 **Core value:** Users get accurate, visual, step-by-step answers to Indian tax questions — from simple queries to complex calculations with document analysis.
-**Current focus:** Phase 2 — Component Architecture
+**Current focus:** Phase 3 — Tax Calculator
 
 ## Current Position
 
-Phase: 2 of 6 (Component Architecture)
-Plan: 4 of 5 in current phase (02-04 complete)
-Status: In progress — 02-04 complete, ready for 02-05
-Last activity: 2026-04-04 — Plan 02-04 complete: Sidebar.tsx, Header.tsx, CalculatorView.tsx, DashboardView.tsx created; App.tsx refactored to 58-line thin shell
+Phase: 3 of 6 (Tax Calculator)
+Plan: 1 of 5 in current phase (03-01 complete)
+Status: In progress — 03-01 complete, ready for 03-02
+Last activity: 2026-04-04 — Plan 03-01 complete: TaxRules interface hierarchy, FY_2025_26 and FY_2024_25 constants, getTaxRules() lookup, formatINR/formatINRCompact utilities
 
-Progress: [████████░░] 35% (phase 1 done, phase 2 plans 1-4 of 5 complete)
+Progress: [████████░░] 37% (phases 1-2 done, phase 3 plan 1 of 5 complete)
 
 ## Performance Metrics
 
@@ -36,6 +36,7 @@ Progress: [████████░░] 35% (phase 1 done, phase 2 plans 1-4 
 *Updated after each plan completion*
 | Phase 01-express-backend-api-key-migration P03 | 2 | 2 tasks | 4 files |
 | Phase 02-component-architecture P02 | 8 | 2 tasks | 3 files |
+| Phase 03-tax-calculator P01 | 2 | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -69,6 +70,9 @@ Recent decisions affecting current work:
 - [Phase 02-04]: quickQueries defined as local constant in Sidebar — not a prop (matches App.tsx pattern, sidebar owns its own quick query list)
 - [Phase 02-04]: Tab navigation placed in Header with border-b-2 active styling; hidden in plugin mode to keep plugin embed clean
 - [Phase 02-04]: App.tsx reduced to 58-line thin shell — only useTheme/usePluginMode hooks, activeView/isSidebarOpen state, layout composition
+- [Phase 03-01]: FY data files are plain TypeScript constants type-checked by TaxRules interface — zero runtime parsing
+- [Phase 03-01]: Infinity sentinel in Slab.upTo — uniform engine loop, no special-case for top slab
+- [Phase 03-01]: getTaxRules() throws on unknown FY — hard error prevents silent miscalculation
 
 ### Pending Todos
 
@@ -76,12 +80,12 @@ None yet.
 
 ### Blockers/Concerns
 
-- Phase 3: FY 2025-26 tax slab values and 87A rebate threshold need verification against Finance Act 2025 before coding constants (MEDIUM confidence)
+- Phase 3: FY 2025-26 tax slab values and 87A rebate threshold RESOLVED — verified and coded in 03-01 (Finance Act 2025 confirmed)
 - Phase 5: Gemini Files API behavior for password-protected Form 16 PDFs (TRACES format) is LOW confidence — test before planning tasks
 - Phase 6: Smart Assist postMessage contract (origin domain, event types, data shapes) not yet confirmed with Smart Assist team — gate Phase 6 planning on this input
 
 ## Session Continuity
 
 Last session: 2026-04-04
-Stopped at: Completed 02-04-PLAN.md — all tasks done, ready for 02-05
-Resume file: .planning/phases/02-component-architecture/02-05-PLAN.md
+Stopped at: Completed 03-01-PLAN.md — all tasks done, ready for 03-02
+Resume file: .planning/phases/03-tax-calculator/03-02-PLAN.md
