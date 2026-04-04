@@ -10,9 +10,9 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 ## Current Position
 
 Phase: 5 of 6 (Document Handling)
-Plan: 2 of 4 in current phase (05-02 complete)
-Status: In progress — 05-02 complete, chat route extended with fileContext injection; 05-03 (useChat activeDocument) and 05-04 (DocumentsView UI) remaining
-Last activity: 2026-04-04 — Plan 05-02 complete: chat route fileContext injection via createPartFromUri, expired URI error detection; DOC-02 server side satisfied
+Plan: 3 of 4 in current phase (05-03 complete)
+Status: In progress — 05-03 complete, client service layer wired; 05-04 (DocumentsView UI) remaining
+Last activity: 2026-04-04 — Plan 05-03 complete: sendChatMessage extended with fileContext param; useChat gains activeDocument state with attach/detach; DOC-02 client side and DOC-04 satisfied
 
 Progress: [██████████] 60% (phases 1-4 done, phase 5 plan 1 of 3 complete)
 
@@ -41,6 +41,7 @@ Progress: [██████████] 60% (phases 1-4 done, phase 5 plan 1 
 | Phase 04-enhanced-visualizations-dashboard P03 | 1 | 2 tasks | 3 files |
 | Phase 05-document-handling P01 | 15 | 2 tasks | 2 files |
 | Phase 05-document-handling P02 | 2 | 1 tasks | 1 files |
+| Phase 05-document-handling P03 | 8 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -99,6 +100,8 @@ Recent decisions affecting current work:
 - [Phase 05-01]: Markdown fence stripping added before JSON.parse on Gemini extraction responses to prevent silent parse failures
 - [Phase 05-02]: Use SDK Part type for messageParts array — avoids type incompatibility with FileData.fileUri being optional in @google/genai SDK types
 - [Phase 05-02]: File part injected only into current message parts, not into chat history — prevents sending same PDF reference N times per multi-turn conversation
+- [Phase 05-03]: activeDocument stored in React useState only — never written to localStorage or sessionStorage (DOC-04 requirement enforced)
+- [Phase 05-03]: fileContext param shape is { uri: string; mimeType: string } rather than DocumentContext — keeps service layer framework-agnostic per Phase 02-01 pattern
 
 ### Pending Todos
 
@@ -113,5 +116,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-04-04
-Stopped at: Completed 05-02-PLAN.md — chat route extended with fileContext injection, createPartFromUri Part[] messageParts, expired URI detection; DOC-02 server side complete
-Resume file: .planning/phases/05-document-handling/05-03-PLAN.md
+Stopped at: Completed 05-03-PLAN.md — sendChatMessage fileContext param; useChat activeDocument state + attach/detach; DOC-02 client side and DOC-04 complete
+Resume file: .planning/phases/05-document-handling/05-04-PLAN.md
