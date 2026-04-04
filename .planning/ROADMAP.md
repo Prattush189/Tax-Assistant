@@ -98,7 +98,13 @@ Plans:
   2. User can ask follow-up questions about an uploaded document in the chat interface and receive document-aware answers
   3. User can upload a salary slip or investment proof PDF or image and receive AI analysis of its contents
   4. Uploaded files are processed server-side via Gemini Files API; no file URI persists after the browser session ends
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+- [ ] 05-01-PLAN.md — Types extension + Gemini Files API upload pipeline in upload.ts
+- [ ] 05-02-PLAN.md — Server chat route extension with optional fileContext injection
+- [ ] 05-03-PLAN.md — Client service layer and useChat extension for document context
+- [ ] 05-04-PLAN.md — DocumentsView, DocumentCard UI components + App.tsx/Header/ChatInput wiring
 
 ### Phase 6: Iframe Plugin Mode Hardening
 **Goal**: The app embeds seamlessly in Smart Assist as an iframe with correct height sizing, origin-validated messaging, and theme sync
@@ -122,5 +128,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 2. Component Architecture | 4/4 | Complete    | 2026-04-04 |
 | 3. Tax Calculator | 3/3 | Complete    | 2026-04-04 |
 | 4. Enhanced Visualizations + Dashboard | 3/3 | Complete    | 2026-04-04 |
-| 5. Document Handling | 0/? | Not started | - |
+| 5. Document Handling | 0/4 | Not started | - |
 | 6. Iframe Plugin Mode Hardening | 0/? | Not started | - |
