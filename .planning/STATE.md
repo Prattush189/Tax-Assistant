@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 ## Current Position
 
 Phase: 3 of 6 (Tax Calculator)
-Plan: 2 of 5 in current phase (03-02 complete)
-Status: In progress — 03-02 complete, ready for 03-03
-Last activity: 2026-04-04 — Plan 03-02 complete: calculateIncomeTax (marginal relief, HRA), calculateCapitalGains (indexation option), calculateGST (CGST/SGST/IGST, rate validation)
+Plan: 3 of 5 in current phase (03-03 complete)
+Status: In progress — 03-03 complete, ready for 03-04
+Last activity: 2026-04-04 — Plan 03-03 complete: CalculatorView tab shell, IncomeTaxTab (dual-regime useMemo), RegimeComparison (savings banner), CapitalGainsTab (indexation option), GstTab (current rates only)
 
-Progress: [████████░░] 40% (phases 1-2 done, phase 3 plans 1-2 of 5 complete)
+Progress: [████████░░] 46% (phases 1-2 done, phase 3 plans 1-3 of 5 complete)
 
 ## Performance Metrics
 
@@ -78,6 +78,10 @@ Recent decisions affecting current work:
 - [Phase 03-02]: HRA base = basic+DA not gross salary — documented in function comment to prevent regression
 - [Phase 03-02]: GST validates against [0, 0.25, 3, 5, 18, 40] — 12% and 28% eliminated Sep 2025
 - [Phase 03-02]: Real estate indexation exposes both branches with recommendedOption for lower tax
+- [Phase 03-03]: IncomeTaxTab calls calculateIncomeTax twice in one useMemo — old and new regime always computed together
+- [Phase 03-03]: RegimeComparison is a pure display component receiving oldResult/newResult props — zero calculation logic
+- [Phase 03-03]: GstTab renders only [0, 5, 18, 40] standard + [3, 0.25] special rate buttons — no 12% or 28% UI options
+- [Phase 03-03]: CapitalGainsTab passes indexedCost || purchasePrice to engine — safe fallback when indexation checkbox checked but field empty
 
 ### Pending Todos
 
@@ -92,5 +96,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-04-04
-Stopped at: Completed 03-02-PLAN.md — all tasks done, ready for 03-03
-Resume file: .planning/phases/03-tax-calculator/03-03-PLAN.md
+Stopped at: Completed 03-03-PLAN.md — all tasks done, ready for 03-04
+Resume file: .planning/phases/03-tax-calculator/03-04-PLAN.md

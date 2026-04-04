@@ -14,7 +14,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Express Backend + API Key Migration** - Secure the Gemini API key server-side and establish the Express proxy foundation (completed 2026-04-04)
 - [x] **Phase 2: Component Architecture** - Decompose the 495-line App.tsx monolith into maintainable feature components and hooks (completed 2026-04-04)
-- [ ] **Phase 3: Tax Calculator** - Build client-side old/new regime comparison, capital gains, and GST calculators with versioned tax rules
+- [x] **Phase 3: Tax Calculator** - Build client-side old/new regime comparison, capital gains, and GST calculators with versioned tax rules (completed 2026-04-04)
 - [ ] **Phase 4: Enhanced Visualizations + Dashboard** - Add waterfall, line, and stacked charts; build interactive tax dashboard over calculator output
 - [ ] **Phase 5: Document Handling** - Form 16 PDF upload, extracted summary, and document-aware chat Q&A via Gemini Files API
 - [ ] **Phase 6: Iframe Plugin Mode Hardening** - Production-ready postMessage infrastructure, origin validation, height resize, and theme sync
@@ -115,7 +115,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 |-------|----------------|--------|-----------|
 | 1. Express Backend + API Key Migration | 4/4 | Complete    | 2026-04-04 |
 | 2. Component Architecture | 4/4 | Complete    | 2026-04-04 |
-| 3. Tax Calculator | 2/3 | In Progress|  |
+| 3. Tax Calculator | 3/3 | Complete   | 2026-04-04 |
 | 4. Enhanced Visualizations + Dashboard | 0/? | Not started | - |
 | 5. Document Handling | 0/? | Not started | - |
 | 6. Iframe Plugin Mode Hardening | 0/? | Not started | - |
