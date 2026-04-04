@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Message } from '../types';
+import { Message, DocumentContext } from '../types';
 import { sendChatMessage } from '../services/api';
 
 export function useChat() {
@@ -7,6 +7,11 @@ export function useChat() {
   const [input, setInput] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [activeDocument, setActiveDocument] = useState<DocumentContext | null>(null);
+  // activeDocument is React state only — NEVER write to localStorage (DOC-04)
+
+  const attachDocument = (doc: DocumentContext) => setActiveDocument(doc);
+  const detachDocument = () => setActiveDocument(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -47,7 +52,8 @@ export function useChat() {
             content: msg,
           };
           return updated;
-        })
+        }),
+        activeDocument ? { uri: activeDocument.fileUri, mimeType: activeDocument.mimeType } : undefined
       );
     } finally {
       setIsLoading(false);
@@ -57,6 +63,7 @@ export function useChat() {
   const clearChat = () => {
     setMessages([]);
     setInput('');
+    setActiveDocument(null);  // DOC-04: clear document context when chat is reset
   };
 
   return {
@@ -67,5 +74,8 @@ export function useChat() {
     messagesEndRef,
     send,
     clearChat,
+    activeDocument,
+    attachDocument,
+    detachDocument,
   };
 }
