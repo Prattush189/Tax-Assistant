@@ -40,10 +40,10 @@ Requirements for milestone v1.0. Each maps to roadmap phases.
 
 ### Document Handling
 
-- [ ] **DOC-01**: User can upload Form 16 PDF and see extracted salary, TDS, and deduction summary
-- [ ] **DOC-02**: User can ask follow-up questions about an uploaded document in chat (document-aware Q&A)
-- [ ] **DOC-03**: User can upload any tax-related document (salary slip, investment proof) for AI analysis
-- [ ] **DOC-04**: Uploaded files processed via Gemini Files API server-side; file URIs not persisted beyond session
+- [x] **DOC-01**: User can upload Form 16 PDF and see extracted salary, TDS, and deduction summary
+- [x] **DOC-02**: User can ask follow-up questions about an uploaded document in chat (document-aware Q&A)
+- [x] **DOC-03**: User can upload any tax-related document (salary slip, investment proof) for AI analysis
+- [x] **DOC-04**: Uploaded files processed via Gemini Files API server-side; file URIs not persisted beyond session
 
 ### Plugin & Embed
 
@@ -109,10 +109,10 @@ Deferred to future release. Tracked but not in current roadmap.
 | VIZ-02 | Phase 4 | Complete |
 | VIZ-03 | Phase 4 | Complete |
 | VIZ-04 | Phase 4 | Complete |
-| DOC-01 | Phase 5 | Pending |
-| DOC-02 | Phase 5 | Pending |
-| DOC-03 | Phase 5 | Pending |
-| DOC-04 | Phase 5 | Pending |
+| DOC-01 | Phase 5 | Complete |
+| DOC-02 | Phase 5 | Complete |
+| DOC-03 | Phase 5 | Complete |
+| DOC-04 | Phase 5 | Complete |
 | PLUG-01 | Phase 6 | Pending |
 | PLUG-02 | Phase 6 | Pending |
 | PLUG-03 | Phase 6 | Pending |

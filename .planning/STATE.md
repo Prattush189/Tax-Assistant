@@ -10,9 +10,9 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 ## Current Position
 
 Phase: 5 of 6 (Document Handling)
-Plan: 1 of 3 in current phase (05-01 complete)
-Status: In progress — 05-01 complete, Gemini Files API pipeline implemented; 05-02 (DocumentsView UI) and 05-03 (chat fileContext) remaining
-Last activity: 2026-04-04 — Plan 05-01 complete: Gemini Files API pipeline in upload.ts, DocumentSummary/DocumentContext types; DOC-01/DOC-03/DOC-04 satisfied
+Plan: 2 of 4 in current phase (05-02 complete)
+Status: In progress — 05-02 complete, chat route extended with fileContext injection; 05-03 (useChat activeDocument) and 05-04 (DocumentsView UI) remaining
+Last activity: 2026-04-04 — Plan 05-02 complete: chat route fileContext injection via createPartFromUri, expired URI error detection; DOC-02 server side satisfied
 
 Progress: [██████████] 60% (phases 1-4 done, phase 5 plan 1 of 3 complete)
 
@@ -113,5 +113,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-04-04
-Stopped at: Completed 05-01-PLAN.md — Gemini Files API pipeline in upload.ts, DocumentSummary/DocumentContext types; DOC-01/DOC-03/DOC-04 satisfied
-Resume file: .planning/phases/05-document-handling/05-02-PLAN.md
+Stopped at: Completed 05-02-PLAN.md — chat route extended with fileContext injection, createPartFromUri Part[] messageParts, expired URI detection; DOC-02 server side complete
+Resume file: .planning/phases/05-document-handling/05-03-PLAN.md
