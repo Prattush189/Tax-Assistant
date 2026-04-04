@@ -115,7 +115,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 |-------|----------------|--------|-----------|
 | 1. Express Backend + API Key Migration | 4/4 | Complete    | 2026-04-04 |
 | 2. Component Architecture | 4/4 | Complete    | 2026-04-04 |
-| 3. Tax Calculator | 1/3 | In Progress|  |
+| 3. Tax Calculator | 2/3 | In Progress|  |
 | 4. Enhanced Visualizations + Dashboard | 0/? | Not started | - |
 | 5. Document Handling | 0/? | Not started | - |
 | 6. Iframe Plugin Mode Hardening | 0/? | Not started | - |

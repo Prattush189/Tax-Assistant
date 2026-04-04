@@ -23,12 +23,12 @@ Requirements for milestone v1.0. Each maps to roadmap phases.
 
 ### Tax Calculator
 
-- [ ] **CALC-01**: User can compare Old vs New income tax regime side-by-side for FY 2025-26 and FY 2024-25
-- [ ] **CALC-02**: User can input salary, deductions (80C, 80D, 80CCD-1B), HRA, and standard deduction for old regime
-- [ ] **CALC-03**: Calculator auto-applies Section 87A rebate and 4% health & education cess
-- [ ] **CALC-04**: User sees regime recommendation with exact savings amount ("Switch to new regime, save X")
-- [ ] **CALC-05**: User can calculate capital gains (LTCG/STCG) for equity, mutual funds, and real estate with current rates
-- [ ] **CALC-06**: User can calculate GST breakdown (CGST+SGST or IGST) for a given amount, rate, and transaction type
+- [x] **CALC-01**: User can compare Old vs New income tax regime side-by-side for FY 2025-26 and FY 2024-25
+- [x] **CALC-02**: User can input salary, deductions (80C, 80D, 80CCD-1B), HRA, and standard deduction for old regime
+- [x] **CALC-03**: Calculator auto-applies Section 87A rebate and 4% health & education cess
+- [x] **CALC-04**: User sees regime recommendation with exact savings amount ("Switch to new regime, save X")
+- [x] **CALC-05**: User can calculate capital gains (LTCG/STCG) for equity, mutual funds, and real estate with current rates
+- [x] **CALC-06**: User can calculate GST breakdown (CGST+SGST or IGST) for a given amount, rate, and transaction type
 - [x] **CALC-07**: Tax rules stored as versioned per-FY data files, not hardcoded constants
 
 ### Visualization & Dashboard
@@ -98,12 +98,12 @@ Deferred to future release. Tracked but not in current roadmap.
 | ARCH-02 | Phase 2 | Complete |
 | ARCH-03 | Phase 2 | Complete |
 | ARCH-04 | Phase 2 | Complete |
-| CALC-01 | Phase 3 | Pending |
-| CALC-02 | Phase 3 | Pending |
-| CALC-03 | Phase 3 | Pending |
-| CALC-04 | Phase 3 | Pending |
-| CALC-05 | Phase 3 | Pending |
-| CALC-06 | Phase 3 | Pending |
+| CALC-01 | Phase 3 | Complete |
+| CALC-02 | Phase 3 | Complete |
+| CALC-03 | Phase 3 | Complete |
+| CALC-04 | Phase 3 | Complete |
+| CALC-05 | Phase 3 | Complete |
+| CALC-06 | Phase 3 | Complete |
 | CALC-07 | Phase 3 | Complete |
 | VIZ-01 | Phase 4 | Pending |
 | VIZ-02 | Phase 4 | Pending |

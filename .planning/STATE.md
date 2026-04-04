@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 ## Current Position
 
 Phase: 3 of 6 (Tax Calculator)
-Plan: 1 of 5 in current phase (03-01 complete)
-Status: In progress — 03-01 complete, ready for 03-02
-Last activity: 2026-04-04 — Plan 03-01 complete: TaxRules interface hierarchy, FY_2025_26 and FY_2024_25 constants, getTaxRules() lookup, formatINR/formatINRCompact utilities
+Plan: 2 of 5 in current phase (03-02 complete)
+Status: In progress — 03-02 complete, ready for 03-03
+Last activity: 2026-04-04 — Plan 03-02 complete: calculateIncomeTax (marginal relief, HRA), calculateCapitalGains (indexation option), calculateGST (CGST/SGST/IGST, rate validation)
 
-Progress: [████████░░] 37% (phases 1-2 done, phase 3 plan 1 of 5 complete)
+Progress: [████████░░] 40% (phases 1-2 done, phase 3 plans 1-2 of 5 complete)
 
 ## Performance Metrics
 
@@ -73,6 +73,11 @@ Recent decisions affecting current work:
 - [Phase 03-01]: FY data files are plain TypeScript constants type-checked by TaxRules interface — zero runtime parsing
 - [Phase 03-01]: Infinity sentinel in Slab.upTo — uniform engine loop, no special-case for top slab
 - [Phase 03-01]: getTaxRules() throws on unknown FY — hard error prevents silent miscalculation
+- [Phase 03-02]: 87A rebate isolated to taxEngine.ts — capitalGainsEngine.ts has zero rebate logic (s.111A/s.112A gains cannot benefit from 87A)
+- [Phase 03-02]: Marginal relief = max(0, slabTax - excessAboveThreshold) — smooth cliff prevention for any income value
+- [Phase 03-02]: HRA base = basic+DA not gross salary — documented in function comment to prevent regression
+- [Phase 03-02]: GST validates against [0, 0.25, 3, 5, 18, 40] — 12% and 28% eliminated Sep 2025
+- [Phase 03-02]: Real estate indexation exposes both branches with recommendedOption for lower tax
 
 ### Pending Todos
 
@@ -87,5 +92,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-04-04
-Stopped at: Completed 03-01-PLAN.md — all tasks done, ready for 03-02
-Resume file: .planning/phases/03-tax-calculator/03-02-PLAN.md
+Stopped at: Completed 03-02-PLAN.md — all tasks done, ready for 03-03
+Resume file: .planning/phases/03-tax-calculator/03-03-PLAN.md
