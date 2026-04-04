@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 ## Current Position
 
 Phase: 2 of 6 (Component Architecture)
-Plan: 1 of 5 in current phase (02-01 complete)
-Status: In progress — 02-01 complete, ready for 02-02
-Last activity: 2026-04-04 — Plan 02-01 complete: src/types/index.ts, src/lib/utils.ts, src/services/api.ts created
+Plan: 2 of 5 in current phase (02-02 complete)
+Status: In progress — 02-02 complete, ready for 02-03
+Last activity: 2026-04-04 — Plan 02-02 complete: src/hooks/useTheme.ts, src/hooks/usePluginMode.ts, src/hooks/useChat.ts created
 
-Progress: [█████░░░░░] 20% (phase 1 done, phase 2 plan 1 of 5 complete)
+Progress: [██████░░░░] 24% (phase 1 done, phase 2 plans 1-2 of 5 complete)
 
 ## Performance Metrics
 
@@ -35,6 +35,7 @@ Progress: [█████░░░░░] 20% (phase 1 done, phase 2 plan 1 of 
 
 *Updated after each plan completion*
 | Phase 01-express-backend-api-key-migration P03 | 2 | 2 tasks | 4 files |
+| Phase 02-component-architecture P02 | 8 | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -59,6 +60,8 @@ Recent decisions affecting current work:
 - [Phase 02-01]: api.ts uses callbacks (onChunk/onError) rather than React state — service layer stays framework-agnostic
 - [Phase 02-01]: SSE buffer accumulation (decoder stream:true + lines.pop()) copied verbatim from App.tsx — must not be simplified
 - [Phase 02-01]: HistoryItem conversion placed in api.ts — server API contract knowledge belongs in service layer
+- [Phase 02-02]: clearChat excludes window.confirm — confirmation is UI concern, hook simply resets state
+- [Phase 02-02]: chatContainerRef excluded from useChat — dead code in App.tsx (assigned but never read)
 
 ### Pending Todos
 
@@ -73,5 +76,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-04-04
-Stopped at: Completed 02-01-PLAN.md — all tasks done, ready for 02-02
-Resume file: .planning/phases/02-component-architecture/02-02-PLAN.md
+Stopped at: Completed 02-02-PLAN.md — all tasks done, ready for 02-03
+Resume file: .planning/phases/02-component-architecture/02-03-PLAN.md
