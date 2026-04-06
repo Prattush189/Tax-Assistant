@@ -24,8 +24,8 @@ export function Sidebar({ isOpen, onClose, isDarkMode, onToggleTheme, onClearCha
     )}>
       <div className="flex flex-col h-full p-6">
         <div className="flex items-center gap-3 mb-8">
-          <div className="p-2 bg-orange-100 dark:bg-orange-900/30 rounded-xl">
-            <IndianRupee className="w-6 h-6 text-orange-600 dark:text-orange-400" />
+          <div className="flex items-center justify-center">
+            <img src="/logoAI.png" alt="Tax Assistant Logo" className="w-8 h-8 object-contain rounded-lg" />
           </div>
           <h1 className="text-xl font-bold tracking-tight text-slate-800 dark:text-slate-100">Tax Assistant</h1>
           <button

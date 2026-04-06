@@ -42,7 +42,7 @@ export function Header({
           </button>
         )}
         <div className="flex items-center gap-2">
-          <ShieldCheck className="w-5 h-5 text-green-600 dark:text-green-400" />
+          <img src="/logoAI.png" alt="Tax Assistant Logo" className="w-6 h-6 object-contain rounded-md" />
           <span className="font-semibold text-slate-700 dark:text-slate-200 text-sm sm:text-base">
             {isPluginMode ? 'Tax Assistant' : 'Indian Tax Assistant'}
           </span>
