@@ -19,8 +19,8 @@ import { cn } from './lib/utils';
 type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'documents';
 
 export default function App() {
-  const { isDarkMode, toggleTheme } = useTheme();
-  const { isPluginMode } = usePluginMode();
+  const { isDarkMode, toggleTheme, setIsDarkMode } = useTheme();
+  const { isPluginMode } = usePluginMode(setIsDarkMode);
   const [activeView, setActiveView] = useState<ActiveView>('chat');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 

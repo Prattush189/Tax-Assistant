@@ -24,6 +24,7 @@ export function useTheme() {
 
   return {
     isDarkMode,
+    setIsDarkMode,
     toggleTheme: () => setIsDarkMode(prev => !prev),
   };
 }
