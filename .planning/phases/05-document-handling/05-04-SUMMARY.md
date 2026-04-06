@@ -120,3 +120,15 @@ None — no external service configuration required for this plan.
 ---
 *Phase: 05-document-handling*
 *Completed: 2026-04-04*
+
+## Self-Check: PASSED
+
+- FOUND: src/components/documents/DocumentCard.tsx
+- FOUND: src/components/documents/DocumentsView.tsx
+- FOUND: src/App.tsx (modified)
+- FOUND: src/components/layout/Header.tsx (modified)
+- FOUND: src/components/chat/ChatView.tsx (modified)
+- FOUND: src/components/chat/ChatInput.tsx (modified)
+- FOUND: commit 5181468 (Task 1)
+- FOUND: commit e802b21 (Task 2)
+- TypeScript compile: zero errors
