@@ -16,9 +16,7 @@ const app = express();
 const PORT = process.env.PORT ?? 4001;
 
 // 1. Security headers — helmet first so headers apply to all responses
-// frame-ancestors set to allow iframe embedding for ?plugin=true mode.
-// Using permissive '*' initially; tighten to specific origin once embedding
-// domain is confirmed (tracked: PLUG-02 in Phase 6).
+// CSP: frame-ancestors tightened in Phase 6 (PLUG-02) — production allows Smart Assist origin only
 app.use(
   helmet({
     contentSecurityPolicy: {
@@ -28,7 +26,9 @@ app.use(
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", 'data:', 'blob:'],
         connectSrc: ["'self'"],
-        frameAncestors: ["'self'", '*'],
+        frameAncestors: process.env.NODE_ENV === 'production'
+          ? ["'self'", 'https://ai.smartbizin.com']
+          : ["'self'", 'http://localhost:3000', 'http://localhost:5173'],
       },
     },
   })
