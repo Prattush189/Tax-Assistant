@@ -133,4 +133,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 3. Tax Calculator | 3/3 | Complete    | 2026-04-04 |
 | 4. Enhanced Visualizations + Dashboard | 3/3 | Complete    | 2026-04-04 |
 | 5. Document Handling | 4/4 | Complete    | 2026-04-04 |
-| 6. Iframe Plugin Mode Hardening | 0/2 | Not started | - |
+| 6. Iframe Plugin Mode Hardening | 1/2 | In Progress|  |

@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-04-04)
 
 **Core value:** Users get accurate, visual, step-by-step answers to Indian tax questions — from simple queries to complex calculations with document analysis.
-**Current focus:** Phase 5 — Document Handling
+**Current focus:** Phase 6 — iFrame Plugin Mode Hardening
 
 ## Current Position
 
-Phase: 5 of 6 (Document Handling)
-Plan: 4 of 4 in current phase (05-04 complete)
-Status: Phase 5 complete — all 4 plans done; full document handling flow operational
-Last activity: 2026-04-04 — Plan 05-04 complete: DocumentsView UI with drag-and-drop upload, DocumentCard summary, Documents tab in Header, document badge in ChatInput; all DOC requirements observable from UI
+Phase: 6 of 6 (iFrame Plugin Mode Hardening)
+Plan: 1 of 2 in current phase (06-01 complete)
+Status: Phase 6 in progress — 06-01 done: postMessage height reporter, origin validation, theme sync, CSP tightened
+Last activity: 2026-04-04 — Plan 06-01 complete: usePluginMode extended with ResizeObserver and origin-validated message listener; useTheme exposes setIsDarkMode; App.tsx wired; server CSP frame-ancestors env-conditional (PLUG-01, PLUG-02, PLUG-04)
 
-Progress: [████████████] 75% (phases 1-5 done, phase 6 remaining)
+Progress: [█████████████] 83% (phases 1-5 done, phase 6 plan 1 of 2 done)
 
 ## Performance Metrics
 
@@ -42,6 +42,7 @@ Progress: [████████████] 75% (phases 1-5 done, phase 6 r
 | Phase 05-document-handling P01 | 15 | 2 tasks | 2 files |
 | Phase 05-document-handling P02 | 2 | 1 tasks | 1 files |
 | Phase 05-document-handling P03 | 8 | 2 tasks | 2 files |
+| Phase 06-iframe-plugin-mode-hardening P01 | 2 | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -105,6 +106,10 @@ Recent decisions affecting current work:
 - [Phase 05-04]: useChat lifted to App.tsx as single chatHook instance — ChatView receives it as prop to prevent dual-instance document context split where DocumentsView attach wouldn't flow to ChatView send
 - [Phase 05-04]: ChatView accepts chatHook: ReturnType<typeof useChat> prop — type-safe approach without prop drilling individual values
 - [Phase 05-04]: ChatInput textarea gets rounded-t-none when activeDocument badge shown — badge and textarea join visually as single connected element
+- [Phase 06-01]: usePluginMode accepts onSetTheme? callback rather than importing useTheme internally — avoids dual theme state and keeps hook composable
+- [Phase 06-01]: TAX_ASSISTANT_READY sent before ResizeObserver fires — parent can register listener before height messages begin
+- [Phase 06-01]: postMessage targetOrigin is always PARENT_ORIGIN constant, never '*' — prevents any page from intercepting height messages
+- [Phase 06-01]: frameAncestors env-conditional: production locks to ai.smartbizin.com; dev allows localhost:3000 and localhost:5173
 
 ### Pending Todos
 
@@ -119,5 +124,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-04-04
-Stopped at: Completed 05-04-PLAN.md — DocumentsView UI, DocumentCard, Documents tab, ChatInput badge; Phase 5 fully complete
-Resume file: .planning/phases/06-smart-assist-plugin/ (Phase 6 plans pending)
+Stopped at: Completed 06-01-PLAN.md — postMessage height reporter, origin validation, theme sync, CSP tightened; Phase 6 plan 1 of 2 complete
+Resume file: .planning/phases/06-iframe-plugin-mode-hardening/06-02-PLAN.md

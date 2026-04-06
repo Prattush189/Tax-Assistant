@@ -47,10 +47,10 @@ Requirements for milestone v1.0. Each maps to roadmap phases.
 
 ### Plugin & Embed
 
-- [ ] **PLUG-01**: Iframe communicates content height to parent via postMessage for seamless embedding
-- [ ] **PLUG-02**: Iframe validates parent origin against allowlist on all received postMessage events
+- [x] **PLUG-01**: Iframe communicates content height to parent via postMessage for seamless embedding
+- [x] **PLUG-02**: Iframe validates parent origin against allowlist on all received postMessage events
 - [ ] **PLUG-03**: Plugin mode hides unnecessary chrome (sidebar, resource links) and adapts layout for constrained widths
-- [ ] **PLUG-04**: Parent can sync theme (dark/light) to iframe via postMessage
+- [x] **PLUG-04**: Parent can sync theme (dark/light) to iframe via postMessage
 
 ## v2 Requirements
 
@@ -113,10 +113,10 @@ Deferred to future release. Tracked but not in current roadmap.
 | DOC-02 | Phase 5 | Complete |
 | DOC-03 | Phase 5 | Complete |
 | DOC-04 | Phase 5 | Complete |
-| PLUG-01 | Phase 6 | Pending |
-| PLUG-02 | Phase 6 | Pending |
+| PLUG-01 | Phase 6 | Complete |
+| PLUG-02 | Phase 6 | Complete |
 | PLUG-03 | Phase 6 | Pending |
-| PLUG-04 | Phase 6 | Pending |
+| PLUG-04 | Phase 6 | Complete |
 
 **Coverage:**
 - v1 requirements: 27 total
