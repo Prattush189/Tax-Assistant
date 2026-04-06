@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-04-04)
 
 **Core value:** Users get accurate, visual, step-by-step answers to Indian tax questions — from simple queries to complex calculations with document analysis.
-**Current focus:** Phase 6 — iFrame Plugin Mode Hardening
+**Current focus:** Phase 6 complete — all PLUG requirements delivered
 
 ## Current Position
 
 Phase: 6 of 6 (iFrame Plugin Mode Hardening)
-Plan: 1 of 2 in current phase (06-01 complete)
-Status: Phase 6 in progress — 06-01 done: postMessage height reporter, origin validation, theme sync, CSP tightened
-Last activity: 2026-04-04 — Plan 06-01 complete: usePluginMode extended with ResizeObserver and origin-validated message listener; useTheme exposes setIsDarkMode; App.tsx wired; server CSP frame-ancestors env-conditional (PLUG-01, PLUG-02, PLUG-04)
+Plan: 2 of 2 in current phase (06-02 complete — ALL PLANS DONE)
+Status: Phase 6 complete — PLUG-01 through PLUG-04 all implemented and hardened
+Last activity: 2026-04-04 — Plan 06-02 complete: responsive 400px fixes (overflow-x-auto, grid-cols-1 sm:grid-cols-2); Phase 6 and full project roadmap done
 
-Progress: [█████████████] 83% (phases 1-5 done, phase 6 plan 1 of 2 done)
+Progress: [███████████████] 100% (all 6 phases complete)
 
 ## Performance Metrics
 
@@ -43,6 +43,7 @@ Progress: [█████████████] 83% (phases 1-5 done, phase 
 | Phase 05-document-handling P02 | 2 | 1 tasks | 1 files |
 | Phase 05-document-handling P03 | 8 | 2 tasks | 2 files |
 | Phase 06-iframe-plugin-mode-hardening P01 | 2 | 2 tasks | 4 files |
+| Phase 06-iframe-plugin-mode-hardening P02 | 8 | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -110,6 +111,8 @@ Recent decisions affecting current work:
 - [Phase 06-01]: TAX_ASSISTANT_READY sent before ResizeObserver fires — parent can register listener before height messages begin
 - [Phase 06-01]: postMessage targetOrigin is always PARENT_ORIGIN constant, never '*' — prevents any page from intercepting height messages
 - [Phase 06-01]: frameAncestors env-conditional: production locks to ai.smartbizin.com; dev allows localhost:3000 and localhost:5173
+- [Phase 06-02]: overflow-x-auto applied globally (not isPluginMode conditional) — responsive behavior benefits all users
+- [Phase 06-02]: TaxSummaryCards grid-cols-2 changed to grid-cols-1 sm:grid-cols-2 so cards stack at 400px rather than squeeze
 
 ### Pending Todos
 
@@ -124,5 +127,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-04-04
-Stopped at: Completed 06-01-PLAN.md — postMessage height reporter, origin validation, theme sync, CSP tightened; Phase 6 plan 1 of 2 complete
-Resume file: .planning/phases/06-iframe-plugin-mode-hardening/06-02-PLAN.md
+Stopped at: Completed 06-02-PLAN.md — responsive 400px layout fixes for plugin iframe mode; Phase 6 and full roadmap complete
+Resume file: None — all plans complete

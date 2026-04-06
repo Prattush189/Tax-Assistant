@@ -17,7 +17,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: Tax Calculator** - Build client-side old/new regime comparison, capital gains, and GST calculators with versioned tax rules (completed 2026-04-04)
 - [x] **Phase 4: Enhanced Visualizations + Dashboard** - Add waterfall, line, and stacked charts; build interactive tax dashboard over calculator output (completed 2026-04-04)
 - [x] **Phase 5: Document Handling** - Form 16 PDF upload, extracted summary, and document-aware chat Q&A via Gemini Files API (completed 2026-04-04)
-- [ ] **Phase 6: Iframe Plugin Mode Hardening** - Production-ready postMessage infrastructure, origin validation, height resize, and theme sync
+- [x] **Phase 6: Iframe Plugin Mode Hardening** - Production-ready postMessage infrastructure, origin validation, height resize, and theme sync (completed 2026-04-06)
 
 ## Phase Details
 
@@ -133,4 +133,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 3. Tax Calculator | 3/3 | Complete    | 2026-04-04 |
 | 4. Enhanced Visualizations + Dashboard | 3/3 | Complete    | 2026-04-04 |
 | 5. Document Handling | 4/4 | Complete    | 2026-04-04 |
-| 6. Iframe Plugin Mode Hardening | 1/2 | In Progress|  |
+| 6. Iframe Plugin Mode Hardening | 2/2 | Complete   | 2026-04-06 |
