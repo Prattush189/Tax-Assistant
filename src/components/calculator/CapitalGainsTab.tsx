@@ -230,7 +230,8 @@ export function CapitalGainsTab() {
               <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3">
                 Indexation Comparison
               </p>
-              <div className="grid grid-cols-2 gap-3 mb-3">
+              <div className="overflow-x-auto">
+              <div className="grid grid-cols-2 gap-3 mb-3 min-w-[280px]">
                 {/* With Indexation */}
                 <div
                   className={cn(
@@ -280,6 +281,7 @@ export function CapitalGainsTab() {
                     Tax: {formatINR(result.indexationOption.withoutIndexation.taxAmount)}
                   </div>
                 </div>
+              </div>
               </div>
               <p className="text-xs text-slate-400 dark:text-slate-500">
                 Taxpayers who acquired property BEFORE 23 July 2024 may choose either option.

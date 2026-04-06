@@ -18,7 +18,7 @@ export function CalculatorView() {
   return (
     <div className="flex-1 flex flex-col p-4 md:p-6 overflow-y-auto">
       {/* Tab bar */}
-      <div className="flex gap-1 mb-6 border-b border-slate-200 dark:border-slate-700">
+      <div className="flex flex-wrap gap-1 mb-6 border-b border-slate-200 dark:border-slate-700">
         {TABS.map((tab) => (
           <button
             key={tab.id}

@@ -33,7 +33,9 @@ export function DashboardView() {
 
         <TaxSummaryCards result={betterResult} regimeLabel={betterLabel} />
 
-        <TaxWaterfallChart result={betterResult} />
+        <div className="overflow-x-auto">
+          <TaxWaterfallChart result={betterResult} />
+        </div>
 
         {/* VIZ-04: RegimeComparison already implements full slab-by-slab table — reuse, do not rebuild */}
         <div>

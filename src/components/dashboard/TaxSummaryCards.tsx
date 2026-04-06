@@ -32,7 +32,7 @@ export function TaxSummaryCards({ result, regimeLabel, className }: TaxSummaryCa
   ];
 
   return (
-    <div className={cn('grid grid-cols-2 lg:grid-cols-4 gap-4', className)}>
+    <div className={cn('grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4', className)}>
       {cards.map((card) => (
         <div
           key={card.label}
