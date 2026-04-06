@@ -115,7 +115,11 @@ Plans:
   2. All postMessage events from the parent are validated against an origin allowlist; unrecognized origins are silently ignored
   3. Plugin mode hides the sidebar and resource links and adapts the layout to constrained widths
   4. When the Smart Assist parent sends a theme-change message, the iframe switches between dark and light mode
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 06-01-PLAN.md — useTheme setter exposure + usePluginMode ResizeObserver/origin-validator/theme-sync + server CSP tightening
+- [ ] 06-02-PLAN.md — Plugin mode layout audit at 400px + end-to-end human verification checkpoint
 
 ## Progress
 
@@ -129,4 +133,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 3. Tax Calculator | 3/3 | Complete    | 2026-04-04 |
 | 4. Enhanced Visualizations + Dashboard | 3/3 | Complete    | 2026-04-04 |
 | 5. Document Handling | 4/4 | Complete    | 2026-04-04 |
-| 6. Iframe Plugin Mode Hardening | 0/? | Not started | - |
+| 6. Iframe Plugin Mode Hardening | 0/2 | Not started | - |
