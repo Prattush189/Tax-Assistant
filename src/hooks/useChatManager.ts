@@ -116,42 +116,30 @@ export function useChatManager() {
     setInput('');
     setIsLoading(true);
 
-    // Add empty model placeholder
-    setMessages(prev => [...prev, { role: 'model', content: '', timestamp: new Date() }]);
+    // Buffer full response, then reveal at once (like Claude)
+    let fullResponse = '';
+    let wasTruncated = false;
 
     try {
       await sendChatMessage(
         chatId ?? null,
         messageText,
-        (text) => setMessages(prev => {
-          const updated = [...prev];
-          updated[updated.length - 1] = {
-            ...updated[updated.length - 1],
-            content: updated[updated.length - 1].content + text,
-          };
-          return updated;
-        }),
-        (msg) => setMessages(prev => {
-          const updated = [...prev];
-          updated[updated.length - 1] = {
-            ...updated[updated.length - 1],
-            content: msg,
-          };
-          return updated;
-        }),
+        (text) => { fullResponse += text; },
+        (msg) => { fullResponse = msg; },
         activeDocument ? { filename: activeDocument.filename, mimeType: activeDocument.mimeType, extractedData: activeDocument.extractedData } : undefined,
         isGuest ? messages : undefined,
-        // onDone — detect truncation
         (stopReason) => {
-          if (stopReason === 'max_tokens') {
-            setMessages(prev => {
-              const updated = [...prev];
-              updated[updated.length - 1] = { ...updated[updated.length - 1], truncated: true };
-              return updated;
-            });
-          }
+          if (stopReason === 'max_tokens') wasTruncated = true;
         },
       );
+
+      // Reveal full response at once
+      setMessages(prev => [...prev, {
+        role: 'model',
+        content: fullResponse,
+        timestamp: new Date(),
+        truncated: wasTruncated,
+      }]);
 
       if (isAuthenticated) {
         await loadChatList();
@@ -169,44 +157,38 @@ export function useChatManager() {
     setIsLoading(true);
 
     // Add a new model placeholder to append continued text
+    // Remove truncated flag from the last message
     setMessages(prev => {
       const updated = [...prev];
-      // Remove truncated flag from the last message
       if (updated.length > 0) {
         updated[updated.length - 1] = { ...updated[updated.length - 1], truncated: false };
       }
-      return [...updated, { role: 'model' as const, content: '', timestamp: new Date() }];
+      return updated;
     });
+
+    let contResponse = '';
+    let contTruncated = false;
 
     try {
       await sendChatMessage(
         chatId ?? null,
         'Continue from where you left off. Do not repeat what you already said.',
-        (text) => setMessages(prev => {
-          const updated = [...prev];
-          updated[updated.length - 1] = {
-            ...updated[updated.length - 1],
-            content: updated[updated.length - 1].content + text,
-          };
-          return updated;
-        }),
-        (msg) => setMessages(prev => {
-          const updated = [...prev];
-          updated[updated.length - 1] = { ...updated[updated.length - 1], content: msg };
-          return updated;
-        }),
+        (text) => { contResponse += text; },
+        (msg) => { contResponse = msg; },
         undefined,
         isGuest ? messages : undefined,
         (stopReason) => {
-          if (stopReason === 'max_tokens') {
-            setMessages(prev => {
-              const updated = [...prev];
-              updated[updated.length - 1] = { ...updated[updated.length - 1], truncated: true };
-              return updated;
-            });
-          }
+          if (stopReason === 'max_tokens') contTruncated = true;
         },
       );
+
+      // Append continuation as a new model message
+      setMessages(prev => [...prev, {
+        role: 'model' as const,
+        content: contResponse,
+        timestamp: new Date(),
+        truncated: contTruncated,
+      }]);
     } finally {
       setIsLoading(false);
     }

@@ -5,6 +5,7 @@ import { useChatManager } from '../../hooks/useChatManager';
 import { useFileUpload } from '../../hooks/useFileUpload';
 import { MessageBubble } from './MessageBubble';
 import { ChatInput } from './ChatInput';
+import { ThinkingIndicator } from './ThinkingIndicator';
 import { cn } from '../../lib/utils';
 
 const quickQueries = [
@@ -72,7 +73,7 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
 
       {/* Chat Area */}
       <div className="flex-1 overflow-y-auto p-4 lg:p-8 space-y-6 scroll-smooth">
-        {messages.length === 0 ? (
+        {messages.length === 0 && !isLoading ? (
           <div className="h-full flex flex-col items-center justify-center text-center max-w-2xl mx-auto space-y-8 py-12">
             <div className="w-20 h-20 rounded-3xl flex items-center justify-center">
               <img src="/logoAI.png" alt="Tax Assistant" className="w-16 h-16 object-contain" />
@@ -100,32 +101,27 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
             <AnimatePresence initial={false}>
               {messages.map((msg, idx) => (
                 <motion.div
-                  key={idx}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
+                  key={`${idx}-${msg.content.slice(0, 20)}`}
+                  initial={{ opacity: 0, y: 12, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  transition={{ duration: 0.4, ease: 'easeOut' }}
                 >
                   <MessageBubble message={msg} onContinue={continueResponse} />
                 </motion.div>
               ))}
             </AnimatePresence>
-            {isLoading && messages[messages.length - 1]?.content === '' && (
+
+            {/* Thinking indicator — shows animated logo while waiting */}
+            {isLoading && (
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
-                className="flex gap-4"
+                exit={{ opacity: 0 }}
               >
-                <div className="w-8 h-8 rounded-xl flex items-center justify-center">
-                  <img src="/logoAI.png" alt="Assistant" className="w-6 h-6 object-contain" />
-                </div>
-                <div className="bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm border border-slate-200/50 dark:border-slate-800/50 p-4 rounded-2xl rounded-tl-none shadow-sm">
-                  <div className="flex gap-1">
-                    <span className="w-2 h-2 bg-slate-300 dark:bg-slate-600 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
-                    <span className="w-2 h-2 bg-slate-300 dark:bg-slate-600 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
-                    <span className="w-2 h-2 bg-slate-300 dark:bg-slate-600 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
-                  </div>
-                </div>
+                <ThinkingIndicator />
               </motion.div>
             )}
+
             <div ref={messagesEndRef} />
           </div>
         )}
