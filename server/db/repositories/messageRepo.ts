@@ -45,7 +45,7 @@ export const messageRepo = {
       content,
       attachment_filename: attachmentFilename ?? null,
       attachment_mime_type: attachmentMimeType ?? null,
-      created_at: new Date().toISOString(),
+      created_at: new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString().replace('Z', ''),
     };
   },
 };

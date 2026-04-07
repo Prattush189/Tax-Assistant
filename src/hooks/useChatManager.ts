@@ -48,7 +48,7 @@ export function useChatManager() {
         msgs.map(m => ({
           role: m.role,
           content: m.content,
-          timestamp: new Date(m.created_at),
+          timestamp: new Date(m.created_at + '+05:30'),
           attachment: m.attachment_filename
             ? { filename: m.attachment_filename, mimeType: m.attachment_mime_type! }
             : undefined,

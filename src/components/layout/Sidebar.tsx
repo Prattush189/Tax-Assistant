@@ -19,9 +19,10 @@ interface SidebarProps {
 }
 
 function timeAgo(dateStr: string): string {
-  const now = Date.now();
+  // Timestamps are stored in IST — offset client time to IST for comparison
+  const istNow = Date.now() + (5.5 * 60 * 60 * 1000) + (new Date().getTimezoneOffset() * 60 * 1000);
   const then = new Date(dateStr).getTime();
-  const diff = now - then;
+  const diff = istNow - then;
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return 'Just now';
   if (mins < 60) return `${mins}m ago`;

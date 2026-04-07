@@ -18,10 +18,10 @@ const stmts = {
     'INSERT INTO chats (id, user_id, title) VALUES (?, ?, ?)'
   ),
   updateTitle: db.prepare(
-    'UPDATE chats SET title = ?, updated_at = datetime(\'now\') WHERE id = ?'
+    'UPDATE chats SET title = ?, updated_at = datetime(\'now\', \'+5 hours\', \'+30 minutes\') WHERE id = ?'
   ),
   updateTimestamp: db.prepare(
-    'UPDATE chats SET updated_at = datetime(\'now\') WHERE id = ?'
+    'UPDATE chats SET updated_at = datetime(\'now\', \'+5 hours\', \'+30 minutes\') WHERE id = ?'
   ),
   delete: db.prepare('DELETE FROM chats WHERE id = ?'),
 };
