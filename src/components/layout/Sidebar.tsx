@@ -91,7 +91,7 @@ export function Sidebar({
         </div>
 
         {/* Navigation Tabs */}
-        <div className="grid grid-cols-3 gap-1 mb-3 bg-slate-100 dark:bg-slate-800/50 p-1 rounded-xl" style={{ gridTemplateColumns: `repeat(${user?.role === 'admin' ? 4 : 3}, 1fr)` }}>
+        <div className="flex flex-wrap gap-0.5 mb-3 bg-slate-100 dark:bg-slate-800/50 p-1 rounded-xl">
           {[...baseNavItems, ...(user?.role === 'admin' ? [adminNavItem] : [])].map((item) => {
             const Icon = item.icon;
             return (
@@ -99,14 +99,14 @@ export function Sidebar({
                 key={item.id}
                 onClick={() => handleNavClick(item.id)}
                 className={cn(
-                  "flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 text-xs font-medium rounded-lg transition-all",
+                  "flex-1 min-w-[60px] flex items-center justify-center gap-1 px-1.5 py-1.5 text-[11px] font-medium rounded-lg transition-all",
                   activeView === item.id
                     ? "bg-white dark:bg-slate-700 text-[#B8860B] dark:text-[#D4A020] shadow-sm"
                     : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
                 )}
               >
-                <Icon className="w-3.5 h-3.5" />
-                <span className="text-[11px] truncate">{item.label}</span>
+                <Icon className="w-3 h-3 shrink-0" />
+                <span className="truncate">{item.label}</span>
               </button>
             );
           })}

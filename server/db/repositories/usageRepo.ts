@@ -1,21 +1,8 @@
 import db from '../index.js';
 
-export interface UsageRow {
-  id: number;
+export interface UsageByIp {
   ip: string;
-  user_id: string | null;
-  input_tokens: number;
-  output_tokens: number;
-  cost: number;
-  is_plugin: number;
-  created_at: string;
-}
-
-export interface UsageAggregation {
-  ip: string;
-  user_id: string | null;
-  user_email: string | null;
-  user_name: string | null;
+  users: string; // comma-separated user names or "Guest"
   requests: number;
   total_input_tokens: number;
   total_output_tokens: number;
@@ -31,16 +18,21 @@ export interface UsageStats {
   unique_users: number;
 }
 
+export interface BlockedIp {
+  ip: string;
+  reason: string | null;
+  blocked_until: string | null;
+  created_at: string;
+}
+
 const stmts = {
   log: db.prepare(
     'INSERT INTO api_usage (ip, user_id, input_tokens, output_tokens, cost, is_plugin) VALUES (?, ?, ?, ?, ?, ?)'
   ),
-  getAll: db.prepare(`
+  getByIp: db.prepare(`
     SELECT
       a.ip,
-      a.user_id,
-      u.email AS user_email,
-      u.name AS user_name,
+      GROUP_CONCAT(DISTINCT COALESCE(u.name, 'Guest')) AS users,
       COUNT(*) AS requests,
       SUM(a.input_tokens) AS total_input_tokens,
       SUM(a.output_tokens) AS total_output_tokens,
@@ -48,18 +40,6 @@ const stmts = {
     FROM api_usage a
     LEFT JOIN users u ON a.user_id = u.id
     WHERE a.created_at >= ?
-    GROUP BY a.ip, a.user_id
-    ORDER BY total_cost DESC
-  `),
-  getGuests: db.prepare(`
-    SELECT
-      a.ip,
-      COUNT(*) AS requests,
-      SUM(a.input_tokens) AS total_input_tokens,
-      SUM(a.output_tokens) AS total_output_tokens,
-      SUM(a.cost) AS total_cost
-    FROM api_usage a
-    WHERE a.user_id IS NULL AND a.created_at >= ?
     GROUP BY a.ip
     ORDER BY total_cost DESC
   `),
@@ -74,13 +54,20 @@ const stmts = {
     FROM api_usage
     WHERE created_at >= ?
   `),
+  // Blocked IPs
+  blockIp: db.prepare(
+    'INSERT OR REPLACE INTO blocked_ips (ip, reason, blocked_until) VALUES (?, ?, ?)'
+  ),
+  unblockIp: db.prepare('DELETE FROM blocked_ips WHERE ip = ?'),
+  isBlocked: db.prepare('SELECT * FROM blocked_ips WHERE ip = ?'),
+  allBlocked: db.prepare('SELECT * FROM blocked_ips ORDER BY created_at DESC'),
 };
 
 function periodToDate(period: string): string {
-  const now = new Date(Date.now() + 5.5 * 60 * 60 * 1000); // IST
+  const now = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
   if (period === 'day') now.setDate(now.getDate() - 1);
   else if (period === 'week') now.setDate(now.getDate() - 7);
-  else now.setDate(1); // month — from 1st
+  else now.setDate(1);
   return now.toISOString().replace('Z', '');
 }
 
@@ -89,15 +76,40 @@ export const usageRepo = {
     stmts.log.run(ip, userId, inputTokens, outputTokens, cost, isPlugin ? 1 : 0);
   },
 
-  getAll(period: string = 'month'): UsageAggregation[] {
-    return stmts.getAll.all(periodToDate(period)) as UsageAggregation[];
-  },
-
-  getGuests(period: string = 'month'): Omit<UsageAggregation, 'user_id' | 'user_email' | 'user_name'>[] {
-    return stmts.getGuests.all(periodToDate(period)) as Omit<UsageAggregation, 'user_id' | 'user_email' | 'user_name'>[];
+  getByIp(period: string = 'month'): UsageByIp[] {
+    return stmts.getByIp.all(periodToDate(period)) as UsageByIp[];
   },
 
   getStats(period: string = 'month'): UsageStats {
     return stmts.getStats.get(periodToDate(period)) as UsageStats;
+  },
+
+  // IP blocking
+  blockIp(ip: string, hours: number, reason?: string): void {
+    const until = new Date(Date.now() + hours * 60 * 60 * 1000 + 5.5 * 60 * 60 * 1000);
+    const untilStr = until.toISOString().replace('Z', '').replace('T', ' ').slice(0, 19);
+    stmts.blockIp.run(ip, reason ?? null, untilStr);
+  },
+
+  unblockIp(ip: string): void {
+    stmts.unblockIp.run(ip);
+  },
+
+  isBlocked(ip: string): BlockedIp | null {
+    const row = stmts.isBlocked.get(ip) as BlockedIp | undefined;
+    if (!row) return null;
+    // Check expiry
+    if (row.blocked_until) {
+      const until = new Date(row.blocked_until + '+05:30');
+      if (until <= new Date()) {
+        stmts.unblockIp.run(ip);
+        return null;
+      }
+    }
+    return row;
+  },
+
+  allBlocked(): BlockedIp[] {
+    return stmts.allBlocked.all() as BlockedIp[];
   },
 };

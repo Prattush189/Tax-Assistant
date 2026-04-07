@@ -97,9 +97,19 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
     return;
   }
 
-  // Check monthly token budget
   const clientIp = req.ip ?? req.socket.remoteAddress ?? 'unknown';
   const isPlugin = !!req.headers['x-plugin-key'];
+
+  // Check IP block
+  const blocked = usageRepo.isBlocked(clientIp);
+  if (blocked) {
+    res.status(403).json({
+      error: `This IP is blocked${blocked.blocked_until ? ' until ' + blocked.blocked_until + ' IST' : ''}. ${blocked.reason || ''}`.trim(),
+    });
+    return;
+  }
+
+  // Check monthly token budget
   const budget = checkBudget(clientIp, isPlugin);
   if (!budget.allowed) {
     res.status(429).json({

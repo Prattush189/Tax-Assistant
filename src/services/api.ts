@@ -195,10 +195,6 @@ export async function adminFetchUsage(period = 'month') {
   return authFetch(`/api/admin/usage?period=${period}`);
 }
 
-export async function adminFetchGuestUsage(period = 'month') {
-  return authFetch(`/api/admin/usage/guests?period=${period}`);
-}
-
 export async function adminSuspendUser(userId: string, hours: number) {
   return authFetch(`/api/admin/users/${userId}/suspend`, {
     method: 'POST',
@@ -208,4 +204,15 @@ export async function adminSuspendUser(userId: string, hours: number) {
 
 export async function adminUnsuspendUser(userId: string) {
   return authFetch(`/api/admin/users/${userId}/unsuspend`, { method: 'POST' });
+}
+
+export async function adminBlockIp(ip: string, hours: number, reason?: string) {
+  return authFetch(`/api/admin/ip/${encodeURIComponent(ip)}/block`, {
+    method: 'POST',
+    body: JSON.stringify({ hours, reason }),
+  });
+}
+
+export async function adminUnblockIp(ip: string) {
+  return authFetch(`/api/admin/ip/${encodeURIComponent(ip)}/unblock`, { method: 'POST' });
 }

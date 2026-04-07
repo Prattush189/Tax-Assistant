@@ -57,3 +57,10 @@ CREATE TABLE IF NOT EXISTS api_usage (
 CREATE INDEX IF NOT EXISTS idx_api_usage_ip ON api_usage(ip);
 CREATE INDEX IF NOT EXISTS idx_api_usage_user_id ON api_usage(user_id);
 CREATE INDEX IF NOT EXISTS idx_api_usage_created_at ON api_usage(created_at);
+
+CREATE TABLE IF NOT EXISTS blocked_ips (
+  ip TEXT PRIMARY KEY,
+  reason TEXT,
+  blocked_until TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+);
