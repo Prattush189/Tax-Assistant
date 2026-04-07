@@ -180,3 +180,32 @@ export async function updateChatTitle(chatId: string, title: string): Promise<vo
 export async function deleteChat(chatId: string): Promise<void> {
   await authFetch(`/api/chats/${chatId}`, { method: 'DELETE' });
 }
+
+// ── Admin API ─────────────────────────────────────────────────────────────
+
+export async function adminFetchStats(period = 'month') {
+  return authFetch(`/api/admin/stats?period=${period}`);
+}
+
+export async function adminFetchUsers() {
+  return authFetch('/api/admin/users');
+}
+
+export async function adminFetchUsage(period = 'month') {
+  return authFetch(`/api/admin/usage?period=${period}`);
+}
+
+export async function adminFetchGuestUsage(period = 'month') {
+  return authFetch(`/api/admin/usage/guests?period=${period}`);
+}
+
+export async function adminSuspendUser(userId: string, hours: number) {
+  return authFetch(`/api/admin/users/${userId}/suspend`, {
+    method: 'POST',
+    body: JSON.stringify({ hours }),
+  });
+}
+
+export async function adminUnsuspendUser(userId: string) {
+  return authFetch(`/api/admin/users/${userId}/unsuspend`, { method: 'POST' });
+}

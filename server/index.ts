@@ -6,7 +6,8 @@ import chatRouter from './routes/chat.js';
 import uploadRouter from './routes/upload.js';
 import chatsRouter from './routes/chats.js';
 import authRouter from './routes/auth.js';
-import { authMiddleware, optionalAuthMiddleware } from './middleware/auth.js';
+import adminRouter from './routes/admin.js';
+import { authMiddleware, optionalAuthMiddleware, adminMiddleware } from './middleware/auth.js';
 import { authLimiter, chatLimiter, uploadLimiter } from './middleware/rateLimiter.js';
 import helmet from 'helmet';
 import cors from 'cors';
@@ -66,6 +67,9 @@ app.use('/api', uploadRouter);
 
 // Chats CRUD — requires auth (guests have no chats)
 app.use('/api/chats', authMiddleware, chatsRouter);
+
+// Admin — requires auth + admin role
+app.use('/api/admin', authMiddleware, adminMiddleware, adminRouter);
 
 // 5. Production static serving
 if (process.env.NODE_ENV === 'production') {

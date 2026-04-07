@@ -1,9 +1,9 @@
-import { X, Plus, Moon, Sun, LogOut, Trash2, MessageSquare, LogIn, MessageCircle, Calculator, LayoutDashboard } from 'lucide-react';
+import { X, Plus, Moon, Sun, LogOut, Trash2, MessageSquare, LogIn, MessageCircle, Calculator, LayoutDashboard, Shield } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { ChatItem } from '../../services/api';
 import { useState } from 'react';
 
-type ActiveView = 'chat' | 'calculator' | 'dashboard';
+type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin';
 
 interface SidebarProps {
   isOpen: boolean;
@@ -22,11 +22,13 @@ interface SidebarProps {
   onViewChange: (view: ActiveView) => void;
 }
 
-const navItems: { id: ActiveView; label: string; icon: typeof MessageCircle }[] = [
+const baseNavItems: { id: ActiveView; label: string; icon: typeof MessageCircle }[] = [
   { id: 'chat', label: 'Chat', icon: MessageCircle },
   { id: 'calculator', label: 'Calculator', icon: Calculator },
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
 ];
+
+const adminNavItem = { id: 'admin' as ActiveView, label: 'Admin', icon: Shield };
 
 function timeAgo(dateStr: string): string {
   const istNow = Date.now() + (5.5 * 60 * 60 * 1000) + (new Date().getTimezoneOffset() * 60 * 1000);
@@ -90,7 +92,7 @@ export function Sidebar({
 
         {/* Navigation Tabs */}
         <div className="flex gap-1 mb-3 bg-slate-100 dark:bg-slate-800/50 p-1 rounded-xl">
-          {navItems.map((item) => {
+          {[...baseNavItems, ...(user?.role === 'admin' ? [adminNavItem] : [])].map((item) => {
             const Icon = item.icon;
             return (
               <button

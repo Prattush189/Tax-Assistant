@@ -12,14 +12,14 @@ const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET ?? 'dev-refresh-secret
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN ?? '15m';
 const JWT_REFRESH_EXPIRES_IN = process.env.JWT_REFRESH_EXPIRES_IN ?? '7d';
 
-function generateTokens(user: { id: string; email: string }) {
+function generateTokens(user: { id: string; email: string; role?: string }) {
   const accessToken = jwt.sign(
-    { id: user.id, email: user.email },
+    { id: user.id, email: user.email, role: user.role ?? 'user' },
     JWT_SECRET,
     { expiresIn: JWT_EXPIRES_IN as string | number }
   );
   const refreshToken = jwt.sign(
-    { id: user.id, email: user.email },
+    { id: user.id, email: user.email, role: user.role ?? 'user' },
     JWT_REFRESH_SECRET,
     { expiresIn: JWT_REFRESH_EXPIRES_IN as string | number }
   );
@@ -62,7 +62,7 @@ router.post('/signup', async (req: Request, res: Response) => {
 
   res.status(201).json({
     ...tokens,
-    user: { id: user.id, email: user.email, name: user.name },
+    user: { id: user.id, email: user.email, name: user.name, role: user.role ?? 'user' },
   });
 });
 
@@ -90,7 +90,7 @@ router.post('/login', async (req: Request, res: Response) => {
   const tokens = generateTokens(user);
   res.json({
     ...tokens,
-    user: { id: user.id, email: user.email, name: user.name },
+    user: { id: user.id, email: user.email, name: user.name, role: user.role ?? 'user' },
   });
 });
 
@@ -124,7 +124,7 @@ router.get('/me', authMiddleware, (req: AuthRequest, res: Response) => {
     res.status(404).json({ error: 'User not found' });
     return;
   }
-  res.json({ id: user.id, email: user.email, name: user.name });
+  res.json({ id: user.id, email: user.email, name: user.name, role: user.role ?? 'user' });
 });
 
 export default router;

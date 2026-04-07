@@ -3,6 +3,7 @@ import { Router, Response } from 'express';
 import Anthropic from '@anthropic-ai/sdk';
 import { chatRepo } from '../db/repositories/chatRepo.js';
 import { messageRepo } from '../db/repositories/messageRepo.js';
+import { usageRepo } from '../db/repositories/usageRepo.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
@@ -175,7 +176,13 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
     stopReason = finalMsg.stop_reason;
 
     // Track token costs
-    addCost(clientIp, finalMsg.usage.input_tokens, finalMsg.usage.output_tokens);
+    const inputTok = finalMsg.usage.input_tokens;
+    const outputTok = finalMsg.usage.output_tokens;
+    addCost(clientIp, inputTok, outputTok);
+
+    // Persist usage to DB
+    const cost = (inputTok * INPUT_COST_PER_TOKEN) + (outputTok * OUTPUT_COST_PER_TOKEN);
+    usageRepo.log(clientIp, req.user?.id ?? null, inputTok, outputTok, cost, isPlugin);
 
     // Persist model response (authenticated only)
     if (isAuthenticated && chatId && fullResponse) {
