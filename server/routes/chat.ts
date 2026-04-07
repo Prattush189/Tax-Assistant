@@ -102,7 +102,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
   const budget = checkBudget(clientIp, isPlugin);
   if (!budget.allowed) {
     res.status(429).json({
-      error: `Monthly usage limit reached ($${budget.spent.toFixed(2)}/$${budget.budget}). Resets on the 1st.`,
+      error: 'Monthly usage limit reached. Your limit resets on the 1st of next month.',
     });
     return;
   }
