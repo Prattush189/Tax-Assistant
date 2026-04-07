@@ -16,7 +16,7 @@ interface SidebarProps {
   onSwitchChat: (chatId: string) => void;
   onDeleteChat: (chatId: string) => void;
   isGuest: boolean;
-  user: { id: string; email: string; name: string } | null;
+  user: { id: string; email: string; name: string; role: string } | null;
   onLogout: () => void;
   activeView: ActiveView;
   onViewChange: (view: ActiveView) => void;

@@ -6,7 +6,7 @@ interface HeaderProps {
   isDarkMode: boolean;
   onToggleTheme: () => void;
   onOpenSidebar: () => void;
-  user: { id: string; email: string; name: string } | null;
+  user: { id: string; email: string; name: string; role: string } | null;
   onLogout: () => void;
 }
 
