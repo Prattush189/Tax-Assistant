@@ -34,7 +34,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
       <div className={cn(
         "w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0",
         role === 'user'
-          ? 'bg-gradient-to-br from-indigo-500 to-purple-600 text-white'
+          ? 'bg-gradient-to-br from-orange-500 to-orange-600 text-white'
           : ''
       )}>
         {role === 'user' ? <User className="w-4 h-4" /> : <img src="/logoAI.png" alt="Assistant" className="w-5 h-5 object-contain" />}
@@ -42,7 +42,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
       <div className={cn(
         "max-w-[85%] p-4 rounded-2xl shadow-sm",
         role === 'user'
-          ? 'bg-gradient-to-br from-indigo-500 to-purple-600 text-white rounded-tr-none'
+          ? 'bg-gradient-to-br from-orange-500 to-orange-600 text-white rounded-tr-none'
           : 'bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm border border-slate-200/50 dark:border-slate-800/50 text-slate-800 dark:text-slate-200 rounded-tl-none'
       )}>
         {attachment && (

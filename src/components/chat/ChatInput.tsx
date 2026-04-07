@@ -59,13 +59,13 @@ export function ChatInput({
           </div>
         )}
 
-        <div className="relative flex items-end gap-2">
+        <div className="relative flex items-center gap-2">
           {/* Paperclip button */}
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={isUploading}
             className={cn(
-              "p-2.5 rounded-xl transition-all shrink-0 mb-0.5",
+              "p-2.5 rounded-xl transition-all shrink-0",
               isUploading
                 ? "text-slate-300 dark:text-slate-600 cursor-not-allowed"
                 : "text-slate-400 hover:text-orange-500 hover:bg-orange-50 dark:hover:bg-orange-900/20"
@@ -103,7 +103,7 @@ export function ChatInput({
               onClick={onSend}
               disabled={isLoading || input.trim() === ''}
               className={cn(
-                "absolute right-2 bottom-2 p-2 rounded-xl transition-all",
+                "absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-xl transition-all",
                 isLoading || input.trim() === ''
                   ? 'text-slate-300 dark:text-slate-600 cursor-not-allowed'
                   : 'text-white bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 shadow-lg shadow-orange-200/50 dark:shadow-none'
