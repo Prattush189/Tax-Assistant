@@ -54,18 +54,18 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
 
   return (
     <div
-      className="flex-1 flex flex-col relative"
+      className="flex-1 flex flex-col relative min-h-0"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
       {/* Drag overlay */}
       {isDragOver && (
-        <div className="absolute inset-0 z-20 bg-orange-50/90 dark:bg-orange-950/90 backdrop-blur-sm flex items-center justify-center">
-          <div className="flex flex-col items-center gap-3 p-8 border-2 border-dashed border-orange-400 dark:border-orange-600 rounded-3xl">
-            <Upload className="w-12 h-12 text-orange-500" />
-            <p className="text-lg font-semibold text-orange-700 dark:text-orange-300">Drop your document here</p>
-            <p className="text-sm text-orange-500">PDF, JPEG, PNG, WebP, or HEIC</p>
+        <div className="absolute inset-0 z-20 bg-[#FDF6E3]/90 dark:bg-[#5C4505]/90 backdrop-blur-sm flex items-center justify-center">
+          <div className="flex flex-col items-center gap-3 p-8 border-2 border-dashed border-[#D4A020] dark:border-[#B8860B] rounded-3xl">
+            <Upload className="w-12 h-12 text-[#D4A020]" />
+            <p className="text-lg font-semibold text-[#B8860B] dark:text-[#D4A020]">Drop your document here</p>
+            <p className="text-sm text-[#D4A020]">PDF, JPEG, PNG, WebP, or HEIC</p>
           </div>
         </div>
       )}
@@ -88,9 +88,9 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
                 <button
                   key={i}
                   onClick={() => setInput(q)}
-                  className="p-4 bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm border border-slate-200/50 dark:border-slate-800/50 rounded-2xl text-left hover:border-orange-400 dark:hover:border-orange-600 hover:shadow-lg transition-all group"
+                  className="p-4 bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm border border-slate-200/50 dark:border-slate-800/50 rounded-2xl text-left hover:border-[#D4A020] dark:hover:border-[#B8860B] hover:shadow-lg transition-all group"
                 >
-                  <p className="text-sm font-medium text-slate-700 dark:text-slate-300 group-hover:text-orange-600 dark:group-hover:text-orange-400">{q}</p>
+                  <p className="text-sm font-medium text-slate-700 dark:text-slate-300 group-hover:text-[#B8860B] dark:group-hover:text-[#D4A020]">{q}</p>
                 </button>
               ))}
             </div>

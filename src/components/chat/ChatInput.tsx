@@ -29,7 +29,7 @@ export function ChatInput({
   const isUploading = uploadPhase === 'uploading' || uploadPhase === 'analyzing';
 
   return (
-    <div className="p-4 lg:p-6 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-t border-slate-200/50 dark:border-slate-800/50">
+    <div className="shrink-0 p-4 lg:p-6 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-t border-slate-200/50 dark:border-slate-800/50">
       <div className="max-w-4xl mx-auto">
         {/* Document attachment badge */}
         {(activeDocument || isUploading) && (
@@ -68,7 +68,7 @@ export function ChatInput({
               "p-2.5 rounded-xl transition-all shrink-0",
               isUploading
                 ? "text-slate-300 dark:text-slate-600 cursor-not-allowed"
-                : "text-slate-400 hover:text-orange-500 hover:bg-orange-50 dark:hover:bg-orange-900/20"
+                : "text-slate-400 hover:text-[#D4A020] hover:bg-[#D4A020]/10 dark:hover:bg-[#B8860B]/10"
             )}
             title="Attach document"
           >
@@ -94,7 +94,7 @@ export function ChatInput({
               }}
               placeholder="Ask about income tax, GST, or tax saving..."
               className={cn(
-                "w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-4 py-3 pr-14 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent resize-none min-h-[52px] max-h-32 transition-all text-slate-800 dark:text-slate-100 text-sm",
+                "w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-4 py-3 pr-14 focus:outline-none focus:ring-2 focus:ring-[#D4A020] focus:border-transparent resize-none min-h-[52px] max-h-32 transition-all text-slate-800 dark:text-slate-100 text-sm",
                 activeDocument || isUploading ? "rounded-b-2xl rounded-t-none" : "rounded-2xl"
               )}
               rows={1}
@@ -106,7 +106,7 @@ export function ChatInput({
                 "absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-xl transition-all",
                 isLoading || input.trim() === ''
                   ? 'text-slate-300 dark:text-slate-600 cursor-not-allowed'
-                  : 'text-white bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 shadow-lg shadow-orange-200/50 dark:shadow-none'
+                  : 'text-white bg-gradient-to-r from-[#D4A020] to-[#B8860B] hover:from-[#B8860B] hover:to-[#9A7209] shadow-lg shadow-[#D4A020]/20 dark:shadow-none'
               )}
             >
               <Send className="w-5 h-5" />

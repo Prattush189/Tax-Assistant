@@ -40,7 +40,7 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 via-orange-50 to-indigo-50 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 p-4">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 via-[#FDF6E3] to-indigo-50 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 p-4">
       <div className="w-full max-w-md">
         <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border border-white/20 dark:border-slate-700/50 rounded-3xl shadow-2xl p-8">
           {/* Logo */}
@@ -64,7 +64,7 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 required
-                className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent text-slate-800 dark:text-white transition-all"
+                className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#D4A020] focus:border-transparent text-slate-800 dark:text-white transition-all"
                 placeholder="John Doe"
               />
             </div>
@@ -76,7 +76,7 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
-                className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent text-slate-800 dark:text-white transition-all"
+                className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#D4A020] focus:border-transparent text-slate-800 dark:text-white transition-all"
                 placeholder="you@example.com"
               />
             </div>
@@ -90,7 +90,7 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
                   onChange={(e) => setPassword(e.target.value)}
                   required
                   minLength={8}
-                  className="w-full px-4 py-3 pr-12 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent text-slate-800 dark:text-white transition-all"
+                  className="w-full px-4 py-3 pr-12 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#D4A020] focus:border-transparent text-slate-800 dark:text-white transition-all"
                   placeholder="Min. 8 characters"
                 />
                 <button
@@ -110,7 +110,7 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 required
-                className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent text-slate-800 dark:text-white transition-all"
+                className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#D4A020] focus:border-transparent text-slate-800 dark:text-white transition-all"
                 placeholder="Confirm your password"
               />
             </div>
@@ -118,7 +118,7 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
             <button
               type="submit"
               disabled={isSubmitting}
-              className="w-full py-3 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white font-semibold rounded-xl shadow-lg shadow-orange-200 dark:shadow-orange-900/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              className="w-full py-3 bg-gradient-to-r from-[#D4A020] to-[#B8860B] hover:from-[#B8860B] hover:to-[#9A7209] text-white font-semibold rounded-xl shadow-lg shadow-[#D4A020]/20 dark:shadow-[#B8860B]/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {isSubmitting ? (
                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -135,7 +135,7 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
             Already have an account?{' '}
             <button
               onClick={onSwitchToLogin}
-              className="text-orange-600 dark:text-orange-400 font-semibold hover:underline"
+              className="text-[#B8860B] dark:text-[#D4A020] font-semibold hover:underline"
             >
               Sign in
             </button>

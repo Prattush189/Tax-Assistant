@@ -53,7 +53,7 @@ function AppContent() {
         />
       )}
       <TaxCalculatorProvider>
-        <main className="flex-1 flex flex-col relative min-w-0">
+        <main className="flex-1 flex flex-col relative min-w-0 min-h-0 h-screen">
           <Header
             isPluginMode={isPluginMode}
             isDarkMode={isDarkMode}

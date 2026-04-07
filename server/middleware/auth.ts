@@ -24,10 +24,13 @@ export function authMiddleware(req: AuthRequest, res: Response, next: NextFuncti
   }
 }
 
-// Optional auth — attaches user if token present, continues either way
-export function optionalAuthMiddleware(req: AuthRequest, _res: Response, next: NextFunction): void {
+// Optional auth — attaches user if token present, or validates plugin key, continues either way
+export function optionalAuthMiddleware(req: AuthRequest, res: Response, next: NextFunction): void {
   const header = req.headers.authorization;
+  const pluginKey = req.headers['x-plugin-key'] as string | undefined;
+  const PLUGIN_API_KEY = process.env.PLUGIN_API_KEY;
 
+  // Check JWT first
   if (header?.startsWith('Bearer ')) {
     const token = header.slice(7);
     try {
@@ -35,6 +38,21 @@ export function optionalAuthMiddleware(req: AuthRequest, _res: Response, next: N
       req.user = { id: payload.id, email: payload.email };
     } catch {
       // Invalid token — treat as guest
+    }
+    next();
+    return;
+  }
+
+  // Check plugin key — required for unauthenticated (guest/plugin) access
+  if (!req.user) {
+    if (!PLUGIN_API_KEY) {
+      // No plugin key configured — allow all guests (dev mode)
+      next();
+      return;
+    }
+    if (!pluginKey || pluginKey !== PLUGIN_API_KEY) {
+      res.status(403).json({ error: 'Invalid or missing plugin key' });
+      return;
     }
   }
 

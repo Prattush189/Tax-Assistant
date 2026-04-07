@@ -36,7 +36,7 @@ export function Header({
 }: HeaderProps) {
   return (
     <header className={cn(
-      "h-14 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-b border-slate-200/50 dark:border-slate-800/50 flex items-center justify-between px-4 lg:px-8 sticky top-0 z-10",
+      "h-14 shrink-0 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-b border-slate-200/50 dark:border-slate-800/50 flex items-center justify-between px-4 lg:px-8 sticky top-0 z-10",
       isPluginMode && "h-12 px-4"
     )}>
       <div className="flex items-center gap-3">
@@ -66,7 +66,7 @@ export function Header({
               className={cn(
                 "px-3 py-1.5 text-sm font-medium rounded-lg transition-all",
                 activeView === tab.id
-                  ? "bg-white dark:bg-slate-700 text-orange-600 dark:text-orange-400 shadow-sm"
+                  ? "bg-white dark:bg-slate-700 text-[#B8860B] dark:text-[#D4A020] shadow-sm"
                   : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
               )}
             >

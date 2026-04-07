@@ -2,9 +2,20 @@ import { Message, UploadResponse } from '../types';
 
 const TOKEN_KEY = 'tax_access_token';
 
+function getPluginKey(): string | null {
+  if (typeof window === 'undefined') return null;
+  return new URLSearchParams(window.location.search).get('key');
+}
+
 function getAuthHeaders(): Record<string, string> {
   const token = localStorage.getItem(TOKEN_KEY);
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  if (token) return { Authorization: `Bearer ${token}` };
+
+  // Guest/plugin mode — send plugin key if present
+  const pluginKey = getPluginKey();
+  if (pluginKey) return { 'X-Plugin-Key': pluginKey };
+
+  return {};
 }
 
 // ── Chat API (streaming) ─────────────────────────────────────────────────
