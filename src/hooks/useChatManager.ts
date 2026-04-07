@@ -141,6 +141,16 @@ export function useChatManager() {
         }),
         activeDocument ? { filename: activeDocument.filename, mimeType: activeDocument.mimeType, extractedData: activeDocument.extractedData } : undefined,
         isGuest ? messages : undefined,
+        // onDone — detect truncation
+        (stopReason) => {
+          if (stopReason === 'max_tokens') {
+            setMessages(prev => {
+              const updated = [...prev];
+              updated[updated.length - 1] = { ...updated[updated.length - 1], truncated: true };
+              return updated;
+            });
+          }
+        },
       );
 
       if (isAuthenticated) {
@@ -150,6 +160,57 @@ export function useChatManager() {
       setIsLoading(false);
     }
   }, [isLoading, input, currentChatId, activeDocument, isAuthenticated, isGuest, messages, createNewChat, loadChatList]);
+
+  // Continue a truncated response
+  const continueResponse = useCallback(async () => {
+    if (isLoading) return;
+
+    const chatId = currentChatId;
+    setIsLoading(true);
+
+    // Add a new model placeholder to append continued text
+    setMessages(prev => {
+      const updated = [...prev];
+      // Remove truncated flag from the last message
+      if (updated.length > 0) {
+        updated[updated.length - 1] = { ...updated[updated.length - 1], truncated: false };
+      }
+      return [...updated, { role: 'model' as const, content: '', timestamp: new Date() }];
+    });
+
+    try {
+      await sendChatMessage(
+        chatId ?? null,
+        'Continue from where you left off. Do not repeat what you already said.',
+        (text) => setMessages(prev => {
+          const updated = [...prev];
+          updated[updated.length - 1] = {
+            ...updated[updated.length - 1],
+            content: updated[updated.length - 1].content + text,
+          };
+          return updated;
+        }),
+        (msg) => setMessages(prev => {
+          const updated = [...prev];
+          updated[updated.length - 1] = { ...updated[updated.length - 1], content: msg };
+          return updated;
+        }),
+        undefined,
+        isGuest ? messages : undefined,
+        (stopReason) => {
+          if (stopReason === 'max_tokens') {
+            setMessages(prev => {
+              const updated = [...prev];
+              updated[updated.length - 1] = { ...updated[updated.length - 1], truncated: true };
+              return updated;
+            });
+          }
+        },
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  }, [isLoading, currentChatId, isGuest, messages]);
 
   const attachDocument = (doc: DocumentContext) => setActiveDocument(doc);
   const detachDocument = () => setActiveDocument(null);
@@ -178,5 +239,6 @@ export function useChatManager() {
     attachDocument,
     detachDocument,
     isGuest,
+    continueResponse,
   };
 }

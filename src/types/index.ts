@@ -6,6 +6,7 @@ export interface Message {
     filename: string;
     mimeType: string;
   };
+  truncated?: boolean; // true if response was cut off (max_tokens reached)
 }
 
 export interface UploadResponse {

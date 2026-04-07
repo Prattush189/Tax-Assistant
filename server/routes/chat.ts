@@ -9,9 +9,63 @@ const router = Router();
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 
 const MODEL = 'claude-haiku-4-5-20251001';
-const MAX_TOKENS = 1024;
+const MAX_TOKENS = 4096;
 
-// Concise system prompt — optimized for token efficiency
+// ── Token-based cost tracking per IP ──
+// Haiku 4.5: $1/MTok input, $5/MTok output
+const INPUT_COST_PER_TOKEN = 1 / 1_000_000;   // $0.000001
+const OUTPUT_COST_PER_TOKEN = 5 / 1_000_000;   // $0.000005
+
+// Monthly budgets (configurable via env)
+const MONTHLY_BUDGET_APP = parseFloat(process.env.MONTHLY_BUDGET_APP ?? '5');       // $5/month for main app
+const MONTHLY_BUDGET_PLUGIN = parseFloat(process.env.MONTHLY_BUDGET_PLUGIN ?? '1'); // $1/month for plugin
+
+interface CostRecord {
+  cost: number;
+  resetAt: number;
+}
+const ipCosts = new Map<string, CostRecord>();
+
+function getMonthResetTimestamp(): number {
+  const now = new Date();
+  // Reset on 1st of next month at midnight IST (18:30 UTC previous day)
+  const reset = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 18, 30, 0));
+  if (reset.getTime() <= now.getTime()) {
+    reset.setUTCMonth(reset.getUTCMonth() + 1);
+  }
+  return reset.getTime();
+}
+
+function checkBudget(ip: string, isPlugin: boolean): { allowed: boolean; spent: number; budget: number } {
+  const now = Date.now();
+  const record = ipCosts.get(ip);
+  const budget = isPlugin ? MONTHLY_BUDGET_PLUGIN : MONTHLY_BUDGET_APP;
+
+  if (!record || now > record.resetAt) {
+    ipCosts.set(ip, { cost: 0, resetAt: getMonthResetTimestamp() });
+    return { allowed: true, spent: 0, budget };
+  }
+
+  return { allowed: record.cost < budget, spent: record.cost, budget };
+}
+
+function addCost(ip: string, inputTokens: number, outputTokens: number): void {
+  const cost = (inputTokens * INPUT_COST_PER_TOKEN) + (outputTokens * OUTPUT_COST_PER_TOKEN);
+  const record = ipCosts.get(ip);
+  if (record) {
+    record.cost += cost;
+  }
+}
+
+// Cleanup stale entries every hour
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, record] of ipCosts) {
+    if (now > record.resetAt) ipCosts.delete(ip);
+  }
+}, 60 * 60 * 1000);
+
+// System prompt
 const SYSTEM_INSTRUCTION = `You are "Tax Assistant" — an expert on Indian Income Tax, GST, and financial planning.
 
 SCOPE: Only answer questions about Indian tax, GST, deductions, capital gains, and financial planning. Politely decline other topics.
@@ -28,7 +82,6 @@ DEDUCTION LIMITS (FY 2024-25):
 New regime std deduction: ₹75K | Old regime std deduction: ₹50K
 New regime rebate 87A: ₹25K (income ≤₹7L) | Old regime rebate 87A: ₹12.5K (income ≤₹5L)`;
 
-// Limit history to last N messages to save tokens
 const MAX_HISTORY_MESSAGES = 10;
 
 router.post('/chat', async (req: AuthRequest, res: Response) => {
@@ -40,6 +93,17 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
   }
   if (message.length > 4000) {
     res.status(400).json({ error: 'message exceeds 4000 character limit' });
+    return;
+  }
+
+  // Check monthly token budget
+  const clientIp = req.ip ?? req.socket.remoteAddress ?? 'unknown';
+  const isPlugin = !!req.headers['x-plugin-key'];
+  const budget = checkBudget(clientIp, isPlugin);
+  if (!budget.allowed) {
+    res.status(429).json({
+      error: `Monthly usage limit reached ($${budget.spent.toFixed(2)}/$${budget.budget}). Resets on the 1st.`,
+    });
     return;
   }
 
@@ -55,19 +119,16 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
     }
     chat = dbChat;
 
-    // Persist user message
     messageRepo.create(chatId, 'user', message.trim(), fileContext?.filename, fileContext?.mimeType);
 
-    // Load history from DB, map 'model' -> 'assistant' for Anthropic
     const dbMessages = messageRepo.findByChatId(chatId);
-    history = dbMessages.slice(0, -1) // exclude current user message
-      .slice(-MAX_HISTORY_MESSAGES) // only last N to save tokens
+    history = dbMessages.slice(0, -1)
+      .slice(-MAX_HISTORY_MESSAGES)
       .map(m => ({
         role: (m.role === 'model' ? 'assistant' : 'user') as 'user' | 'assistant',
         content: m.content,
       }));
   } else {
-    // Guest mode — use client-sent history
     const raw = Array.isArray(clientHistory) ? clientHistory : [];
     history = raw.slice(-MAX_HISTORY_MESSAGES).map((m: { role: string; parts?: Array<{ text: string }>; content?: string }) => ({
       role: (m.role === 'model' ? 'assistant' : 'user') as 'user' | 'assistant',
@@ -75,12 +136,10 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
     }));
   }
 
-  // Ensure history starts with 'user' and alternates (Anthropic requirement)
   if (history.length > 0 && history[0].role !== 'user') {
     history = history.slice(1);
   }
 
-  // Build the user message with optional file context
   let userContent = message.trim();
   if (fileContext?.extractedData) {
     userContent = `[Attached document context: ${JSON.stringify(fileContext.extractedData)}]\n\n${userContent}`;
@@ -105,12 +164,18 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
       ],
     });
 
+    let stopReason: string | null = null;
+
     stream.on('text', (text) => {
       fullResponse += text;
       res.write(`data: ${JSON.stringify({ text })}\n\n`);
     });
 
-    await stream.finalMessage();
+    const finalMsg = await stream.finalMessage();
+    stopReason = finalMsg.stop_reason;
+
+    // Track token costs
+    addCost(clientIp, finalMsg.usage.input_tokens, finalMsg.usage.output_tokens);
 
     // Persist model response (authenticated only)
     if (isAuthenticated && chatId && fullResponse) {
@@ -123,7 +188,8 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
       chatRepo.touchTimestamp(chatId);
     }
 
-    res.write('data: [DONE]\n\n');
+    // Send done with stop_reason so frontend knows if response was truncated
+    res.write(`data: ${JSON.stringify({ done: true, stop_reason: stopReason })}\n\n`);
   } catch (err) {
     console.error('[chat] Anthropic API error:', err);
     const errMsg = err instanceof Error ? err.message : String(err);

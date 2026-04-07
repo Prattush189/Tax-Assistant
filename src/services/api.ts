@@ -27,6 +27,7 @@ export async function sendChatMessage(
   onError: (msg: string) => void,
   fileContext?: { filename: string; mimeType: string; extractedData?: unknown },
   localHistory?: Message[],
+  onDone?: (stopReason: string | null) => void,
 ): Promise<void> {
   // Build body — guest mode sends history, authenticated sends chatId
   const body: Record<string, unknown> = {
@@ -79,10 +80,12 @@ export async function sendChatMessage(
     for (const line of lines) {
       if (!line.startsWith('data: ')) continue;
       const payload = line.slice(6).trim();
-      if (payload === '[DONE]') return;
-
       try {
         const parsed = JSON.parse(payload);
+        if (parsed.done) {
+          onDone?.(parsed.stop_reason ?? null);
+          return;
+        }
         if (parsed.error) {
           onError(parsed.message ?? "I'm having trouble connecting. Please try again in a moment.");
           return;

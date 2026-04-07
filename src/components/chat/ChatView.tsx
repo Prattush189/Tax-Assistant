@@ -20,7 +20,7 @@ interface ChatViewProps {
 }
 
 export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewProps) {
-  const { messages, input, setInput, isLoading, messagesEndRef, send, activeDocument, attachDocument, detachDocument } = chatManager;
+  const { messages, input, setInput, isLoading, messagesEndRef, send, activeDocument, attachDocument, detachDocument, continueResponse } = chatManager;
   const fileUpload = useFileUpload();
   const [isDragOver, setIsDragOver] = useState(false);
 
@@ -104,7 +104,7 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                 >
-                  <MessageBubble message={msg} />
+                  <MessageBubble message={msg} onContinue={continueResponse} />
                 </motion.div>
               ))}
             </AnimatePresence>
