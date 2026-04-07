@@ -1,6 +1,6 @@
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Bot, User, FileText } from 'lucide-react';
+import { User, FileText } from 'lucide-react';
 import { Message } from '../../types';
 import { cn } from '../../lib/utils';
 import { ChartRenderer } from './ChartRenderer';
@@ -35,9 +35,9 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         "w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0",
         role === 'user'
           ? 'bg-gradient-to-br from-indigo-500 to-purple-600 text-white'
-          : 'bg-gradient-to-br from-orange-100 to-orange-200 dark:from-orange-900/30 dark:to-orange-800/20 text-orange-600 dark:text-orange-400'
+          : ''
       )}>
-        {role === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
+        {role === 'user' ? <User className="w-4 h-4" /> : <img src="/logoAI.png" alt="Assistant" className="w-5 h-5 object-contain" />}
       </div>
       <div className={cn(
         "max-w-[85%] p-4 rounded-2xl shadow-sm",

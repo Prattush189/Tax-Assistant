@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Bot, Upload } from 'lucide-react';
+import { Upload } from 'lucide-react';
 import { useChatManager } from '../../hooks/useChatManager';
 import { useFileUpload } from '../../hooks/useFileUpload';
 import { MessageBubble } from './MessageBubble';
@@ -74,8 +74,8 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
       <div className="flex-1 overflow-y-auto p-4 lg:p-8 space-y-6 scroll-smooth">
         {messages.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center max-w-2xl mx-auto space-y-8 py-12">
-            <div className="w-20 h-20 bg-gradient-to-br from-orange-100 to-orange-200 dark:from-orange-900/30 dark:to-orange-800/20 rounded-3xl flex items-center justify-center">
-              <Bot className="w-10 h-10 text-orange-600 dark:text-orange-400" />
+            <div className="w-20 h-20 rounded-3xl flex items-center justify-center">
+              <img src="/logoAI.png" alt="Tax Assistant" className="w-16 h-16 object-contain" />
             </div>
             <div className="space-y-4">
               <h2 className="text-2xl sm:text-3xl font-bold text-slate-800 dark:text-slate-100">Namaste! I'm your Tax Assistant.</h2>
@@ -114,8 +114,8 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
                 animate={{ opacity: 1 }}
                 className="flex gap-4"
               >
-                <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-orange-100 to-orange-200 dark:from-orange-900/30 dark:to-orange-800/20 text-orange-600 dark:text-orange-400 flex items-center justify-center">
-                  <Bot className="w-5 h-5" />
+                <div className="w-8 h-8 rounded-xl flex items-center justify-center">
+                  <img src="/logoAI.png" alt="Assistant" className="w-6 h-6 object-contain" />
                 </div>
                 <div className="bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm border border-slate-200/50 dark:border-slate-800/50 p-4 rounded-2xl rounded-tl-none shadow-sm">
                   <div className="flex gap-1">
