@@ -1,4 +1,4 @@
-import { X, Plus, Moon, Sun, LogOut, Trash2, MessageSquare } from 'lucide-react';
+import { X, Plus, Moon, Sun, LogOut, Trash2, MessageSquare, LogIn } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { ChatItem } from '../../services/api';
 import { useState } from 'react';
@@ -13,6 +13,7 @@ interface SidebarProps {
   onNewChat: () => void;
   onSwitchChat: (chatId: string) => void;
   onDeleteChat: (chatId: string) => void;
+  isGuest: boolean;
   user: { id: string; email: string; name: string } | null;
   onLogout: () => void;
 }
@@ -38,7 +39,7 @@ function getInitials(name: string): string {
 export function Sidebar({
   isOpen, onClose, isDarkMode, onToggleTheme,
   chatList, currentChatId, onNewChat, onSwitchChat, onDeleteChat,
-  user, onLogout,
+  isGuest, user, onLogout,
 }: SidebarProps) {
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
@@ -85,7 +86,18 @@ export function Sidebar({
       {/* Chat History */}
       <div className="flex-1 overflow-y-auto p-2">
         <h2 className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider px-2 py-2">Chat History</h2>
-        {chatList.length === 0 ? (
+        {isGuest ? (
+          <div className="px-3 py-6 text-center">
+            <p className="text-sm text-slate-400 dark:text-slate-500 mb-3">Sign in to save your chat history</p>
+            <button
+              onClick={onLogout}
+              className="flex items-center justify-center gap-2 mx-auto px-4 py-2 text-sm text-orange-600 dark:text-orange-400 border border-orange-200 dark:border-orange-800 rounded-xl hover:bg-orange-50 dark:hover:bg-orange-900/20 transition-colors"
+            >
+              <LogIn className="w-4 h-4" />
+              Sign in
+            </button>
+          </div>
+        ) : chatList.length === 0 ? (
           <p className="text-sm text-slate-400 dark:text-slate-500 px-3 py-4 text-center">No chats yet. Start one!</p>
         ) : (
           <div className="space-y-0.5">
@@ -131,7 +143,7 @@ export function Sidebar({
           {isDarkMode ? 'Light Mode' : 'Dark Mode'}
         </button>
 
-        {user && (
+        {user ? (
           <div className="flex items-center gap-2 px-3 py-2">
             <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-xs font-bold shrink-0">
               {getInitials(user.name)}
@@ -148,7 +160,12 @@ export function Sidebar({
               <LogOut className="w-4 h-4 text-red-500" />
             </button>
           </div>
-        )}
+        ) : isGuest ? (
+          <div className="flex items-center gap-2 px-3 py-2">
+            <div className="w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-slate-500 text-xs font-bold shrink-0">G</div>
+            <p className="text-sm text-slate-500 dark:text-slate-400">Guest</p>
+          </div>
+        ) : null}
       </div>
     </aside>
   );

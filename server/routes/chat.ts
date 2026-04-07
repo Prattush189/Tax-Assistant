@@ -61,13 +61,9 @@ Guidelines:
 - If a query is not related to Indian tax or finance, politely redirect the user.`;
 
 router.post('/chat', async (req: AuthRequest, res: Response) => {
-  const { chatId, message, fileContext } = req.body;
+  const { chatId, message, history: clientHistory, fileContext } = req.body;
 
-  // Validate
-  if (!chatId || typeof chatId !== 'string') {
-    res.status(400).json({ error: 'chatId is required' });
-    return;
-  }
+  // Validate message
   if (!message || typeof message !== 'string' || message.trim().length === 0) {
     res.status(400).json({ error: 'message is required' });
     return;
@@ -77,29 +73,32 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
     return;
   }
 
-  // Verify chat belongs to user
-  const chat = chatRepo.findById(chatId);
-  if (!chat || chat.user_id !== req.user!.id) {
-    res.status(404).json({ error: 'Chat not found' });
-    return;
+  const isAuthenticated = !!req.user;
+  let history: Array<{ role: string; parts: Array<{ text: string }> }> = [];
+  let chat: { title: string } | null = null;
+
+  if (isAuthenticated && chatId) {
+    // Authenticated user — persist and load from DB
+    const dbChat = chatRepo.findById(chatId);
+    if (!dbChat || dbChat.user_id !== req.user!.id) {
+      res.status(404).json({ error: 'Chat not found' });
+      return;
+    }
+    chat = dbChat;
+
+    // Persist user message
+    messageRepo.create(chatId, 'user', message.trim(), fileContext?.filename, fileContext?.mimeType);
+
+    // Load history from DB (exclude last user message — sent separately)
+    const dbMessages = messageRepo.findByChatId(chatId);
+    history = dbMessages.slice(0, -1).map(m => ({
+      role: m.role,
+      parts: [{ text: m.content }],
+    }));
+  } else {
+    // Guest mode — use client-sent history (no persistence)
+    history = Array.isArray(clientHistory) ? clientHistory : [];
   }
-
-  // Persist user message
-  messageRepo.create(
-    chatId,
-    'user',
-    message.trim(),
-    fileContext?.filename,
-    fileContext?.mimeType
-  );
-
-  // Load history from DB
-  const dbMessages = messageRepo.findByChatId(chatId);
-  // Convert to Gemini history format (exclude the last user message — we send it separately)
-  const history = dbMessages.slice(0, -1).map(m => ({
-    role: m.role,
-    parts: [{ text: m.content }],
-  }));
 
   // SSE headers
   res.setHeader('Content-Type', 'text/event-stream');
@@ -116,7 +115,6 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
       history,
     });
 
-    // Build message parts
     const messageParts: Part[] = [];
     if (fileContext?.uri && fileContext?.mimeType) {
       messageParts.push(createPartFromUri(fileContext.uri, fileContext.mimeType));
@@ -132,19 +130,17 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
       }
     }
 
-    // Persist model response
-    if (fullResponse) {
+    // Persist model response (authenticated only)
+    if (isAuthenticated && chatId && fullResponse) {
       messageRepo.create(chatId, 'model', fullResponse);
-    }
 
-    // Auto-title: if this is the first user message, set chat title
-    if (chat.title === 'New Chat' && message.trim().length > 0) {
-      const title = message.trim().slice(0, 60) + (message.trim().length > 60 ? '...' : '');
-      chatRepo.updateTitle(chatId, title);
+      // Auto-title on first message
+      if (chat?.title === 'New Chat' && message.trim().length > 0) {
+        const title = message.trim().slice(0, 60) + (message.trim().length > 60 ? '...' : '');
+        chatRepo.updateTitle(chatId, title);
+      }
+      chatRepo.touchTimestamp(chatId);
     }
-
-    // Touch timestamp
-    chatRepo.touchTimestamp(chatId);
 
     res.write('data: [DONE]\n\n');
   } catch (err) {

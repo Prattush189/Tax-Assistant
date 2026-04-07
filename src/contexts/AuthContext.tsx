@@ -9,10 +9,12 @@ interface User {
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
+  isGuest: boolean;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
   signup: (name: string, email: string, password: string) => Promise<void>;
   logout: () => void;
+  continueAsGuest: () => void;
   getAuthHeader: () => Record<string, string>;
 }
 
@@ -20,6 +22,7 @@ const AuthContext = createContext<AuthContextType | null>(null);
 
 const TOKEN_KEY = 'tax_access_token';
 const REFRESH_KEY = 'tax_refresh_token';
+const GUEST_KEY = 'tax_guest_mode';
 
 async function apiFetch(url: string, options: RequestInit = {}) {
   const res = await fetch(url, {
@@ -36,15 +39,17 @@ async function apiFetch(url: string, options: RequestInit = {}) {
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const [isGuest, setIsGuest] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   const logout = useCallback(() => {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(REFRESH_KEY);
+    localStorage.removeItem(GUEST_KEY);
     setUser(null);
+    setIsGuest(false);
   }, []);
 
-  // Try to refresh the access token
   const refreshAccessToken = useCallback(async (): Promise<string | null> => {
     const refreshToken = localStorage.getItem(REFRESH_KEY);
     if (!refreshToken) return null;
@@ -66,6 +71,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Validate stored token on mount
   useEffect(() => {
     async function validate() {
+      // Check guest mode first
+      if (localStorage.getItem(GUEST_KEY) === 'true') {
+        setIsGuest(true);
+        setIsLoading(false);
+        return;
+      }
+
       const token = localStorage.getItem(TOKEN_KEY);
       if (!token) {
         setIsLoading(false);
@@ -78,7 +90,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         });
         setUser(data);
       } catch {
-        // Token expired — try refresh
         const newToken = await refreshAccessToken();
         if (newToken) {
           try {
@@ -104,6 +115,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
     localStorage.setItem(TOKEN_KEY, data.accessToken);
     localStorage.setItem(REFRESH_KEY, data.refreshToken);
+    localStorage.removeItem(GUEST_KEY);
+    setIsGuest(false);
     setUser(data.user);
   };
 
@@ -114,8 +127,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
     localStorage.setItem(TOKEN_KEY, data.accessToken);
     localStorage.setItem(REFRESH_KEY, data.refreshToken);
+    localStorage.removeItem(GUEST_KEY);
+    setIsGuest(false);
     setUser(data.user);
   };
+
+  const continueAsGuest = useCallback(() => {
+    localStorage.setItem(GUEST_KEY, 'true');
+    setIsGuest(true);
+    setUser(null);
+  }, []);
 
   const getAuthHeader = useCallback((): Record<string, string> => {
     const token = localStorage.getItem(TOKEN_KEY);
@@ -127,10 +148,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       value={{
         user,
         isAuthenticated: !!user,
+        isGuest,
         isLoading,
         login,
         signup,
         logout,
+        continueAsGuest,
         getAuthHeader,
       }}
     >

@@ -47,6 +47,7 @@ function AppContent() {
             setIsSidebarOpen(false);
           }}
           onDeleteChat={chatManager.deleteChatById}
+          isGuest={chatManager.isGuest}
           user={user}
           onLogout={logout}
         />

@@ -45,9 +45,7 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
         <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border border-white/20 dark:border-slate-700/50 rounded-3xl shadow-2xl p-8">
           {/* Logo */}
           <div className="text-center mb-8">
-            <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-orange-400 to-orange-600 rounded-2xl shadow-lg shadow-orange-200 dark:shadow-orange-900/30 mb-4">
-              <img src="/logoAI.png" alt="Tax Assistant" className="w-10 h-10 object-contain rounded-lg" />
-            </div>
+            <img src="/logoAI.png" alt="Tax Assistant" className="w-16 h-16 object-contain mb-4" />
             <h1 className="text-2xl font-bold text-slate-800 dark:text-white">Create your account</h1>
             <p className="text-slate-500 dark:text-slate-400 mt-1">Get started with Tax Assistant</p>
           </div>

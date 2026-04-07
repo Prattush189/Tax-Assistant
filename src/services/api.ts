@@ -1,4 +1,4 @@
-import { UploadResponse } from '../types';
+import { Message, UploadResponse } from '../types';
 
 const TOKEN_KEY = 'tax_access_token';
 
@@ -10,20 +10,35 @@ function getAuthHeaders(): Record<string, string> {
 // ── Chat API (streaming) ─────────────────────────────────────────────────
 
 export async function sendChatMessage(
-  chatId: string,
+  chatId: string | null,
   message: string,
   onChunk: (text: string) => void,
   onError: (msg: string) => void,
-  fileContext?: { uri: string; mimeType: string }
+  fileContext?: { uri: string; mimeType: string },
+  localHistory?: Message[],
 ): Promise<void> {
+  // Build body — guest mode sends history, authenticated sends chatId
+  const body: Record<string, unknown> = {
+    message,
+    fileContext: fileContext ?? null,
+  };
+
+  if (chatId && chatId !== 'guest') {
+    body.chatId = chatId;
+  }
+
+  if (localHistory) {
+    // Guest mode: send conversation history so server can forward to Gemini
+    body.history = localHistory.map(m => ({
+      role: m.role,
+      parts: [{ text: m.content }],
+    }));
+  }
+
   const response = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-    body: JSON.stringify({
-      chatId,
-      message,
-      fileContext: fileContext ?? null,
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!response.ok || !response.body) {

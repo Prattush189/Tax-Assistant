@@ -11,7 +11,7 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 
 export function useChatManager() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, isGuest } = useAuth();
   const [chatList, setChatList] = useState<ChatItem[]>([]);
   const [currentChatId, setCurrentChatId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -20,12 +20,11 @@ export function useChatManager() {
   const [activeDocument, setActiveDocument] = useState<DocumentContext | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Scroll to bottom on new messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Load chat list on auth
+  // Load chat list (authenticated only)
   const loadChatList = useCallback(async () => {
     if (!isAuthenticated) return;
     try {
@@ -40,7 +39,6 @@ export function useChatManager() {
     loadChatList();
   }, [loadChatList]);
 
-  // Switch to a chat
   const switchChat = useCallback(async (chatId: string) => {
     setCurrentChatId(chatId);
     setActiveDocument(null);
@@ -62,17 +60,22 @@ export function useChatManager() {
     }
   }, []);
 
-  // Create a new chat
   const createNewChat = useCallback(async (): Promise<string> => {
+    if (isGuest) {
+      // Guest: just clear local state, no API call
+      setCurrentChatId(null);
+      setMessages([]);
+      setActiveDocument(null);
+      return 'guest';
+    }
     const chat = await apiCreateChat();
     setChatList(prev => [chat, ...prev]);
     setCurrentChatId(chat.id);
     setMessages([]);
     setActiveDocument(null);
     return chat.id;
-  }, []);
+  }, [isGuest]);
 
-  // Delete a chat
   const deleteChatById = useCallback(async (chatId: string) => {
     await apiDeleteChat(chatId);
     setChatList(prev => prev.filter(c => c.id !== chatId));
@@ -89,8 +92,8 @@ export function useChatManager() {
 
     let chatId = currentChatId;
 
-    // Auto-create chat if none selected
-    if (!chatId) {
+    if (isAuthenticated && !chatId) {
+      // Auto-create chat for authenticated users
       try {
         chatId = await createNewChat();
       } catch (err) {
@@ -113,12 +116,12 @@ export function useChatManager() {
     setInput('');
     setIsLoading(true);
 
-    // Add empty model message placeholder
+    // Add empty model placeholder
     setMessages(prev => [...prev, { role: 'model', content: '', timestamp: new Date() }]);
 
     try {
       await sendChatMessage(
-        chatId,
+        chatId ?? null,
         messageText,
         (text) => setMessages(prev => {
           const updated = [...prev];
@@ -136,15 +139,18 @@ export function useChatManager() {
           };
           return updated;
         }),
-        activeDocument ? { uri: activeDocument.fileUri, mimeType: activeDocument.mimeType } : undefined
+        activeDocument ? { uri: activeDocument.fileUri, mimeType: activeDocument.mimeType } : undefined,
+        // For guest mode, send local history so server can forward to Gemini
+        isGuest ? messages : undefined,
       );
 
-      // Refresh chat list to get updated title/timestamp
-      await loadChatList();
+      if (isAuthenticated) {
+        await loadChatList();
+      }
     } finally {
       setIsLoading(false);
     }
-  }, [isLoading, input, currentChatId, activeDocument, createNewChat, loadChatList]);
+  }, [isLoading, input, currentChatId, activeDocument, isAuthenticated, isGuest, messages, createNewChat, loadChatList]);
 
   const attachDocument = (doc: DocumentContext) => setActiveDocument(doc);
   const detachDocument = () => setActiveDocument(null);
@@ -172,5 +178,6 @@ export function useChatManager() {
     activeDocument,
     attachDocument,
     detachDocument,
+    isGuest,
   };
 }

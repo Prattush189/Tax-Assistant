@@ -8,7 +8,7 @@ interface AuthGuardProps {
 }
 
 export function AuthGuard({ children }: AuthGuardProps) {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isGuest, isLoading, continueAsGuest } = useAuth();
   const [authView, setAuthView] = useState<'login' | 'signup'>('login');
 
   if (isLoading) {
@@ -22,12 +22,18 @@ export function AuthGuard({ children }: AuthGuardProps) {
     );
   }
 
-  if (!isAuthenticated) {
-    if (authView === 'login') {
-      return <LoginPage onSwitchToSignup={() => setAuthView('signup')} />;
-    }
-    return <SignupPage onSwitchToLogin={() => setAuthView('login')} />;
+  // Allow through if authenticated OR guest
+  if (isAuthenticated || isGuest) {
+    return <>{children}</>;
   }
 
-  return <>{children}</>;
+  if (authView === 'login') {
+    return (
+      <LoginPage
+        onSwitchToSignup={() => setAuthView('signup')}
+        onContinueAsGuest={continueAsGuest}
+      />
+    );
+  }
+  return <SignupPage onSwitchToLogin={() => setAuthView('login')} />;
 }

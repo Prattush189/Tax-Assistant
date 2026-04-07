@@ -6,7 +6,7 @@ import chatRouter from './routes/chat.js';
 import uploadRouter from './routes/upload.js';
 import chatsRouter from './routes/chats.js';
 import authRouter from './routes/auth.js';
-import { authMiddleware } from './middleware/auth.js';
+import { authMiddleware, optionalAuthMiddleware } from './middleware/auth.js';
 import { authLimiter, chatLimiter, uploadLimiter } from './middleware/rateLimiter.js';
 import helmet from 'helmet';
 import cors from 'cors';
@@ -54,17 +54,18 @@ app.use(
 // 3. Body parsing
 app.use(express.json({ limit: '1mb' }));
 
-// 4. API routes with per-route rate limiting
+// 4. API routes
 // Auth routes — public, with brute-force protection
 app.use('/api/auth', authLimiter, authRouter);
 
-// Protected routes — require JWT
-app.use('/api', authMiddleware);
-app.use('/api/chat', chatLimiter);
-app.use('/api/upload', uploadLimiter);
+// Chat & upload — optional auth (guests can use, but no persistence)
+app.use('/api/chat', optionalAuthMiddleware, chatLimiter);
+app.use('/api/upload', optionalAuthMiddleware, uploadLimiter);
 app.use('/api', chatRouter);
 app.use('/api', uploadRouter);
-app.use('/api/chats', chatsRouter);
+
+// Chats CRUD — requires auth (guests have no chats)
+app.use('/api/chats', authMiddleware, chatsRouter);
 
 // 5. Production static serving
 if (process.env.NODE_ENV === 'production') {
