@@ -43,17 +43,11 @@ export function optionalAuthMiddleware(req: AuthRequest, res: Response, next: Ne
     return;
   }
 
-  // Check plugin key — required for unauthenticated (guest/plugin) access
-  if (!req.user) {
-    if (!PLUGIN_API_KEY) {
-      // No plugin key configured — allow all guests (dev mode)
-      next();
-      return;
-    }
-    if (!pluginKey || pluginKey !== PLUGIN_API_KEY) {
-      res.status(403).json({ error: 'Invalid or missing plugin key' });
-      return;
-    }
+  // Plugin key is only checked when the request sends one (iframe embeds).
+  // Main app guests (no plugin key header) are allowed through.
+  if (pluginKey && PLUGIN_API_KEY && pluginKey !== PLUGIN_API_KEY) {
+    res.status(403).json({ error: 'Invalid plugin key' });
+    return;
   }
 
   next();
