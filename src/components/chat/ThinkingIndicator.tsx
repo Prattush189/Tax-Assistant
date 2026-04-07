@@ -4,77 +4,60 @@ export function ThinkingIndicator() {
   return (
     <div className="flex items-center justify-center py-8">
       <div className="flex flex-col items-center gap-3">
-        <svg
-          width="56"
-          height="56"
-          viewBox="0 0 100 100"
-          fill="none"
-          xmlns="http://www.w3.org/2000/svg"
-        >
-          {/* Bar 1 (shorter, left) — rises first */}
-          <motion.path
-            d="M20 75 L20 55 L35 50 L35 75 Z"
-            fill="#B8860B"
-            initial={{ scaleY: 0, opacity: 0 }}
-            animate={{ scaleY: 1, opacity: 1 }}
-            transition={{
-              duration: 0.5,
-              ease: 'easeOut',
-              repeat: Infinity,
-              repeatDelay: 1.8,
-              repeatType: 'loop',
-            }}
-            style={{ originY: '100%', originX: '50%', transformBox: 'fill-box' }}
+        <div className="relative w-14 h-14">
+          {/* Pulse rings */}
+          <motion.div
+            className="absolute inset-0 rounded-full bg-[#D4A020]/15"
+            animate={{ scale: [1, 1.8, 1], opacity: [0.4, 0, 0.4] }}
+            transition={{ duration: 2.5, repeat: Infinity, ease: 'easeInOut' }}
+          />
+          <motion.div
+            className="absolute inset-0 rounded-full bg-[#D4A020]/10"
+            animate={{ scale: [1, 1.5, 1], opacity: [0.3, 0, 0.3] }}
+            transition={{ duration: 2.5, repeat: Infinity, ease: 'easeInOut', delay: 0.4 }}
           />
 
-          {/* Bar 2 (taller, right) — rises second */}
-          <motion.path
-            d="M36 75 L36 40 L51 35 L51 75 Z"
-            fill="#D4A020"
-            initial={{ scaleY: 0, opacity: 0 }}
-            animate={{ scaleY: 1, opacity: 1 }}
-            transition={{
-              duration: 0.5,
-              ease: 'easeOut',
-              delay: 0.3,
-              repeat: Infinity,
-              repeatDelay: 1.8,
-              repeatType: 'loop',
+          {/* Logo with clip-path reveal: bottom → top, then loops */}
+          <motion.div
+            className="absolute inset-0 overflow-hidden"
+            animate={{
+              clipPath: [
+                'inset(100% 0 0 0)',  // fully hidden (clipped from top)
+                'inset(60% 0 0 0)',   // bars start appearing
+                'inset(30% 0 0 0)',   // bars fully visible
+                'inset(0% 0 0 0)',    // arrow revealed
+                'inset(0% 0 0 0)',    // hold
+                'inset(100% 0 0 0)',  // reset
+              ],
             }}
-            style={{ originY: '100%', originX: '50%', transformBox: 'fill-box' }}
-          />
+            transition={{
+              duration: 2.4,
+              repeat: Infinity,
+              ease: 'easeInOut',
+              times: [0, 0.2, 0.45, 0.65, 0.85, 1],
+            }}
+          >
+            <img
+              src="/logoAI.svg"
+              alt="Thinking..."
+              className="w-14 h-14 object-contain"
+            />
+          </motion.div>
 
-          {/* Arrow — shoots up last */}
-          <motion.path
-            d="M42 42 L55 15 L75 10 L68 22 L80 20 L52 38 Z"
-            fill="#E0B830"
-            initial={{ y: 30, opacity: 0, scale: 0.5 }}
-            animate={{ y: 0, opacity: 1, scale: 1 }}
+          {/* Subtle upward motion on the logo */}
+          <motion.div
+            className="absolute inset-0 pointer-events-none"
+            animate={{ y: [4, 0, 0, -2, 0, 4] }}
             transition={{
-              duration: 0.6,
-              ease: [0.34, 1.56, 0.64, 1], // spring-like overshoot
-              delay: 0.7,
+              duration: 2.4,
               repeat: Infinity,
-              repeatDelay: 1.5,
-              repeatType: 'loop',
+              ease: 'easeInOut',
+              times: [0, 0.2, 0.45, 0.65, 0.85, 1],
             }}
-          />
-
-          {/* Subtle shine sweep on the arrow */}
-          <motion.path
-            d="M55 15 L60 12 L70 19 L68 22 Z"
-            fill="#F5E6B8"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: [0, 0.6, 0] }}
-            transition={{
-              duration: 0.8,
-              delay: 1.1,
-              repeat: Infinity,
-              repeatDelay: 1.8,
-              repeatType: 'loop',
-            }}
-          />
-        </svg>
+          >
+            <div className="w-14 h-14" style={{ opacity: 0 }} />
+          </motion.div>
+        </div>
 
         {/* Thinking text */}
         <motion.p
