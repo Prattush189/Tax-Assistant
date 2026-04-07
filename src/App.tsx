@@ -50,6 +50,8 @@ function AppContent() {
           isGuest={chatManager.isGuest}
           user={user}
           onLogout={logout}
+          activeView={activeView}
+          onViewChange={setActiveView}
         />
       )}
       <TaxCalculatorProvider>
@@ -58,8 +60,6 @@ function AppContent() {
             isPluginMode={isPluginMode}
             isDarkMode={isDarkMode}
             onToggleTheme={toggleTheme}
-            activeView={activeView}
-            onViewChange={setActiveView}
             onOpenSidebar={() => setIsSidebarOpen(true)}
             user={user}
             onLogout={logout}
@@ -83,7 +83,6 @@ export default function App() {
   const { setIsDarkMode } = useTheme();
   const { isPluginMode } = usePluginMode(setIsDarkMode);
 
-  // Plugin mode skips auth
   if (isPluginMode) {
     return <AppContent />;
   }
