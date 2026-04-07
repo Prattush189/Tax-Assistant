@@ -1,69 +1,39 @@
 // server/routes/chat.ts
 import { Router, Response } from 'express';
-import { GoogleGenAI, createPartFromUri, Part } from '@google/genai';
+import Anthropic from '@anthropic-ai/sdk';
 import { chatRepo } from '../db/repositories/chatRepo.js';
 import { messageRepo } from '../db/repositories/messageRepo.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 
-// SYSTEM_INSTRUCTION — authoritative copy lives here on the server
-const SYSTEM_INSTRUCTION = `You are "Tax Assistant", a highly specialized AI assistant for Indian Tax and Financial matters.
-Your expertise includes:
-1. Income Tax Act, 1961: Detailed knowledge of Old vs New Tax Regimes (FY 2024-25, FY 2025-26), deductions (80C, 80D, etc.), HRA, LTA, and capital gains.
-2. GST (Goods and Services Tax): Rates, filing requirements, ITC, and compliance for businesses and freelancers.
-3. Professional Queries: Tax implications for Salaried employees, Freelancers (44ADA), and Small Businesses (44AD).
-4. Math & Calculations: Accurate calculation of tax liability, cess, and surcharges.
-5. Financial Planning: Suggesting tax-saving investments like PPF, ELSS, NPS, etc.
+const MODEL = 'claude-haiku-4-5-20251001';
+const MAX_TOKENS = 1024;
 
-CHART GENERATION:
-When providing statistical data or tax comparisons, you MUST also provide a JSON block for visualization.
-Format: \`\`\`json-chart { ... } \`\`\`
+// Concise system prompt — optimized for token efficiency
+const SYSTEM_INSTRUCTION = `You are "Tax Assistant" — an expert on Indian Income Tax, GST, and financial planning.
 
-Supported chart types:
+SCOPE: Only answer questions about Indian tax, GST, deductions, capital gains, and financial planning. Politely decline other topics.
 
-"bar" — single-series bar chart
-{ "type": "bar", "title": "...", "data": [{ "name": "...", "value": 123 }, ...] }
+RULES:
+- Specify FY/AY for all calculations
+- Show tax breakdowns in compact Markdown tables (GFM syntax, blank lines before/after tables)
+- Be concise: answer in the fewest words possible while staying accurate
+- Mention consulting a CA for official filing
+- For comparisons, include a json-chart block: \`\`\`json-chart {"type":"bar"|"pie"|"line","title":"...","data":[{"name":"...","value":0}]} \`\`\`
 
-"pie" — donut/pie chart
-{ "type": "pie", "title": "...", "data": [{ "name": "...", "value": 123 }, ...] }
+DEDUCTION LIMITS (FY 2024-25):
+80C: ₹1.5L | 80D: ₹25K/₹50K(senior) | 80CCD(1B): ₹50K | HRA: metro 50%, non-metro 40%
+New regime std deduction: ₹75K | Old regime std deduction: ₹50K
+New regime rebate 87A: ₹25K (income ≤₹7L) | Old regime rebate 87A: ₹12.5K (income ≤₹5L)`;
 
-"line" — line chart (use for trends over income/time)
-{ "type": "line", "title": "...", "data": [{ "name": "5L", "rate": 0 }, ...], "lines": ["rate"] }
-"lines" is required — list the data keys to plot as lines.
-
-"stacked-bar" — stacked bar chart (use for showing composition/breakdown)
-{ "type": "stacked-bar", "title": "...", "data": [{ "name": "80C", "used": 150000, "remaining": 50000 }], "keys": ["used", "remaining"] }
-"keys" is required — list the data keys to stack.
-
-"composed" — combined bar + line chart (use for overlaying two different scales)
-{ "type": "composed", "title": "...", "data": [{ "name": "FY24", "income": 1200000, "tax": 97500 }], "bars": ["income"], "lines": ["tax"] }
-"bars" and "lines" are required — list keys for bar series and line series respectively.
-
-Use "line" for: effective tax rate progression, year-over-year comparison.
-Use "stacked-bar" for: deduction breakdown (used vs. remaining), income composition.
-Use "composed" for: income vs. tax overlay, gross vs. net comparison.
-
-TABLE FORMATTING (CRITICAL):
-- Use standard GFM (GitHub Flavored Markdown) table syntax.
-- Ensure there is a blank line before and after every table.
-- Ensure each row is on a NEW line.
-- Use the standard header separator: | Header | Header | \n | --- | --- | \n | Row | Row |
-- DO NOT use double pipes (||) for rows. Use single pipes (|) at the start and end of each row.
-
-Guidelines:
-- Always specify which Assessment Year (AY) or Financial Year (FY) you are referring to.
-- For calculations, show the step-by-step breakdown in a Markdown table.
-- Use clear, professional, yet accessible language.
-- Include a disclaimer that you are an AI assistant and users should consult a Chartered Accountant (CA) for official filing.
-- Use Markdown (tables, bold text, lists) to make complex information readable.
-- If a query is not related to Indian tax or finance, politely redirect the user.`;
+// Limit history to last N messages to save tokens
+const MAX_HISTORY_MESSAGES = 10;
 
 router.post('/chat', async (req: AuthRequest, res: Response) => {
   const { chatId, message, history: clientHistory, fileContext } = req.body;
 
-  // Validate message
   if (!message || typeof message !== 'string' || message.trim().length === 0) {
     res.status(400).json({ error: 'message is required' });
     return;
@@ -74,11 +44,10 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
   }
 
   const isAuthenticated = !!req.user;
-  let history: Array<{ role: string; parts: Array<{ text: string }> }> = [];
+  let history: Array<{ role: 'user' | 'assistant'; content: string }> = [];
   let chat: { title: string } | null = null;
 
   if (isAuthenticated && chatId) {
-    // Authenticated user — persist and load from DB
     const dbChat = chatRepo.findById(chatId);
     if (!dbChat || dbChat.user_id !== req.user!.id) {
       res.status(404).json({ error: 'Chat not found' });
@@ -89,15 +58,32 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
     // Persist user message
     messageRepo.create(chatId, 'user', message.trim(), fileContext?.filename, fileContext?.mimeType);
 
-    // Load history from DB (exclude last user message — sent separately)
+    // Load history from DB, map 'model' -> 'assistant' for Anthropic
     const dbMessages = messageRepo.findByChatId(chatId);
-    history = dbMessages.slice(0, -1).map(m => ({
-      role: m.role,
-      parts: [{ text: m.content }],
-    }));
+    history = dbMessages.slice(0, -1) // exclude current user message
+      .slice(-MAX_HISTORY_MESSAGES) // only last N to save tokens
+      .map(m => ({
+        role: (m.role === 'model' ? 'assistant' : 'user') as 'user' | 'assistant',
+        content: m.content,
+      }));
   } else {
-    // Guest mode — use client-sent history (no persistence)
-    history = Array.isArray(clientHistory) ? clientHistory : [];
+    // Guest mode — use client-sent history
+    const raw = Array.isArray(clientHistory) ? clientHistory : [];
+    history = raw.slice(-MAX_HISTORY_MESSAGES).map((m: { role: string; parts?: Array<{ text: string }>; content?: string }) => ({
+      role: (m.role === 'model' ? 'assistant' : 'user') as 'user' | 'assistant',
+      content: m.parts?.[0]?.text ?? m.content ?? '',
+    }));
+  }
+
+  // Ensure history starts with 'user' and alternates (Anthropic requirement)
+  if (history.length > 0 && history[0].role !== 'user') {
+    history = history.slice(1);
+  }
+
+  // Build the user message with optional file context
+  let userContent = message.trim();
+  if (fileContext?.extractedData) {
+    userContent = `[Attached document context: ${JSON.stringify(fileContext.extractedData)}]\n\n${userContent}`;
   }
 
   // SSE headers
@@ -109,32 +95,27 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
   let fullResponse = '';
 
   try {
-    const geminiChat = ai.chats.create({
-      model: 'gemini-2.0-flash',
-      config: { systemInstruction: SYSTEM_INSTRUCTION },
-      history,
+    const stream = anthropic.messages.stream({
+      model: MODEL,
+      max_tokens: MAX_TOKENS,
+      system: SYSTEM_INSTRUCTION,
+      messages: [
+        ...history,
+        { role: 'user', content: userContent },
+      ],
     });
 
-    const messageParts: Part[] = [];
-    if (fileContext?.uri && fileContext?.mimeType) {
-      messageParts.push(createPartFromUri(fileContext.uri, fileContext.mimeType));
-    }
-    messageParts.push({ text: message });
+    stream.on('text', (text) => {
+      fullResponse += text;
+      res.write(`data: ${JSON.stringify({ text })}\n\n`);
+    });
 
-    const stream = await geminiChat.sendMessageStream({ message: messageParts });
-
-    for await (const chunk of stream) {
-      if (chunk.text) {
-        fullResponse += chunk.text;
-        res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`);
-      }
-    }
+    await stream.finalMessage();
 
     // Persist model response (authenticated only)
     if (isAuthenticated && chatId && fullResponse) {
       messageRepo.create(chatId, 'model', fullResponse);
 
-      // Auto-title on first message
       if (chat?.title === 'New Chat' && message.trim().length > 0) {
         const title = message.trim().slice(0, 60) + (message.trim().length > 60 ? '...' : '');
         chatRepo.updateTitle(chatId, title);
@@ -144,11 +125,11 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
 
     res.write('data: [DONE]\n\n');
   } catch (err) {
-    console.error('[chat] Gemini API error:', err);
+    console.error('[chat] Anthropic API error:', err);
     const errMsg = err instanceof Error ? err.message : String(err);
-    const isExpiredFile = errMsg.includes('404') || errMsg.toLowerCase().includes('file not found');
-    const clientMessage = isExpiredFile
-      ? 'The uploaded document has expired. Please upload it again to continue document Q&A.'
+    const isRateLimit = errMsg.includes('429') || errMsg.toLowerCase().includes('rate');
+    const clientMessage = isRateLimit
+      ? 'Too many requests. Please wait a moment and try again.'
       : "I'm having trouble connecting. Please try again in a moment.";
     res.write(`data: ${JSON.stringify({ error: true, message: clientMessage })}\n\n`);
   } finally {

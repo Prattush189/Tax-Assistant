@@ -14,7 +14,7 @@ export async function sendChatMessage(
   message: string,
   onChunk: (text: string) => void,
   onError: (msg: string) => void,
-  fileContext?: { uri: string; mimeType: string },
+  fileContext?: { filename: string; mimeType: string; extractedData?: unknown },
   localHistory?: Message[],
 ): Promise<void> {
   // Build body — guest mode sends history, authenticated sends chatId

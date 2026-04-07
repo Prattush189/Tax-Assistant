@@ -20,7 +20,7 @@ export function useFileUpload() {
       return {
         filename: result.filename,
         mimeType: result.mimeType,
-        fileUri: result.fileUri,
+        fileUri: result.fileUri ?? '',
         extractedData: result.extractedData,
       };
     } catch (err) {

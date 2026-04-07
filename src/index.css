@@ -45,6 +45,73 @@
   }
 }
 
+/* Custom radio buttons */
+input[type="radio"] {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid #94a3b8;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  position: relative;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+input[type="radio"]:checked {
+  border-color: #f97316;
+  background: #f97316;
+  box-shadow: inset 0 0 0 3px #fff;
+}
+.dark input[type="radio"]:checked {
+  box-shadow: inset 0 0 0 3px #0f172a;
+}
+input[type="radio"]:hover {
+  border-color: #f97316;
+}
+
+/* Custom checkboxes */
+input[type="checkbox"] {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid #94a3b8;
+  border-radius: 5px;
+  background: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+  position: relative;
+}
+input[type="checkbox"]:checked {
+  border-color: #f97316;
+  background: #f97316;
+}
+input[type="checkbox"]:checked::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 6px;
+  height: 10px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+input[type="checkbox"]:hover {
+  border-color: #f97316;
+}
+
+/* Hide number input spinners */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
 /* Markdown table styles */
 .markdown-body table {
   width: 100%;

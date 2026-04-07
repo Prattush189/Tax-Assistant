@@ -139,8 +139,7 @@ export function useChatManager() {
           };
           return updated;
         }),
-        activeDocument ? { uri: activeDocument.fileUri, mimeType: activeDocument.mimeType } : undefined,
-        // For guest mode, send local history so server can forward to Gemini
+        activeDocument ? { filename: activeDocument.filename, mimeType: activeDocument.mimeType, extractedData: activeDocument.extractedData } : undefined,
         isGuest ? messages : undefined,
       );
 
