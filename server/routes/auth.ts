@@ -1,0 +1,130 @@
+import { Router, Request, Response } from 'express';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import { userRepo } from '../db/repositories/userRepo.js';
+import { authMiddleware } from '../middleware/auth.js';
+import { AuthRequest } from '../types.js';
+
+const router = Router();
+
+const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-secret-change-me';
+const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET ?? 'dev-refresh-secret-change-me';
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN ?? '15m';
+const JWT_REFRESH_EXPIRES_IN = process.env.JWT_REFRESH_EXPIRES_IN ?? '7d';
+
+function generateTokens(user: { id: string; email: string }) {
+  const accessToken = jwt.sign(
+    { id: user.id, email: user.email },
+    JWT_SECRET,
+    { expiresIn: JWT_EXPIRES_IN as string | number }
+  );
+  const refreshToken = jwt.sign(
+    { id: user.id, email: user.email },
+    JWT_REFRESH_SECRET,
+    { expiresIn: JWT_REFRESH_EXPIRES_IN as string | number }
+  );
+  return { accessToken, refreshToken };
+}
+
+// POST /api/auth/signup
+router.post('/signup', async (req: Request, res: Response) => {
+  const { email, password, name } = req.body;
+
+  // Validate
+  if (!email || !password || !name) {
+    res.status(400).json({ error: 'Name, email, and password are required' });
+    return;
+  }
+  if (typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    res.status(400).json({ error: 'Invalid email format' });
+    return;
+  }
+  if (typeof password !== 'string' || password.length < 8) {
+    res.status(400).json({ error: 'Password must be at least 8 characters' });
+    return;
+  }
+  if (typeof name !== 'string' || name.trim().length === 0) {
+    res.status(400).json({ error: 'Name is required' });
+    return;
+  }
+
+  // Check uniqueness
+  const existing = userRepo.findByEmail(email);
+  if (existing) {
+    res.status(409).json({ error: 'An account with this email already exists' });
+    return;
+  }
+
+  // Hash & create
+  const hashedPassword = await bcrypt.hash(password, 12);
+  const user = userRepo.create(email, hashedPassword, name.trim());
+  const tokens = generateTokens(user);
+
+  res.status(201).json({
+    ...tokens,
+    user: { id: user.id, email: user.email, name: user.name },
+  });
+});
+
+// POST /api/auth/login
+router.post('/login', async (req: Request, res: Response) => {
+  const { email, password } = req.body;
+
+  if (!email || !password) {
+    res.status(400).json({ error: 'Email and password are required' });
+    return;
+  }
+
+  const user = userRepo.findByEmail(email);
+  if (!user) {
+    res.status(401).json({ error: 'Invalid email or password' });
+    return;
+  }
+
+  const valid = await bcrypt.compare(password, user.password);
+  if (!valid) {
+    res.status(401).json({ error: 'Invalid email or password' });
+    return;
+  }
+
+  const tokens = generateTokens(user);
+  res.json({
+    ...tokens,
+    user: { id: user.id, email: user.email, name: user.name },
+  });
+});
+
+// POST /api/auth/refresh
+router.post('/refresh', (req: Request, res: Response) => {
+  const { refreshToken } = req.body;
+
+  if (!refreshToken) {
+    res.status(400).json({ error: 'Refresh token is required' });
+    return;
+  }
+
+  try {
+    const payload = jwt.verify(refreshToken, JWT_REFRESH_SECRET) as { id: string; email: string };
+    const user = userRepo.findById(payload.id);
+    if (!user) {
+      res.status(401).json({ error: 'User not found' });
+      return;
+    }
+    const tokens = generateTokens(user);
+    res.json(tokens);
+  } catch {
+    res.status(401).json({ error: 'Invalid or expired refresh token' });
+  }
+});
+
+// GET /api/auth/me (protected)
+router.get('/me', authMiddleware, (req: AuthRequest, res: Response) => {
+  const user = userRepo.findById(req.user!.id);
+  if (!user) {
+    res.status(404).json({ error: 'User not found' });
+    return;
+  }
+  res.json({ id: user.id, email: user.email, name: user.name });
+});
+
+export default router;

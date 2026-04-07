@@ -1,12 +1,14 @@
 // server/routes/chat.ts
-import { Router, Request, Response } from 'express';
+import { Router, Response } from 'express';
 import { GoogleGenAI, createPartFromUri, Part } from '@google/genai';
-import { validateChatRequest } from '../middleware/validation.js';
+import { chatRepo } from '../db/repositories/chatRepo.js';
+import { messageRepo } from '../db/repositories/messageRepo.js';
+import { AuthRequest } from '../types.js';
 
 const router = Router();
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 
-// SYSTEM_INSTRUCTION moved from App.tsx — authoritative copy lives here on the server
+// SYSTEM_INSTRUCTION — authoritative copy lives here on the server
 const SYSTEM_INSTRUCTION = `You are "Tax Assistant", a highly specialized AI assistant for Indian Tax and Financial matters.
 Your expertise includes:
 1. Income Tax Act, 1961: Detailed knowledge of Old vs New Tax Regimes (FY 2024-25, FY 2025-26), deductions (80C, 80D, etc.), HRA, LTA, and capital gains.
@@ -58,51 +60,95 @@ Guidelines:
 - Use Markdown (tables, bold text, lists) to make complex information readable.
 - If a query is not related to Indian tax or finance, politely redirect the user.`;
 
-router.post('/chat', async (req: Request, res: Response) => {
-  // Validate request body
-  const validationError = validateChatRequest(req.body);
-  if (validationError) {
-    res.status(validationError.status).json({ error: validationError.message });
+router.post('/chat', async (req: AuthRequest, res: Response) => {
+  const { chatId, message, fileContext } = req.body;
+
+  // Validate
+  if (!chatId || typeof chatId !== 'string') {
+    res.status(400).json({ error: 'chatId is required' });
+    return;
+  }
+  if (!message || typeof message !== 'string' || message.trim().length === 0) {
+    res.status(400).json({ error: 'message is required' });
+    return;
+  }
+  if (message.length > 4000) {
+    res.status(400).json({ error: 'message exceeds 4000 character limit' });
     return;
   }
 
-  const { message, history = [], fileContext } = req.body;
+  // Verify chat belongs to user
+  const chat = chatRepo.findById(chatId);
+  if (!chat || chat.user_id !== req.user!.id) {
+    res.status(404).json({ error: 'Chat not found' });
+    return;
+  }
+
+  // Persist user message
+  messageRepo.create(
+    chatId,
+    'user',
+    message.trim(),
+    fileContext?.filename,
+    fileContext?.mimeType
+  );
+
+  // Load history from DB
+  const dbMessages = messageRepo.findByChatId(chatId);
+  // Convert to Gemini history format (exclude the last user message — we send it separately)
+  const history = dbMessages.slice(0, -1).map(m => ({
+    role: m.role,
+    parts: [{ text: m.content }],
+  }));
 
   // SSE headers
-  // X-Accel-Buffering: no disables Apache/Nginx buffering — critical for streaming to work in production
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('X-Accel-Buffering', 'no');
 
+  let fullResponse = '';
+
   try {
-    const chat = ai.chats.create({
+    const geminiChat = ai.chats.create({
       model: 'gemini-2.0-flash',
       config: { systemInstruction: SYSTEM_INSTRUCTION },
-      history: history,
+      history,
     });
 
-    // Build message parts — prepend file part only for the CURRENT message (not history)
-    // Injecting into history would send the same PDF reference N times, wasting tokens
+    // Build message parts
     const messageParts: Part[] = [];
     if (fileContext?.uri && fileContext?.mimeType) {
       messageParts.push(createPartFromUri(fileContext.uri, fileContext.mimeType));
     }
     messageParts.push({ text: message });
 
-    const stream = await chat.sendMessageStream({ message: messageParts });
+    const stream = await geminiChat.sendMessageStream({ message: messageParts });
 
     for await (const chunk of stream) {
       if (chunk.text) {
+        fullResponse += chunk.text;
         res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`);
       }
     }
 
-    // [DONE] sentinel tells the client the stream is complete
+    // Persist model response
+    if (fullResponse) {
+      messageRepo.create(chatId, 'model', fullResponse);
+    }
+
+    // Auto-title: if this is the first user message, set chat title
+    if (chat.title === 'New Chat' && message.trim().length > 0) {
+      const title = message.trim().slice(0, 60) + (message.trim().length > 60 ? '...' : '');
+      chatRepo.updateTitle(chatId, title);
+    }
+
+    // Touch timestamp
+    chatRepo.touchTimestamp(chatId);
+
     res.write('data: [DONE]\n\n');
   } catch (err) {
     console.error('[chat] Gemini API error:', err);
-    // Detect expired file URI (Gemini returns 404 when Files API URI has expired or been deleted)
     const errMsg = err instanceof Error ? err.message : String(err);
     const isExpiredFile = errMsg.includes('404') || errMsg.toLowerCase().includes('file not found');
     const clientMessage = isExpiredFile

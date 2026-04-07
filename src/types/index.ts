@@ -2,6 +2,10 @@ export interface Message {
   role: 'user' | 'model';
   content: string;
   timestamp: Date;
+  attachment?: {
+    filename: string;
+    mimeType: string;
+  };
 }
 
 export interface UploadResponse {

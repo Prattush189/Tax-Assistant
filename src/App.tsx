@@ -6,27 +6,27 @@
 import { useState } from 'react';
 import { useTheme } from './hooks/useTheme';
 import { usePluginMode } from './hooks/usePluginMode';
-import { useChat } from './hooks/useChat';
+import { useChatManager } from './hooks/useChatManager';
+import { useAuth } from './contexts/AuthContext';
+import { AuthGuard } from './components/auth/AuthGuard';
 import { Sidebar } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
 import { ChatView } from './components/chat/ChatView';
 import { CalculatorView } from './components/calculator/CalculatorView';
 import { DashboardView } from './components/dashboard/DashboardView';
-import { DocumentsView } from './components/documents/DocumentsView';
 import { TaxCalculatorProvider } from './contexts/TaxCalculatorContext';
 import { cn } from './lib/utils';
 
-type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'documents';
+type ActiveView = 'chat' | 'calculator' | 'dashboard';
 
-export default function App() {
+function AppContent() {
   const { isDarkMode, toggleTheme, setIsDarkMode } = useTheme();
   const { isPluginMode } = usePluginMode(setIsDarkMode);
   const [activeView, setActiveView] = useState<ActiveView>('chat');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const { user, logout } = useAuth();
 
-  // Single useChat instance lifted to App — shared between ChatView and DocumentsView
-  // so that document context attached in DocumentsView flows correctly into chat send calls
-  const chatHook = useChat();
+  const chatManager = useChatManager();
 
   return (
     <div className={cn(
@@ -39,6 +39,16 @@ export default function App() {
           onClose={() => setIsSidebarOpen(false)}
           isDarkMode={isDarkMode}
           onToggleTheme={toggleTheme}
+          chatList={chatManager.chatList}
+          currentChatId={chatManager.currentChatId}
+          onNewChat={chatManager.createNewChat}
+          onSwitchChat={(chatId) => {
+            chatManager.switchChat(chatId);
+            setIsSidebarOpen(false);
+          }}
+          onDeleteChat={chatManager.deleteChatById}
+          user={user}
+          onLogout={logout}
         />
       )}
       <TaxCalculatorProvider>
@@ -50,17 +60,12 @@ export default function App() {
             activeView={activeView}
             onViewChange={setActiveView}
             onOpenSidebar={() => setIsSidebarOpen(true)}
+            user={user}
+            onLogout={logout}
           />
-          {activeView === 'chat' && <ChatView isPluginMode={isPluginMode} chatHook={chatHook} />}
+          {activeView === 'chat' && <ChatView isPluginMode={isPluginMode} chatManager={chatManager} />}
           {activeView === 'calculator' && <CalculatorView />}
           {activeView === 'dashboard' && <DashboardView />}
-          {activeView === 'documents' && (
-            <DocumentsView
-              activeDocument={chatHook.activeDocument}
-              onDocumentAttach={chatHook.attachDocument}
-              onDocumentDetach={chatHook.detachDocument}
-            />
-          )}
         </main>
       </TaxCalculatorProvider>
       {isSidebarOpen && !isPluginMode && (
@@ -70,5 +75,21 @@ export default function App() {
         />
       )}
     </div>
+  );
+}
+
+export default function App() {
+  const { setIsDarkMode } = useTheme();
+  const { isPluginMode } = usePluginMode(setIsDarkMode);
+
+  // Plugin mode skips auth
+  if (isPluginMode) {
+    return <AppContent />;
+  }
+
+  return (
+    <AuthGuard>
+      <AppContent />
+    </AuthGuard>
   );
 }

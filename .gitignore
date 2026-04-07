@@ -9,3 +9,6 @@ coverage/
 
 # PM2 logs
 logs/
+
+# SQLite database
+data/

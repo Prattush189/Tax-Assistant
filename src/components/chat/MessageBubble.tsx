@@ -1,6 +1,6 @@
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Bot, User } from 'lucide-react';
+import { Bot, User, FileText } from 'lucide-react';
 import { Message } from '../../types';
 import { cn } from '../../lib/utils';
 import { ChartRenderer } from './ChartRenderer';
@@ -27,26 +27,40 @@ interface MessageBubbleProps {
 }
 
 export function MessageBubble({ message }: MessageBubbleProps) {
-  const { role, content, timestamp } = message;
+  const { role, content, timestamp, attachment } = message;
 
   return (
-    <div className={cn("flex gap-4", role === 'user' ? 'flex-row-reverse' : '')}>
+    <div className={cn("flex gap-3", role === 'user' ? 'flex-row-reverse' : '')}>
       <div className={cn(
-        "w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0",
+        "w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0",
         role === 'user'
-          ? 'bg-indigo-600 text-white'
-          : 'bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400'
+          ? 'bg-gradient-to-br from-indigo-500 to-purple-600 text-white'
+          : 'bg-gradient-to-br from-orange-100 to-orange-200 dark:from-orange-900/30 dark:to-orange-800/20 text-orange-600 dark:text-orange-400'
       )}>
-        {role === 'user' ? <User className="w-5 h-5" /> : <Bot className="w-5 h-5" />}
+        {role === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
       </div>
       <div className={cn(
         "max-w-[85%] p-4 rounded-2xl shadow-sm",
         role === 'user'
-          ? 'bg-indigo-600 text-white rounded-tr-none'
-          : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 rounded-tl-none'
+          ? 'bg-gradient-to-br from-indigo-500 to-purple-600 text-white rounded-tr-none'
+          : 'bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm border border-slate-200/50 dark:border-slate-800/50 text-slate-800 dark:text-slate-200 rounded-tl-none'
       )}>
+        {attachment && (
+          <div className={cn(
+            "flex items-center gap-1.5 mb-2 px-2 py-1 rounded-lg text-xs w-fit",
+            role === 'user'
+              ? "bg-white/20 text-white/90"
+              : "bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400"
+          )}>
+            <FileText className="w-3 h-3" />
+            <span className="truncate max-w-[200px]">{attachment.filename}</span>
+          </div>
+        )}
         {renderContent(content, role)}
-        <div className={cn("text-[10px] mt-2 opacity-50", role === 'user' ? 'text-right' : '')}>
+        <div className={cn(
+          "text-[10px] mt-2 opacity-0 hover:opacity-50 transition-opacity",
+          role === 'user' ? 'text-right' : ''
+        )}>
           {timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
         </div>
       </div>

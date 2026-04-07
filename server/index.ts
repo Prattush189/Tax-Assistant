@@ -1,11 +1,15 @@
 // server/index.ts
 import 'dotenv/config';
+import './db/index.js';
 import express from 'express';
 import chatRouter from './routes/chat.js';
 import uploadRouter from './routes/upload.js';
+import chatsRouter from './routes/chats.js';
+import authRouter from './routes/auth.js';
+import { authMiddleware } from './middleware/auth.js';
+import { authLimiter, chatLimiter, uploadLimiter } from './middleware/rateLimiter.js';
 import helmet from 'helmet';
 import cors from 'cors';
-import { rateLimit } from 'express-rate-limit';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -15,8 +19,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT ?? 4001;
 
-// 1. Security headers — helmet first so headers apply to all responses
-// CSP: frame-ancestors tightened in Phase 6 (PLUG-02) — production allows Smart Assist origin only
+// 1. Security headers
 app.use(
   helmet({
     contentSecurityPolicy: {
@@ -34,7 +37,7 @@ app.use(
   })
 );
 
-// 2. CORS — before routes so OPTIONS pre-flight gets CORS headers
+// 2. CORS
 const allowedOrigins =
   process.env.NODE_ENV === 'production'
     ? ['https://ai.smartbizin.com', 'https://smartbizin.com']
@@ -43,36 +46,30 @@ const allowedOrigins =
 app.use(
   cors({
     origin: allowedOrigins,
-    methods: ['GET', 'POST'],
+    methods: ['GET', 'POST', 'PATCH', 'DELETE'],
     credentials: false,
   })
 );
 
-// 3. Rate limiting on /api/* — 30 req/min per IP
-// Friendly message per CONTEXT.md error handling decisions
-const limiter = rateLimit({
-  windowMs: 60 * 1000,
-  limit: 30,
-  standardHeaders: 'draft-8',
-  legacyHeaders: false,
-  message: {
-    error: "You're sending messages too fast. Please wait a moment.",
-  },
-});
-app.use('/api', limiter);
-
-// 4. Body parsing — 1MB limit (chat history is text; no binary here)
+// 3. Body parsing
 app.use(express.json({ limit: '1mb' }));
 
-// 5. API routes
+// 4. API routes with per-route rate limiting
+// Auth routes — public, with brute-force protection
+app.use('/api/auth', authLimiter, authRouter);
+
+// Protected routes — require JWT
+app.use('/api', authMiddleware);
+app.use('/api/chat', chatLimiter);
+app.use('/api/upload', uploadLimiter);
 app.use('/api', chatRouter);
 app.use('/api', uploadRouter);
+app.use('/api/chats', chatsRouter);
 
-// 6. Production static serving — Express serves Vite build output
+// 5. Production static serving
 if (process.env.NODE_ENV === 'production') {
   const distPath = path.join(__dirname, '..', 'dist');
   app.use(express.static(distPath));
-  // SPA fallback — serve index.html for any unmatched GET
   app.get('*', (_req, res) => {
     res.sendFile(path.join(distPath, 'index.html'));
   });

@@ -1,8 +1,11 @@
+import { useState, useCallback } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Bot } from 'lucide-react';
-import { useChat } from '../../hooks/useChat';
+import { Bot, Upload } from 'lucide-react';
+import { useChatManager } from '../../hooks/useChatManager';
+import { useFileUpload } from '../../hooks/useFileUpload';
 import { MessageBubble } from './MessageBubble';
 import { ChatInput } from './ChatInput';
+import { cn } from '../../lib/utils';
 
 const quickQueries = [
   "New vs Old Tax Regime FY 2024-25?",
@@ -13,19 +16,65 @@ const quickQueries = [
 
 interface ChatViewProps {
   isPluginMode: boolean;
-  chatHook: ReturnType<typeof useChat>;
+  chatManager: ReturnType<typeof useChatManager>;
 }
 
-export function ChatView({ isPluginMode: _isPluginMode, chatHook }: ChatViewProps) {
-  const { messages, input, setInput, isLoading, messagesEndRef, send, activeDocument } = chatHook;
+export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewProps) {
+  const { messages, input, setInput, isLoading, messagesEndRef, send, activeDocument, attachDocument, detachDocument } = chatManager;
+  const fileUpload = useFileUpload();
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  const handleFileSelect = useCallback(async (file: File) => {
+    const doc = await fileUpload.handleFile(file);
+    if (doc) attachDocument(doc);
+  }, [fileUpload, attachDocument]);
+
+  const handleDetach = useCallback(() => {
+    detachDocument();
+    fileUpload.reset();
+  }, [detachDocument, fileUpload]);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+    setIsDragOver(false);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleFileSelect(file);
+  }, [handleFileSelect]);
 
   return (
-    <>
+    <div
+      className="flex-1 flex flex-col relative"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {/* Drag overlay */}
+      {isDragOver && (
+        <div className="absolute inset-0 z-20 bg-orange-50/90 dark:bg-orange-950/90 backdrop-blur-sm flex items-center justify-center">
+          <div className="flex flex-col items-center gap-3 p-8 border-2 border-dashed border-orange-400 dark:border-orange-600 rounded-3xl">
+            <Upload className="w-12 h-12 text-orange-500" />
+            <p className="text-lg font-semibold text-orange-700 dark:text-orange-300">Drop your document here</p>
+            <p className="text-sm text-orange-500">PDF, JPEG, PNG, WebP, or HEIC</p>
+          </div>
+        </div>
+      )}
+
       {/* Chat Area */}
       <div className="flex-1 overflow-y-auto p-4 lg:p-8 space-y-6 scroll-smooth">
         {messages.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center max-w-2xl mx-auto space-y-8 py-12">
-            <div className="w-20 h-20 bg-orange-100 dark:bg-orange-900/30 rounded-3xl flex items-center justify-center animate-bounce">
+            <div className="w-20 h-20 bg-gradient-to-br from-orange-100 to-orange-200 dark:from-orange-900/30 dark:to-orange-800/20 rounded-3xl flex items-center justify-center">
               <Bot className="w-10 h-10 text-orange-600 dark:text-orange-400" />
             </div>
             <div className="space-y-4">
@@ -39,7 +88,7 @@ export function ChatView({ isPluginMode: _isPluginMode, chatHook }: ChatViewProp
                 <button
                   key={i}
                   onClick={() => setInput(q)}
-                  className="p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-left hover:border-orange-400 dark:hover:border-orange-600 hover:shadow-md transition-all group"
+                  className="p-4 bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm border border-slate-200/50 dark:border-slate-800/50 rounded-2xl text-left hover:border-orange-400 dark:hover:border-orange-600 hover:shadow-lg transition-all group"
                 >
                   <p className="text-sm font-medium text-slate-700 dark:text-slate-300 group-hover:text-orange-600 dark:group-hover:text-orange-400">{q}</p>
                 </button>
@@ -59,16 +108,16 @@ export function ChatView({ isPluginMode: _isPluginMode, chatHook }: ChatViewProp
                 </motion.div>
               ))}
             </AnimatePresence>
-            {isLoading && (
+            {isLoading && messages[messages.length - 1]?.content === '' && (
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 className="flex gap-4"
               >
-                <div className="w-8 h-8 rounded-lg bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 flex items-center justify-center">
+                <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-orange-100 to-orange-200 dark:from-orange-900/30 dark:to-orange-800/20 text-orange-600 dark:text-orange-400 flex items-center justify-center">
                   <Bot className="w-5 h-5" />
                 </div>
-                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl rounded-tl-none shadow-sm">
+                <div className="bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm border border-slate-200/50 dark:border-slate-800/50 p-4 rounded-2xl rounded-tl-none shadow-sm">
                   <div className="flex gap-1">
                     <span className="w-2 h-2 bg-slate-300 dark:bg-slate-600 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
                     <span className="w-2 h-2 bg-slate-300 dark:bg-slate-600 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
@@ -89,7 +138,10 @@ export function ChatView({ isPluginMode: _isPluginMode, chatHook }: ChatViewProp
         onInputChange={setInput}
         onSend={send}
         activeDocument={activeDocument}
+        onFileSelect={handleFileSelect}
+        onDetachDocument={handleDetach}
+        uploadPhase={fileUpload.uploadPhase}
       />
-    </>
+    </div>
   );
 }

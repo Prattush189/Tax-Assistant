@@ -1,103 +1,154 @@
-import { X, IndianRupee, Info, ExternalLink, Moon, Sun, Trash2 } from 'lucide-react';
+import { X, Plus, Moon, Sun, LogOut, Trash2, MessageSquare } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { ChatItem } from '../../services/api';
+import { useState } from 'react';
 
 interface SidebarProps {
   isOpen: boolean;
   onClose: () => void;
   isDarkMode: boolean;
   onToggleTheme: () => void;
-  onClearChat?: () => void;
+  chatList: ChatItem[];
+  currentChatId: string | null;
+  onNewChat: () => void;
+  onSwitchChat: (chatId: string) => void;
+  onDeleteChat: (chatId: string) => void;
+  user: { id: string; email: string; name: string } | null;
+  onLogout: () => void;
 }
 
-const quickQueries = [
-  "New vs Old Tax Regime FY 2024-25?",
-  "How to save tax under 80C?",
-  "GST rate for software services?",
-  "Calculate tax for 15L income",
-];
+function timeAgo(dateStr: string): string {
+  const now = Date.now();
+  const then = new Date(dateStr).getTime();
+  const diff = now - then;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'Just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(dateStr).toLocaleDateString();
+}
 
-export function Sidebar({ isOpen, onClose, isDarkMode, onToggleTheme, onClearChat }: SidebarProps) {
+function getInitials(name: string): string {
+  return name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+}
+
+export function Sidebar({
+  isOpen, onClose, isDarkMode, onToggleTheme,
+  chatList, currentChatId, onNewChat, onSwitchChat, onDeleteChat,
+  user, onLogout,
+}: SidebarProps) {
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const handleDelete = async (e: React.MouseEvent, chatId: string) => {
+    e.stopPropagation();
+    setDeletingId(chatId);
+    try {
+      await onDeleteChat(chatId);
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   return (
     <aside className={cn(
-      "fixed inset-y-0 left-0 z-50 w-72 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 transform transition-transform duration-300 ease-in-out lg:relative lg:translate-x-0",
+      "fixed inset-y-0 left-0 z-50 w-72 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-r border-slate-200/50 dark:border-slate-800/50 transform transition-transform duration-300 ease-in-out lg:relative lg:translate-x-0 flex flex-col",
       isOpen ? 'translate-x-0' : '-translate-x-full'
     )}>
-      <div className="flex flex-col h-full p-6">
-        <div className="flex items-center gap-3 mb-8">
-          <div className="flex items-center justify-center">
-            <img src="/logoAI.png" alt="Tax Assistant Logo" className="w-8 h-8 object-contain rounded-lg" />
+      {/* Header */}
+      <div className="p-4 border-b border-slate-200/50 dark:border-slate-800/50">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <img src="/logoAI.png" alt="Tax Assistant Logo" className="w-7 h-7 object-contain rounded-lg" />
+            <h1 className="text-lg font-bold tracking-tight text-slate-800 dark:text-slate-100">Tax Assistant</h1>
           </div>
-          <h1 className="text-xl font-bold tracking-tight text-slate-800 dark:text-slate-100">Tax Assistant</h1>
           <button
             onClick={onClose}
-            className="lg:hidden ml-auto p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg"
+            className="lg:hidden p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg"
           >
-            <X className="w-5 h-5" />
+            <X className="w-5 h-5 text-slate-500" />
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto">
-          <div className="mb-6">
-            <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 px-2">Quick Guides</h2>
-            <div className="space-y-1">
-              {quickQueries.map((query, idx) => (
+        {/* New Chat Button */}
+        <button
+          onClick={() => { onNewChat(); onClose(); }}
+          className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white font-medium rounded-xl shadow-lg shadow-orange-200/50 dark:shadow-orange-900/30 transition-all text-sm"
+        >
+          <Plus className="w-4 h-4" />
+          New Chat
+        </button>
+      </div>
+
+      {/* Chat History */}
+      <div className="flex-1 overflow-y-auto p-2">
+        <h2 className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider px-2 py-2">Chat History</h2>
+        {chatList.length === 0 ? (
+          <p className="text-sm text-slate-400 dark:text-slate-500 px-3 py-4 text-center">No chats yet. Start one!</p>
+        ) : (
+          <div className="space-y-0.5">
+            {chatList.map((chat) => (
+              <button
+                key={chat.id}
+                onClick={() => onSwitchChat(chat.id)}
+                className={cn(
+                  "w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-left transition-all group relative",
+                  currentChatId === chat.id
+                    ? "bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-300"
+                    : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                )}
+              >
+                <MessageSquare className={cn(
+                  "w-4 h-4 shrink-0",
+                  currentChatId === chat.id ? "text-orange-500" : "text-slate-400"
+                )} />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate">{chat.title}</p>
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500">{timeAgo(chat.updated_at)}</p>
+                </div>
                 <button
-                  key={idx}
-                  onClick={onClose}
-                  className="w-full text-left px-3 py-2 text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100 rounded-lg transition-colors flex items-center gap-2"
+                  onClick={(e) => handleDelete(e, chat.id)}
+                  disabled={deletingId === chat.id}
+                  className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all shrink-0"
                 >
-                  <Info className="w-4 h-4 text-slate-400" />
-                  {query}
+                  <Trash2 className="w-3.5 h-3.5 text-red-500" />
                 </button>
-              ))}
-            </div>
+              </button>
+            ))}
           </div>
+        )}
+      </div>
 
-          <div className="mb-6">
-            <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 px-2">Resources</h2>
-            <div className="space-y-1">
-              <a
-                href="https://www.incometax.gov.in/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="w-full text-left px-3 py-2 text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg flex items-center gap-2"
-              >
-                <ExternalLink className="w-4 h-4" />
-                Income Tax Portal
-              </a>
-              <a
-                href="https://www.gst.gov.in/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="w-full text-left px-3 py-2 text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg flex items-center gap-2"
-              >
-                <ExternalLink className="w-4 h-4" />
-                GST Portal
-              </a>
+      {/* Footer */}
+      <div className="p-3 border-t border-slate-200/50 dark:border-slate-800/50 space-y-1">
+        <button
+          onClick={onToggleTheme}
+          className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors"
+        >
+          {isDarkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+          {isDarkMode ? 'Light Mode' : 'Dark Mode'}
+        </button>
+
+        {user && (
+          <div className="flex items-center gap-2 px-3 py-2">
+            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-xs font-bold shrink-0">
+              {getInitials(user.name)}
             </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-slate-700 dark:text-slate-200 truncate">{user.name}</p>
+              <p className="text-[11px] text-slate-400 truncate">{user.email}</p>
+            </div>
+            <button
+              onClick={onLogout}
+              className="p-1.5 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-colors"
+              title="Logout"
+            >
+              <LogOut className="w-4 h-4 text-red-500" />
+            </button>
           </div>
-        </div>
-
-        <div className="pt-6 border-t border-slate-100 dark:border-slate-800 space-y-2">
-          <button
-            onClick={onToggleTheme}
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
-          >
-            {isDarkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-            {isDarkMode ? 'Light Mode' : 'Dark Mode'}
-          </button>
-          <button
-            onClick={onClearChat}
-            disabled={!onClearChat}
-            className={cn(
-              "w-full flex items-center gap-2 px-3 py-2 text-sm rounded-lg transition-colors",
-              onClearChat ? "text-red-600 hover:bg-red-900/20" : "text-slate-400 cursor-not-allowed"
-            )}
-          >
-            <Trash2 className="w-4 h-4" />
-            Clear Conversation
-          </button>
-        </div>
+        )}
       </div>
     </aside>
   );
