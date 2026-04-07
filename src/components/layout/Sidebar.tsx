@@ -91,7 +91,7 @@ export function Sidebar({
         </div>
 
         {/* Navigation Tabs */}
-        <div className="flex gap-1 mb-3 bg-slate-100 dark:bg-slate-800/50 p-1 rounded-xl">
+        <div className="grid grid-cols-3 gap-1 mb-3 bg-slate-100 dark:bg-slate-800/50 p-1 rounded-xl" style={{ gridTemplateColumns: `repeat(${user?.role === 'admin' ? 4 : 3}, 1fr)` }}>
           {[...baseNavItems, ...(user?.role === 'admin' ? [adminNavItem] : [])].map((item) => {
             const Icon = item.icon;
             return (
@@ -106,7 +106,7 @@ export function Sidebar({
                 )}
               >
                 <Icon className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">{item.label}</span>
+                <span className="text-[11px] truncate">{item.label}</span>
               </button>
             );
           })}
