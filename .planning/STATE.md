@@ -52,6 +52,7 @@ Phase 11: [ ] Phase 12: [ ] Phase 13: [ ] Phase 14: [ ] Phase 15: [ ]
 | Phase 05-document-handling P03 | 8 | 2 tasks | 2 files |
 | Phase 06-iframe-plugin-mode-hardening P01 | 2 | 2 tasks | 4 files |
 | Phase 06-iframe-plugin-mode-hardening P02 | 8 | 2 tasks | 4 files |
+| Phase 07-rag-infrastructure-fixes P01 | 1 | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -132,6 +133,10 @@ Recent decisions affecting current work:
 - Data: Full CGST Rules 2017 deferred to v2 — ITC reversal rules create retrieval noise without dedicated query routing
 - Data: HSN/SAC rate schedule deferred — too frequently amended, requires dedicated lookup UI
 - Infrastructure: CGST PDF extraction quality is unknown until attempted — section-count validation gate (>150 chunks) is the early-warning check before writing chunker code
+- [Phase 07-01]: Chunk.source changed from 3-value union to string — valid values come from SOURCE_CONFIGS.id
+- [Phase 07-01]: retrieve() signature simplified to (query, topK) — reads from module-level chunkMap, no external callers
+- [Phase 07-01]: comparison.txt boost retained at 1.5x via cfg.boost field in SourceConfig (not hardcoded)
+- [Phase 07-01]: DEFAULT_TOP_K = 5 locked; new source registration requires only SOURCE_CONFIGS array entry
 
 ### Pending Todos
 
@@ -145,5 +150,5 @@ Recent decisions affecting current work:
 ## Session Continuity
 
 Last session: 2026-04-08
-Stopped at: Phase 7 context gathered — all 4 gray areas discussed (chunking, retrieval, source design, backward compat)
-Resume file: .planning/phases/07-rag-infrastructure-fixes/07-CONTEXT.md
+Stopped at: Completed 07-01-PLAN.md — RAG refactored to SOURCE_CONFIGS-driven architecture
+Resume file: .planning/phases/07-rag-infrastructure-fixes/07-01-SUMMARY.md
