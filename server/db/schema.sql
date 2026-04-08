@@ -65,3 +65,17 @@ CREATE TABLE IF NOT EXISTS blocked_ips (
   blocked_until TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
 );
+
+CREATE TABLE IF NOT EXISTS notices (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  notice_type TEXT NOT NULL,
+  sub_type TEXT,
+  title TEXT,
+  input_data TEXT,
+  generated_content TEXT,
+  status TEXT NOT NULL DEFAULT 'draft',
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+);
+CREATE INDEX IF NOT EXISTS idx_notices_user_id ON notices(user_id);

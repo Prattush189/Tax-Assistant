@@ -1,9 +1,9 @@
-import { X, Plus, Moon, Sun, LogOut, Trash2, MessageSquare, MessageCircle, Calculator, LayoutDashboard, Shield, CreditCard } from 'lucide-react';
+import { X, Plus, Moon, Sun, LogOut, Trash2, MessageSquare, MessageCircle, Calculator, LayoutDashboard, Shield, CreditCard, FileText } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { ChatItem } from '../../services/api';
 import { useState } from 'react';
 
-type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan';
+type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices';
 
 interface SidebarProps {
   isOpen: boolean;
@@ -25,6 +25,7 @@ const baseNavItems: { id: ActiveView; label: string; icon: typeof MessageCircle 
   { id: 'chat', label: 'Chat', icon: MessageCircle },
   { id: 'calculator', label: 'Calc', icon: Calculator },
   { id: 'dashboard', label: 'Stats', icon: LayoutDashboard },
+  { id: 'notices', label: 'Notices', icon: FileText },
   { id: 'plan', label: 'Plan', icon: CreditCard },
 ];
 
@@ -109,7 +110,7 @@ export function Sidebar({
                 className={cn(
                   "flex-1 min-w-[50px] flex items-center justify-center gap-1 px-1 py-1.5 text-[11px] font-medium rounded-lg transition-all",
                   activeView === item.id
-                    ? "bg-white dark:bg-slate-700 text-[#B8860B] dark:text-[#D4A020] shadow-sm"
+                    ? "bg-white dark:bg-slate-700 text-[#047857] dark:text-[#059669] shadow-sm"
                     : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
                 )}
               >
@@ -124,7 +125,7 @@ export function Sidebar({
         {activeView === 'chat' && (
           <button
             onClick={() => { onNewChat(); onClose(); }}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-[#D4A020] to-[#B8860B] hover:from-[#B8860B] hover:to-[#9A7209] text-white font-medium rounded-xl shadow-lg shadow-[#D4A020]/20 dark:shadow-[#B8860B]/20 transition-all text-sm"
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-[#059669] to-[#047857] hover:from-[#047857] hover:to-[#065F46] text-white font-medium rounded-xl shadow-lg shadow-[#059669]/20 dark:shadow-[#047857]/20 transition-all text-sm"
           >
             <Plus className="w-4 h-4" />
             New Chat
@@ -148,13 +149,13 @@ export function Sidebar({
                     className={cn(
                       "w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-left transition-all group relative",
                       currentChatId === chat.id
-                        ? "bg-[#D4A020]/10 dark:bg-[#B8860B]/15 text-[#B8860B] dark:text-[#D4A020]"
+                        ? "bg-[#059669]/10 dark:bg-[#047857]/15 text-[#047857] dark:text-[#059669]"
                         : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
                     )}
                   >
                     <MessageSquare className={cn(
                       "w-4 h-4 shrink-0",
-                      currentChatId === chat.id ? "text-[#D4A020]" : "text-slate-400"
+                      currentChatId === chat.id ? "text-[#059669]" : "text-slate-400"
                     )} />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium truncate">{chat.title}</p>
@@ -191,7 +192,7 @@ export function Sidebar({
 
         {user && (
           <div className="flex items-center gap-2 px-3 py-2">
-            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#D4A020] to-[#B8860B] flex items-center justify-center text-white text-xs font-bold shrink-0">
+            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#059669] to-[#047857] flex items-center justify-center text-white text-xs font-bold shrink-0">
               {getInitials(user.name)}
             </div>
             <div className="flex-1 min-w-0">

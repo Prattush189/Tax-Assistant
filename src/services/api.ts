@@ -252,3 +252,110 @@ export async function adminChangePlan(userId: string, plan: 'free' | 'pro' | 'en
     body: JSON.stringify({ plan }),
   });
 }
+
+// ── Notice Drafter API ───────────────────────────────────────────────────
+
+export interface NoticeItem {
+  id: string;
+  notice_type: string;
+  sub_type: string | null;
+  title: string | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NoticeGenerateInput {
+  noticeType: string;
+  subType?: string;
+  senderDetails?: {
+    name?: string;
+    address?: string;
+    pan?: string;
+    gstin?: string;
+  };
+  recipientDetails?: {
+    officer?: string;
+    office?: string;
+    address?: string;
+  };
+  noticeDetails?: {
+    noticeNumber?: string;
+    noticeDate?: string;
+    section?: string;
+    assessmentYear?: string;
+    din?: string;
+  };
+  keyPoints: string;
+  extractedText?: string;
+}
+
+export async function generateNotice(
+  input: NoticeGenerateInput,
+  onChunk: (text: string) => void,
+  onError: (msg: string) => void,
+  onDone?: (noticeId: string | null) => void,
+): Promise<void> {
+  const doFetch = () => fetch('/api/notices/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    body: JSON.stringify(input),
+  });
+
+  let response = await doFetch();
+  if (response.status === 401) {
+    const refreshed = await tryRefreshToken();
+    if (refreshed) response = await doFetch();
+  }
+
+  if (!response.ok || !response.body) {
+    let errorMessage = 'Failed to generate notice draft.';
+    try {
+      const errData = await response.json();
+      if (errData.error) errorMessage = errData.error;
+    } catch { /* ignore */ }
+    onError(errorMessage);
+    return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      try {
+        const parsed = JSON.parse(line.slice(6).trim());
+        if (parsed.done) { onDone?.(parsed.noticeId ?? null); return; }
+        if (parsed.error) { onError(parsed.message ?? 'Generation failed.'); return; }
+        if (parsed.text) onChunk(parsed.text);
+      } catch { /* skip */ }
+    }
+  }
+}
+
+export async function fetchNotices(): Promise<{ notices: NoticeItem[]; usage: { used: number; limit: number } }> {
+  return authFetch('/api/notices');
+}
+
+export async function fetchNotice(id: string) {
+  return authFetch(`/api/notices/${id}`);
+}
+
+export async function updateNotice(id: string, content: string, title?: string) {
+  return authFetch(`/api/notices/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ content, title }),
+  });
+}
+
+export async function deleteNotice(id: string) {
+  return authFetch(`/api/notices/${id}`, { method: 'DELETE' });
+}
