@@ -145,5 +145,5 @@ Recent decisions affecting current work:
 ## Session Continuity
 
 Last session: 2026-04-08
-Stopped at: v1.1 roadmap created — phases 7-10 defined with success criteria and requirement mappings
-Resume file: None — ready to plan Phase 7 via /gsd:plan-phase 7
+Stopped at: Phase 7 context gathered — all 4 gray areas discussed (chunking, retrieval, source design, backward compat)
+Resume file: .planning/phases/07-rag-infrastructure-fixes/07-CONTEXT.md
