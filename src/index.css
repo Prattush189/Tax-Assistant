@@ -21,6 +21,14 @@
     padding: 0;
   }
 
+  /* Global button press feedback */
+  button:active:not(:disabled) {
+    transform: scale(0.98);
+  }
+  button {
+    transition: transform 0.1s ease, background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+
   /* Toast theming for dark mode */
   .dark {
     --toast-bg: #1e293b;

@@ -4,6 +4,7 @@
  */
 
 import { useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import { useTheme } from './hooks/useTheme';
 import { usePluginMode } from './hooks/usePluginMode';
 import { useChatManager } from './hooks/useChatManager';
@@ -66,12 +67,23 @@ function AppContent() {
             user={user}
             onLogout={logout}
           />
-          {activeView === 'chat' && <ChatView isPluginMode={isPluginMode} chatManager={chatManager} />}
-          {activeView === 'calculator' && <CalculatorView />}
-          {activeView === 'dashboard' && <DashboardView />}
-          {activeView === 'admin' && user?.role === 'admin' && <AdminDashboard />}
-          {activeView === 'plan' && <PlanPage />}
-          {activeView === 'notices' && <NoticeDrafterPage />}
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={activeView}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+              className="flex-1 flex flex-col min-h-0"
+            >
+              {activeView === 'chat' && <ChatView isPluginMode={isPluginMode} chatManager={chatManager} />}
+              {activeView === 'calculator' && <CalculatorView />}
+              {activeView === 'dashboard' && <DashboardView />}
+              {activeView === 'admin' && user?.role === 'admin' && <AdminDashboard />}
+              {activeView === 'plan' && <PlanPage />}
+              {activeView === 'notices' && <NoticeDrafterPage />}
+            </motion.div>
+          </AnimatePresence>
         </main>
       </TaxCalculatorProvider>
       {isSidebarOpen && !isPluginMode && (
