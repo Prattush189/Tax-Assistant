@@ -84,15 +84,6 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
 
   const clientIp = req.ip ?? req.socket.remoteAddress ?? 'unknown';
 
-  // Check IP block
-  const blocked = usageRepo.isBlocked(clientIp);
-  if (blocked) {
-    res.status(403).json({
-      error: `This IP is blocked${blocked.blocked_until ? ' until ' + blocked.blocked_until + ' IST' : ''}. ${blocked.reason || ''}`.trim(),
-    });
-    return;
-  }
-
   // Check plan-based message limit
   const user = userRepo.findById(req.user.id);
   const plan = user?.plan ?? 'free';

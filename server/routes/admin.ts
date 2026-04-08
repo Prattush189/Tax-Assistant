@@ -22,9 +22,20 @@ router.get('/stats', (req: AuthRequest, res: Response) => {
   });
 });
 
-// GET /api/admin/users
+// GET /api/admin/users — includes IPs per user
 router.get('/users', (_req: AuthRequest, res: Response) => {
   const users = userRepo.findAll();
+
+  // Get distinct IPs per user from api_usage
+  const ipsByUser = db.prepare(`
+    SELECT user_id, GROUP_CONCAT(DISTINCT ip) AS ips
+    FROM api_usage
+    WHERE user_id IS NOT NULL
+    GROUP BY user_id
+  `).all() as { user_id: string; ips: string }[];
+
+  const ipMap = new Map(ipsByUser.map(r => [r.user_id, r.ips]));
+
   res.json(users.map(u => ({
     id: u.id,
     email: u.email,
@@ -35,36 +46,15 @@ router.get('/users', (_req: AuthRequest, res: Response) => {
     created_at: u.created_at,
     chat_count: u.chat_count,
     message_count: u.message_count,
+    ips: ipMap.get(u.id) || '',
   })));
 });
 
-// GET /api/admin/usage — grouped by IP
+// GET /api/admin/usage — grouped by IP (kept for stats)
 router.get('/usage', (req: AuthRequest, res: Response) => {
   const period = (req.query.period as string) ?? 'month';
   const usage = usageRepo.getByIp(period);
-  const blockedList = usageRepo.allBlocked();
-  const blockedSet = new Set(blockedList.map(b => b.ip));
-
-  res.json(usage.map(u => ({
-    ...u,
-    is_blocked: blockedSet.has(u.ip),
-  })));
-});
-
-// POST /api/admin/ip/:ip/block
-router.post('/ip/:ip/block', (req: AuthRequest, res: Response) => {
-  const { ip } = req.params;
-  const { hours, reason } = req.body;
-  const h = typeof hours === 'number' && hours > 0 ? hours : 24;
-  usageRepo.blockIp(ip, h, reason);
-  res.json({ success: true });
-});
-
-// POST /api/admin/ip/:ip/unblock
-router.post('/ip/:ip/unblock', (req: AuthRequest, res: Response) => {
-  const { ip } = req.params;
-  usageRepo.unblockIp(ip);
-  res.json({ success: true });
+  res.json(usage);
 });
 
 // POST /api/admin/users/:id/plan — change user's plan

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Users, Activity, DollarSign, Globe, Shield, Ban, CheckCircle, RefreshCw, ShieldOff } from 'lucide-react';
-import { adminFetchStats, adminFetchUsers, adminFetchUsage, adminSuspendUser, adminUnsuspendUser, adminBlockIp, adminUnblockIp } from '../../services/api';
+import { Users, Activity, DollarSign, Shield, CheckCircle, RefreshCw, ShieldOff } from 'lucide-react';
+import { adminFetchStats, adminFetchUsers, adminSuspendUser, adminUnsuspendUser, adminChangePlan } from '../../services/api';
 import toast from 'react-hot-toast';
 
 interface Stats {
@@ -20,23 +20,15 @@ interface AdminUser {
   email: string;
   name: string;
   role: string;
+  plan: string;
   suspended_until: string | null;
   created_at: string;
   chat_count: number;
   message_count: number;
+  ips: string;
 }
 
-interface UsageEntry {
-  ip: string;
-  users: string;
-  requests: number;
-  total_input_tokens: number;
-  total_output_tokens: number;
-  total_cost: number;
-  is_blocked: boolean;
-}
-
-const BLOCK_OPTIONS = [
+const SUSPEND_OPTIONS = [
   { label: '1 hour', hours: 1 },
   { label: '6 hours', hours: 6 },
   { label: '24 hours', hours: 24 },
@@ -47,22 +39,18 @@ const BLOCK_OPTIONS = [
 export function AdminDashboard() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
-  const [usage, setUsage] = useState<UsageEntry[]>([]);
   const [period, setPeriod] = useState('month');
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<'users' | 'usage'>('usage');
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [s, u, g] = await Promise.all([
+      const [s, u] = await Promise.all([
         adminFetchStats(period),
         adminFetchUsers(),
-        adminFetchUsage(period),
       ]);
       setStats(s);
       setUsers(u);
-      setUsage(g);
     } catch (err) {
       toast.error('Failed to load admin data');
       console.error(err);
@@ -89,20 +77,12 @@ export function AdminDashboard() {
     } catch { toast.error('Failed to unsuspend'); }
   };
 
-  const handleBlockIp = async (ip: string, hours: number) => {
+  const handlePlanChange = async (userId: string, plan: 'free' | 'pro' | 'enterprise') => {
     try {
-      await adminBlockIp(ip, hours);
-      toast.success(`IP ${ip} blocked`);
+      await adminChangePlan(userId, plan);
+      toast.success(`Plan changed to ${plan}`);
       loadData();
-    } catch { toast.error('Failed to block IP'); }
-  };
-
-  const handleUnblockIp = async (ip: string) => {
-    try {
-      await adminUnblockIp(ip);
-      toast.success(`IP ${ip} unblocked`);
-      loadData();
-    } catch { toast.error('Failed to unblock IP'); }
+    } catch { toast.error('Failed to change plan'); }
   };
 
   return (
@@ -136,157 +116,103 @@ export function AdminDashboard() {
             <StatCard icon={Users} label="Users" value={stats.total_users} />
             <StatCard icon={Activity} label="API Calls" value={stats.total_requests} />
             <StatCard icon={DollarSign} label="Cost" value={`$${stats.total_cost.toFixed(4)}`} />
-            <StatCard icon={Globe} label="Active IPs" value={stats.unique_ips} />
+            <StatCard icon={ShieldOff} label="Chats" value={stats.total_chats} />
           </div>
         )}
 
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
           {stats && (
             <>
-              <MiniStat label="Total Chats" value={stats.total_chats} />
               <MiniStat label="Total Messages" value={stats.total_messages} />
+              <MiniStat label="Active Users" value={stats.unique_users} />
               <MiniStat label="Tokens Used" value={`${((stats.total_input_tokens + stats.total_output_tokens) / 1000).toFixed(1)}K`} />
             </>
           )}
         </div>
 
-        {/* Tab Switcher */}
-        <div className="flex gap-1 bg-slate-100 dark:bg-slate-800/50 p-1 rounded-xl w-fit">
-          <button
-            onClick={() => setTab('usage')}
-            className={`px-4 py-1.5 text-sm font-medium rounded-lg transition-all ${tab === 'usage' ? 'bg-white dark:bg-slate-700 text-[#B8860B] dark:text-[#D4A020] shadow-sm' : 'text-slate-500'}`}
-          >
-            IP Usage ({usage.length})
-          </button>
-          <button
-            onClick={() => setTab('users')}
-            className={`px-4 py-1.5 text-sm font-medium rounded-lg transition-all ${tab === 'users' ? 'bg-white dark:bg-slate-700 text-[#B8860B] dark:text-[#D4A020] shadow-sm' : 'text-slate-500'}`}
-          >
-            Users ({users.length})
-          </button>
-        </div>
-
-        {/* Usage Table (IP-grouped) */}
-        {tab === 'usage' && (
-          <div className="bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm border border-slate-200/50 dark:border-slate-800/50 rounded-2xl overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200 dark:border-slate-700">
-                    <th className="text-left px-4 py-3 font-medium text-slate-500">IP</th>
-                    <th className="text-left px-4 py-3 font-medium text-slate-500">Users</th>
-                    <th className="text-left px-4 py-3 font-medium text-slate-500">Requests</th>
-                    <th className="text-left px-4 py-3 font-medium text-slate-500">Input Tok</th>
-                    <th className="text-left px-4 py-3 font-medium text-slate-500">Output Tok</th>
-                    <th className="text-left px-4 py-3 font-medium text-slate-500">Cost</th>
-                    <th className="text-left px-4 py-3 font-medium text-slate-500">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {usage.map((u, i) => (
-                    <tr key={i} className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                      <td className="px-4 py-3 text-xs font-mono text-slate-500">{u.ip}</td>
-                      <td className="px-4 py-3 text-xs text-slate-600 dark:text-slate-400">{u.users}</td>
-                      <td className="px-4 py-3 text-slate-600 dark:text-slate-400">{u.requests}</td>
-                      <td className="px-4 py-3 text-slate-600 dark:text-slate-400">{u.total_input_tokens.toLocaleString()}</td>
-                      <td className="px-4 py-3 text-slate-600 dark:text-slate-400">{u.total_output_tokens.toLocaleString()}</td>
-                      <td className="px-4 py-3 font-medium text-[#B8860B] dark:text-[#D4A020]">${u.total_cost.toFixed(4)}</td>
-                      <td className="px-4 py-3">
-                        {u.is_blocked ? (
-                          <button
-                            onClick={() => handleUnblockIp(u.ip)}
-                            className="flex items-center gap-1 px-2 py-1 text-xs text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 rounded-lg transition-colors"
-                          >
-                            <CheckCircle className="w-3 h-3" /> Unblock
+        {/* Users Table */}
+        <div className="bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm border border-slate-200/50 dark:border-slate-800/50 rounded-2xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-200/50 dark:border-slate-800/50">
+            <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-300">Users ({users.length})</h2>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 dark:border-slate-700">
+                  <th className="text-left px-4 py-3 font-medium text-slate-500">Name</th>
+                  <th className="text-left px-4 py-3 font-medium text-slate-500">Email</th>
+                  <th className="text-left px-4 py-3 font-medium text-slate-500">Plan</th>
+                  <th className="text-left px-4 py-3 font-medium text-slate-500">Role</th>
+                  <th className="text-left px-4 py-3 font-medium text-slate-500">IPs</th>
+                  <th className="text-left px-4 py-3 font-medium text-slate-500">Chats</th>
+                  <th className="text-left px-4 py-3 font-medium text-slate-500">Msgs</th>
+                  <th className="text-left px-4 py-3 font-medium text-slate-500">Status</th>
+                  <th className="text-left px-4 py-3 font-medium text-slate-500">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map(u => (
+                  <tr key={u.id} className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                    <td className="px-4 py-3 text-slate-800 dark:text-slate-200 font-medium">{u.name}</td>
+                    <td className="px-4 py-3 text-slate-500 dark:text-slate-400 text-xs">{u.email}</td>
+                    <td className="px-4 py-3">
+                      {u.role === 'admin' ? (
+                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-[#D4A020]/20 text-[#B8860B] dark:text-[#D4A020]">
+                          {u.plan}
+                        </span>
+                      ) : (
+                        <select
+                          value={u.plan}
+                          onChange={e => handlePlanChange(u.id, e.target.value as 'free' | 'pro' | 'enterprise')}
+                          className="px-2 py-1 text-xs bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 cursor-pointer"
+                        >
+                          <option value="free">Free</option>
+                          <option value="pro">Pro</option>
+                          <option value="enterprise">Enterprise</option>
+                        </select>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${u.role === 'admin' ? 'bg-[#D4A020]/20 text-[#B8860B] dark:text-[#D4A020]' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'}`}>
+                        {u.role}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-xs font-mono text-slate-400 max-w-[150px] truncate" title={u.ips}>
+                      {u.ips ? u.ips.split(',').length + ' IP' + (u.ips.split(',').length > 1 ? 's' : '') : '—'}
+                    </td>
+                    <td className="px-4 py-3 text-slate-600 dark:text-slate-400">{u.chat_count}</td>
+                    <td className="px-4 py-3 text-slate-600 dark:text-slate-400">{u.message_count}</td>
+                    <td className="px-4 py-3">
+                      {u.suspended_until ? (
+                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400">Suspended</span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400">Active</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {u.role !== 'admin' && (
+                        u.suspended_until ? (
+                          <button onClick={() => handleUnsuspend(u.id)} className="flex items-center gap-1 px-2 py-1 text-xs text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 rounded-lg transition-colors">
+                            <CheckCircle className="w-3 h-3" /> Unsuspend
                           </button>
                         ) : (
                           <select
-                            onChange={e => {
-                              const h = parseInt(e.target.value);
-                              if (h > 0) handleBlockIp(u.ip, h);
-                              e.target.value = '';
-                            }}
+                            onChange={e => { const h = parseInt(e.target.value); if (h > 0) handleSuspend(u.id, h); e.target.value = ''; }}
                             defaultValue=""
                             className="px-2 py-1 text-xs bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg text-red-500 cursor-pointer"
                           >
-                            <option value="" disabled>Block...</option>
-                            {BLOCK_OPTIONS.map(o => (
-                              <option key={o.hours} value={o.hours}>{o.label}</option>
-                            ))}
+                            <option value="" disabled>Suspend...</option>
+                            {SUSPEND_OPTIONS.map(o => <option key={o.hours} value={o.hours}>{o.label}</option>)}
                           </select>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                  {usage.length === 0 && (
-                    <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400">No usage data for this period</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* Users Table */}
-        {tab === 'users' && (
-          <div className="bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm border border-slate-200/50 dark:border-slate-800/50 rounded-2xl overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200 dark:border-slate-700">
-                    <th className="text-left px-4 py-3 font-medium text-slate-500">Name</th>
-                    <th className="text-left px-4 py-3 font-medium text-slate-500">Email</th>
-                    <th className="text-left px-4 py-3 font-medium text-slate-500">Role</th>
-                    <th className="text-left px-4 py-3 font-medium text-slate-500">Chats</th>
-                    <th className="text-left px-4 py-3 font-medium text-slate-500">Msgs</th>
-                    <th className="text-left px-4 py-3 font-medium text-slate-500">Status</th>
-                    <th className="text-left px-4 py-3 font-medium text-slate-500">Actions</th>
+                        )
+                      )}
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {users.map(u => (
-                    <tr key={u.id} className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                      <td className="px-4 py-3 text-slate-800 dark:text-slate-200 font-medium">{u.name}</td>
-                      <td className="px-4 py-3 text-slate-500 dark:text-slate-400 text-xs">{u.email}</td>
-                      <td className="px-4 py-3">
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${u.role === 'admin' ? 'bg-[#D4A020]/20 text-[#B8860B] dark:text-[#D4A020]' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'}`}>
-                          {u.role}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-slate-600 dark:text-slate-400">{u.chat_count}</td>
-                      <td className="px-4 py-3 text-slate-600 dark:text-slate-400">{u.message_count}</td>
-                      <td className="px-4 py-3">
-                        {u.suspended_until ? (
-                          <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400">Suspended</span>
-                        ) : (
-                          <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400">Active</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        {u.role !== 'admin' && (
-                          u.suspended_until ? (
-                            <button onClick={() => handleUnsuspend(u.id)} className="flex items-center gap-1 px-2 py-1 text-xs text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 rounded-lg transition-colors">
-                              <CheckCircle className="w-3 h-3" /> Unsuspend
-                            </button>
-                          ) : (
-                            <select
-                              onChange={e => { const h = parseInt(e.target.value); if (h > 0) handleSuspend(u.id, h); e.target.value = ''; }}
-                              defaultValue=""
-                              className="px-2 py-1 text-xs bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg text-red-500 cursor-pointer"
-                            >
-                              <option value="" disabled>Suspend...</option>
-                              {BLOCK_OPTIONS.map(o => <option key={o.hours} value={o.hours}>{o.label}</option>)}
-                            </select>
-                          )
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                ))}
+              </tbody>
+            </table>
           </div>
-        )}
+        </div>
       </div>
     </div>
   );
