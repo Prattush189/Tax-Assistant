@@ -164,7 +164,11 @@ Plans:
   2. Asking about interstate supply or place of supply returns a response citing IGST Act sections (e.g., Section 10-13)
   3. GST Act chunks appear in retrieval output labeled distinctly from IT Act 1961 and IT Act 2025 chunks
   4. CGST Act loads with more than 150 section-matched chunks (extraction quality gate passes)
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 08-01-PLAN.md — CGST Act + IGST Act text files and SOURCE_CONFIGS registration
+- [ ] 08-02-PLAN.md — Startup chunk count validation and end-to-end GST query testing
 
 ### Phase 9: Reference Data
 **Goal**: Queries about CII values, tax due dates, and ITR form selection return exact structured answers rather than approximate keyword matches from Act text
