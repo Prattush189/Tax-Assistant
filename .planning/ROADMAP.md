@@ -149,7 +149,11 @@ Plans:
   3. SCHEDULE and PART sections produce separate chunks with labels that do not inherit Act section numbers
   4. TypeScript union type for chunk source accepts new values without duplicating retrieval logic
   5. Existing act-1961.txt, act-2025.txt, and comparison.txt files load and produce the same or more chunks than before the fix (no data loss)
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 07-01-PLAN.md — SourceConfig registry, source-agnostic retrieval, stable chunk IDs, topK=5
+- [ ] 07-02-PLAN.md — Chapter header detection and schedule-aware chunking
 
 ### Phase 8: GST Act Data
 **Goal**: Users can ask GST-specific questions and receive answers grounded in actual CGST Act and IGST Act text with proper section references
