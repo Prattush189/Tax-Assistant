@@ -1,20 +1,25 @@
 # Feature Research
 
-**Domain:** Indian Tax Assistant Web App (Chat + Calculator + Document Handling + Visualization + Iframe Plugin)
-**Researched:** 2026-04-04
-**Confidence:** MEDIUM-HIGH (verified against live competitor products; AI-specific document handling flags remain LOW confidence pending Gemini Files API testing)
+**Domain:** Indian Tax Assistant Chatbot — RAG Data Completeness & Quality (v1.1)
+**Researched:** 2026-04-08
+**Confidence:** HIGH (existing codebase read directly; data sources verified via official CBIC/CBDT sources and competitor products)
 
 ---
 
-## Context: Existing vs. New Features
+## Context: What Already Exists (Do Not Regress)
 
-This research focuses exclusively on the **new milestone features**. Existing validated features (chat UI, dark/light mode, basic bar/pie charts, markdown tables, responsive layout, quick shortcuts, basic `?plugin=true` mode) are out of scope.
+This is a subsequent milestone. The following are already shipped and must be preserved:
 
-New feature areas under research:
-1. **Tax Calculators** — Old vs New regime, capital gains, GST
-2. **Document Handling** — Form 16, salary slip parsing, general doc Q&A
-3. **Interactive Tax Dashboard** — Enhanced visualization, deduction/income breakdown
-4. **Iframe Plugin Mode** — Production-grade embedding in Smart Assist
+| Already Built | Status |
+|---|---|
+| IT Act 1961 full text (49K lines, 942 sections) | Stable — `data/act-1961.txt` |
+| IT Act 2025 full text (33K lines, 551 sections) | Stable — `data/act-2025.txt` |
+| Comparison document (1285 lines, 40 sections) | Stable — `data/comparison.txt` |
+| Keyword RAG: inverted index + section scoring | Stable — `server/rag/index.ts` |
+| GST coverage via comparison.txt sections 10, 25 | Partial — rate structure, composition, RCM, e-invoicing, ITC restrictions, key section refs |
+| RAG chunker: section-number regex (`^\d+[A-Z]*`) | Works for numbered sections; fails silently for schedules, chapter headings, tables, reference data |
+
+**Key technical gap in existing chunker:** `splitIntoSections()` uses `/^(\d+[A-Z]*(?:-[A-Z]+)?)\.\s/gm` — any content that doesn't start with a section number (CGST schedules, IT Act schedules, CII table rows, due date tables, ITR matrix) falls through to a single `{ section: 'general', text: entireFile }` blob. This blob is unchunkable and unfindable by keyword scoring. Fixing this is a prerequisite for all new data files to work.
 
 ---
 
@@ -22,131 +27,118 @@ New feature areas under research:
 
 ### Table Stakes (Users Expect These)
 
-Features users assume exist. Missing these = product feels incomplete.
+Features users assume exist. Missing these = product feels incomplete or gives wrong answers.
 
 | Feature | Why Expected | Complexity | Notes |
 |---------|--------------|------------|-------|
-| Old vs New regime comparison side-by-side | Every major Indian tax tool (ClearTax, Groww, IT portal) does this; FY 2025-26 changes make regime choice critical | MEDIUM | Show tax under both regimes simultaneously; auto-recommend the lower-tax regime |
-| Income slabs input: salary, gross income, age category | Standard inputs across all calculators; age determines senior/super-senior citizen thresholds | LOW | Salaried / Business / Senior Citizen tabs; age bracket (below 60, 60-80, 80+) |
-| Standard deduction auto-applied | ₹75,000 (new regime) / ₹50,000 (old regime) for salaried — users expect this to be automatic, not a manual input | LOW | Apply automatically based on regime; surfacing it explicitly helps trust |
-| Major Section 80 deductions in old regime | 80C (₹1.5L), 80D health insurance (₹25K/₹50K), 80CCD(1B) NPS (₹50K), HRA exemption — users planning old regime investments need these | MEDIUM | HRA requires separate sub-calculator (basic, DA, HRA received, rent paid, metro/non-metro) |
-| Final tax payable with cess (4%) | No tax tool omits health and education cess; users expect the real bottom-line number | LOW | Total tax = slab tax + surcharge (if applicable) + 4% cess |
-| Rebate u/s 87A auto-applied | New regime: income ≤ ₹12L → zero tax via 87A. Users will be confused if this is not automatic | LOW | New regime 87A: up to ₹60,000 rebate; effectively zero tax up to ₹12L for FY 2025-26 |
-| Capital gains: LTCG vs STCG with asset type | Users with equity, MF, property, or gold holdings expect a dedicated capital gains calculator; rates differ by asset class | MEDIUM | Equity/MF STCG = 20%, LTCG = 12.5% (exemption ₹1.25L); real estate LTCG = 12.5% without indexation |
-| GST: intra-state (CGST+SGST) vs inter-state (IGST) split | Any business-oriented user will expect this; it is the first thing every GST tool shows | LOW | Simple input: amount + GST rate + transaction type → breakdown |
-| Form 16 PDF upload and parsing | ITR filing apps (ClearTax, TaxBuddy) have popularized this; users expect to upload and get their tax picture auto-populated | HIGH | Form 16 PDFs from TRACES are often password-protected (PAN+DOB format); Part A (TDS summary) + Part B (salary breakdown) must both be parsed |
-| Extracted fields summary display | After document upload, users expect to see what was extracted: salary, TDS, deductions, net taxable income | MEDIUM | Show a structured summary card, not raw extracted text |
-| Chat Q&A on uploaded document | "What is my taxable income from this Form 16?" — document-aware follow-up queries are the main value of multimodal AI | MEDIUM | Requires passing document context through to Gemini; Gemini API supports Files API (50MB limit) |
-| Tax breakdown chart (income → deductions → taxable → tax) | Users expect to see their tax graphically once they run a calculation — already exists as bar/pie, but the flow must be tied to the calculator | LOW | Waterfall chart or stacked bar most natural for income → deductions → taxable income → tax flow |
-| Responsive layout in iframe embed | Smart Assist will render this inside a constrained panel; it must not overflow or break at 320–480px widths | LOW | Already partially handled by existing responsive layout; iframe mode needs tighter testing |
-| postMessage API for iframe height | Parent page cannot know the iframe's content height without explicit communication; scroll bars inside iframes are a bad UX | MEDIUM | Use `window.parent.postMessage({ type: 'resize', height: document.body.scrollHeight }, targetOrigin)` |
-
----
+| GST section-level query coverage (CGST + IGST Act text) | Users ask about ITC eligibility, place of supply, GST registration, refunds, demand/recovery — these require actual section text, not the summary already in comparison.txt. Current RAG returns no context for queries like "what is Section 17(5)" or "place of supply for software services". | HIGH | CGST Act: 21 chapters, ~174 sections, 5 schedules. IGST Act: ~25 sections, place-of-supply rules in Sections 10-13. Official text from cbic-gst.gov.in. GST rate schedules restructured into 7 slabs effective 22 Sep 2025. Finance Act 2025 amendments effective 1 Apr 2025. |
+| CII table for capital gains calculations | Capital gains queries ("what is my indexed acquisition cost?") require CII values for each FY since 2001-02. CBDT notified CII 376 for FY 2025-26. Without this table in RAG, the assistant must hallucinate or guess CII values. | LOW | Static lookup: FY 2001-02 (base year, index 100) through FY 2025-26 (index 376). ~25 rows. CBDT Notification No. 70/2025 dated 01 Jul 2025. Important: indexation removed from 23 Jul 2024 for most assets except land/building acquired before that date — this rule-change context already exists in comparison.txt capital gains section. |
+| Tax compliance due dates calendar | "When is advance tax due?", "TDS deposit deadline?", "ITR filing last date?" are among the most frequent tax queries. Currently the assistant has no structured data for these — it relies on Gemini's training knowledge, which may be stale for FY 2025-26 specific dates. | LOW | Key FY 2025-26 dates: ITR Jul 31 2026 (individuals, non-audit), Sep 30 2026 (audit cases); advance tax Jun 15/Sep 15/Dec 15/Mar 15 (15%/45%/75%/100%); TDS deposit 7th following month (government same day); GSTR-1 11th monthly/13th QRMP; GSTR-3B 20th (large), 22nd/24th (small). Static structured data, fits in 2-3 chunks. |
+| ITR form selection matrix | "Which ITR should I file?" is a top-5 tax query. The decision logic has meaningful complexity (ITR-1 vs ITR-2 vs ITR-3 vs ITR-4 depends on income sources, amount, residential status, company directorship). AY 2026-27 change: LTCG under Section 112A up to ₹1.25L is now ITR-1 eligible. Without a structured matrix in RAG, the assistant gives generic guidance. | LOW | ITR-1: salary ≤50L, LTCG 112A ≤1.25L, one house property. ITR-2: multiple house properties, capital gains (other), foreign income, income >50L, NRI/RNOR, company director. ITR-3: business/profession income (non-presumptive). ITR-4: presumptive scheme (44AD/44ADA/44AE) income ≤50L. ITR-5/6/7: firms/companies/trusts. |
+| Schedule-aware RAG chunking | All new data files (CGST schedules, CII table, due dates, ITR matrix) plus existing IT Act schedules (14-16 of them) currently fall through to a `general` chunk. Unindexable. | MEDIUM | Fix `splitIntoSections()` to detect: `SCHEDULE [IVX]+`, `CHAPTER [IVX]+` headings, `===` delimiters (already handled for comparison.txt), table headers. Assign labels like `Schedule-III-CGST`, `CII-table`, `Due-dates-FY2025-26`, `ITR-selection-matrix`. The fix is surgical — modify the chunker to handle multiple content patterns. |
+| Source-type-aware retrieval scoring | After adding CGST/IGST, CII, due dates, ITR matrix as new sources, the current balanced-retrieval logic (1 chunk from each of 3 sources) will under-serve queries targeting specific new sources. A GST query should weight CGST chunks; a capital gains query should weight CII and comparison chunks. | MEDIUM | Extend `Chunk` type with new source values: `cgst`, `igst`, `cii-table`, `due-dates`, `itr-matrix`. Extend `scoreChunk()` with source-type boosting based on query keyword heuristics. Replace rigid 1-per-source balancing with a smarter selection that fills topK from highest-scoring candidates with a soft diversity nudge. |
 
 ### Differentiators (Competitive Advantage)
 
-Features that set the product apart. Not required, but valuable.
+Features that set this assistant apart. Not required for basic function, but increase answer quality and user trust.
 
 | Feature | Value Proposition | Complexity | Notes |
 |---------|-------------------|------------|-------|
-| Regime recommendation with "switch savings" callout | Not just showing both — explicitly telling the user "switch to new regime and save ₹X" is more actionable than ClearTax's passive display | LOW | Trivially computed from side-by-side calc; high perceived value |
-| Deduction gap analysis (80C, 80D, NPS unused capacity) | Show how much of each deduction limit is used vs available: "You have ₹60K unused 80C capacity — invest in ELSS to save ₹18,600 more tax" | MEDIUM | Only meaningful in old regime; helps users plan before March 31 deadline |
-| Capital gains holding-period optimizer | "If you hold 3 more months, this gain qualifies for LTCG rate (12.5% vs 20% STCG)" — Groww and Fisdom show this but not many pure calculators do | MEDIUM | Requires purchase date + current date + expected sale date logic |
-| Chat-to-calculator pre-fill | User asks "what if my salary is 15 lakhs?" in chat → calculator auto-opens with 15L pre-filled | MEDIUM | Requires postMessage-style internal state bridge between chat and calculator views |
-| GST HSN code lookup via AI | User describes a product in plain English → Gemini suggests HSN code + applicable GST rate | LOW | Already within Gemini's capability; differentiates from plain calculators |
-| Document comparison Q&A (multi-year) | Upload Form 16 from two years: "Did my effective tax rate improve?" — no mainstream tool does cross-year document comparison | HIGH | Requires multi-file context in Gemini; complex UX; defer to v2 |
-| Theme sync with parent via postMessage | Smart Assist parent can send `{ type: 'theme', value: 'dark' }` → iframe switches theme to match parent | LOW | postMessage listener for theme event; already have dark/light toggle; wires up naturally |
-| Surcharge calculation for high incomes | Users earning above ₹50L/₹1Cr/₹2Cr face surcharge; most simple calculators get this right but many miss marginal relief | MEDIUM | Important for high-income users; adds credibility |
-
----
+| Both IT Acts (1961 + 2025) during transition period | No other tool covers both Acts simultaneously with cross-references. Payments before/after 1 Apr 2026 fall under different Acts. This is already built — it is a genuine differentiator vs Kar Saathi (2025 Act only) and ClearTax/TaxBuddy (neither Act text). | LOW (already exists) | Preserve comparison.txt as the cross-reference anchor. CGST/IGST addition extends this multi-layer coverage to GST. |
+| GST place-of-supply answers from actual IGST text | "Is software support to a foreign client zero-rated?" "What is POS for events held in multiple states?" — these require Sections 12/13 IGST Act text with all conditions. Comparison.txt has a one-paragraph summary; the actual act text provides the sub-condition granularity. | MEDIUM | Covered once IGST Act is loaded. Chunker must keep POS sections cohesive (they have condition tables spanning multiple subsections). |
+| CII-informed capital gains with correct Jul 2024 rule | Historical CII values + the rule change (indexation removed from Jul 23 2024 for most assets; land/building can choose 20% with indexation OR 12.5% without) together let the assistant give precise capital gains answers. Comparison.txt already has the rule-change context. Adding CII values completes it. | LOW | CII table is the missing piece. The rule context is already in RAG. Together these enable accurate answers like "you bought in FY 2010-11 (CII 167), selling now (CII 363), indexed cost = purchase × 363/167". |
+| Query-type-aware retrieval boosting | Different query types need different source mixes. GST queries should weight CGST chunks. Capital gains queries should weight CII + comparison chunks. ITR queries should weight itr-matrix chunks. The current flat keyword scoring treats all sources equally, creating retrieval noise. | MEDIUM | Add a `detectQueryDomain()` function that classifies queries as `gst`, `capital-gains`, `itr-selection`, `due-dates`, `income-tax` based on keyword presence. Apply per-domain source-type multipliers to scores. This is an extension of the existing `1.5x comparison boost` pattern. |
 
 ### Anti-Features (Commonly Requested, Often Problematic)
 
 | Feature | Why Requested | Why Problematic | Alternative |
 |---------|---------------|-----------------|-------------|
-| ITR form submission / e-filing integration | Users want end-to-end filing in one place | Requires TRACES/Income Tax portal API access, digital signatures, legal liability; ITR forms change every year requiring constant maintenance; AI tax advice errors become legal exposure | Keep explicitly advisory: "This calculator shows your estimated liability; file via the official portal" with a direct link to incometax.gov.in |
-| Real-time AIS / 26AS data fetch | Users want auto-imported TDS data | Requires taxpayer credentials (PAN + password) for the IT portal; storing or proxying these is a security and legal liability | Accept manual entry or Form 16 upload instead |
-| Multi-file document batch processing | Power users want to upload 10 salary slips at once | Gemini Files API has per-request context limits; batch processing needs queue management, error recovery, storage — backend complexity multiplies significantly for uncertain benefit | Limit to one primary document + optional supplementary document per session |
-| Exact tax opinion / advice ("you must do X") | Users want prescriptive guidance | AI hallucination in tax context = potential financial harm; SEBI/IT dept have no formal chatbot certification framework | Frame all outputs as estimates and suggestions; include "consult a CA for your specific situation" disclaimer on calculators and document analysis |
-| Persistent tax history / year-over-year tracking | Users want to track taxes across years | Requires user authentication, backend storage, GDPR-equivalent data handling — out of scope for v1 with no auth system | Provide export/copy functionality per session; defer accounts to v2 |
-| Live stock price integration for capital gains | Users want to enter ticker symbol → auto-fill purchase/sale price | Requires stock price API subscription (NSE/BSE data not free); adds dependency on external uptime | Ask users to enter amounts manually; this is a one-time calculation |
-| Salary slip OCR for non-digital documents | Users want to photograph a printed slip | Mobile camera OCR for complex layouts is unreliable; Gemini vision works better with clean digital PDFs | Accept only PDF/image uploads of clean digital documents; document clearly that scanned/handwritten docs may have lower accuracy |
+| Full CGST Rules 2017 as RAG data | Complete coverage feels more authoritative | Rules are ~250+ rules, verbose (~200K+ words), frequently amended via CGST Amendment Rules. Loading all rule text would dilute the chunk pool and create retrieval noise — the LLM already has strong knowledge of common rules from training data. | Load Act text (sections only). Add a curated rules-summary for the 5-6 highest-query topics: Rule 36 (ITC reconciliation), Rule 86B (1% cash payment), Rule 42/43 (ITC reversal), e-invoicing thresholds. Add to comparison.txt additions, not as raw rules text. |
+| Finance Act amendment text as standalone RAG files | Keeps content current | Finance Act text is structured as patches ("in section X, substitute Y for Z") — unreadable as standalone context and actively confuses the LLM with partial sentences. | Update comparison.txt when significant amendments occur. This is already the established pattern — comparison.txt was manually crafted to capture the most important changes. |
+| Full HSN-wise GST rate schedule | Users want exact rates by commodity | GST rate schedules restructured into 7 schedules with hundreds of HSN entries — a lookup problem, not a chat problem. Loading the full rate schedule creates enormous chunk volume with poor answer quality. | Cover common categories in comparison.txt (0%, 5%, 12%, 18%, 28% with representative goods/services). Refer users to CBIC GST rate finder for specific HSN queries. |
+| Semantic/vector embedding RAG to replace keyword RAG | Better fuzzy query matching | Requires embedding model infrastructure (API costs, latency increase, dependency on embedding service). The existing keyword RAG with inverted index is fast, free, and works well for a legal domain where users use precise terms. "Section 17(5)" always wins over fuzzy matching in a tax corpus. | Improve keyword scoring heuristics (source-type boosting, query domain detection). Keep semantic search as a v2 option only if keyword RAG demonstrably fails on specific query patterns. |
+| CBDT Circular corpus | Comprehensive coverage | CBDT has hundreds of circulars, many superseded. Loading all of them creates retrieval noise and stale-answer risk. The most critical circular content (CII values, transitional notices) is better embedded as structured reference data. | CII values go in `cii-table.txt`. Transitional Section 536 guidance already in comparison.txt. TDS operational guidance already in comparison.txt Section 3. |
 
 ---
 
 ## Feature Dependencies
 
 ```
-[Express Backend Proxy]
-    └──required-by──> [Document Upload & Analysis]
-                          └──enhances──> [Calculator Pre-fill from Document]
-    └──required-by──> [Gemini Files API (server-side)]
+[Schedule-aware RAG chunker]  ← prerequisite for everything below
+    └──required-by──> [CGST Act text] (5 schedules, chapter headers, rate tables)
+    └──required-by──> [IGST Act text] (chapter headers, POS condition tables)
+    └──required-by──> [CII table] (tabular data, no section numbers)
+    └──required-by──> [Due dates calendar] (structured reference table, no section numbers)
+    └──required-by──> [ITR form matrix] (decision table, no section numbers)
+    └──also-fixes──> [IT Act 1961/2025 schedules] (currently fall to 'general' blob)
 
-[Tax Calculator UI]
-    └──enhances──> [Tax Dashboard Visualization]
-    └──enables──> [Regime Recommendation Callout]
-    └──enables──> [Deduction Gap Analysis]
+[CGST Act full text]
+    └──enables──> [GST section-level queries] (S.9 levy, S.16 ITC, S.17 blocked credits, S.54 refunds)
+    └──enables──> [Composition scheme detail queries] (S.10)
+    └──enables──> [GST TDS/TCS queries] (S.51, S.52)
+    └──depends-on──> [Schedule-aware chunker] (5 schedules would be swallowed by 'general' without it)
 
-[Old vs New Regime Calculator]
-    └──required-by──> [Capital Gains Calculator]
-        (capital gains interact with slab calculation and 87A rebate eligibility)
+[IGST Act full text]
+    └──enables──> [Place of supply queries] (S.10-13: goods, services, online services, import/export)
+    └──enables──> [Interstate vs intrastate classification]
+    └──depends-on──> [Schedule-aware chunker]
 
-[Chat Interface (existing)]
-    └──enhances──> [Document Q&A]
-    └──enables──> [Chat-to-Calculator Pre-fill] (differentiator)
+[CII table data]
+    └──enables──> [Accurate indexed cost calculations]
+    └──complements──> [comparison.txt capital gains section] (rule-change context already present)
+    └──depends-on──> [Schedule-aware chunker] (tabular format)
 
-[Existing ?plugin=true Mode]
-    └──replaced-by──> [Production Iframe Plugin Mode]
-        └──requires──> [postMessage Height Resize]
-        └──requires──> [postMessage Theme Sync]
+[Due dates calendar]
+    └──enables──> [Compliance deadline queries] (advance tax, TDS, ITR, GST returns)
+    └──depends-on──> [Schedule-aware chunker]
+    └──independent-of──> [CII table, ITR matrix, CGST Act]
 
-[Document Upload (Form 16)]
-    └──requires──> [Express Backend]
-        (API key must not be exposed; file upload must not go directly to client-side Gemini call)
+[ITR form selection matrix]
+    └──enables──> [Which ITR to file queries]
+    └──cross-references──> [IT Act 2025 Section 263] (return filing provisions)
+    └──depends-on──> [Schedule-aware chunker]
+    └──independent-of──> [CGST Act, CII table, due dates]
+
+[Source-type-aware retrieval scoring]
+    └──enhances──> [All new data sources] (ensures new chunks compete fairly with existing IT Act chunks)
+    └──depends-on──> [New source types registered in Chunk type]
+    └──not-a-blocker──> system degrades gracefully without it (returns lower-relevance but not wrong context)
 ```
 
 ### Dependency Notes
 
-- **Document upload requires Express backend:** Gemini Files API calls with multipart uploads must be server-side to keep the API key hidden. Client-side upload directly to Gemini exposes the key.
-- **Capital gains requires Old/New regime base calc:** Capital gains are computed separately but feed into total tax liability and 87A rebate eligibility check (LTCG under 112A is excluded from 87A rebate — this edge case breaks simple calculators).
-- **Production iframe mode requires postMessage infrastructure:** The existing `?plugin=true` hides UI chrome but does not communicate height or theme to the parent. Smart Assist embedding needs both.
-- **Tax dashboard is a view layer over calculator outputs:** The dashboard does not need its own data model — it renders calculator results and document-extracted data as charts. Build calculator first.
+- **Schedule-aware chunker is the only hard prerequisite.** Everything else depends on it. Without it, all new data files load as a single `general` chunk with zero retrievability.
+- **CGST and IGST Acts are independent of each other** in loading order, but logically paired — CGST covers intra-state and general provisions; IGST covers inter-state and place-of-supply. Both should ship together.
+- **CII table, due dates, and ITR matrix are fully independent.** They can be added in any order once the chunker handles non-section-numbered content.
+- **Source-type scoring enhances but does not block.** The system works without it — new sources will be indexed and scored by keyword frequency, just without domain-based boosting. Ship after core data files are loaded and tested.
 
 ---
 
 ## MVP Definition
 
-This milestone's MVP (v1.0) — minimum needed to ship the new milestone coherently:
+### Launch With (v1.1 — this milestone)
 
-### Launch With (v1.0)
+All items below are required for the stated milestone goal: "comprehensive RAG data coverage."
 
-- [ ] **Express backend proxying Gemini API** — security prerequisite for everything else; API key cannot remain in client bundle
-- [ ] **Old vs New regime income tax calculator** — core calculator; regime comparison is the single most-requested Indian tax feature
-- [ ] **Section 80C / 80D / HRA deduction inputs (old regime)** — old regime is meaningless without these; new regime needs only income + standard deduction
-- [ ] **Rebate 87A auto-application and cess calculation** — without these, tax figures will be wrong and erode user trust
-- [ ] **Capital gains sub-calculator (equity + real estate)** — high user demand; rates changed in Budget 2024-25 (LTCG 12.5%, STCG 20%) so users are actively recalculating
-- [ ] **GST calculator (basic: amount + rate + type)** — table stakes for business-oriented users; 30 minutes to implement
-- [ ] **Tax breakdown visualization tied to calculator output** — connects existing chart capability to new calculator; waterfall or stacked bar
-- [ ] **Form 16 PDF upload and parsed summary display** — highest perceived value document feature; most users have Form 16 from employer
-- [ ] **Document-aware chat Q&A (document context passed to Gemini)** — the AI differentiator; plain upload without chat is just a PDF viewer
-- [ ] **postMessage height resize for iframe** — without this, Smart Assist embedding will have broken scrolling; must ship with iframe mode
-- [ ] **Production iframe cleanup (hide chrome, lock scroll, theme param)** — the existing plugin mode is prototype-grade; Smart Assist needs production behavior
+- [ ] Schedule-aware RAG chunker — prerequisite; all new files are unreachable without this
+- [ ] CGST Act full text (21 chapters, ~174 sections, 5 schedules) — closes the largest GST query gap
+- [ ] IGST Act full text (~25 sections including POS rules) — closes interstate supply and export/import gaps
+- [ ] CII table FY 2001-02 to FY 2025-26 — low cost, high value, completes capital gains query chain
+- [ ] Due dates calendar FY 2025-26 — highest query frequency category, lowest implementation cost
+- [ ] ITR form selection matrix AY 2026-27 — high query frequency, structured decision logic
+- [ ] Source-type-aware retrieval with new source labels — ensures new data competes fairly; extends existing score-boosting pattern
 
 ### Add After Validation (v1.x)
 
-- [ ] **Regime recommendation callout with exact savings figure** — easy win once base calculator works; add after verifying calculation accuracy
-- [ ] **Deduction gap analysis (unused 80C/80D/NPS capacity)** — valuable but requires base calculator to be stable first
-- [ ] **postMessage theme sync from parent** — low effort but test Smart Assist integration first to confirm it is needed
-- [ ] **Salary slip document upload** — structure is less standardized than Form 16; add after Form 16 parsing pipeline is stable
-- [ ] **Capital gains holding-period optimizer hint** — add to capital gains calculator after base calc ships
+- [ ] CGST Rules curated summary (Rule 36/42/43/86B) — add if retrieval gaps on ITC reversal and cash payment rule questions are observed post-launch
+- [ ] Updated CII table for FY 2026-27 — add once CBDT notifies the value (typically by July of the tax year)
+- [ ] GST rate categories reference (top 20 frequently asked goods/services) — add if users frequently ask HSN-level questions not covered by Act context
 
 ### Future Consideration (v2+)
 
-- [ ] **Chat-to-calculator pre-fill bridge** — requires internal state architecture decision; coordinate with routing/navigation phase
-- [ ] **GST HSN code AI lookup** — differentiator; not blocking any current user flow
-- [ ] **Multi-year document comparison** — high complexity; requires multi-file Gemini context management
-- [ ] **Surcharge marginal relief calculation** — important for >₹50L earners but edge case for MVP audience
-- [ ] **User accounts + tax history persistence** — requires auth system; out of scope for stateless v1
+- [ ] Semantic/vector embedding retrieval — defer; keyword RAG is adequate for precise legal terminology and requires no infrastructure cost
+- [ ] Full HSN-wise GST rate schedule — requires dedicated lookup UI, not chat retrieval
+- [ ] Finance Act amendment corpus — amendment text is not useful as raw RAG context; update comparison.txt manually instead
 
 ---
 
@@ -154,89 +146,56 @@ This milestone's MVP (v1.0) — minimum needed to ship the new milestone coheren
 
 | Feature | User Value | Implementation Cost | Priority |
 |---------|------------|---------------------|----------|
-| Express backend proxy | HIGH (security blocker) | LOW | P1 |
-| Old vs New regime calculator | HIGH | MEDIUM | P1 |
-| 80C / 80D / HRA deduction inputs | HIGH | MEDIUM | P1 |
-| 87A rebate + cess auto-application | HIGH (correctness) | LOW | P1 |
-| Capital gains LTCG/STCG calculator | HIGH | MEDIUM | P1 |
-| Form 16 PDF upload + summary | HIGH | HIGH | P1 |
-| Document-aware chat Q&A | HIGH | MEDIUM | P1 |
-| Tax breakdown chart (calculator-linked) | MEDIUM | LOW | P1 |
-| postMessage height resize | HIGH (embed correctness) | LOW | P1 |
-| Production iframe cleanup | MEDIUM | LOW | P1 |
-| GST calculator (basic) | MEDIUM | LOW | P1 |
-| Regime recommendation callout | MEDIUM | LOW | P2 |
-| Deduction gap analysis | MEDIUM | MEDIUM | P2 |
-| postMessage theme sync | LOW | LOW | P2 |
-| Salary slip upload | MEDIUM | MEDIUM | P2 |
-| Capital gains holding-period hint | LOW | LOW | P2 |
-| Chat-to-calculator pre-fill | MEDIUM | HIGH | P3 |
-| GST HSN code AI lookup | LOW | LOW | P3 |
-| Multi-year document comparison | LOW | HIGH | P3 |
-| Surcharge marginal relief | LOW | MEDIUM | P3 |
+| Schedule-aware RAG chunker | HIGH (prerequisite) | MEDIUM | P1 |
+| CGST Act full text | HIGH | MEDIUM | P1 |
+| IGST Act full text | HIGH | LOW (smaller act) | P1 |
+| Due dates calendar | HIGH | LOW | P1 |
+| CII table | MEDIUM | LOW | P1 |
+| ITR form matrix | HIGH | LOW | P1 |
+| Source-type retrieval scoring | MEDIUM | LOW | P1 |
+| CGST Rules curated summary | MEDIUM | MEDIUM | P2 |
+| GST rate categories reference | MEDIUM | LOW | P2 |
+| Semantic search | HIGH (long-term) | HIGH | P3 |
+| Full HSN rate schedule | MEDIUM | HIGH (lookup infra) | P3 |
 
 **Priority key:**
-- P1: Must have for this milestone
-- P2: Should have, add when P1 is stable
-- P3: Nice to have, future milestone
+- P1: Must have for v1.1 milestone
+- P2: Should have, add after v1.1 ships and retrieval gaps are observed
+- P3: Requires significant new infrastructure, defer to later milestone
 
 ---
 
 ## Competitor Feature Analysis
 
-| Feature | ClearTax | Groww | IT Dept Portal | Our Approach |
-|---------|----------|-------|----------------|--------------|
-| Old vs New comparison | Yes, side-by-side | Yes, tabbed | Yes (basic) | Side-by-side with recommendation callout |
-| Capital gains calculator | Yes, LTCG/STCG with asset types | Yes | No | Yes, asset-type selector with holding period |
-| Form 16 upload | Yes (core product) | No | TRACES upload only | Yes, via Express + Gemini multimodal |
-| Chat/AI Q&A | No (forms-based) | No | Karsati (limited) | Core differentiator — AI-native |
-| GST calculator | Separate section | No | CBIC portal | Integrated as calculator tab |
-| Dashboard visualization | Limited | Portfolio charts | Minimal | Waterfall + stacked bar tied to calculator |
-| Iframe embed | No | No | No | Smart Assist target use case |
-| Deduction optimizer | Yes (guided) | No | No | As differentiator after base calc |
-| Theme sync | N/A | N/A | N/A | postMessage-based for Smart Assist |
-
----
-
-## Indian Tax Domain: User Behavior Expectations
-
-Based on research into how Indian taxpayers interact with tax tools:
-
-**Calculator expectations:**
-- Users want instant results — no "submit" page reload; calculate on input change (or on a single "Calculate" button tap for mobile)
-- Most users know their gross salary but not their exact taxable income; the calculator must do the decomposition
-- March–July is peak usage (advance tax deadlines + ITR filing season); users are in "planning mode" before March and "filing mode" after April
-- New regime defaulted since April 2023 by IT dept; calculators should default to new regime but make switching easy
-
-**Document upload expectations:**
-- Users expect upload → instant extraction → review → refine; they do not want to re-enter data from a document they just uploaded
-- Form 16 password protection is a known friction point; users expect a password prompt if extraction fails, not a generic error
-- Privacy concern is high for salary/tax documents; users want clarity on whether files are stored (they should not be for v1)
-
-**Iframe/embed expectations:**
-- Smart Assist users will not know they are in an iframe; the embedded app must feel native to the parent
-- Theme mismatch (dark parent + light iframe) is visually jarring and the #1 embed UX complaint
-- Scroll behavior: content inside the iframe should not create double scrollbars; height-auto via postMessage is the correct solution
+| Feature | Kar Saathi (CBDT, Apr 2026) | ClearTax / TaxBuddy | Our Approach |
+|---------|------------------------------|---------------------|--------------|
+| IT Act 2025 coverage | Yes (primary focus) | Calculator-based (no act text) | Full text in RAG |
+| IT Act 1961 coverage | No (only 2025) | No | Full text in RAG + comparison doc |
+| GST section-level queries | Basic FAQ | Calculator-based | CGST + IGST Act text via RAG |
+| Capital gains with CII | Basic | Calculator (user inputs CII) | CII table in RAG for conversational answers |
+| Compliance due dates | Static help page | Static calendar page | Embedded in RAG for natural query answers |
+| ITR form selection | FAQ wizard | Guided questionnaire | RAG matrix + AI reasoning |
+| Section citations in answers | No | No | Yes (section numbers cited in responses) |
+| Both Acts during transition | No | No | Core differentiator — comparison.txt + both act texts |
 
 ---
 
 ## Sources
 
-- [ClearTax Income Tax Calculator](https://cleartax.in/paytax/taxcalculator) — feature set reference
-- [Groww Income Tax Calculator](https://groww.in/calculators/income-tax-calculator) — Old vs New regime UI pattern
-- [IT Department Old vs New Regime Tool](https://incometaxindia.gov.in/Pages/tools/old-regime-vis-a-vis-new-regime.aspx) — official baseline
-- [ClearTax LTCG Calculator](https://cleartax.in/s/ltcg-calculator) — capital gains feature reference
-- [ClearTax Income Tax Slabs FY 2025-26](https://cleartax.in/s/income-tax-slabs) — current rate verification
-- [GST Calculator India 2025 — TaxCalculators.in](https://www.taxcalculators.in/calculators/gst-calculator) — GST feature reference
-- [Gemini PDF Analysis — Firebase](https://firebase.google.com/docs/vertex-ai/analyze-documents) — document handling capabilities
-- [Google Gemini PDF Limits — DataStudios](https://www.datastudios.org/post/google-gemini-pdf-reading-file-size-limits-parsing-features-cloud-uploads-and-automation-workflo) — 50MB limit, base64 inflation, Firebase 20MB cap
-- [React iframes Best Practices — LogRocket](https://blog.logrocket.com/best-practices-react-iframes/) — iframe postMessage patterns
-- [postMessage iframe resize — Dev.to](https://dev.to/tvanantwerp/how-to-resize-iframes-with-message-events-2fec) — height resize implementation
-- [AI Tax Chatbot Pitfalls — CNBC](https://www.cnbc.com/2026/03/31/ai-tax-help-pitfalls.html) — anti-features and accuracy risks
-- [TaxBuddy ITR App Features 2025](https://www.taxbuddy.com/blog/itr-filing-mobile-app-india) — Form 16 auto-import baseline
-- [Form 16 Sample PDF — IT Dept](https://eportal.incometax.gov.in/iec/foservices/assets/pdf/1_Form16_Sample.pdf) — Part A/B field structure
+- [Kar Saathi AI chatbot launch — BusinessToday, Apr 2026](https://www.businesstoday.in/personal-finance/tax/story/income-tax-dept-launches-kar-saathi-ai-chatbot-with-new-website-ahead-of-itr-season-523728-2026-04-02)
+- [CBDT CII notification FY 2025-26 (CII = 376) — RSM India](https://www.rsm.global/india/insights/cbdt-notifies-cost-inflation-index-cii-376-fy-2025-26)
+- [CII table — Income Tax India official](https://incometaxindia.gov.in/charts%20%20tables/cost-inflation-index.htm)
+- [Which ITR form to file FY 2025-26 — ClearTax](https://cleartax.in/s/which-itr-to-file)
+- [ITR filing due dates FY 2025-26 — ClearTax](https://cleartax.in/s/due-date-tax-filing)
+- [Tax compliance calendar FY 2025-26 — ClearTax](https://cleartax.in/s/compliance-calendar)
+- [CGST Act full text — CBIC official](https://cbic-gst.gov.in/gst-acts.html)
+- [CGST Act all sections — AUBSP](https://www.aubsp.com/all-sections-cgst-act/)
+- [GST rate restructure Sep 2025 — Lexology](https://www.lexology.com/library/detail.aspx?g=69360233-eb7c-41f8-a2b7-4e3f76480c5c)
+- [RAG chunking for legal documents — Milvus](https://milvus.io/ai-quick-reference/what-are-best-practices-for-chunking-lengthy-legal-documents-for-vectorization)
+- [Best chunking strategies RAG 2025 — Firecrawl](https://www.firecrawl.dev/blog/best-chunking-strategies-rag)
+- [ITR form selection AY 2026-27 — ClearTax](https://cleartax.in/s/itr2)
 
 ---
 
-*Feature research for: Indian Tax Assistant — v1.0 milestone (Express backend, visualizations, calculator, document handling, iframe plugin)*
-*Researched: 2026-04-04*
+*Feature research for: Indian Tax Assistant — v1.1 milestone (RAG Data Completeness & Quality)*
+*Researched: 2026-04-08*

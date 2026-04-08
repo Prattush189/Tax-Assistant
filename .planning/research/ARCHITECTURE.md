@@ -1,8 +1,8 @@
 # Architecture Research
 
-**Domain:** React + Vite SPA with Express backend proxy — Indian tax assistant
-**Researched:** 2026-04-04
-**Confidence:** HIGH (verified against Vite official docs, @google/genai SDK docs, established patterns)
+**Domain:** RAG pipeline for Indian tax legislation — chunking, indexing, retrieval
+**Researched:** 2026-04-08
+**Confidence:** HIGH (derived directly from reading the live codebase — server/rag/index.ts, server/routes/chat.ts, all three data files)
 
 ---
 
@@ -11,435 +11,382 @@
 ### System Overview
 
 ```
-┌───────────────────────────────────────────────────────────────────┐
-│                         BROWSER                                   │
-│                                                                   │
-│  ┌────────────┐  ┌──────────────┐  ┌───────────────────────┐     │
-│  │  ChatView  │  │  Calculator  │  │  Dashboard (Charts)   │     │
-│  └─────┬──────┘  └──────┬───────┘  └──────────┬────────────┘     │
-│        │                │                     │                   │
-│  ┌─────▼────────────────▼─────────────────────▼────────────┐     │
-│  │                    App Shell / Layout                    │     │
-│  │         (tabs/view switching, plugin mode wrapper)       │     │
-│  └──────────────────────────┬───────────────────────────────┘     │
-│                             │                                     │
-│  ┌──────────────────────────▼───────────────────────────────┐     │
-│  │                   API Service Layer                       │     │
-│  │       src/services/api.ts  (fetch → /api/*)               │     │
-│  └──────────────────────────┬───────────────────────────────┘     │
-└─────────────────────────────┼─────────────────────────────────────┘
-                              │ HTTP (proxied in dev, direct in prod)
-┌─────────────────────────────▼─────────────────────────────────────┐
-│                      EXPRESS SERVER (server/)                      │
-│                                                                   │
-│  ┌──────────────┐  ┌─────────────────┐  ┌─────────────────────┐  │
-│  │ POST /api/   │  │  POST /api/     │  │  POST /api/         │  │
-│  │   chat       │  │  upload         │  │  calculate          │  │
-│  └──────┬───────┘  └────────┬────────┘  └──────────┬──────────┘  │
-│         │                   │                      │              │
-│  ┌──────▼───────────────────▼──────────────────────▼──────────┐  │
-│  │                 Gemini Service (server/services/gemini.ts)  │  │
-│  │               GoogleGenAI SDK — API key stays server-side   │  │
-│  └──────────────────────────┬───────────────────────────────────┘  │
-└─────────────────────────────┼─────────────────────────────────────┘
-                              │ HTTPS
-                    ┌─────────▼──────────┐
-                    │   Google Gemini API │
-                    │ (gemini-3.1-pro-   │
-                    │  preview)          │
-                    └────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                         CLIENT (React)                               │
+│  ChatBox → POST /api/chat  (message + optional fileContext)          │
+└────────────────────────────┬────────────────────────────────────────┘
+                             │
+┌────────────────────────────▼────────────────────────────────────────┐
+│                    server/routes/chat.ts                             │
+│  1. Auth + plan-limit check                                          │
+│  2. retrieveContext(userMessage)   <-- RAG call (unchanged entry pt) │
+│  3. Prepend RAG context to userContent                               │
+│  4. Forward to Gemini via SSE stream                                 │
+└──────────┬──────────────────────────────────┬───────────────────────┘
+           │                                  │
+┌──────────▼──────────────┐        ┌──────────▼──────────────────────┐
+│   server/rag/index.ts   │        │         Google Gemini API        │
+│                         │        │  gemini-2.5-flash (primary)      │
+│  initRAG()              │        │  gemini-2.5-flash-lite (fallback)│
+│  |- buildChunks()       │        └─────────────────────────────────-┘
+│  |   |- splitter()      │
+│  |   `- subChunk()      │
+│  |- buildIndex()        │
+│  `- retrieve()          │
+│      `- scoreChunk()    │
+│                         │
+└──────────┬──────────────┘
+           | readFileSync at startup
+┌──────────▼──────────────────────────────────────────────────────────┐
+│                      server/data/  (plain .txt)                      │
+│  act-1961.txt    (2.95 MB, 49 217 lines) -- EXISTING                 │
+│  act-2025.txt    (1.66 MB, 33 186 lines) -- EXISTING                 │
+│  comparison.txt  (75 KB, ====== headers) -- EXISTING                 │
+│  cgst-act.txt    (NEW)                                               │
+│  igst-act.txt    (NEW)                                               │
+│  cii-table.txt   (NEW)                                               │
+│  due-dates.txt   (NEW)                                               │
+│  itr-matrix.txt  (NEW)                                               │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Component Responsibilities
 
-| Component | Responsibility | Location |
-|-----------|---------------|----------|
-| App shell | Plugin mode wrapper, theme, tab routing | `src/App.tsx` (refactored) |
-| ChatView | Message list, input, streaming response render | `src/components/chat/` |
-| ChartRenderer | Recharts wrapper, parses json-chart blocks | `src/components/charts/` |
-| Dashboard | Interactive chart collection, tax breakdown | `src/components/dashboard/` |
-| TaxCalculator | Form inputs, old vs new regime UI | `src/components/calculator/` |
-| DocumentUpload | File picker, upload progress, doc Q&A | `src/components/documents/` |
-| API service | All fetch calls, typed request/response | `src/services/api.ts` |
-| Express server | Route handlers, no business logic | `server/index.ts` |
-| Gemini service | GoogleGenAI SDK calls, stream handling | `server/services/gemini.ts` |
+| Component | Responsibility | Current State |
+|-----------|---------------|---------------|
+| `splitIntoSections()` | Divide Act text into per-section chunks | BUG: regex also matches schedule list items starting with `1.`, `2.` |
+| `splitComparisonSections()` | Divide comparison.txt into topic blocks | Works correctly; splits on `===...===` lines |
+| `subChunk()` | Break oversized sections into 1200-char sliding windows with 200-char overlap | Works correctly |
+| `buildIndex()` | Build inverted token-to-chunk-ID map | Works correctly; all sources share one key space |
+| `scoreChunk()` | Rank a candidate chunk for a query | Works; keyword frequency + section number boost (+50 exact, +15 in-text) + 1.5x comparison multiplier |
+| `retrieve()` | Select top-K chunks with balanced source coverage | BUG: hard-codes three source buckets; fails to accommodate 5+ sources |
+| `retrieveContext()` | Entry point called by chat route | Works; includes broadenSectionNumbers fallback |
+| `initRAG()` | Load all data files and build index at server startup | Works; each file wrapped in try/catch |
 
 ---
 
-## Recommended Project Structure
+## Recommended Project Structure (after milestone)
 
 ```
-tax-assistant/
-├── server/                      # Express backend (NEW)
-│   ├── index.ts                 # App entry: mounts middleware + routes, serves dist/ in prod
-│   ├── routes/
-│   │   ├── chat.ts              # POST /api/chat — proxies to Gemini, streams response
-│   │   ├── upload.ts            # POST /api/upload — multer + Gemini Files API
-│   │   └── calculate.ts         # POST /api/calculate — structured tax calculation
-│   └── services/
-│       └── gemini.ts            # GoogleGenAI SDK instance, shared across routes
-│
-├── src/                         # React frontend (REFACTORED from monolith)
-│   ├── main.tsx                 # Unchanged
-│   ├── index.css                # Unchanged
-│   ├── App.tsx                  # Slimmed to shell: tab state, plugin mode, layout
-│   │
-│   ├── components/
-│   │   ├── chat/
-│   │   │   ├── ChatView.tsx     # Extracted from App.tsx — message list + input
-│   │   │   ├── MessageBubble.tsx
-│   │   │   └── ChatInput.tsx
-│   │   │
-│   │   ├── charts/
-│   │   │   ├── ChartRenderer.tsx  # Extracted from App.tsx — bar + pie
-│   │   │   ├── WaterfallChart.tsx # NEW — for tax slab breakdowns
-│   │   │   ├── LineChart.tsx      # NEW — for year-over-year comparison
-│   │   │   └── ChartDashboard.tsx # NEW — combines charts into interactive view
-│   │   │
-│   │   ├── calculator/
-│   │   │   ├── TaxCalculator.tsx  # NEW — main calculator view
-│   │   │   ├── IncomeInputForm.tsx # NEW — salary, HRA, deductions form
-│   │   │   └── RegimeComparison.tsx # NEW — old vs new regime result display
-│   │   │
-│   │   ├── documents/
-│   │   │   ├── DocumentUpload.tsx  # NEW — drag-drop + file picker
-│   │   │   ├── UploadProgress.tsx  # NEW — upload + processing state
-│   │   │   └── DocQAView.tsx       # NEW — chat interface for uploaded doc
-│   │   │
-│   │   └── layout/
-│   │       ├── Sidebar.tsx      # Extracted from App.tsx
-│   │       ├── Header.tsx       # Extracted from App.tsx
-│   │       └── PluginWrapper.tsx # NEW — handles iframe constraints
-│   │
-│   ├── hooks/
-│   │   ├── useChat.ts           # NEW — message state, send, clear logic from App.tsx
-│   │   ├── useTheme.ts          # NEW — dark mode logic extracted from App.tsx
-│   │   └── usePluginMode.ts     # NEW — URL param detection, postMessage listener
-│   │
-│   ├── services/
-│   │   └── api.ts               # NEW — typed fetch wrapper for all /api/* calls
-│   │
-│   └── types/
-│       └── index.ts             # NEW — Message, ChartData, TaxInput, UploadedFile types
-│
-├── index.html                   # Unchanged
-├── vite.config.ts               # MODIFIED — add server.proxy for dev
-├── tsconfig.json                # MODIFIED — add server/ paths if needed
-└── package.json                 # MODIFIED — add dev scripts, multer
+server/
+|- data/
+|   |- act-1961.txt        # UNCHANGED -- existing fallback
+|   |- act-2025.txt        # UNCHANGED -- existing fallback
+|   |- comparison.txt      # UNCHANGED -- existing fallback
+|   |- cgst-act.txt        # NEW -- CGST Act full text
+|   |- igst-act.txt        # NEW -- IGST Act full text
+|   |- cii-table.txt       # NEW -- Cost Inflation Index table
+|   |- due-dates.txt       # NEW -- compliance due dates calendar
+|   `- itr-matrix.txt      # NEW -- ITR form selection matrix
+|
+`- rag/
+    `- index.ts            # MODIFIED -- see change list below
 ```
 
 ### Structure Rationale
 
-- **`server/`**: Kept flat because there are only three routes. A `routes/` subfolder separates concerns without premature nesting. The `services/gemini.ts` singleton avoids reinitializing the SDK on every request.
-- **`src/components/[feature]/`**: Feature folders rather than type folders (`components/`, `containers/`). Each feature owns its subcomponents. This matches the roadmap's feature-by-feature delivery.
-- **`src/hooks/`**: Business logic extracted from App.tsx goes here, not into components. `useChat.ts` is the most important — it owns the message array, send function, and loading state.
-- **`src/services/api.ts`**: Single place for all fetch calls. Centralizing here means switching from fetch to axios or adding auth headers later is a one-file change.
-- **`src/types/`**: Shared types prevent import cycles between components and hooks.
+- **data/ stays flat**: All sources are plain text. No subdirectory needed. `initRAG()` loads them by name. Flat keeps the per-file try/catch pattern simple to follow.
+- **rag/index.ts stays a single file**: The logic is cohesive. Splitting into chunker.ts / scorer.ts / retriever.ts adds file-switching overhead with no functional benefit at this scale (~340 lines).
+- **New source names follow existing naming convention**: lowercase, hyphen-separated, `.txt` extension.
 
 ---
 
 ## Architectural Patterns
 
-### Pattern 1: Vite Dev Proxy → Express
+### Pattern 1: Source-Typed Chunk with Explicit Source Enum
 
-**What:** Vite's `server.proxy` intercepts `/api/*` requests during development and forwards them to the Express process on a different port. In production, Express serves both the built frontend and the API from the same port.
+**What:** Every `Chunk` carries a `source` discriminant that drives both scoring and balanced retrieval. New sources must be added to this union, or TypeScript will catch the gap.
 
-**When to use:** Always — this is the standard pattern for Vite + Express monorepos.
+**When to use:** Always — the source type is load-bearing for the bucket-selection logic in `retrieve()`.
 
-**Trade-offs:** Zero CORS configuration needed in dev. In production, one process serves everything (simpler deployment but single point of failure for scaling — acceptable for v1).
+**Trade-offs:** Adding a new source requires touching the type definition, the `buildChunks()` call in `initRAG()`, and the bucket caps in `retrieve()`. This is intentional — it keeps retrieval policy explicit and compiler-enforced.
 
-**vite.config.ts change:**
+**Change required:**
 ```typescript
-server: {
-  hmr: process.env.DISABLE_HMR !== 'true',
-  proxy: {
-    '/api': {
-      target: 'http://localhost:4000',
-      changeOrigin: true,
-      // Do NOT rewrite — keep /api prefix so Express routes match
-    },
-  },
-},
+// BEFORE
+source: 'act-2025' | 'act-1961' | 'comparison';
+
+// AFTER
+source: 'act-2025' | 'act-1961' | 'comparison' | 'cgst' | 'igst' | 'reference';
+// 'reference' covers cii-table, due-dates, itr-matrix (lookup data, not legislation)
 ```
 
-**Express production serve pattern (server/index.ts):**
+### Pattern 2: Splitter Strategy per Source Type
+
+**What:** Each source category uses a dedicated splitter. Act files use the section-regex splitter. The comparison file uses the header splitter. New sources need their own splitters because their structure differs fundamentally from numbered sections.
+
+**When to use:** Any time a new file has a structure that cannot be parsed by existing splitters without producing garbage chunks.
+
+**Trade-offs:** More splitter functions means more code, but blindly applying `splitIntoSections()` to a CII table produces chunks labelled "section 9" (matching `9. FY 2001-02 — 100`) that score incorrectly against section-number queries.
+
+**New splitter needed for reference data:**
 ```typescript
-import path from 'path';
-import { fileURLToPath } from 'url';
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-// API routes first
-app.use('/api/chat', chatRouter);
-app.use('/api/upload', uploadRouter);
-app.use('/api/calculate', calculateRouter);
-
-// Serve Vite build in production
-if (process.env.NODE_ENV === 'production') {
-  const distPath = path.join(__dirname, '../dist');
-  app.use(express.static(distPath));
-  app.get('*', (_req, res) => {
-    res.sendFile(path.join(distPath, 'index.html'));
-  });
+function splitReferenceData(text: string): { section: string; text: string }[] {
+  // Convention: reference files authored with --- between named blocks
+  // or with ## Block Title headers.
+  // Each logical unit (e.g. one year range of CII entries, one ITR form row)
+  // becomes one chunk. These are short by nature -- subChunk() rarely fires.
+  const parts = text.split(/^---$/gm);
+  return parts
+    .map(p => p.trim())
+    .filter(p => p.length > 20)
+    .map(p => {
+      const firstLine = p.split('\n')[0].trim();
+      return { section: firstLine.slice(0, 60), text: p };
+    });
 }
 ```
 
-**package.json dev scripts:**
-```json
-"dev:client": "vite --port=3000 --host=0.0.0.0",
-"dev:server": "tsx watch server/index.ts",
-"dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
-"build": "vite build",
-"start": "NODE_ENV=production node --import tsx/esm server/index.ts"
+**GST Act splitter -- reuse `splitIntoSections()` but verify format first:**
+CGST/IGST Acts use numbered sections (`9. Levy and collection of tax.`) matching the existing regex. Confirm the source file format matches before assuming. The schedule-stripping fix (Pattern 4) applies equally to GST Acts.
+
+### Pattern 3: Map-Based Retrieval Buckets with Per-Source Caps
+
+**What:** `retrieve()` currently fills results from three hard-coded source buckets. With 6 source types, this must become data-driven. Each source gets a configurable slot cap before remaining capacity is filled by highest-scoring uncapped results.
+
+**When to use:** Required before adding any new source type beyond the existing three.
+
+**Trade-offs:** Hard caps per source prevent any single large file (act-1961.txt at 2.95 MB generates many candidates) from dominating results. The caps are intentionally conservative for legislation files and more generous for reference data, which is dense and short.
+
+**Change required:**
+```typescript
+// BEFORE: hard-coded three buckets
+const fromComparison: typeof scored = [];
+const from2025: typeof scored = [];
+const from1961: typeof scored = [];
+
+// AFTER: map-based, one bucket per source
+const BUCKET_CAPS: Record<Chunk['source'], number> = {
+  comparison: 1,
+  'act-2025': 2,
+  'act-1961': 1,
+  cgst:       2,
+  igst:       1,
+  reference:  2,
+};
+
+const buckets = new Map<Chunk['source'], typeof scored>(
+  Object.keys(BUCKET_CAPS).map(k => [k as Chunk['source'], []])
+);
+
+for (const s of scored) {
+  const bucket = buckets.get(s.chunk.source)!;
+  const cap = BUCKET_CAPS[s.chunk.source];
+  if (bucket.length < cap) bucket.push(s);
+}
+
+const filled = [...buckets.values()].flat();
+const used = new Set(filled.map(s => s.chunk.id));
+const remaining = scored.filter(s => !used.has(s.chunk.id));
+
+const combined = [...filled, ...remaining]
+  .sort((a, b) => b.score - a.score)
+  .slice(0, topK);
 ```
 
-### Pattern 2: Gemini Proxy Route — Text Chat
+Also increase default topK from 3 to 5 in the `retrieveContext()` call signature. Cross-domain queries (e.g. "GST and TDS treatment of X") need chunks from more than 3 sources.
 
-**What:** Express receives the conversation history and new message from the client. It reconstructs the chat session with the system instruction server-side (which the client no longer needs to send) and streams the response back.
+### Pattern 4: SCHEDULE Boundary Stripping in Section Splitter
 
-**When to use:** For all text chat — this is the security-critical change.
+**What:** The current regex `/^(\d+[A-Z]*(?:-[A-Z]+)?)\.\s/gm` matches both Act sections and schedule list items. After the last numbered section (e.g. Section 536 in act-2025.txt), the Act text contains SCHEDULE blocks with items numbered `1. (1) The eligible...`, `2. ...`. These are incorrectly split into hundreds of false-positive "section" chunks.
 
-**Trade-offs:** Adds one network hop (client → Express → Gemini vs client → Gemini). The latency is negligible for streaming responses. The benefit is the API key never reaches the client bundle.
+**When to use:** This is a bug fix that applies to all Act-format source files (act-1961.txt, act-2025.txt, cgst-act.txt, igst-act.txt).
 
-**Key change:** Remove `const ai = new GoogleGenAI(...)` from `src/App.tsx`. The `GEMINI_API_KEY` Vite define in `vite.config.ts` is removed entirely. The key lives only in `.env` on the server.
+**Verification:** In act-2025.txt, `SCHEDULE I` appears at line 27778 with list items starting `1. (1) The eligible investment fund...`. The regex currently matches these as section 1 chunks.
 
-**server/routes/chat.ts sketch:**
+**Fix:**
 ```typescript
-import { Router } from 'express';
-import { geminiClient } from '../services/gemini.js';
+function splitIntoSections(text: string): { section: string; text: string }[] {
+  // Strip schedule content: find first SCHEDULE heading and discard everything after.
+  // Schedules use numbered items (1., 2.) identical in format to section starts,
+  // but they are not sections.
+  const scheduleStart = text.search(/^SCHEDULE\s+[IVXLC0-9]/m);
+  const bodyText = scheduleStart > 0 ? text.slice(0, scheduleStart) : text;
 
-const router = Router();
-
-router.post('/', async (req, res) => {
-  const { history, message } = req.body;
-
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-
-  const chat = geminiClient.chats.create({
-    model: 'gemini-3.1-pro-preview',
-    config: { systemInstruction: SYSTEM_INSTRUCTION },
-    history,
-  });
-
-  const stream = await chat.sendMessageStream({ message });
-  for await (const chunk of stream) {
-    res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`);
-  }
-  res.write('data: [DONE]\n\n');
-  res.end();
-});
-```
-
-**src/services/api.ts sketch:**
-```typescript
-export async function sendChatMessage(
-  history: Message[],
-  message: string,
-  onChunk: (text: string) => void
-): Promise<void> {
-  const response = await fetch('/api/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ history, message }),
-  });
-  // Read SSE stream from response
-  const reader = response.body!.getReader();
-  // ... parse chunks, call onChunk
+  const sectionRegex = /^(\d+[A-Z]*(?:-[A-Z]+)?)\.\s/gm;
+  const matches = [...bodyText.matchAll(sectionRegex)];
+  // ... rest of function unchanged, using bodyText instead of text
 }
 ```
 
-### Pattern 3: Document Upload via Multer → Gemini Files API
+### Pattern 5: Preamble and CHAPTER Block Preservation
 
-**What:** Client POSTs a `multipart/form-data` request to `/api/upload`. Express uses multer with `memoryStorage` to receive the file as a `Buffer`. The buffer is converted to a `Blob` (Node.js 18+ global) and passed to the Gemini `files.upload()` method. The returned file URI is stored in component state and sent with subsequent chat messages.
+**What:** Content before the first numbered section (preamble text: "Be it enacted...", long title, "CHAPTER I — PRELIMINARY" heading) is currently either dropped or merged into section 1's chunk. CHAPTER headings between sections are also dropped. This makes queries like "what chapter covers capital gains" or "what is the preliminary provision" return nothing.
 
-**When to use:** For Form 16 PDFs, salary slips, and general document Q&A.
+**When to use:** Required for completeness. Adds a small number of stub chunks (one per chapter transition block). These are short and naturally stay under the 1200-char limit.
 
-**Trade-offs:** `memoryStorage` keeps the file in RAM temporarily — acceptable for documents under 10MB (Form 16, salary slips). For large files (future: ITR XMLs), switch to `diskStorage` and pass the file path to `files.upload()` directly. Files uploaded to Gemini expire after 48 hours — no permanent storage is needed for v1.
-
-**server/routes/upload.ts sketch:**
+**Fix:**
 ```typescript
-import multer from 'multer';
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+// Capture preamble (everything before first section)
+const firstSectionStart = matches[0]?.index ?? bodyText.length;
+const preamble = bodyText.slice(0, firstSectionStart).trim();
+if (preamble.length > 50) {
+  sections.push({ section: 'preamble', text: preamble });
+}
 
-router.post('/', upload.single('document'), async (req, res) => {
-  const { buffer, mimetype, originalname } = req.file!;
-  const blob = new Blob([buffer], { type: mimetype });
-
-  const uploaded = await geminiClient.files.upload({
-    file: blob,
-    config: { displayName: originalname, mimeType: mimetype },
-  });
-
-  res.json({ fileUri: uploaded.uri, displayName: originalname });
-});
-```
-
-**Client data flow:**
-```
-DocumentUpload component
-  → POST /api/upload (multipart)
-  → receives { fileUri, displayName }
-  → stores in useChat hook state as attachedDocument
-  → ChatInput shows "1 document attached" badge
-  → on send: message payload includes fileUri
-  → server includes file reference in Gemini parts array
-```
-
-### Pattern 4: Plugin Mode (iframe Embed)
-
-**What:** The app detects `?plugin=true` in the URL (already implemented). For production iframe mode, the parent Smart Assist page communicates via `window.postMessage` for theme sync and resize events. The app posts back its height when content changes.
-
-**When to use:** When embedded as an iframe in Smart Assist.
-
-**Trade-offs:** postMessage requires strict origin validation to prevent spoofing. The existing `isPluginMode` detection via URL param is correct — keep it. The sidebar is already hidden in plugin mode.
-
-**Changes needed for production plugin mode:**
-1. Extract plugin layout logic into `PluginWrapper.tsx`
-2. Add postMessage listener in `usePluginMode.ts` with origin allowlist
-3. Post height updates to parent when message list grows
-
-```typescript
-// src/hooks/usePluginMode.ts
-const ALLOWED_ORIGINS = ['https://smart-assist.example.com']; // configure via env
-
-useEffect(() => {
-  if (!isPluginMode) return;
-  const handler = (event: MessageEvent) => {
-    if (!ALLOWED_ORIGINS.includes(event.origin)) return;
-    if (event.data?.type === 'SET_THEME') {
-      setIsDarkMode(event.data.dark);
-    }
-  };
-  window.addEventListener('message', handler);
-  return () => window.removeEventListener('message', handler);
-}, [isPluginMode]);
+// During section loop: detect CHAPTER lines within section text
+// and optionally emit them as stub chunks or prepend to following section.
+// Simplest approach: CHAPTER headers naturally appear at the start of the
+// section that follows them -- the subChunk text will contain the chapter heading.
+// No additional action needed unless a CHAPTER header appears between two sections
+// with no text in between (rare).
 ```
 
 ---
 
 ## Data Flow
 
-### Chat Message Flow (NEW — via backend proxy)
+### Startup Flow (one-time, synchronous at process start)
 
 ```
-User types message
-    ↓
-ChatInput.tsx — onSend(text)
-    ↓
-useChat.ts — appendUserMessage(), call api.sendChatMessage()
-    ↓
-src/services/api.ts — POST /api/chat (JSON: { history, message })
-    ↓ (Vite proxy in dev → direct in prod)
-server/routes/chat.ts — reconstruct chat, call gemini.chats.create()
-    ↓
-Gemini API — streaming response
-    ↓
-SSE chunks → api.ts onChunk callback
-    ↓
-useChat.ts — appendToLastModelMessage(chunk)
-    ↓
-ChatView.tsx — re-renders with partial text
-    ↓
-renderContent() — splits json-chart blocks → ChartRenderer or Markdown
+server/index.ts: initRAG()
+    |
+    For each source file (try/catch per file):
+        readFileSync(filePath, 'utf-8')
+            |
+        splitter(text)  ->  [{ section, text }, ...]
+            |               splitIntoSections()         for Act files
+            |               splitComparisonSections()   for comparison.txt
+            |               splitReferenceData()        for reference files (NEW)
+            |
+        subChunk()      ->  [{ section, text }, ...]  (split large sections)
+            |
+        push to allChunks[] with { id, source, section, text, lowerText }
+            |
+    buildIndex(allChunks)
+        -> invertedIndex: Map<token, Set<chunkId>>
 ```
 
-### Document Upload Flow (NEW)
+### Per-Request RAG Flow (unchanged entry point, improved internals)
 
 ```
-DocumentUpload.tsx — user selects file
-    ↓
-api.ts — POST /api/upload (multipart/form-data)
-    ↓
-server/routes/upload.ts — multer receives buffer
-    ↓
-new Blob([buffer]) → geminiClient.files.upload()
-    ↓
-Gemini Files API — returns { uri, name }
-    ↓
-api.ts — returns { fileUri, displayName }
-    ↓
-useChat.ts — setAttachedDocument({ fileUri, displayName })
-    ↓
-ChatInput.tsx — shows document badge, enables send
-    ↓
-On send: POST /api/chat with { history, message, fileUri }
-    ↓
-server/routes/chat.ts — adds filePart to Gemini message parts
+POST /api/chat { message }
+    |
+retrieveContext(message, topK=5)
+    |
+tokenize(message)           -> string[]  (lowercase, stopwords removed, len>2)
+broadenSectionNumbers()     -> broader section variants for fallback
+    |
+invertedIndex.get(token)    -> Set<candidateChunkId>  for each token
+    |
+scoreChunk() for each candidate
+    -> keyword frequency
+    -> section number exact/in-text boost
+    -> comparison source 1.5x multiplier
+    |
+fill per-source buckets up to BUCKET_CAPS
+    |
+merge buckets, fill remaining slots from highest-scoring overflow
+    |
+sort by score, slice to topK (5)
+    |
+format: "[Source Label -- Section]\ntext\n\n---\n\n..."
+    |
+prepend to userContent in chat route
+    |
+Gemini receives: [RAG context block] + [user message]
 ```
 
-### Tax Calculator Flow (NEW — client-side only for v1)
+### Key Data Flows
 
-```
-TaxCalculator.tsx — user fills IncomeInputForm
-    ↓
-RegimeComparison.tsx — client-side calculation (no API needed for basic math)
-    ↓
-ChartDashboard.tsx — renders breakdown as waterfall/bar/pie
-    ↓
-Optional: "Explain this" button → useChat.ts.sendWithContext(calculationResult)
-    ↓
-Sends pre-formatted prompt to /api/chat for AI commentary
-```
+1. **New file addition:** Add file to `server/data/`, add its source literal to `Chunk['source']` union, add a `buildChunks()` call in `initRAG()`, add its bucket cap in `BUCKET_CAPS`. Four touch points, all in `rag/index.ts` plus the data directory.
 
-Note: Basic tax calculation (slabs, cess, 80C deductions) is deterministic math. Do it client-side. Reserve the `/api/calculate` endpoint for complex edge cases (surcharge, AMT, partnership firms) that benefit from AI explanation.
+2. **Reference data queries (CII, due dates, ITR matrix):** These files produce short, dense chunks that score well on exact-match lookups (e.g. "CII 2023-24", "ITR-2 NRI"). They use the `reference` source type. The comparison 1.5x multiplier does not apply -- these are factual tables, not cross-reference prose. Their BUCKET_CAPS value of 2 gives them priority over any single Act file at 1.
 
-### State Management
-
-No global state manager is needed. The three independent feature areas each own their state:
-
-```
-useChat.ts          → messages[], isLoading, attachedDocument, send(), clear()
-TaxCalculator.tsx   → incomeData, calculationResult (local useState)
-useTheme.ts         → isDarkMode (localStorage persistence, extracted from App.tsx)
-usePluginMode.ts    → isPluginMode, postMessage bridge
-```
-
-Props flow down from App.tsx shell only for theme (dark mode class on root element). Feature components are self-contained.
+3. **GST Act queries:** CGST and IGST produce chunks via the same `splitIntoSections()` path as IT Acts (after schedule-stripping fix). They get separate source types (`cgst`, `igst`) so their bucket caps are tunable independently of the IT Acts.
 
 ---
 
-## Build and Deploy Story
+## Integration Points: New vs Modified
 
-### Development (two processes, one origin)
+### NEW -- data files (no code change needed for the files themselves)
 
-```
-npm run dev
-  ├── tsx watch server/index.ts    → Express on :4000
-  └── vite --port=3000             → Vite dev server on :3000
-                                      (proxies /api/* → :4000)
-```
+| File | Format | Splitter | Source Type |
+|------|--------|----------|-------------|
+| `cgst-act.txt` | Numbered sections (`9. Levy...`) | `splitIntoSections()` with schedule fix | `cgst` |
+| `igst-act.txt` | Numbered sections | `splitIntoSections()` with schedule fix | `igst` |
+| `cii-table.txt` | Year-value blocks separated by `---` | `splitReferenceData()` NEW | `reference` |
+| `due-dates.txt` | Calendar blocks separated by `---` | `splitReferenceData()` NEW | `reference` |
+| `itr-matrix.txt` | Form-criteria rows separated by `---` | `splitReferenceData()` NEW | `reference` |
 
-Browser opens `http://localhost:3000`. All `/api/*` requests are proxied by Vite. Hot module reload works for React. Express restarts via `tsx watch` on server file changes.
+### MODIFIED -- `server/rag/index.ts`
 
-### Production (single process)
+| Change | Why | Risk |
+|--------|-----|------|
+| Extend `Chunk['source']` union | Required for new source types | Low -- TypeScript catches missing cases at compile time |
+| Add SCHEDULE-boundary stripping to `splitIntoSections()` | Fix false-positive section chunks from schedule list items | Medium -- test against existing files; expect chunk count to decrease |
+| Add preamble capture before first section | Preserve currently-dropped pre-section content | Low -- adds chunks, removes nothing |
+| Add `splitReferenceData()` function | Handle tabular/calendar reference files | Low -- new function, no existing code changed |
+| Replace hard-coded three-bucket logic with `BUCKET_CAPS` map | Support 5+ sources without hard-coded slots | Medium -- core retrieval path; regression-test required |
+| Add `SOURCE_LABELS` lookup table in `retrieveContext()` | Extend label formatting without cascading else-if | Low -- format change only |
+| Increase default topK from 3 to 5 | Cross-domain queries need more chunks | Low -- only affects context length; monitor token usage |
+| Add new `buildChunks()` calls in `initRAG()` for 5 files | Load new files | Low -- each wrapped in try/catch; non-fatal if file missing |
 
-```
-npm run build          → vite build → dist/
-NODE_ENV=production npm start
-  └── Express on :PORT
-        ├── /api/*    → route handlers
-        └── /*        → serve dist/ (Vite build output)
-```
+### NOT MODIFIED
 
-One process, one port. Express serves the built React app as static files and handles all API calls. The Gemini API key is read from environment variables at startup — never in the build output.
+| Component | Reason untouched |
+|-----------|-----------------|
+| `server/routes/chat.ts` | The `retrieveContext()` call site is already correct. Label formatting moves inside `retrieveContext()` using `SOURCE_LABELS`. No change to chat route needed. |
+| `server/index.ts` | `initRAG()` is already called at startup. No change needed. |
+| `server/data/act-1961.txt` | Preserved per milestone requirement |
+| `server/data/act-2025.txt` | Preserved per milestone requirement |
+| `server/data/comparison.txt` | Preserved per milestone requirement |
+| Gemini system prompt | Already instructs the model to use reference context without mentioning it; "If the reference is not relevant, IGNORE it" handles reference data gracefully |
 
-### Environment Variables
+---
 
-```
-# .env (server only, never in client bundle)
-GEMINI_API_KEY=...
-PORT=4000
-NODE_ENV=development
-ALLOWED_PLUGIN_ORIGINS=https://smart-assist.example.com
-```
+## Build Order
 
-Remove from `vite.config.ts`:
-```typescript
-// DELETE THIS — key must not reach client
-define: {
-  'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-},
-```
+Dependencies between work items determine sequence. Items with no dependencies can be built in parallel.
+
+### Step 1 -- Fix the chunker (prerequisite for everything else)
+
+Fix `splitIntoSections()` before adding any new files. The schedule-stripping bug affects act-1961.txt and act-2025.txt right now. Adding more files while the chunker is broken compounds the problem.
+
+1. Add SCHEDULE-boundary stripping to `splitIntoSections()`
+2. Add preamble + CHAPTER block capture
+3. Run `initRAG()` and inspect console output -- chunk count for act-2025 and act-1961 should decrease as false schedule-section chunks are eliminated
+4. Run sample queries against existing three files to confirm no retrieval regression
+
+Deliverable: Correct chunks from existing three files. No new files yet.
+
+### Step 2 -- Extend retrieval for multiple sources (prerequisite for Step 3 and Step 4)
+
+The hard-coded three-bucket logic must be replaced before adding new source types.
+
+1. Extend `Chunk['source']` union with `'cgst' | 'igst' | 'reference'`
+2. Replace `fromComparison / from2025 / from1961` buckets with `BUCKET_CAPS` map logic
+3. Increase default topK from 3 to 5 in `retrieveContext()`
+4. Add `SOURCE_LABELS` lookup table in `retrieveContext()` to replace inline label formatting
+5. Verify with mock chunk objects covering all 6 source types
+
+Deliverable: Retrieval infrastructure ready for 6 source types.
+
+### Step 3 -- Add GST Act files (can run in parallel with Step 4 after Step 2 is done)
+
+1. Obtain and clean CGST Act plain text -> `cgst-act.txt`
+2. Obtain and clean IGST Act plain text -> `igst-act.txt`
+3. Add `buildChunks(join(dataDir, 'cgst-act.txt'), 'cgst')` call in `initRAG()`
+4. Add `buildChunks(join(dataDir, 'igst-act.txt'), 'igst')` call in `initRAG()`
+5. Spot-check chunk splits (verify section 9 CGST chunks correctly, verify no schedule bleed)
+6. Test GST queries end-to-end ("GST rate on software services", "Section 9 CGST levy", "ITC reversal IGST")
+
+### Step 4 -- Add reference data files (can run in parallel with Step 3 after Step 2 is done)
+
+1. Write `splitReferenceData()` -- the delimiter convention (`---` between blocks) must be decided here, before authoring the files
+2. Create `cii-table.txt` in the agreed delimiter format
+3. Create `due-dates.txt` in the agreed delimiter format
+4. Create `itr-matrix.txt` in the agreed delimiter format
+5. Add three `buildChunks()` calls in `initRAG()` with `source: 'reference'`
+6. Test lookup queries ("CII for FY 2023-24", "due date for advance tax Q3", "which ITR form for salaried NRI")
+
+### Step 5 -- Integration and quality validation
+
+1. Full server startup with all 8 files; confirm all load without errors
+2. Cross-domain query test ("GST and TDS on professional services", "CII-adjusted capital gains for FY 2025-26")
+3. Confirm topK=5 context does not meaningfully inflate token costs -- check `inputTok` in usageRepo
+4. Confirm comparison.txt 1.5x multiplier still surfaces comparison chunks where appropriate
+5. Confirm no existing query patterns regressed from the schedule-stripping change
 
 ---
 
@@ -447,119 +394,73 @@ define: {
 
 | Scale | Architecture Adjustments |
 |-------|--------------------------|
-| 0-1k users | Current monolith is fine. Single Express process. |
-| 1k-10k users | Add response caching for repeated tax calculations. Stream SSE correctly (backpressure). |
-| 10k+ users | Extract Express to separate container. Gemini API rate limits become the bottleneck — add queue/retry layer. |
+| Current (8 files, ~5 MB total, in-process) | Synchronous readFileSync at startup is fine. Index fits comfortably in memory (~30-50 MB for inverted index). No change needed. |
+| 20+ files or 50+ MB total data | Evaluate lazy loading by source category. At that volume, consider a proper vector store (Qdrant, Weaviate) with embedding-based retrieval replacing the keyword index. |
+| 100k+ daily queries | The in-process index is a read-only shared data structure -- scales horizontally with Node.js cluster or multiple server instances without change. The bottleneck becomes Gemini API quota, not RAG. |
 
 ### Scaling Priorities
 
-1. **First bottleneck:** Gemini API rate limits (60 QPM on free tier). Add exponential retry in `server/services/gemini.ts` before worrying about horizontal scaling.
-2. **Second bottleneck:** Uploaded file storage — Gemini Files API files expire in 48 hours. If users expect persistence, add a database for file URI mapping. Defer to v2.
-
----
-
-## Integration Points — New vs Modified
-
-### New Components (net-new files)
-
-| Component | Type | Depends On |
-|-----------|------|-----------|
-| `server/index.ts` | New file | Express, existing package.json dep |
-| `server/routes/chat.ts` | New file | Gemini service |
-| `server/routes/upload.ts` | New file | multer (new dep), Gemini service |
-| `server/services/gemini.ts` | New file | @google/genai (existing dep) |
-| `src/services/api.ts` | New file | Native fetch |
-| `src/hooks/useChat.ts` | Extracted | api.ts |
-| `src/components/calculator/TaxCalculator.tsx` | New feature | Recharts (existing dep) |
-| `src/components/documents/DocumentUpload.tsx` | New feature | api.ts |
-| `src/components/charts/WaterfallChart.tsx` | New chart type | Recharts (existing dep) |
-| `src/components/layout/PluginWrapper.tsx` | New file | usePluginMode hook |
-
-### Modified Files (changes to existing)
-
-| File | What Changes | Risk |
-|------|-------------|------|
-| `src/App.tsx` | Extract ChatView, Sidebar, Header into components. Remove GoogleGenAI init. Add tab switching for Calculator/Chat views. | Medium — biggest refactor |
-| `vite.config.ts` | Add `server.proxy` block. Remove `define.process.env.GEMINI_API_KEY`. | Low |
-| `package.json` | Add `concurrently`, `multer`, `@types/multer`. Add dev/start scripts. | Low |
-| `tsconfig.json` | Add `server/` to include if using shared types between client and server. | Low |
-
-### External Services
-
-| Service | Integration Pattern | Notes |
-|---------|---------------------|-------|
-| Google Gemini API | SDK via `server/services/gemini.ts` | API key env var only. Model: `gemini-3.1-pro-preview` (keep existing). |
-| Gemini Files API | `geminiClient.files.upload(blob)` | Files expire 48h. Store file URI in component state, not persistent DB. |
-| Smart Assist (parent frame) | `postMessage` with origin validation | Allowlist origins via `ALLOWED_PLUGIN_ORIGINS` env var. |
+1. **First bottleneck:** Gemini API rate limits (429 errors). The retry logic already handles this. topK=5 increases prompt token count by roughly 25% over topK=3 -- monitor `usageRepo` inputTok averages after deploying.
+2. **Second bottleneck:** Index memory. At 8 files (~5 MB total), the in-memory inverted index is approximately 30-50 MB -- negligible. If data grows to 50+ MB (e.g. adding state GST Acts, CBDT circulars), profile index size before adding more files.
 
 ---
 
 ## Anti-Patterns
 
-### Anti-Pattern 1: Calling Gemini from the Client After Adding Express
+### Anti-Pattern 1: Applying `splitIntoSections()` to Reference Data Without Format Verification
 
-**What people do:** Add the Express backend but keep the direct `GoogleGenAI` call in App.tsx as a fallback for development speed.
+**What people do:** Reuse the existing section-regex splitter for CII tables and due-date calendars because "it already handles all text files."
+**Why it's wrong:** The regex matches `9. FY 2001-02 -- 100` as section number 9. A CII table row labelled "section 9" scores against unrelated section-number queries ("Section 9 CGST levy").
+**Do this instead:** Author reference files with a consistent block delimiter and write `splitReferenceData()` to split on those delimiters.
 
-**Why it's wrong:** The API key stays in the client bundle. The whole point of adding Express is to move the key server-side. Two code paths to maintain.
+### Anti-Pattern 2: Raising topK Without Monitoring Token Budget
 
-**Do this instead:** Delete `const ai = new GoogleGenAI(...)` from App.tsx on day one of the Express integration. All Gemini calls go through `/api/*`.
+**What people do:** Increase topK to 10 or higher to maximize recall.
+**Why it's wrong:** Each chunk is up to 1200 characters (~300 tokens). At topK=10, RAG context adds ~3000 tokens to every request. The risk is cost increase and potential response truncation if the combined input + system prompt approaches model limits. Gemini 2.5 Flash has a large input window, but cost scales linearly with input tokens.
+**Do this instead:** Increase topK incrementally (3 -> 5), monitor `inputTok` averages in `usageRepo`, and confirm answer quality improves before going higher.
 
-### Anti-Pattern 2: Storing Uploaded Files on the Express Server
+### Anti-Pattern 3: Hard-Coding Source Labels as Cascading else-if in `retrieveContext()`
 
-**What people do:** Configure multer `diskStorage` to save uploads to `server/uploads/`, then read them later for subsequent questions.
+**What people do:** Add `else if (c.source === 'cgst') return 'CGST Act'` branches each time a source is added.
+**Why it's wrong:** Each new source requires editing the formatting block. Easy to miss one, resulting in `undefined` labels in the context string passed to Gemini.
+**Do this instead:** Use a lookup table:
+```typescript
+const SOURCE_LABELS: Record<Chunk['source'], string> = {
+  'act-2025':   'IT Act 2025',
+  'act-1961':   'IT Act 1961',
+  'comparison': 'Comparison Guide',
+  'cgst':       'CGST Act',
+  'igst':       'IGST Act',
+  'reference':  'Reference Data',
+};
+const label = SOURCE_LABELS[c.source] ?? c.source;
+```
 
-**Why it's wrong:** Files accumulate, disk fills up, no cleanup strategy, breaks in multi-instance deploys. For this use case, the Gemini Files API already provides 48-hour storage — use it.
+### Anti-Pattern 4: Loading New Files Outside the Existing try/catch Pattern
 
-**Do this instead:** Use `multer.memoryStorage()`, upload the buffer to Gemini Files API immediately, return only the `fileUri` to the client. The client passes the URI with each subsequent message.
-
-### Anti-Pattern 3: Recreating the Gemini Chat Session on Every Request
-
-**What people do:** Call `ai.chats.create()` inside a module-level singleton expecting it to persist conversation state across HTTP requests.
-
-**Why it's wrong:** HTTP is stateless. The Express process handles many requests. A single chat session object is not safe to share across concurrent users.
-
-**Do this instead:** Create a new `ai.chats.create()` call per request, passing the full `history` array sent from the client. The client owns conversation state; the server is stateless.
-
-### Anti-Pattern 4: Adding React Router for Calculator/Dashboard Views
-
-**What people do:** Reach for `react-router-dom` because there are now multiple "pages" (chat, calculator, dashboard).
-
-**Why it's wrong:** PROJECT.md explicitly notes "Pages not needed yet — calculator and dashboard can be tabs/views." Adding a router changes URLs, breaks the back button behavior in plugin/iframe mode, and requires parent-frame URL sync.
-
-**Do this instead:** Simple tab state in App.tsx: `const [activeView, setActiveView] = useState<'chat' | 'calculator' | 'dashboard'>('chat')`. Conditional render of the three views. Zero additional dependencies.
-
----
-
-## Build Order for Implementation
-
-Based on dependencies between components, implement in this order:
-
-1. **Express skeleton + Vite proxy** — `server/index.ts`, `server/services/gemini.ts`, `vite.config.ts` proxy config, updated npm scripts. Verifies the dev setup works before any feature work.
-
-2. **Chat route migration** — `server/routes/chat.ts`, `src/services/api.ts`, `src/hooks/useChat.ts`. This is the security-critical change (API key off client). Replace `handleSend` in App.tsx to call `api.ts` instead of GoogleGenAI directly.
-
-3. **App.tsx component split** — Extract `Sidebar`, `Header`, `ChatView`, `MessageBubble`, `ChartRenderer` into their component folders. App.tsx becomes the shell. This is mechanical refactoring — no behavior change.
-
-4. **Tax Calculator UI** — `TaxCalculator.tsx`, `IncomeInputForm.tsx`, `RegimeComparison.tsx`. Client-side only. Add tab switching to App.tsx.
-
-5. **Enhanced Charts / Dashboard** — `WaterfallChart.tsx`, `LineChart.tsx`, `ChartDashboard.tsx`. Extends existing Recharts usage.
-
-6. **Document Upload** — `server/routes/upload.ts` (multer), `DocumentUpload.tsx`, `DocQAView.tsx`. Requires multer dependency. Builds on the chat route established in step 2.
-
-7. **Plugin mode hardening** — `usePluginMode.ts`, `PluginWrapper.tsx`. Origin validation, postMessage bridge. Can be done last since basic plugin mode already works.
+**What people do:** Add `buildChunks()` calls directly (not wrapped), causing server startup to crash if a data file is absent.
+**Why it's wrong:** The existing pattern wraps each file load in try/catch with a `console.warn`. This allows the server to start with partial data -- a degraded experience, not a crash.
+**Do this instead:** Follow the existing pattern exactly for every new `buildChunks()` call:
+```typescript
+try {
+  const chunksGST = buildChunks(join(dataDir, 'cgst-act.txt'), 'cgst');
+  console.log(`[RAG] Loaded cgst: ${chunksGST.length} chunks`);
+  allChunks.push(...chunksGST);
+} catch (err) {
+  console.warn('[RAG] cgst-act.txt not found, skipping');
+}
+```
 
 ---
 
 ## Sources
 
-- [Vite Server Options — official proxy docs](https://vite.dev/config/server-options)
-- [Vite Backend Integration guide](https://vite.dev/guide/backend-integration)
-- [Gemini Files API — @google/genai release docs](https://googleapis.github.io/js-genai/release_docs/classes/files.Files.html)
-- [Google AI Files API reference](https://ai.google.dev/api/files)
-- [Multer memoryStorage — expressjs/multer](https://github.com/expressjs/multer)
-- [React iframe best practices — LogRocket](https://blog.logrocket.com/best-practices-react-iframes/)
+- Live codebase: `D:/tax-assistant/server/rag/index.ts` — read directly, HIGH confidence
+- Live codebase: `D:/tax-assistant/server/routes/chat.ts` — read directly, HIGH confidence
+- Live codebase: `D:/tax-assistant/server/data/act-2025.txt` — schedule structure verified at line 27778, HIGH confidence
+- Live codebase: `D:/tax-assistant/server/data/act-1961.txt` — structure verified by inspection, HIGH confidence
+- Live codebase: `D:/tax-assistant/.planning/PROJECT.md` — milestone requirements, HIGH confidence
 
 ---
-
-*Architecture research for: React + Vite + Express — Tax Assistant v1.0*
-*Researched: 2026-04-04*
+*Architecture research for: Indian tax assistant RAG pipeline (v1.1 milestone)*
+*Researched: 2026-04-08*

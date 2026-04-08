@@ -1,458 +1,294 @@
 # Pitfalls Research
 
-**Domain:** Indian Tax Assistant — Adding Express proxy, PDF parsing, enhanced charts, tax calculator, iframe plugin to existing React app
-**Researched:** 2026-04-04
-**Confidence:** HIGH (architecture/security pitfalls), MEDIUM (tax calculation rules), HIGH (iframe/postMessage)
+**Domain:** Indian Tax Assistant — v1.1 RAG Data Completeness & Quality (Adding CGST/IGST text, supplementary reference data, schedule-aware chunking, improved retrieval)
+**Researched:** 2026-04-08
+**Confidence:** HIGH (chunker/scorer behavior from direct code inspection), MEDIUM (CGST Act structure), HIGH (retrieval regression patterns)
 
 ---
 
 ## Critical Pitfalls
 
-### Pitfall 1: API Key Survives the Migration to Express
+### Pitfall 1: The Balanced-Retrieval Logic Breaks When a Fourth Source Is Added
 
 **What goes wrong:**
-The API key is currently injected into the Vite client bundle via `define`. When adding the Express backend, developers add the proxy routes but forget to remove the Vite `define` block. The key continues to ship in the client bundle alongside the new proxy. Both paths now work — tests pass, but the original vulnerability remains.
+The current `retrieve()` function hardcodes a three-bucket balancing strategy: one slot for `comparison`, one for `act-2025`, one for `act-1961`. When a fourth source (e.g., `cgst-act`) is added, it has no bucket. It can only appear in the "fill remaining slots" pass — which only fires if one of the three named buckets fails to produce a result. For most income tax queries, all three named buckets fire and fill all three topK=3 slots. Every GST query now competes for zero reserved slots, and GST chunks never surface even when they are the most relevant results for the query.
 
 **Why it happens:**
-The `define` block in `vite.config.ts` is out of sight during server work. Since the client still calls Gemini directly in fallback code paths or tests, CI passes. The key is still visible in `window.__DEFINES__` or the built bundle.
+The bucketing logic uses hardcoded source-name comparisons (`s.chunk.source === 'comparison'`, `s.chunk.source === 'act-2025'`, `s.chunk.source === 'act-1961'`). It was designed for exactly three sources. Adding a fourth source string does nothing to the balancing code.
 
 **How to avoid:**
-1. Remove `VITE_GEMINI_API_KEY` from `vite.config.ts` `define` block as the **first commit** of the Express phase — before writing any proxy code.
-2. If the client still boots, something still has the key. Make the app broken first, then fix it by routing through Express.
-3. Run `grep -r "GEMINI_API_KEY" dist/` in CI after every build. Fail the build if found.
-
-**Warning signs:**
-- `process.env.GEMINI_API_KEY` or `import.meta.env.VITE_GEMINI_API_KEY` still referenced anywhere in `src/`
-- Bundle analyzer shows the key string in client output
-- Network tab shows requests going directly to `generativelanguage.googleapis.com` from the browser
-
-**Phase to address:**
-Phase: Express Backend Proxy — treat key removal as a prerequisite gate, not an afterthought.
-
----
-
-### Pitfall 2: CORS Misconfigured to Allow All Origins
-
-**What goes wrong:**
-Express is configured with `cors({ origin: '*' })` to stop CORS errors quickly during development. This ships to production. Any website can now proxy requests through your Express server and exhaust your Gemini quota, or exfiltrate uploaded document content.
-
-**Why it happens:**
-Wildcard CORS stops the immediate error, developers move on, and the configuration never gets tightened. The risk is invisible until the API quota is drained.
-
-**How to avoid:**
-Set explicit origin allowlist from day one:
-```javascript
-const ALLOWED_ORIGINS = [
-  'http://localhost:5173',         // Vite dev
-  'https://your-app.domain.com',   // Production
-  'https://smart-assist.domain.com' // Smart Assist iframe parent
-];
-cors({ origin: (origin, cb) => {
-  if (!origin || ALLOWED_ORIGINS.includes(origin)) cb(null, true);
-  else cb(new Error('Origin not allowed'));
-}})
-```
-
-**Warning signs:**
-- `Access-Control-Allow-Origin: *` visible in response headers in browser devtools
-- `cors()` called without an `origin` option
-
-**Phase to address:**
-Phase: Express Backend Proxy — set the allowlist before wiring up Gemini proxy routes.
-
----
-
-### Pitfall 3: Gemini Streaming Breaks Silently Behind a Reverse Proxy
-
-**What goes wrong:**
-The Gemini API supports streaming responses (SSE/chunked transfer). The Express proxy works perfectly locally, but in staging/production behind Nginx or Cloudflare the response is buffered — the entire completion arrives at once after a long pause, or times out for long responses. Users see a frozen spinner for 10–30 seconds.
-
-**Why it happens:**
-Nginx buffers proxy responses by default. Cloudflare caches responses. Neither announces this failure loudly — the response eventually arrives, so tests pass but UX is broken. The current prototype is not streaming, so this only emerges after streaming is added.
-
-**How to avoid:**
-Set anti-buffering headers explicitly in the Express response before piping the Gemini stream:
-```javascript
-res.setHeader('X-Accel-Buffering', 'no');     // Nginx
-res.setHeader('Cache-Control', 'no-cache, no-transform');
-res.setHeader('Content-Type', 'text/event-stream');
-res.flushHeaders();
-```
-Add `proxy_buffering off;` in Nginx config for the Express upstream. Test streaming behavior explicitly in staging, not just localhost.
-
-**Warning signs:**
-- Response arrives all at once in production but streams locally
-- Very long apparent latency before first token appears
-- `Content-Length` header present on streaming response (should be absent)
-
-**Phase to address:**
-Phase: Express Backend Proxy — add streaming headers before deploying to any environment with a reverse proxy.
-
----
-
-### Pitfall 4: postMessage Uses Wildcard Target Origin
-
-**What goes wrong:**
-The iframe communicates with the Smart Assist parent using `window.parent.postMessage(data, '*')`. Any malicious page that embeds the tax assistant can receive those messages. If the messages include user document data, tax calculation results, or session tokens, those are exfiltrated.
-
-**Why it happens:**
-`'*'` is the obvious way to make postMessage "just work" without knowing the parent URL at development time. It ships because there is no visible error and tests pass.
-
-**How to avoid:**
-1. Require the parent origin to be passed as a URL param or postMessage handshake before sending any data back.
-2. Always specify target origin explicitly: `window.parent.postMessage(data, 'https://smart-assist.domain.com')`.
-3. On the listener side, validate `event.origin` against a hardcoded allowlist before processing any message.
-```javascript
-window.addEventListener('message', (event) => {
-  if (!ALLOWED_ORIGINS.includes(event.origin)) return;
-  // process event.data
-});
-```
-
-**Warning signs:**
-- Any `postMessage` call with `'*'` as second argument
-- Message listeners that don't check `event.origin`
-- No `frame-ancestors` CSP directive in Express response headers
-
-**Phase to address:**
-Phase: Iframe Plugin Mode — treat origin validation as a non-negotiable requirement before any data passes through postMessage.
-
----
-
-### Pitfall 5: CSP frame-ancestors Not Set, Enabling Clickjacking
-
-**What goes wrong:**
-Without `Content-Security-Policy: frame-ancestors 'self' https://smart-assist.domain.com`, any website can embed the tax assistant in a hidden iframe, overlay UI elements over it, and use clickjacking to trick users into submitting documents to attacker-controlled forms.
-
-**Why it happens:**
-CSP headers require server-side configuration. The React app cannot set its own CSP without a server. Since the current app has no Express server, no CSP exists. Adding Express is the first opportunity to set it — but developers focus on the proxy functionality rather than response headers.
-
-**How to avoid:**
-Add a CSP middleware to Express as part of the initial server setup (use `helmet` package):
-```javascript
-app.use(helmet.contentSecurityPolicy({
-  directives: {
-    frameAncestors: ["'self'", 'https://smart-assist.domain.com']
+Before adding any new source file, refactor the balancing strategy. Replace hardcoded per-source buckets with a source-agnostic approach: score all candidates globally, then apply a diversity rule (e.g., at most N chunks from any single source). One concrete pattern:
+```typescript
+// Track how many slots each source has used
+const sourceCount = new Map<string, number>();
+const MAX_PER_SOURCE = 1; // or 2 for topK=5
+const balanced: ScoredChunk[] = [];
+for (const s of scored) {
+  if (balanced.length >= topK) break;
+  const used = sourceCount.get(s.chunk.source) ?? 0;
+  if (used < MAX_PER_SOURCE) {
+    balanced.push(s);
+    sourceCount.set(s.chunk.source, used + 1);
   }
-}));
+}
+// Fill remaining with highest scorers regardless of source
 ```
+This is source-count-agnostic and survives adding N new sources.
 
 **Warning signs:**
-- No `Content-Security-Policy` header in Express responses
-- `X-Frame-Options` header absent (legacy fallback)
-- App loads in any random iframe without restriction
+- GST queries return zero RAG context despite CGST text being loaded
+- Logs show CGST chunks being indexed but never appearing in results
+- `fromComparison + from2025 + from1961 >= topK` is always true when new source is present
 
 **Phase to address:**
-Phase: Express Backend Proxy (initial server setup) — helmet should be one of the first three middlewares added.
+Refactor balancing logic before adding any new source file. Make it the first code change of the data-addition phase.
 
 ---
 
-### Pitfall 6: Monolithic App.tsx State Split Causes Prop Drilling or Context Hell
+### Pitfall 2: The Section Regex Silently Drops All Schedule, Chapter, and Preamble Content
 
 **What goes wrong:**
-When splitting `App.tsx` (~495 lines) into components, state that was co-located gets hoisted up to a common ancestor or thrown into multiple Context providers. Either you get 8+ props passed through three levels of components (prop drilling), or you create 4 separate Context providers that nest inside each other. When a new component is added it either doesn't have access to the state it needs, or any state change re-renders the entire tree.
+`splitIntoSections()` uses the regex `/^(\d+[A-Z]*(?:-[A-Z]+)?)\.\s/gm` to find section starts. Any content that does not begin with a numeric section number is invisible to the chunker. This includes:
+- CGST Act preamble (hundreds of words of definitions context)
+- Chapter headings (e.g., "CHAPTER VI — REGISTRATION")
+- Schedule content (GST rate schedules: SCHEDULE I, SCHEDULE II, etc.)
+- CII tables (year-indexed numeric data, no section numbers)
+- Due dates calendars (structured tabular data)
+- ITR matrix (form-to-eligibility lookup table)
+
+When `splitIntoSections()` finds zero matches, it returns the entire file as a single `{ section: 'general', text: entireFile }` chunk. For a 1MB CGST Act file, this creates one massive chunk that then gets naively sliced by `subChunk()` at 1200-character boundaries mid-sentence, destroying legal context.
 
 **Why it happens:**
-The split is done naively by copy-pasting sections of the monolith into new files. The state that was conveniently in one closure now needs to be shared explicitly, and the path of least resistance is hoisting everything.
+The regex was designed for the IT Acts which consistently use numeric section numbering. The CGST Act uses the same pattern for sections but supplements it with extensive schedules. Supplementary reference files (CII, due dates, ITR matrix) have no section numbers at all.
 
 **How to avoid:**
-1. Before splitting, identify state ownership: UI state (sidebar open/closed) stays local; chat state (messages, loading) lives in one central store or context; theme stays in its own context.
-2. Use one of: React Context + useReducer for the chat domain, or a lightweight store (Zustand) if complexity grows.
-3. Split in order: extract leaf components (pure render) first, then hooks (data-fetching logic), then container components. Never split a parent before its children.
+Use distinct splitter functions per file type, selected by source identifier:
+- `splitIntoSections()` — existing, for act-1961 and act-2025 (already works)
+- `splitCGSTSections()` — identical regex but also extracts SCHEDULE blocks via `/^SCHEDULE\s+[IVX]+/gm`
+- `splitStructuredReference()` — for CII, due dates, ITR matrix: split by blank-line-separated paragraphs or by logical row groups, keeping table headers attached to every chunk
+- `splitComparisonSections()` — existing, for comparison.txt (already works)
+
+Never let a splitter return a single chunk for a file over 10KB without explicit logging.
 
 **Warning signs:**
-- A component receives props it doesn't use — only passes them down
-- More than 3 props with identical names at different component levels
-- Context provider wrapping more than it needs to
+- Log line: `[RAG] Loaded cgst-act: 1 chunks` (should be hundreds)
+- Log line: `[RAG] Loaded cii-table: 1 chunks`
+- Queries about GST schedules or CII values return irrelevant IT Act sections instead of the actual data
 
 **Phase to address:**
-Phase: Architecture Refactoring — establish state ownership map before writing any new component file.
+Schedule-aware chunking phase. Write a chunk-count assertion in the loader: throw if any source file produces fewer than 10 chunks per 50KB of input.
 
 ---
 
-### Pitfall 7: PDF Upload Accepts All File Types and Has No Size Guard
+### Pitfall 3: Chunk IDs Are Array Indices — New Sources Corrupt the Inverted Index
 
 **What goes wrong:**
-A user (or attacker) uploads a 200 MB zip file renamed to `.pdf`, or a JavaScript file, crashing the Node process with an out-of-memory error or executing arbitrary content through naive text extraction. Multer without limits will happily buffer whatever it receives into memory.
+Each `Chunk` has an `id` field assigned as the running array index across all sources (`let id = 0; ... id++`). The inverted index maps token → `Set<number>` where those numbers are chunk IDs. The `retrieve()` function looks up chunks by `chunks[id]`. This works as long as the `allChunks` array is stable after `buildIndex()`.
+
+When a new source file is added, its chunks are appended to `allChunks`. If `buildIndex()` is called incrementally rather than from scratch, or if source loading order changes, the ID-to-chunk mapping becomes inconsistent. A token might point to chunk ID 1450, but `allChunks[1450]` is now a CGST chunk while the index says it's an IT Act chunk. The `.filter(Boolean)` call in `retrieve()` silently swallows missing entries.
 
 **Why it happens:**
-`multer({ storage: memoryStorage() })` with no `limits` option is the default example in every tutorial. File type validation is an afterthought.
+Array index as ID is a fragile pattern — it only works if all chunks are built in one pass and the array is never mutated after indexing. It breaks if: chunks are built in parallel, `initRAG()` is called more than once (e.g., hot reload in dev), or sources are loaded conditionally.
 
 **How to avoid:**
-```javascript
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
-  fileFilter: (req, file, cb) => {
-    const allowed = ['application/pdf', 'image/jpeg', 'image/png'];
-    cb(null, allowed.includes(file.mimetype));
-  }
-});
+Assign IDs as stable, absolute values during `buildChunks()` by passing an offset:
+```typescript
+function buildChunks(filePath, source, idOffset = 0): Chunk[] {
+  // ... id = idOffset + localIndex
+}
+// In initRAG():
+let offset = 0;
+const compChunks = buildChunks(compPath, 'comparison', offset);
+offset += compChunks.length;
+const chunks2025 = buildChunks(act2025Path, 'act-2025', offset);
+offset += chunks2025.length;
+// etc.
 ```
-Also validate the file's magic bytes server-side (first 4 bytes of Buffer), not just the mimetype header which the client can spoof.
+Or switch the inverted index value from `Set<number>` (IDs) to `Set<Chunk>` references directly, eliminating the ID lookup step entirely.
 
 **Warning signs:**
-- Multer configured without `limits.fileSize`
-- `fileFilter` absent or always calling `cb(null, true)`
-- File type check based only on `originalname` extension
+- `chunks[id]` returns `undefined` for valid IDs after adding a new source
+- Retrieval returns results from wrong source (GST chunk labeled as IT Act)
+- Results become inconsistent between server restarts
 
 **Phase to address:**
-Phase: Document Handling — implement limits and validation before the upload endpoint is accessible from the UI.
+Data integration phase. Add a post-build assertion: `allChunks.every((c, i) => c.id === i)` and throw if it fails.
 
 ---
 
-### Pitfall 8: Gemini Files API Uploads Are Temporary — 48-Hour Expiry Not Handled
+### Pitfall 4: Raw Chunk Frequency Scoring Amplifies CGST Over IT Acts
 
 **What goes wrong:**
-A user uploads Form 16 via the Files API. The file URI is stored (even just in React state for a session). After 48 hours — or if the user returns to a persisted session — the URI is referenced but Gemini returns a 404. The app crashes with an unhandled error, or silently sends invalid requests.
+The scorer counts raw token occurrences in chunk text: every time a token appears in a chunk, `score++`. The current `comparison` source gets a 1.5x multiplier to compensate. But CGST Act sections dealing with GST registration, returns, and invoicing repeat common terms ("taxable person", "registered", "supply", "goods") at extremely high frequency — far more than equivalent IT Act sections use "income", "assessee", or "deduction".
+
+For mixed IT+GST queries like "GST registration for a salaried person" or "capital gains on property sold to GST-registered buyer", CGST chunks will outscore IT Act chunks heavily on raw token frequency even though both sources are needed. The IT Act context gets crowded out of topK=3.
 
 **Why it happens:**
-The 48-hour expiry is documented but easy to overlook when building the happy path. The file URI looks stable (it has a UUID), so developers assume it persists.
+Raw frequency scoring (count occurrences) is not length-normalized. A 1200-character CGST chunk with 8 occurrences of "registered" scores higher than a 900-character IT Act chunk with 5 occurrences of "capital gains" — even if the IT Act chunk is more relevant to the query's primary intent.
 
 **How to avoid:**
-1. Treat file URIs as ephemeral session data — never persist them to localStorage or any storage.
-2. Always handle 404/file-not-found errors from Gemini with a specific user message: "Your uploaded document has expired. Please upload it again."
-3. If session persistence is needed later, re-upload on session restore rather than storing URIs.
+Normalize scores by chunk length (characters or word count) before comparing across sources. Implement a simple TF-style normalization:
+```typescript
+const normalizedScore = rawScore / Math.sqrt(chunk.text.length);
+```
+Alternatively, set per-source score caps: no single source can contribute more than 60% of total topK slots regardless of raw score. Measure this against a golden query set (at least 10 queries known to need IT Act context) before and after CGST data is added.
 
 **Warning signs:**
-- File URI stored in `localStorage`
-- No error handling for `404` on Gemini file references
-- User can reference "previously uploaded document" across browser sessions
+- IT Act queries about deductions or TDS now return CGST chunks
+- Queries like "Section 80C deduction limit" return CGST registration sections
+- Comparison document chunks disappear from results entirely
 
 **Phase to address:**
-Phase: Document Handling — add expiry error handling before the feature ships.
+Retrieval quality improvement phase. Establish a regression baseline with 15+ query-source pairs before adding CGST data.
 
 ---
 
-### Pitfall 9: Indian Tax Slabs Hardcoded — Break Every Budget Cycle
+### Pitfall 5: Structured Reference Data (CII Table, Due Dates) Cannot Be Retrieved by Keyword
 
 **What goes wrong:**
-Tax slabs, exemption limits, Section 87A rebate thresholds, surcharge brackets, and standard deduction amounts are hardcoded as constants in the tax calculator. The Finance Act changes these annually (sometimes mid-year). FY 2025-26 has different new regime slabs than FY 2024-25 (₹12L rebate limit, new slab breakpoints). Hardcoded values make the calculator wrong for every financial year except the one it was built for, with no obvious warning to the user.
+The CII table contains rows like `2001-02 | 100`, `2023-24 | 348`, `2024-25 | 363`. The due date calendar contains entries like `15 June | Advance tax — 15% of estimated liability`. The ITR matrix contains form-eligibility rules like `ITR-1 | Resident individual | Salary + one house property`.
+
+These are all lookup structures. A user query like "What is the CII for FY 2023-24?" tokenizes to `['cii', 'fy', '2023', '24']`. The inverted index will find chunks containing "cii" or "2023" — but "2023" appears in hundreds of IT Act amendment notes. The CII chunk scores 1 for "2023" plus 1 for "24"; an IT Act amendment section discussing 2023 amendments scores higher because it mentions "2023" four times. The correct CII chunk loses.
+
+Even if it wins, the retrieved text is a raw table fragment: `2022-23 | 331\n2023-24 | 348\n2024-25 | 363`. The LLM gets the right data only if the table header ("Cost Inflation Index Table") was included in that exact chunk. Without header context, Gemini cannot tell the user what the numbers mean.
 
 **Why it happens:**
-Tax values feel like constants — they don't change at runtime. The natural implementation is `const TAX_SLABS = [...]`. Annual budget changes are an operational concern, not a code concern, so developers don't architect for changeability.
+Keyword scoring was designed for prose legal text where relevant sections discuss the query topic in full sentences. Reference tables have minimal prose — mostly numbers and short labels. The query terms and document terms don't overlap naturally.
 
 **How to avoid:**
-1. Define all tax parameters in a single, versioned data file per financial year: `src/data/tax-rules/FY2025-26.ts`, `FY2024-25.ts`.
-2. The calculator function takes `taxRules: TaxRules` as a parameter — never references year-specific constants directly.
-3. Always display the financial year prominently: "Calculated for FY 2025-26 (AY 2026-27)."
-4. Provide a FY selector — even if only two years are supported, the architecture must support adding new years without touching calculator logic.
-
-**Critical FY 2025-26 values that differ from prior year:**
-- New regime rebate: ₹60,000 (was ₹25,000) — zero tax up to ₹12L effective income
-- New regime standard deduction: ₹75,000 (was ₹50,000)
-- New regime slabs: 0%, 5% (4-8L), 10% (8-12L), 15% (12-16L), 20% (16-20L), 25% (20-24L), 30% (>24L)
-- Surcharge cap: 25% under new regime (vs 37% under old for >5Cr)
-- Health & Education Cess: 4% (unchanged, applied after surcharge)
+1. Keep table headers attached to every chunk: when chunking the CII table, prefix every chunk with the header row even if it means repeating text.
+2. Add a query type detector for reference queries: if query matches patterns like "CII for FY \d{4}", "due date for \w+", "which ITR form for \w+", route to a dedicated lookup handler that does exact/regex matching against the structured file rather than keyword scoring.
+3. For due dates and ITR matrix, store as JSON or structured data file and do lookup by key, bypassing keyword RAG entirely.
 
 **Warning signs:**
-- `const STANDARD_DEDUCTION = 75000` anywhere in code not tied to a FY year object
-- No financial year selector in the calculator UI
-- Calculator doesn't show which year it is calculating for
+- "What is CII for FY 2024-25?" returns IT Act amendment sections instead of the CII value
+- Users report wrong or missing due dates
+- ITR form eligibility answers don't match actual matrix
 
 **Phase to address:**
-Phase: Tax Calculator — architect the data layer with financial year versioning from the first commit.
+Supplementary reference data phase. Build the structured lookup handler before adding the data files.
 
 ---
 
-### Pitfall 10: Old Regime Deductions Are Incomplete — Calculator Gives Wrong Comparison
+### Pitfall 6: CGST Act File Quality Is Unknown Until Extraction — Extraction Artifacts Break the Chunker
 
 **What goes wrong:**
-The old vs new regime comparison is the core value of the tax calculator. Under the old regime, dozens of deductions apply: 80C (up to ₹1.5L), 80D (health insurance), 80E (education loan interest), HRA exemption, LTA, NPS 80CCD(1B), home loan interest 24(b), professional tax, etc. If only 80C is implemented, the old regime always appears worse than it actually is, giving users incorrect advice to switch to the new regime when they should stay on the old one.
+The IT Acts were already extracted and are in `act-1961.txt` and `act-2025.txt`. The CGST Act must be obtained from CBIC PDFs or bare law compilations. PDF-to-text extraction of legal documents commonly produces:
+- Section numbers separated from their text by newlines: `\n73.\n(1) Where any tax payable...` (the regex `/^(\d+[A-Z]*)\.\s/gm` requires the number and dot to be followed by a space on the same line)
+- Headers repeated on every page (running headers like "CHAPTER V — INPUT TAX CREDIT" inserted mid-section)
+- Line numbers or page numbers embedded in text: `Page 47 of 162` appearing between subsections
+- Ligatures and Unicode issues: `fi` → `ﬁ`, section symbol `§` → garbage characters
+- Table content flattened: GST rate schedules become walls of unparseable text
+
+If the extraction produces garbled text and `splitIntoSections()` finds only 3 matches in a 200-section Act, it will silently generate 3 enormous chunks that get sliced at arbitrary character boundaries.
 
 **Why it happens:**
-80C is the most prominent deduction, so it gets implemented first. The complexity of the full deduction set (20+ sections) is underestimated, and "we'll add more later" becomes "never."
+PDF extraction quality varies wildly by tool and source PDF quality. Legal PDFs from government sources often have OCR artifacts or column layouts that confuse linear text extractors.
 
 **How to avoid:**
-1. Build deductions as a pluggable data structure from day one: `{ section: '80C', limit: 150000, label: 'Investments (80C)', applicableRegimes: ['old'] }`.
-2. MVP must include at minimum: 80C, 80D, HRA, standard deduction, Section 87A rebate for both regimes, professional tax.
-3. Show a disclaimer: "Calculation includes the deductions you've entered. Other deductions may reduce your old regime liability further."
-4. Never present the comparison as definitive — always recommend consulting a CA for final decisions.
+1. Validate extraction quality before writing the chunker: open the extracted text file and manually verify 5 randomly selected sections appear intact.
+2. Write a validation script that counts section matches against expected count: CGST Act has ~174 sections — if extraction produces fewer than 100 matches, flag it.
+3. Use a multi-step cleaning pipeline: normalize Unicode, strip page headers (detect repeated phrases), join split section numbers, before passing to the chunker.
+4. Test with the same `splitIntoSections()` function on a 10-section sample before committing to the full file.
 
 **Warning signs:**
-- Old regime tax always higher than new regime in tests regardless of deduction inputs
-- Calculator has only one "investments" input field
-- No HRA or home loan interest input
+- `[RAG] Loaded cgst-act: N chunks` where N < 100 for the full CGST Act
+- Chunks contain strings like "Page 47 of 162" or repeated chapter headers
+- Section numbers appear on their own line without associated text
 
 **Phase to address:**
-Phase: Tax Calculator — deduction coverage must be reviewed before the compare feature ships to users.
-
----
-
-### Pitfall 11: Existing JSON-Chart Flow Breaks After Recharts Refactor
-
-**What goes wrong:**
-The existing app parses AI responses for embedded JSON chart specs and renders bar/pie charts. When adding waterfall, line, and stacked chart types, the JSON schema is extended. Old messages in the chat (or cached responses) that use the old schema now fail to render or render incorrectly. A type field mismatch causes a blank chart or a React error that crashes the entire message list.
-
-**Why it happens:**
-The chart rendering code is changed to support new types but backward compatibility with existing chart JSON shapes is not tested. AI responses are non-deterministic — the model may produce the old format even after the system prompt is updated.
-
-**How to avoid:**
-1. Treat chart JSON parsing as defensive: always validate schema before rendering; fall back to a raw JSON code block if schema is invalid.
-2. Add a `version` field to chart specs in the AI system prompt and handle both `v1` and `v2` schemas.
-3. Write unit tests for the chart parser covering: all current types, unknown type, missing required field, empty data array.
-4. Use a discriminated union type: `type ChartSpec = BarChart | PieChart | WaterfallChart | LineChart` so TypeScript forces handling of each.
-
-**Warning signs:**
-- Chart renderer throws unhandled errors rather than falling back gracefully
-- No tests for the JSON parsing path
-- System prompt updated without updating parser to handle both old and new formats
-
-**Phase to address:**
-Phase: Enhanced Visualization — add schema validation and fallback before adding new chart types.
+CGST data preparation phase, before any chunker code is written.
 
 ---
 
 ## Technical Debt Patterns
 
-Shortcuts that seem reasonable but create long-term problems.
-
 | Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
 |----------|-------------------|----------------|-----------------|
-| `cors({ origin: '*' })` | Stops CORS errors immediately | Any site can proxy through your server; quota exhaustion | Never in production |
-| `multer()` without `limits` | Simplest setup | OOM crash on large uploads | Never |
-| Hardcoded tax slabs | No data layer needed | Calculator wrong after every Finance Act | Never |
-| `postMessage(data, '*')` | Works immediately | Document data exfiltration | Never with sensitive data |
-| Gemini API called directly from client during "testing" | Faster iteration | Key re-exposed, CORS headers needed again | Dev-only, env-gated |
-| Single monolithic Context for all app state | Simple access anywhere | Re-renders entire tree on any state change | Prototype/early MVP only |
-| `pdf-parse` only (no Gemini Files API) | Simple text extraction | Fails on image-based PDFs, scanned Form 16s | Only for guaranteed digital PDFs |
-| Financial year hardcoded to current year | Simpler UI | Silent wrong calculations for prior year questions | Never once calculator ships |
+| Hardcoded source names in balancing logic | Works for current 3 sources | Every new source requires code changes; easy to forget | Never — takes 30 minutes to make source-agnostic |
+| Array index as chunk ID | Simple to implement | Fragile when source loading order changes or is conditional | Only if loading order is strictly fixed and tested |
+| Single `splitIntoSections()` for all files | No new code | Silently drops all schedule/structured content | Never for files with different structures |
+| topK=3 unchanged when adding 2+ new sources | No tuning required | Every query saturates slots; new sources never appear | Acceptable only if sources are mutually exclusive by topic |
+| Storing CII/due-dates in prose-style text | Uniform data loading | Keyword RAG cannot retrieve exact values reliably | Never — use structured lookup for tabular reference data |
+| No chunk-count assertions in loader | Faster startup | Silent data loss when extraction fails | Never — add one log line per source |
 
 ---
 
 ## Integration Gotchas
 
-Common mistakes when connecting to external services.
-
 | Integration | Common Mistake | Correct Approach |
 |-------------|----------------|------------------|
-| Gemini API via Express proxy | Forwarding all headers including `Authorization` from client | Strip all client headers; add API key only on server side |
-| Gemini Files API | Using inline base64 for PDFs > 20MB | Use Files API upload then reference URI; 20MB is the inline limit |
-| Gemini Files API | Assuming file URI persists across sessions | File expires after 48h; treat URI as ephemeral session data only |
-| Gemini streaming | Piping raw Gemini stream to client without setting `Content-Type: text/event-stream` | Set SSE headers before piping; some clients interpret non-SSE chunked responses inconsistently |
-| Multer + Express | Adding multer as global middleware | Apply only to specific upload routes — global multer creates unintended upload endpoints |
-| Smart Assist iframe parent | Sending postMessage before parent is ready | Send a `ready` message and wait for parent's `ack` before sending data |
-| Recharts + React 19 | React 19 compatibility — Recharts 2.x has known issues | Check Recharts issue #4558; as of 2025 Recharts 2.x works with React 19 but with some deprecation warnings; pin version |
+| CGST Act text file | Assume PDF extraction produces clean numbered sections | Validate extraction: count section matches, inspect 5 random sections manually before building chunker |
+| CII / due dates / ITR matrix | Load as text files and run through keyword RAG | Implement structured lookup (JSON + key match) for reference data; keyword RAG is for prose legal text |
+| New source in `initRAG()` | Append `allChunks.push(...newChunks)` after `buildIndex()` was already called | Always call `buildIndex(allChunks)` after all sources are loaded; never call it mid-load |
+| `Chunk.source` type union | Add new source string without updating TypeScript type | Update `source` type first: `'act-2025' | 'act-1961' | 'comparison' | 'cgst-act' | 'reference'` — TypeScript will surface every place that needs updating |
+| `retrieveContext()` label string | `comparison` → "Comparison Guide", `act-2025` → "IT Act 2025" mapping is hardcoded | Add new source to label map before it can appear in results; unlabeled source will show raw source ID to Gemini |
+| Balanced retrieval with new source | Add source to `buildChunks()` but not to balancing buckets | Refactor balancing to be source-count-agnostic before adding any new source |
 
 ---
 
 ## Performance Traps
 
-Patterns that work at small scale but fail as usage grows.
-
 | Trap | Symptoms | Prevention | When It Breaks |
 |------|----------|------------|----------------|
-| Recharts re-renders on every chat message | Charts flash/re-render even when data hasn't changed | Memoize chart data with `useMemo`; memoize components with `React.memo`; stabilize `dataKey` with `useCallback` | With 5+ charts visible simultaneously |
-| PDF parsed on every render | Each state update triggers full PDF re-parse | Parse once on upload, store extracted text in component state; never in render path | Immediately — even single document |
-| New Context provider per feature (chart ctx, calculator ctx, theme ctx, chat ctx) | Any state update causes cascading re-renders across unrelated components | Split contexts by change frequency: theme (rarely), chat messages (often), UI state (frequent) | When Context tree has 4+ providers |
-| Express storing uploaded PDFs in `/tmp` without cleanup | Disk fills up over time | Delete files immediately after processing; or use `memoryStorage` and never write to disk | At moderate request volume |
-| Gemini Files API used for every request including text | Unnecessary latency; 48h expiry management overhead | Only use Files API for actual document uploads; text/prompt requests go directly without file upload | Every request |
-
----
-
-## Security Mistakes
-
-Domain-specific security issues beyond general web security.
-
-| Mistake | Risk | Prevention |
-|---------|------|------------|
-| API key in Vite `define` after Express migration | Key visible in client bundle; Gemini quota stolen | Remove from `define` before proxy routes are written; grep bundle in CI |
-| `frame-ancestors` not set | Clickjacking; tax assistant embedded in attacker-controlled page | Add `helmet` with `frameAncestors` on Express startup |
-| No origin validation on `message` event listener | Attacker page sends arbitrary commands to iframe; data exfiltration | Always check `event.origin` against allowlist before processing |
-| Wildcard `targetOrigin` in `postMessage` | Tax calculation results and document content sent to any embedding page | Always specify exact parent domain as `targetOrigin` |
-| PDF file type validated by extension only | Attacker uploads malicious file as `.pdf` | Validate MIME type AND check first 4 bytes (magic bytes: `%PDF` = `25 50 44 46`) |
-| Tax advice without disclaimer | Legal liability; users may rely on incorrect calculations | Always show "for informational purposes only, consult a CA" on calculator output |
-| Gemini response content injected directly into DOM | XSS via maliciously crafted AI response | Always render AI content through sanitized markdown renderer, never `dangerouslySetInnerHTML` with raw AI text |
-
----
-
-## UX Pitfalls
-
-Common user experience mistakes in this domain.
-
-| Pitfall | User Impact | Better Approach |
-|---------|-------------|-----------------|
-| Calculator doesn't show which FY it is calculating for | User assumes current year; gets wrong result for prior year query | Always show "FY 2025-26 (AY 2026-27)" prominently; add year selector |
-| Document upload has no progress indicator | User thinks upload failed for large PDFs; uploads multiple times | Show upload progress, then "Analyzing document..." state separately |
-| Old/new regime comparison shows only total tax | User cannot understand why one is better | Show line-by-line breakdown: gross income, deductions applied, taxable income, tax before cess, cess, net tax |
-| Chart appears inside long AI response with no scroll anchor | User misses chart embedded mid-conversation | Scroll to chart after render; or surface charts in a separate panel |
-| PDF parse failure shows generic error | User doesn't know if their PDF is scanned/image-based | Detect image-only PDFs early and show: "This appears to be a scanned document. For best results, use a digital Form 16 downloaded from TRACES." |
-| Iframe plugin mode loads standalone theme (full dark UI) | Clashes visually with Smart Assist parent app styling | Expose a `theme` postMessage API so parent can set light/dark; default to `auto` (prefers-color-scheme) |
+| Inverted index size grows quadratically with corpus | Startup time increases; `buildIndex()` takes 2-5 seconds | Index only non-stopword tokens > 2 chars (already done); add token deduplication per chunk | Around 10,000+ chunks (CGST adds ~800-1200, total becomes ~4000+ — still fine) |
+| `subChunk()` creates too many 1200-char slices from large CGST sections | Hundreds of near-duplicate chunks with overlapping text; index becomes noisy | Increase `MAX_CHUNK_SIZE` to 2000 for legal text (sections have meaningful sub-structure); use paragraph boundaries for split points | Immediately visible if CGST section 73 (recovery of tax) generates 15+ parts |
+| All chunks scored even through inverted index fast-path | O(n) fallback scoring when query tokens are common words | Ensure stopwords list covers CGST-specific filler terms ("supply", "goods", "person", "act") that appear in every CGST chunk | When CGST adds 1000+ chunks all containing "supply", every GST query becomes O(1000) |
+| `readFileSync` at startup for all data files | Acceptable at 3 files/4.7MB; slower as files grow | Current approach is fine for up to ~15MB; log startup time as CGST adds 2-4MB | Above 20MB total, consider lazy loading or pre-built chunk cache |
 
 ---
 
 ## "Looks Done But Isn't" Checklist
 
-Things that appear complete but are missing critical pieces.
-
-- [ ] **Express proxy:** Backend routes work locally — verify Gemini API key is **not** present in the Vite-built client bundle (`grep -r "AIza" dist/`)
-- [ ] **CORS:** Stops 403 errors — verify `Access-Control-Allow-Origin` is **not** `*` in production response headers
-- [ ] **PDF upload:** File uploads successfully — verify size limit rejects files >10MB and non-PDF files are rejected with clear error
-- [ ] **Gemini Files API:** PDF analysis works — verify error handling for expired file URI returns user-friendly message, not stack trace
-- [ ] **Tax calculator:** Returns a number — verify FY year is displayed, old regime uses at least 80C+80D+HRA+standard deduction, and a disclaimer is shown
-- [ ] **Old vs new regime:** Comparison renders — verify old regime is not systematically higher due to missing deductions
-- [ ] **Iframe mode:** Renders in iframe — verify `frame-ancestors` CSP header restricts embedding to Smart Assist origin only
-- [ ] **postMessage:** Data passes between parent and iframe — verify every `postMessage` specifies exact target origin, never `'*'`
-- [ ] **Chart rendering:** New chart types display — verify old-format chart JSON still renders (backward compatibility test)
-- [ ] **Recharts + React 19:** Charts render — verify no console errors from React 19 compatibility issues; check Recharts version
+- [ ] **CGST chunker:** `[RAG] Loaded cgst-act: N chunks` — verify N > 150 (CGST has ~174 sections + schedules); if N < 50, extraction failed silently
+- [ ] **CII retrieval:** Test query "What is the CII for FY 2023-24?" — verify response contains `348` (the actual value); if it returns IT Act amendment text, the structured lookup is not wired
+- [ ] **Balanced retrieval with 4+ sources:** Test "GST registration requirements" — verify CGST chunk appears in context; if only IT Act chunks returned, balancing logic still hardcoded to 3 sources
+- [ ] **Schedule retrieval:** Test "What is GST rate on services in Schedule II?" — verify schedule content appears; if no result, schedule splitter not implemented
+- [ ] **Existing query regression:** Run baseline query set (Section 80C limit, TDS Section 194C, old vs new Act comparison) — verify comparison and IT Act chunks still appear; if CGST chunks crowd them out, scoring normalization needed
+- [ ] **Source label in context:** Check Gemini prompt for new source — verify label is human-readable ("CGST Act 2017", not "cgst-act"); unlabeled source confuses Gemini's citation behavior
+- [ ] **TypeScript type exhaustiveness:** `Chunk.source` union updated — verify `tsc --noEmit` passes with new source value; TypeScript will catch all unhandled switch cases
 
 ---
 
 ## Recovery Strategies
 
-When pitfalls occur despite prevention, how to recover.
-
 | Pitfall | Recovery Cost | Recovery Steps |
 |---------|---------------|----------------|
-| API key found in production bundle | HIGH | Rotate key immediately in Google AI Studio; redeploy with key removed from client; audit git history for key commits and invalidate if present |
-| Tax slab hardcoded wrong (post-budget) | MEDIUM | Add versioned tax rules file; update constants; add "last updated" display to calculator; communicate correction to users |
-| postMessage wildcard shipped to production | HIGH | Emergency deploy with fixed origin validation; review server logs for unexpected iframe embeds; notify Smart Assist team |
-| Monolith split causes state regression (features stop working) | MEDIUM | Revert component split to last working state; map all state dependencies before re-attempting split; split one component at a time with tests |
-| PDF parsing OOM crash in production | MEDIUM | Add `limits.fileSize` to multer immediately; restart Express process; monitor Node memory usage going forward |
-| Recharts breaking change causes blank charts | LOW | Pin to last working Recharts version; write regression test; upgrade in isolation |
-| Gemini Files API 48h expiry causes silent failures | LOW | Add try/catch with re-upload prompt; no data loss since document is on user's device |
+| Balancing logic blocks new source from appearing | LOW | Refactor to source-agnostic bucketing (2-3 hours); no data changes needed |
+| CGST extraction produced garbage text | MEDIUM | Re-extract using different tool (pdftotext, PDF.js, or manual copy from CBIC HTML); re-validate; 1-2 days |
+| Existing queries regressed after adding CGST | MEDIUM | Add per-source score cap or length normalization; re-run golden query set; 4-8 hours |
+| CII/due-dates returning wrong results | LOW | Move to structured JSON lookup; keyword RAG path unchanged; 2-4 hours |
+| Chunk IDs corrupt after source reorder | LOW | Rebuild index from scratch (already happens at startup); fix ID assignment to use offsets; 1-2 hours |
+| Schedule content silently dropped | LOW | Add schedule-specific splitter; verify chunk count after; 2-4 hours |
 
 ---
 
 ## Pitfall-to-Phase Mapping
 
-How roadmap phases should address these pitfalls.
-
 | Pitfall | Prevention Phase | Verification |
 |---------|------------------|--------------|
-| API key survives migration to Express | Express Backend Proxy | `grep -r "AIza\|GEMINI_API_KEY" dist/` returns empty after build |
-| CORS wildcard in production | Express Backend Proxy | Response headers show specific origin, not `*` |
-| Streaming breaks behind proxy | Express Backend Proxy | Test streaming with Nginx in staging before feature ship |
-| postMessage wildcard target origin | Iframe Plugin Mode | Code review: no `postMessage(data, '*')` anywhere in codebase |
-| CSP frame-ancestors missing | Express Backend Proxy (server setup) | `curl -I` shows `Content-Security-Policy: frame-ancestors` header |
-| Monolith split causes prop drilling | Architecture Refactoring | No component receives props it doesn't use directly |
-| Multer without size/type limits | Document Handling | Upload test: 20MB file rejected; `.js` file rejected |
-| Gemini Files API expiry unhandled | Document Handling | Test: expired URI returns user-friendly message |
-| Tax slabs hardcoded | Tax Calculator | No numeric tax constants outside versioned data files |
-| Old regime deductions incomplete | Tax Calculator | Test: user with 80C+80D+HRA inputs gets lower old regime tax than new |
-| JSON chart schema backward incompatibility | Enhanced Visualization | All existing chart JSON fixtures still render after schema extension |
-| Recharts re-render performance | Enhanced Visualization | React DevTools profiler: chart components do not re-render on unrelated state changes |
+| Balanced retrieval hardcoded to 3 sources | Phase 1: Retrieval refactor (before any new source added) | Test with mock 4th source; verify it appears in topK results |
+| Section regex drops schedules/chapters | Phase 2: Schedule-aware chunker | Assert chunk count > 150 for CGST; assert schedule sections present |
+| Array index chunk IDs | Phase 1: Retrieval refactor | Post-build assertion `allChunks.every((c,i) => c.id === i)` |
+| Raw frequency scoring amplifies CGST | Phase 3: Scoring normalization | Run 15-query golden set before/after CGST addition; zero regressions |
+| Structured reference data keyword failure | Phase 4: Supplementary data with structured lookup | Integration test: CII query returns exact numeric value |
+| CGST extraction artifacts | Phase 2 prerequisite: Data preparation | Manual inspection + section count validation script before any code |
 
 ---
 
 ## Sources
 
-- [React security in 2025: protect your UI and API without complexity](https://www.etixio.com/en/blog/security-react-2025/)
-- [PostMessage Vulnerabilities: When Cross-Window Communication Goes Wrong](https://medium.com/@instatunnel/postmessage-vulnerabilities-when-cross-window-communication-goes-wrong-4c82a5e8da63)
-- [postMessaged and Compromised — Microsoft MSRC Blog](https://msrc.microsoft.com/blog/2025/08/postmessaged-and-compromised/)
-- [CSP: frame-ancestors — MDN Web Docs](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Security-Policy/frame-ancestors)
-- [Gemini Files API documentation](https://ai.google.dev/gemini-api/docs/files)
-- [Recharts Performance Guide](https://recharts.github.io/en-US/guide/performance/)
-- [Best React chart libraries 2025 — LogRocket](https://blog.logrocket.com/best-react-chart-libraries-2025/)
-- [Income Tax Slabs FY 2025-26 — ClearTax](https://cleartax.in/s/income-tax-slabs)
-- [Tax Rates: Surcharge & Cess AY 2025-26 and 2026-27 — Taxmann](https://www.taxmann.com/post/blog/tax-rates-surcharge-cess)
-- [Finance Act 2025 Tax Rates — Income Tax India (official)](https://incometaxindia.gov.in/Tutorials/2%20Tax%20Rates.pdf)
-- [Multer: Node.js middleware for multipart/form-data](https://github.com/expressjs/multer)
-- [Streaming LLM responses — SSE to real-time UI](https://dev.to/hobbada/the-complete-guide-to-streaming-llm-responses-in-web-applications-from-sse-to-real-time-ui-3534)
-- [Server-Sent Events not production ready — DEV Community](https://dev.to/miketalbot/server-sent-events-are-still-not-production-ready-after-a-decade-a-lesson-for-me-a-warning-for-you-2gie)
-- [React state management 2025 — developerway](https://www.developerway.com/posts/react-state-management-2025)
-- [Recharts React 19 compatibility — GitHub issue #4558](https://github.com/recharts/recharts/issues/4558)
+- Direct code inspection: `D:/tax-assistant/server/rag/index.ts` (retrieval logic, balancing, scoring, chunker)
+- [Legal Chunking: Evaluating Methods for Effective Legal Text Retrieval](https://www.researchgate.net/publication/386472016_Legal_Chunking_Evaluating_Methods_for_Effective_Legal_Text_Retrieval) — MEDIUM confidence, WebSearch verified
+- [Towards Reliable Retrieval in RAG Systems for Large Legal Datasets](https://arxiv.org/html/2510.06999v1) — Document-Level Retrieval Mismatch (DRM) research
+- [RAG for Legal Documents](https://ipchimp.co.uk/2024/02/16/rag-for-legal-documents/) — Legal RAG structural challenges
+- [Practical BM25 — The BM25 Algorithm and its Variables](https://www.elastic.co/blog/practical-bm25-part-2-the-bm25-algorithm-and-its-variables) — IDF instability when corpus grows
+- [Optimizing Retrieval Augmentation with Dynamic Top-K Tuning](https://medium.com/@sauravjoshi23/optimizing-retrieval-augmentation-with-dynamic-top-k-tuning-for-efficient-question-answering-11961503d4ae) — Rank shifting when new docs added
+- [RAG for Structured Data: Benefits, Challenges](https://www.ai21.com/knowledge/rag-for-structured-data/) — Tables/structured data in RAG pipelines
+- [Preserving Table Structure for Better Retrieval](https://unstructured.io/blog/preserving-table-structure-for-better-retrieval) — Table chunking pitfalls
+- [Building a Golden Dataset for AI Evaluation](https://www.getmaxim.ai/articles/building-a-golden-dataset-for-ai-evaluation-a-step-by-step-guide/) — Regression testing with golden query sets
+- CBIC CGST Act structure: [cbic-gst.gov.in/gst-acts.html](https://cbic-gst.gov.in/gst-acts.html)
 
 ---
-*Pitfalls research for: Indian Tax Assistant v1.0 — Feature Addition to Existing React App*
-*Researched: 2026-04-04*
+*Pitfalls research for: Indian Tax Assistant v1.1 — RAG Data Completeness & Quality*
+*Researched: 2026-04-08*
