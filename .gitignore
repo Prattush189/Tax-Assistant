@@ -12,3 +12,5 @@ logs/
 
 # SQLite database
 data/
+!server/data/
+!server/data/tax-reference.md
