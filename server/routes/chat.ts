@@ -11,8 +11,8 @@ import { AuthRequest } from '../types.js';
 const router = Router();
 const ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_AI_API_KEY! });
 
-const PRIMARY_MODEL = 'gemini-2.5-flash';
-const FALLBACK_MODEL = 'gemini-2.0-flash';
+const PRIMARY_MODEL = 'gemini-2.0-flash';
+const FALLBACK_MODEL = 'gemini-2.0-flash-lite';
 const MAX_TOKENS = 8192;
 
 // Gemini Flash pricing (conservative — uses 2.5 rates)
@@ -56,7 +56,8 @@ RESPONSE QUALITY:
 - ALWAYS include a Markdown table when presenting rates, limits, thresholds, comparisons, or mappings. Tables make data scannable.
 - For old vs new Act comparisons, ALWAYS show a mapping table with Old Section | New Section | Nature columns.
 - For tax computations, show step-by-step breakdown in a table.
-- For comparisons (old vs new regime, FY comparisons), include a json-chart block: \`\`\`json-chart {"type":"bar"|"pie"|"line","title":"...","data":[{"name":"...","value":0}]} \`\`\`
+- Include a json-chart block ONLY when there is meaningful numerical data to visualize (tax amounts, slab comparisons, cost breakdowns). Format: \`\`\`json-chart {"type":"bar"|"pie"|"line","title":"...","data":[{"name":"...","value":0}]} \`\`\`
+- Do NOT include charts for non-numerical comparisons (form mappings, section name changes, feature lists). Use tables instead for those.
 - End with a brief practical tip or recommendation where relevant.
 - Mention consulting a CA for official filing.
 
@@ -161,83 +162,90 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
 
   let fullResponse = '';
 
-  try {
-    const requestBody = {
-      contents: [
-        ...history,
-        { role: 'user' as const, parts: [{ text: userContent }] },
-      ],
-      config: {
-        maxOutputTokens: MAX_TOKENS,
-        systemInstruction: SYSTEM_INSTRUCTION,
-      },
-    };
+  const requestBody = {
+    contents: [
+      ...history,
+      { role: 'user' as const, parts: [{ text: userContent }] },
+    ],
+    config: {
+      maxOutputTokens: MAX_TOKENS,
+      systemInstruction: SYSTEM_INSTRUCTION,
+    },
+  };
 
-    let stream;
+  // Retry logic: try primary model, then fallback, up to 3 total attempts
+  const MAX_RETRIES = 3;
+  const MODELS = [PRIMARY_MODEL, FALLBACK_MODEL, FALLBACK_MODEL];
+
+  let success = false;
+
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    const model = attempt === 0 ? PRIMARY_MODEL : FALLBACK_MODEL;
     try {
-      stream = await ai.models.generateContentStream({ model: PRIMARY_MODEL, ...requestBody });
-    } catch (primaryErr) {
-      const msg = primaryErr instanceof Error ? primaryErr.message : '';
-      if (msg.includes('503') || msg.includes('UNAVAILABLE') || msg.includes('overloaded')) {
-        console.warn(`[chat] ${PRIMARY_MODEL} unavailable, falling back to ${FALLBACK_MODEL}`);
-        stream = await ai.models.generateContentStream({ model: FALLBACK_MODEL, ...requestBody });
-      } else {
-        throw primaryErr;
-      }
-    }
+      const stream = await ai.models.generateContentStream({ model, ...requestBody });
 
-    let stopReason: string | null = null;
-    let inputTok = 0;
-    let outputTok = 0;
+      let stopReason: string | null = null;
+      let inputTok = 0;
+      let outputTok = 0;
 
-    for await (const chunk of stream) {
-      const text = chunk.text;
-      if (text) {
-        fullResponse += text;
-        res.write(`data: ${JSON.stringify({ text })}\n\n`);
-      }
+      for await (const chunk of stream) {
+        const text = chunk.text;
+        if (text) {
+          fullResponse += text;
+          res.write(`data: ${JSON.stringify({ text })}\n\n`);
+        }
 
-      // Capture usage from the last chunk
-      if (chunk.usageMetadata) {
-        inputTok = chunk.usageMetadata.promptTokenCount ?? 0;
-        outputTok = chunk.usageMetadata.candidatesTokenCount ?? 0;
+        if (chunk.usageMetadata) {
+          inputTok = chunk.usageMetadata.promptTokenCount ?? 0;
+          outputTok = chunk.usageMetadata.candidatesTokenCount ?? 0;
+        }
+
+        if (chunk.candidates?.[0]?.finishReason) {
+          const reason = chunk.candidates[0].finishReason;
+          stopReason = reason === 'MAX_TOKENS' ? 'max_tokens' : 'end_turn';
+        }
       }
 
-      // Capture stop reason from candidates
-      if (chunk.candidates?.[0]?.finishReason) {
-        const reason = chunk.candidates[0].finishReason;
-        stopReason = reason === 'MAX_TOKENS' ? 'max_tokens' : 'end_turn';
+      // Persist model response
+      if (fullResponse) {
+        messageRepo.create(chatId, 'model', fullResponse);
       }
+
+      // Auto-title
+      if (chat.title === 'New Chat' && message.trim().length > 0) {
+        const title = message.trim().slice(0, 60) + (message.trim().length > 60 ? '...' : '');
+        chatRepo.updateTitle(chatId, title);
+      }
+      chatRepo.touchTimestamp(chatId);
+
+      // Log usage — only on success (errors don't count toward rate limit)
+      const cost = (inputTok * INPUT_COST_PER_TOKEN) + (outputTok * OUTPUT_COST_PER_TOKEN);
+      usageRepo.log(clientIp, req.user.id, inputTok, outputTok, cost, false);
+
+      res.write(`data: ${JSON.stringify({ done: true, stop_reason: stopReason })}\n\n`);
+      success = true;
+      break; // Success — exit retry loop
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const isRetryable = errMsg.includes('503') || errMsg.includes('UNAVAILABLE') || errMsg.includes('overloaded') || errMsg.includes('500');
+      console.warn(`[chat] Attempt ${attempt + 1}/${MAX_RETRIES} failed (${model}): ${errMsg.slice(0, 100)}`);
+
+      if (!isRetryable || attempt === MAX_RETRIES - 1) {
+        // Not retryable or last attempt — send error to client
+        const isRateLimit = errMsg.includes('429') || errMsg.toLowerCase().includes('rate');
+        const clientMessage = isRateLimit
+          ? 'Too many requests. Please wait a moment and try again.'
+          : "I'm having trouble connecting. Please try again in a moment.";
+        res.write(`data: ${JSON.stringify({ error: true, message: clientMessage })}\n\n`);
+        break;
+      }
+
+      // Wait briefly before retry
+      await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
     }
-
-    // Persist model response
-    if (fullResponse) {
-      messageRepo.create(chatId, 'model', fullResponse);
-    }
-
-    // Auto-title
-    if (chat.title === 'New Chat' && message.trim().length > 0) {
-      const title = message.trim().slice(0, 60) + (message.trim().length > 60 ? '...' : '');
-      chatRepo.updateTitle(chatId, title);
-    }
-    chatRepo.touchTimestamp(chatId);
-
-    // Log usage
-    const cost = (inputTok * INPUT_COST_PER_TOKEN) + (outputTok * OUTPUT_COST_PER_TOKEN);
-    usageRepo.log(clientIp, req.user.id, inputTok, outputTok, cost, false);
-
-    res.write(`data: ${JSON.stringify({ done: true, stop_reason: stopReason })}\n\n`);
-  } catch (err) {
-    console.error('[chat] Gemini API error:', err);
-    const errMsg = err instanceof Error ? err.message : String(err);
-    const isRateLimit = errMsg.includes('429') || errMsg.toLowerCase().includes('rate');
-    const clientMessage = isRateLimit
-      ? 'Too many requests. Please wait a moment and try again.'
-      : "I'm having trouble connecting. Please try again in a moment.";
-    res.write(`data: ${JSON.stringify({ error: true, message: clientMessage })}\n\n`);
-  } finally {
-    res.end();
   }
+
+  res.end();
 });
 
 export default router;

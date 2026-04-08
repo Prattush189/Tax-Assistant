@@ -128,6 +128,27 @@ function buildChunks(filePath: string, source: Chunk['source']): Chunk[] {
   return chunks;
 }
 
+// ── Inverted index for fast lookup ──
+
+const invertedIndex = new Map<string, Set<number>>(); // token → chunk IDs
+
+function buildIndex(chunks: Chunk[]): void {
+  invertedIndex.clear();
+  for (const chunk of chunks) {
+    const words = chunk.lowerText.split(/\s+/).filter(w => w.length > 2);
+    for (const word of words) {
+      if (!invertedIndex.has(word)) invertedIndex.set(word, new Set());
+      invertedIndex.get(word)!.add(chunk.id);
+    }
+    // Also index section number
+    const secLower = chunk.section.toLowerCase().replace(/\s*\(part.*/, '');
+    if (secLower) {
+      if (!invertedIndex.has(secLower)) invertedIndex.set(secLower, new Set());
+      invertedIndex.get(secLower)!.add(chunk.id);
+    }
+  }
+}
+
 // ── Keyword scoring ──
 
 function tokenize(query: string): string[] {
@@ -141,7 +162,6 @@ function tokenize(query: string): string[] {
 function scoreChunk(chunk: Chunk, tokens: string[], sectionNumbers: string[]): number {
   let score = 0;
 
-  // Count keyword occurrences in chunk text
   for (const token of tokens) {
     let idx = 0;
     while ((idx = chunk.lowerText.indexOf(token, idx)) !== -1) {
@@ -150,7 +170,6 @@ function scoreChunk(chunk: Chunk, tokens: string[], sectionNumbers: string[]): n
     }
   }
 
-  // Strong boost for section number match in chunk section header
   const sectionLower = chunk.section.toLowerCase();
   for (const secNum of sectionNumbers) {
     if (sectionLower === secNum.toLowerCase() || sectionLower.startsWith(secNum.toLowerCase() + ' ')) {
@@ -158,19 +177,16 @@ function scoreChunk(chunk: Chunk, tokens: string[], sectionNumbers: string[]): n
     }
   }
 
-  // Check if section numbers appear in chunk text (cross-references)
   for (const secNum of sectionNumbers) {
     const secLower = secNum.toLowerCase();
     if (chunk.lowerText.includes(`section ${secLower}`) || chunk.lowerText.includes(`sec. ${secLower}`)) {
       score += 15;
     }
-    // Also match patterns like "194J" or "80C" directly in text
     if (chunk.lowerText.includes(secLower)) {
       score += 10;
     }
   }
 
-  // Boost comparison chunks — they contain cross-reference mappings
   if (chunk.source === 'comparison' && score > 0) {
     score = Math.ceil(score * 1.5);
   }
@@ -178,16 +194,31 @@ function scoreChunk(chunk: Chunk, tokens: string[], sectionNumbers: string[]): n
   return score;
 }
 
-// ── Retrieve top chunks ──
+// ── Retrieve top chunks using inverted index ──
 
 function retrieve(chunks: Chunk[], query: string, topK = 3): Chunk[] {
   const tokens = tokenize(query);
   if (tokens.length === 0) return [];
 
-  // Extract section numbers from query (e.g., "80C", "194J", "115BAC", "393")
   const sectionNumbers = query.match(/\b\d+[A-Z]*\b/g) || [];
 
-  const scored = chunks
+  // Use inverted index to get candidate chunks (instead of scanning all)
+  const candidateIds = new Set<number>();
+  for (const token of tokens) {
+    const ids = invertedIndex.get(token);
+    if (ids) ids.forEach(id => candidateIds.add(id));
+  }
+  for (const sec of sectionNumbers) {
+    const ids = invertedIndex.get(sec.toLowerCase());
+    if (ids) ids.forEach(id => candidateIds.add(id));
+  }
+
+  if (candidateIds.size === 0) return [];
+
+  // Only score candidate chunks, not all chunks
+  const candidates = [...candidateIds].map(id => chunks[id]).filter(Boolean);
+
+  const scored = candidates
     .map(chunk => ({ chunk, score: scoreChunk(chunk, tokens, sectionNumbers) }))
     .filter(s => s.score > 0)
     .sort((a, b) => b.score - a.score);
@@ -258,7 +289,9 @@ export function initRAG(): void {
     console.warn('[RAG] act-1961.txt not found, skipping');
   }
 
-  console.log(`[RAG] Total chunks: ${allChunks.length}`);
+  // Build inverted index for fast lookup
+  buildIndex(allChunks);
+  console.log(`[RAG] Total chunks: ${allChunks.length}, index keys: ${invertedIndex.size}`);
 }
 
 // Progressively broaden section numbers: 15CG → 15C → 15
