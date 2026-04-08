@@ -5,19 +5,14 @@
 See: .planning/PROJECT.md (updated 2026-04-08)
 
 **Core value:** Users get accurate, visual, step-by-step answers to Indian tax questions — from simple queries to complex calculations with document analysis.
-**Current focus:** Milestone v1.1 — RAG Data Completeness & Quality
+**Current focus:** Milestone v1.2 — UI Revamp (Premium Fintech Look)
 
 ## Current Position
 
-Phase: 7 — RAG Infrastructure Fixes
-Plan: Not started
-Status: Roadmap created, ready for planning
-Last activity: 2026-04-08 — v1.1 roadmap created (phases 7-10)
-
-```
-v1.1 Progress: [░░░░░░░░░░░░░░░░░░░░] 0% — Phase 7 not started
-Phase 7: [ ] Phase 8: [ ] Phase 9: [ ] Phase 10: [ ]
-```
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-04-08 — Milestone v1.2 started
 
 ## Performance Metrics
 

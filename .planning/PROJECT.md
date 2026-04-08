@@ -8,16 +8,19 @@ An AI-powered Indian tax assistant that helps users with income tax, GST, deduct
 
 Users get accurate, visual, step-by-step answers to Indian tax questions — from simple queries to complex calculations with document analysis.
 
-## Current Milestone: v1.1 — RAG Data Completeness & Quality
+## Current Milestone: v1.2 — UI Revamp (Premium Fintech Look)
 
-**Goal:** Ensure the RAG system has comprehensive, well-structured data covering both Income Tax Acts, GST, supplementary reference data, and improved chunking/retrieval quality — while preserving existing data files as fallback.
+**Goal:** Transform the entire UI from prototype-quality to premium fintech-grade — new color palette, polished layouts, Framer Motion animations, and a professional login experience. Inspired by banking/fintech apps (Zerodha, Groww, Cred).
 
 **Target features:**
-- Add CGST/IGST Act full text for deep GST query support
-- Add supplementary reference data (CII table, due dates calendar, ITR form matrix)
-- Fix RAG chunker to properly handle schedules, chapters, and non-section-numbered content
-- Improve retrieval quality and scoring for common query patterns
-- Keep existing act-1961.txt, act-2025.txt, comparison.txt as stable fallback
+- New color palette (user to select during implementation — options: refined gold, blue/indigo, or green)
+- Login/Signup pages with Framer Motion entrance animations and premium design
+- Sidebar redesign — better nav, typography, spacing
+- Chat page polish — message bubbles, input area, empty state, thinking indicator
+- Calculator, Dashboard, Notices, Plan pages — consistent premium styling
+- Dark mode refinement — proper contrast ratios, premium feel
+- Typography and spacing overhaul across all components
+- Micro-interactions and transitions via Framer Motion
 
 ## Requirements
 
@@ -86,4 +89,4 @@ Users get accurate, visual, step-by-step answers to Indian tax questions — fro
 | Keep Gemini model | Existing system prompt tuned for Indian tax domain | ✓ Good |
 
 ---
-*Last updated: 2026-04-08 after milestone v1.1 initialization*
+*Last updated: 2026-04-08 after milestone v1.2 initialization*
