@@ -12,7 +12,7 @@ const router = Router();
 const ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_AI_API_KEY! });
 
 const PRIMARY_MODEL = 'gemini-2.5-flash';
-const FALLBACK_MODEL = 'gemini-1.5-flash';
+const FALLBACK_MODEL = 'gemini-2.5-flash-lite';
 const MAX_TOKENS = 8192;
 
 // Gemini Flash pricing (conservative — uses 2.5 rates)
@@ -240,8 +240,8 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
         break;
       }
 
-      // Wait briefly before retry
-      await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+      // Wait before retry (2s, 4s, 6s)
+      await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
     }
   }
 
