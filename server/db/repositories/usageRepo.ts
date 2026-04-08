@@ -26,6 +26,9 @@ export interface BlockedIp {
 }
 
 const stmts = {
+  countByUser: db.prepare(
+    'SELECT COUNT(*) AS count FROM api_usage WHERE user_id = ? AND created_at >= ?'
+  ),
   log: db.prepare(
     'INSERT INTO api_usage (ip, user_id, input_tokens, output_tokens, cost, is_plugin) VALUES (?, ?, ?, ?, ?, ?)'
   ),
@@ -72,6 +75,11 @@ function periodToDate(period: string): string {
 }
 
 export const usageRepo = {
+  countByUser(userId: string, since: string): number {
+    const row = stmts.countByUser.get(userId, since) as { count: number };
+    return row.count;
+  },
+
   log(ip: string, userId: string | null, inputTokens: number, outputTokens: number, cost: number, isPlugin: boolean): void {
     stmts.log.run(ip, userId, inputTokens, outputTokens, cost, isPlugin ? 1 : 0);
   },

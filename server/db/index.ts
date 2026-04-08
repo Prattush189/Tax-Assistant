@@ -29,6 +29,9 @@ const colNames = cols.map(c => c.name);
 if (!colNames.includes('role')) {
   db.exec("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('user', 'admin'))");
 }
+if (!colNames.includes('plan')) {
+  db.exec("ALTER TABLE users ADD COLUMN plan TEXT NOT NULL DEFAULT 'free' CHECK(plan IN ('free', 'pro', 'enterprise'))");
+}
 if (!colNames.includes('suspended_until')) {
   db.exec("ALTER TABLE users ADD COLUMN suspended_until TEXT");
 }

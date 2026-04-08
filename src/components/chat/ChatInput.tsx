@@ -118,7 +118,7 @@ export function ChatInput({
         </div>
       </div>
       <p className="text-[10px] text-center text-slate-400 dark:text-slate-500 mt-3">
-        Tax Assistant can make mistakes. Always verify with a qualified tax professional.
+        Smart AI can make mistakes. Always verify with a qualified professional.
       </p>
     </div>
   );

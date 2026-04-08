@@ -5,25 +5,24 @@ interface User {
   email: string;
   name: string;
   role: 'user' | 'admin';
+  plan: 'free' | 'pro' | 'enterprise';
 }
 
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
-  isGuest: boolean;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
   signup: (name: string, email: string, password: string) => Promise<void>;
   logout: () => void;
-  continueAsGuest: () => void;
   getAuthHeader: () => Record<string, string>;
+  refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
 const TOKEN_KEY = 'tax_access_token';
 const REFRESH_KEY = 'tax_refresh_token';
-const GUEST_KEY = 'tax_guest_mode';
 
 async function apiFetch(url: string, options: RequestInit = {}) {
   const res = await fetch(url, {
@@ -40,15 +39,12 @@ async function apiFetch(url: string, options: RequestInit = {}) {
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [isGuest, setIsGuest] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   const logout = useCallback(() => {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(REFRESH_KEY);
-    localStorage.removeItem(GUEST_KEY);
     setUser(null);
-    setIsGuest(false);
   }, []);
 
   const refreshAccessToken = useCallback(async (): Promise<string | null> => {
@@ -69,45 +65,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [logout]);
 
-  // Validate stored token on mount
+  const fetchMe = useCallback(async (token: string): Promise<User | null> => {
+    try {
+      return await apiFetch('/api/auth/me', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch {
+      return null;
+    }
+  }, []);
+
   useEffect(() => {
     async function validate() {
-      // Check guest mode first
-      if (localStorage.getItem(GUEST_KEY) === 'true') {
-        setIsGuest(true);
-        setIsLoading(false);
-        return;
-      }
-
       const token = localStorage.getItem(TOKEN_KEY);
-      if (!token) {
-        setIsLoading(false);
-        return;
-      }
+      if (!token) { setIsLoading(false); return; }
 
-      try {
-        const data = await apiFetch('/api/auth/me', {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        setUser(data);
-      } catch {
+      let userData = await fetchMe(token);
+      if (!userData) {
         const newToken = await refreshAccessToken();
-        if (newToken) {
-          try {
-            const data = await apiFetch('/api/auth/me', {
-              headers: { Authorization: `Bearer ${newToken}` },
-            });
-            setUser(data);
-          } catch {
-            logout();
-          }
-        }
-      } finally {
-        setIsLoading(false);
+        if (newToken) userData = await fetchMe(newToken);
       }
+      if (userData) setUser(userData);
+      else logout();
+      setIsLoading(false);
     }
     validate();
-  }, [refreshAccessToken, logout]);
+  }, [refreshAccessToken, logout, fetchMe]);
 
   const login = async (email: string, password: string) => {
     const data = await apiFetch('/api/auth/login', {
@@ -116,8 +99,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
     localStorage.setItem(TOKEN_KEY, data.accessToken);
     localStorage.setItem(REFRESH_KEY, data.refreshToken);
-    localStorage.removeItem(GUEST_KEY);
-    setIsGuest(false);
     setUser(data.user);
   };
 
@@ -128,16 +109,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
     localStorage.setItem(TOKEN_KEY, data.accessToken);
     localStorage.setItem(REFRESH_KEY, data.refreshToken);
-    localStorage.removeItem(GUEST_KEY);
-    setIsGuest(false);
     setUser(data.user);
   };
 
-  const continueAsGuest = useCallback(() => {
-    localStorage.setItem(GUEST_KEY, 'true');
-    setIsGuest(true);
-    setUser(null);
-  }, []);
+  const refreshUser = useCallback(async () => {
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (token) {
+      const userData = await fetchMe(token);
+      if (userData) setUser(userData);
+    }
+  }, [fetchMe]);
 
   const getAuthHeader = useCallback((): Record<string, string> => {
     const token = localStorage.getItem(TOKEN_KEY);
@@ -149,13 +130,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       value={{
         user,
         isAuthenticated: !!user,
-        isGuest,
         isLoading,
         login,
         signup,
         logout,
-        continueAsGuest,
         getAuthHeader,
+        refreshUser,
       }}
     >
       {children}

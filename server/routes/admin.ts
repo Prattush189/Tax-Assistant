@@ -30,6 +30,7 @@ router.get('/users', (_req: AuthRequest, res: Response) => {
     email: u.email,
     name: u.name,
     role: u.role,
+    plan: u.plan ?? 'free',
     suspended_until: u.suspended_until,
     created_at: u.created_at,
     chat_count: u.chat_count,
@@ -63,6 +64,20 @@ router.post('/ip/:ip/block', (req: AuthRequest, res: Response) => {
 router.post('/ip/:ip/unblock', (req: AuthRequest, res: Response) => {
   const { ip } = req.params;
   usageRepo.unblockIp(ip);
+  res.json({ success: true });
+});
+
+// POST /api/admin/users/:id/plan — change user's plan
+router.post('/users/:id/plan', (req: AuthRequest, res: Response) => {
+  const { id } = req.params;
+  const { plan } = req.body;
+  if (!['free', 'pro', 'enterprise'].includes(plan)) {
+    res.status(400).json({ error: 'Invalid plan. Must be free, pro, or enterprise.' });
+    return;
+  }
+  const user = userRepo.findById(id);
+  if (!user) { res.status(404).json({ error: 'User not found' }); return; }
+  userRepo.updatePlan(id, plan);
   res.json({ success: true });
 });
 

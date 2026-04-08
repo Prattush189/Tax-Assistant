@@ -76,10 +76,10 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
         {messages.length === 0 && !isLoading ? (
           <div className="h-full flex flex-col items-center justify-center text-center max-w-2xl mx-auto space-y-8 py-12">
             <div className="w-20 h-20 rounded-3xl flex items-center justify-center">
-              <img src="/logoAI.png" alt="Tax Assistant" className="w-16 h-16 object-contain" />
+              <img src="/logoAI.png" alt="Smart AI" className="w-16 h-16 object-contain" />
             </div>
             <div className="space-y-4">
-              <h2 className="text-2xl sm:text-3xl font-bold text-slate-800 dark:text-slate-100">Namaste! I'm your Tax Assistant.</h2>
+              <h2 className="text-2xl sm:text-3xl font-bold text-slate-800 dark:text-slate-100">Namaste! I'm Smart AI.</h2>
               <p className="text-slate-600 dark:text-slate-400 text-base sm:text-lg">
                 Ask me anything about Income Tax, GST, Deductions, or Financial Planning in India.
               </p>

@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
   role TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('user', 'admin')),
+  plan TEXT NOT NULL DEFAULT 'free' CHECK(plan IN ('free', 'pro', 'enterprise')),
   suspended_until TEXT
 );
 

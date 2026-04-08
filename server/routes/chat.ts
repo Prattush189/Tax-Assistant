@@ -1,10 +1,17 @@
 // server/routes/chat.ts
 import { Router, Response } from 'express';
 import Anthropic from '@anthropic-ai/sdk';
+import { readFileSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { chatRepo } from '../db/repositories/chatRepo.js';
 import { messageRepo } from '../db/repositories/messageRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
+import { userRepo } from '../db/repositories/userRepo.js';
 import { AuthRequest } from '../types.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const router = Router();
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
@@ -12,82 +19,70 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 const MODEL = 'claude-haiku-4-5-20251001';
 const MAX_TOKENS = 4096;
 
-// ── Token-based cost tracking per IP ──
-// Haiku 4.5: $1/MTok input, $5/MTok output
-const INPUT_COST_PER_TOKEN = 1 / 1_000_000;   // $0.000001
-const OUTPUT_COST_PER_TOKEN = 5 / 1_000_000;   // $0.000005
+// Haiku 4.5 pricing
+const INPUT_COST_PER_TOKEN = 1 / 1_000_000;
+const OUTPUT_COST_PER_TOKEN = 5 / 1_000_000;
 
-// Monthly budgets (configurable via env)
-const MONTHLY_BUDGET_APP = parseFloat(process.env.MONTHLY_BUDGET_APP ?? '5');       // $5/month for main app
-const MONTHLY_BUDGET_PLUGIN = parseFloat(process.env.MONTHLY_BUDGET_PLUGIN ?? '1'); // $1/month for plugin
-
-interface CostRecord {
-  cost: number;
-  resetAt: number;
-}
-const ipCosts = new Map<string, CostRecord>();
-
-function getMonthResetTimestamp(): number {
-  const now = new Date();
-  // Reset on 1st of next month at midnight IST (18:30 UTC previous day)
-  const reset = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 18, 30, 0));
-  if (reset.getTime() <= now.getTime()) {
-    reset.setUTCMonth(reset.getUTCMonth() + 1);
-  }
-  return reset.getTime();
+// ── Plan-based message limits ──
+interface PlanConfig {
+  limit: number;
+  period: 'day' | 'month';
 }
 
-function checkBudget(ip: string, isPlugin: boolean): { allowed: boolean; spent: number; budget: number } {
-  const now = Date.now();
-  const record = ipCosts.get(ip);
-  const budget = isPlugin ? MONTHLY_BUDGET_PLUGIN : MONTHLY_BUDGET_APP;
+const PLAN_LIMITS: Record<string, PlanConfig> = {
+  free: { limit: 10, period: 'day' },
+  pro: { limit: 1000, period: 'month' },
+  enterprise: { limit: 10000, period: 'month' },
+};
 
-  if (!record || now > record.resetAt) {
-    ipCosts.set(ip, { cost: 0, resetAt: getMonthResetTimestamp() });
-    return { allowed: true, spent: 0, budget };
+function getMessageCount(userId: string, period: 'day' | 'month'): number {
+  const now = new Date(Date.now() + 5.5 * 60 * 60 * 1000); // IST
+  let since: string;
+  if (period === 'day') {
+    const start = new Date(now);
+    start.setHours(0, 0, 0, 0);
+    since = start.toISOString().replace('Z', '');
+  } else {
+    const start = new Date(now.getFullYear(), now.getMonth(), 1);
+    since = start.toISOString().replace('Z', '');
   }
-
-  return { allowed: record.cost < budget, spent: record.cost, budget };
+  const result = usageRepo.countByUser(userId, since);
+  return result;
 }
 
-function addCost(ip: string, inputTokens: number, outputTokens: number): void {
-  const cost = (inputTokens * INPUT_COST_PER_TOKEN) + (outputTokens * OUTPUT_COST_PER_TOKEN);
-  const record = ipCosts.get(ip);
-  if (record) {
-    record.cost += cost;
-  }
-}
+// Load tax reference data at startup
+const TAX_REFERENCE = readFileSync(join(__dirname, '..', 'data', 'tax-reference.md'), 'utf-8');
 
-// Cleanup stale entries every hour
-setInterval(() => {
-  const now = Date.now();
-  for (const [ip, record] of ipCosts) {
-    if (now > record.resetAt) ipCosts.delete(ip);
-  }
-}, 60 * 60 * 1000);
-
-// System prompt
-const SYSTEM_INSTRUCTION = `You are "Tax Assistant" — an expert on Indian Income Tax, GST, and financial planning.
+const SYSTEM_INSTRUCTION = `You are "Smart AI" — an expert on Indian Income Tax, GST, and financial planning.
 
 SCOPE: Only answer questions about Indian tax, GST, deductions, capital gains, and financial planning. Politely decline other topics.
 
 RULES:
+- Default to FY 2025-26 (AY 2026-27) unless user specifies otherwise
 - Specify FY/AY for all calculations
 - Show tax breakdowns in compact Markdown tables (GFM syntax, blank lines before/after tables)
 - Be concise: answer in the fewest words possible while staying accurate
 - Mention consulting a CA for official filing
 - For comparisons, include a json-chart block: \`\`\`json-chart {"type":"bar"|"pie"|"line","title":"...","data":[{"name":"...","value":0}]} \`\`\`
+- ALWAYS use the tax reference data below for rates, slabs, and limits — never guess or use outdated figures
 
-DEDUCTION LIMITS (FY 2024-25):
-80C: ₹1.5L | 80D: ₹25K/₹50K(senior) | 80CCD(1B): ₹50K | HRA: metro 50%, non-metro 40%
-New regime std deduction: ₹75K | Old regime std deduction: ₹50K
-New regime rebate 87A: ₹25K (income ≤₹7L) | Old regime rebate 87A: ₹12.5K (income ≤₹5L)`;
+<tax-reference>
+${TAX_REFERENCE}
+</tax-reference>`;
 
 const MAX_HISTORY_MESSAGES = 10;
 
 router.post('/chat', async (req: AuthRequest, res: Response) => {
-  const { chatId, message, history: clientHistory, fileContext } = req.body;
+  const { chatId, message, fileContext } = req.body;
 
+  if (!req.user) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  if (!chatId || typeof chatId !== 'string') {
+    res.status(400).json({ error: 'chatId is required' });
+    return;
+  }
   if (!message || typeof message !== 'string' || message.trim().length === 0) {
     res.status(400).json({ error: 'message is required' });
     return;
@@ -98,7 +93,6 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
   }
 
   const clientIp = req.ip ?? req.socket.remoteAddress ?? 'unknown';
-  const isPlugin = !!req.headers['x-plugin-key'];
 
   // Check IP block
   const blocked = usageRepo.isBlocked(clientIp);
@@ -109,46 +103,42 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
     return;
   }
 
-  // Check monthly token budget
-  const budget = checkBudget(clientIp, isPlugin);
-  if (!budget.allowed) {
+  // Check plan-based message limit
+  const user = userRepo.findById(req.user.id);
+  const plan = user?.plan ?? 'free';
+  const planConfig = PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
+  const used = getMessageCount(req.user.id, planConfig.period);
+
+  if (used >= planConfig.limit) {
+    const periodLabel = planConfig.period === 'day' ? 'daily' : 'monthly';
     res.status(429).json({
-      error: 'Monthly usage limit reached. Your limit resets on the 1st of next month.',
+      error: `You've reached your ${periodLabel} message limit (${planConfig.limit} messages). Upgrade your plan for more.`,
+      upgrade: true,
     });
     return;
   }
 
-  const isAuthenticated = !!req.user;
-  let history: Array<{ role: 'user' | 'assistant'; content: string }> = [];
-  let chat: { title: string } | null = null;
-
-  if (isAuthenticated && chatId) {
-    const dbChat = chatRepo.findById(chatId);
-    if (!dbChat || dbChat.user_id !== req.user!.id) {
-      res.status(404).json({ error: 'Chat not found' });
-      return;
-    }
-    chat = dbChat;
-
-    messageRepo.create(chatId, 'user', message.trim(), fileContext?.filename, fileContext?.mimeType);
-
-    const dbMessages = messageRepo.findByChatId(chatId);
-    history = dbMessages.slice(0, -1)
-      .slice(-MAX_HISTORY_MESSAGES)
-      .map(m => ({
-        role: (m.role === 'model' ? 'assistant' : 'user') as 'user' | 'assistant',
-        content: m.content,
-      }));
-  } else {
-    const raw = Array.isArray(clientHistory) ? clientHistory : [];
-    history = raw.slice(-MAX_HISTORY_MESSAGES).map((m: { role: string; parts?: Array<{ text: string }>; content?: string }) => ({
-      role: (m.role === 'model' ? 'assistant' : 'user') as 'user' | 'assistant',
-      content: m.parts?.[0]?.text ?? m.content ?? '',
-    }));
+  // Verify chat belongs to user
+  const chat = chatRepo.findById(chatId);
+  if (!chat || chat.user_id !== req.user.id) {
+    res.status(404).json({ error: 'Chat not found' });
+    return;
   }
 
+  // Persist user message
+  messageRepo.create(chatId, 'user', message.trim(), fileContext?.filename, fileContext?.mimeType);
+
+  // Load history from DB
+  const dbMessages = messageRepo.findByChatId(chatId);
+  const history = dbMessages.slice(0, -1)
+    .slice(-MAX_HISTORY_MESSAGES)
+    .map(m => ({
+      role: (m.role === 'model' ? 'assistant' : 'user') as 'user' | 'assistant',
+      content: m.content,
+    }));
+
   if (history.length > 0 && history[0].role !== 'user') {
-    history = history.slice(1);
+    history.shift();
   }
 
   let userContent = message.trim();
@@ -185,27 +175,24 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
     const finalMsg = await stream.finalMessage();
     stopReason = finalMsg.stop_reason;
 
-    // Track token costs
-    const inputTok = finalMsg.usage.input_tokens;
-    const outputTok = finalMsg.usage.output_tokens;
-    addCost(clientIp, inputTok, outputTok);
-
-    // Persist usage to DB
-    const cost = (inputTok * INPUT_COST_PER_TOKEN) + (outputTok * OUTPUT_COST_PER_TOKEN);
-    usageRepo.log(clientIp, req.user?.id ?? null, inputTok, outputTok, cost, isPlugin);
-
-    // Persist model response (authenticated only)
-    if (isAuthenticated && chatId && fullResponse) {
+    // Persist model response
+    if (fullResponse) {
       messageRepo.create(chatId, 'model', fullResponse);
-
-      if (chat?.title === 'New Chat' && message.trim().length > 0) {
-        const title = message.trim().slice(0, 60) + (message.trim().length > 60 ? '...' : '');
-        chatRepo.updateTitle(chatId, title);
-      }
-      chatRepo.touchTimestamp(chatId);
     }
 
-    // Send done with stop_reason so frontend knows if response was truncated
+    // Auto-title
+    if (chat.title === 'New Chat' && message.trim().length > 0) {
+      const title = message.trim().slice(0, 60) + (message.trim().length > 60 ? '...' : '');
+      chatRepo.updateTitle(chatId, title);
+    }
+    chatRepo.touchTimestamp(chatId);
+
+    // Log usage
+    const inputTok = finalMsg.usage.input_tokens;
+    const outputTok = finalMsg.usage.output_tokens;
+    const cost = (inputTok * INPUT_COST_PER_TOKEN) + (outputTok * OUTPUT_COST_PER_TOKEN);
+    usageRepo.log(clientIp, req.user.id, inputTok, outputTok, cost, false);
+
     res.write(`data: ${JSON.stringify({ done: true, stop_reason: stopReason })}\n\n`);
   } catch (err) {
     console.error('[chat] Anthropic API error:', err);

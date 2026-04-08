@@ -7,6 +7,7 @@ export interface UserRow {
   password: string;
   name: string;
   role: 'user' | 'admin';
+  plan: 'free' | 'pro' | 'enterprise';
   suspended_until: string | null;
   created_at: string;
   updated_at: string;
@@ -23,6 +24,9 @@ const stmts = {
   `),
   create: db.prepare(
     'INSERT INTO users (id, email, password, name) VALUES (?, ?, ?, ?)'
+  ),
+  updatePlan: db.prepare(
+    "UPDATE users SET plan = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
   ),
   updateRole: db.prepare(
     "UPDATE users SET role = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
@@ -49,6 +53,10 @@ export const userRepo = {
     const id = crypto.randomBytes(16).toString('hex');
     stmts.create.run(id, email.toLowerCase(), hashedPassword, name);
     return this.findById(id)!;
+  },
+
+  updatePlan(id: string, plan: 'free' | 'pro' | 'enterprise'): void {
+    stmts.updatePlan.run(plan, id);
   },
 
   updateRole(id: string, role: 'user' | 'admin'): void {

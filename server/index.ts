@@ -7,7 +7,7 @@ import uploadRouter from './routes/upload.js';
 import chatsRouter from './routes/chats.js';
 import authRouter from './routes/auth.js';
 import adminRouter from './routes/admin.js';
-import { authMiddleware, optionalAuthMiddleware, adminMiddleware } from './middleware/auth.js';
+import { authMiddleware, adminMiddleware } from './middleware/auth.js';
 import { authLimiter, chatLimiter, uploadLimiter } from './middleware/rateLimiter.js';
 import helmet from 'helmet';
 import cors from 'cors';
@@ -60,14 +60,13 @@ app.use(express.json({ limit: '1mb' }));
 // Auth routes — public, with brute-force protection
 app.use('/api/auth', authLimiter, authRouter);
 
-// Chat & upload — optional auth (guests can use, but no persistence)
-app.use('/api/chat', optionalAuthMiddleware, chatLimiter);
-app.use('/api/upload', optionalAuthMiddleware, uploadLimiter);
+// All API routes require auth
+app.use('/api', authMiddleware);
+app.use('/api/chat', chatLimiter);
+app.use('/api/upload', uploadLimiter);
 app.use('/api', chatRouter);
 app.use('/api', uploadRouter);
-
-// Chats CRUD — requires auth (guests have no chats)
-app.use('/api/chats', authMiddleware, chatsRouter);
+app.use('/api/chats', chatsRouter);
 
 // Admin — requires auth + admin role
 app.use('/api/admin', authMiddleware, adminMiddleware, adminRouter);

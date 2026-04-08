@@ -4,10 +4,9 @@ import { LogIn, Eye, EyeOff } from 'lucide-react';
 
 interface LoginPageProps {
   onSwitchToSignup: () => void;
-  onContinueAsGuest: () => void;
 }
 
-export function LoginPage({ onSwitchToSignup, onContinueAsGuest }: LoginPageProps) {
+export function LoginPage({ onSwitchToSignup }: LoginPageProps) {
   const { login } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -35,9 +34,9 @@ export function LoginPage({ onSwitchToSignup, onContinueAsGuest }: LoginPageProp
         <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border border-white/20 dark:border-slate-700/50 rounded-3xl shadow-2xl p-8">
           {/* Logo */}
           <div className="text-center mb-8">
-            <img src="/logoAI.png" alt="Tax Assistant" className="w-16 h-16 object-contain mb-4" />
+            <img src="/logoAI.png" alt="Smart AI" className="w-16 h-16 object-contain mb-4" />
             <h1 className="text-2xl font-bold text-slate-800 dark:text-white">Welcome back</h1>
-            <p className="text-slate-500 dark:text-slate-400 mt-1">Sign in to your Tax Assistant</p>
+            <p className="text-slate-500 dark:text-slate-400 mt-1">Sign in to Smart AI</p>
           </div>
 
           {error && (
@@ -96,20 +95,7 @@ export function LoginPage({ onSwitchToSignup, onContinueAsGuest }: LoginPageProp
             </button>
           </form>
 
-          <div className="relative my-6">
-            <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-200 dark:border-slate-700" /></div>
-            <div className="relative flex justify-center text-xs"><span className="bg-white/80 dark:bg-slate-900/80 px-3 text-slate-400">or</span></div>
-          </div>
-
-          <button
-            onClick={onContinueAsGuest}
-            className="w-full py-3 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-medium rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-all text-sm"
-          >
-            Continue without account
-          </button>
-          <p className="text-[11px] text-center text-slate-400 mt-2">Chat history won't be saved</p>
-
-          <p className="text-center text-sm text-slate-500 dark:text-slate-400 mt-4">
+          <p className="text-center text-sm text-slate-500 dark:text-slate-400 mt-6">
             Don't have an account?{' '}
             <button
               onClick={onSwitchToSignup}

@@ -41,9 +41,9 @@ export function Header({
 
       {/* Center — logo */}
       <div className="flex items-center gap-2">
-        <img src="/logoAI.png" alt="Tax Assistant Logo" className="w-6 h-6 object-contain" />
+        <img src="/logoAI.png" alt="Smart AI Logo" className="w-6 h-6 object-contain" />
         <span className="font-semibold text-slate-700 dark:text-slate-200 text-sm sm:text-base">
-          {isPluginMode ? 'Tax Assistant' : 'Indian Tax Assistant'}
+          Smart AI
         </span>
       </div>
 

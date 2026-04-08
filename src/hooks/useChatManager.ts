@@ -11,7 +11,7 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 
 export function useChatManager() {
-  const { isAuthenticated, isGuest } = useAuth();
+  const { isAuthenticated } = useAuth();
   const [chatList, setChatList] = useState<ChatItem[]>([]);
   const [currentChatId, setCurrentChatId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -24,7 +24,6 @@ export function useChatManager() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Load chat list (authenticated only)
   const loadChatList = useCallback(async () => {
     if (!isAuthenticated) return;
     try {
@@ -35,9 +34,7 @@ export function useChatManager() {
     }
   }, [isAuthenticated]);
 
-  useEffect(() => {
-    loadChatList();
-  }, [loadChatList]);
+  useEffect(() => { loadChatList(); }, [loadChatList]);
 
   const switchChat = useCallback(async (chatId: string) => {
     setCurrentChatId(chatId);
@@ -61,20 +58,13 @@ export function useChatManager() {
   }, []);
 
   const createNewChat = useCallback(async (): Promise<string> => {
-    if (isGuest) {
-      // Guest: just clear local state, no API call
-      setCurrentChatId(null);
-      setMessages([]);
-      setActiveDocument(null);
-      return 'guest';
-    }
     const chat = await apiCreateChat();
     setChatList(prev => [chat, ...prev]);
     setCurrentChatId(chat.id);
     setMessages([]);
     setActiveDocument(null);
     return chat.id;
-  }, [isGuest]);
+  }, []);
 
   const deleteChatById = useCallback(async (chatId: string) => {
     await apiDeleteChat(chatId);
@@ -86,14 +76,13 @@ export function useChatManager() {
     }
   }, [currentChatId]);
 
-  // Send a message
   const send = useCallback(async () => {
     if (isLoading || input.trim() === '') return;
 
     let chatId = currentChatId;
 
-    if (isAuthenticated && !chatId) {
-      // Auto-create chat for authenticated users
+    // Auto-create chat if none selected
+    if (!chatId) {
       try {
         chatId = await createNewChat();
       } catch (err) {
@@ -116,24 +105,21 @@ export function useChatManager() {
     setInput('');
     setIsLoading(true);
 
-    // Buffer full response, then reveal at once (like Claude)
     let fullResponse = '';
     let wasTruncated = false;
 
     try {
       await sendChatMessage(
-        chatId ?? null,
+        chatId,
         messageText,
         (text) => { fullResponse += text; },
         (msg) => { fullResponse = msg; },
         activeDocument ? { filename: activeDocument.filename, mimeType: activeDocument.mimeType, extractedData: activeDocument.extractedData } : undefined,
-        isGuest ? messages : undefined,
         (stopReason) => {
           if (stopReason === 'max_tokens') wasTruncated = true;
         },
       );
 
-      // Reveal full response at once
       setMessages(prev => [...prev, {
         role: 'model',
         content: fullResponse,
@@ -141,23 +127,19 @@ export function useChatManager() {
         truncated: wasTruncated,
       }]);
 
-      if (isAuthenticated) {
-        await loadChatList();
-      }
+      await loadChatList();
     } finally {
       setIsLoading(false);
     }
-  }, [isLoading, input, currentChatId, activeDocument, isAuthenticated, isGuest, messages, createNewChat, loadChatList]);
+  }, [isLoading, input, currentChatId, activeDocument, createNewChat, loadChatList]);
 
-  // Continue a truncated response
   const continueResponse = useCallback(async () => {
     if (isLoading) return;
-
     const chatId = currentChatId;
+    if (!chatId) return;
+
     setIsLoading(true);
 
-    // Add a new model placeholder to append continued text
-    // Remove truncated flag from the last message
     setMessages(prev => {
       const updated = [...prev];
       if (updated.length > 0) {
@@ -171,18 +153,16 @@ export function useChatManager() {
 
     try {
       await sendChatMessage(
-        chatId ?? null,
+        chatId,
         'Continue from where you left off. Do not repeat what you already said.',
         (text) => { contResponse += text; },
         (msg) => { contResponse = msg; },
         undefined,
-        isGuest ? messages : undefined,
         (stopReason) => {
           if (stopReason === 'max_tokens') contTruncated = true;
         },
       );
 
-      // Append continuation as a new model message
       setMessages(prev => [...prev, {
         role: 'model' as const,
         content: contResponse,
@@ -192,7 +172,7 @@ export function useChatManager() {
     } finally {
       setIsLoading(false);
     }
-  }, [isLoading, currentChatId, isGuest, messages]);
+  }, [isLoading, currentChatId]);
 
   const attachDocument = (doc: DocumentContext) => setActiveDocument(doc);
   const detachDocument = () => setActiveDocument(null);
@@ -220,7 +200,6 @@ export function useChatManager() {
     activeDocument,
     attachDocument,
     detachDocument,
-    isGuest,
     continueResponse,
   };
 }

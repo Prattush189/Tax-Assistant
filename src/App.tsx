@@ -15,10 +15,11 @@ import { ChatView } from './components/chat/ChatView';
 import { CalculatorView } from './components/calculator/CalculatorView';
 import { DashboardView } from './components/dashboard/DashboardView';
 import { AdminDashboard } from './components/admin/AdminDashboard';
+import { PlanPage } from './components/plan/PlanPage';
 import { TaxCalculatorProvider } from './contexts/TaxCalculatorContext';
 import { cn } from './lib/utils';
 
-type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin';
+type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan';
 
 function AppContent() {
   const { isDarkMode, toggleTheme, setIsDarkMode } = useTheme();
@@ -48,7 +49,6 @@ function AppContent() {
             setIsSidebarOpen(false);
           }}
           onDeleteChat={chatManager.deleteChatById}
-          isGuest={chatManager.isGuest}
           user={user}
           onLogout={logout}
           activeView={activeView}
@@ -69,6 +69,7 @@ function AppContent() {
           {activeView === 'calculator' && <CalculatorView />}
           {activeView === 'dashboard' && <DashboardView />}
           {activeView === 'admin' && user?.role === 'admin' && <AdminDashboard />}
+          {activeView === 'plan' && <PlanPage />}
         </main>
       </TaxCalculatorProvider>
       {isSidebarOpen && !isPluginMode && (

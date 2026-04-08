@@ -1,9 +1,9 @@
-import { X, Plus, Moon, Sun, LogOut, Trash2, MessageSquare, LogIn, MessageCircle, Calculator, LayoutDashboard, Shield } from 'lucide-react';
+import { X, Plus, Moon, Sun, LogOut, Trash2, MessageSquare, MessageCircle, Calculator, LayoutDashboard, Shield, CreditCard } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { ChatItem } from '../../services/api';
 import { useState } from 'react';
 
-type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin';
+type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan';
 
 interface SidebarProps {
   isOpen: boolean;
@@ -15,8 +15,7 @@ interface SidebarProps {
   onNewChat: () => void;
   onSwitchChat: (chatId: string) => void;
   onDeleteChat: (chatId: string) => void;
-  isGuest: boolean;
-  user: { id: string; email: string; name: string; role: string } | null;
+  user: { id: string; email: string; name: string; role: string; plan?: string } | null;
   onLogout: () => void;
   activeView: ActiveView;
   onViewChange: (view: ActiveView) => void;
@@ -24,8 +23,9 @@ interface SidebarProps {
 
 const baseNavItems: { id: ActiveView; label: string; icon: typeof MessageCircle }[] = [
   { id: 'chat', label: 'Chat', icon: MessageCircle },
-  { id: 'calculator', label: 'Calculator', icon: Calculator },
-  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { id: 'calculator', label: 'Calc', icon: Calculator },
+  { id: 'dashboard', label: 'Stats', icon: LayoutDashboard },
+  { id: 'plan', label: 'Plan', icon: CreditCard },
 ];
 
 const adminNavItem = { id: 'admin' as ActiveView, label: 'Admin', icon: Shield };
@@ -48,10 +48,16 @@ function getInitials(name: string): string {
   return name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
 }
 
+function planLabel(plan?: string): string {
+  if (plan === 'pro') return 'Pro';
+  if (plan === 'enterprise') return 'Enterprise';
+  return 'Free';
+}
+
 export function Sidebar({
   isOpen, onClose, isDarkMode, onToggleTheme,
   chatList, currentChatId, onNewChat, onSwitchChat, onDeleteChat,
-  isGuest, user, onLogout, activeView, onViewChange,
+  user, onLogout, activeView, onViewChange,
 }: SidebarProps) {
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
@@ -70,6 +76,8 @@ export function Sidebar({
     onClose();
   };
 
+  const navItems = [...baseNavItems, ...(user?.role === 'admin' ? [adminNavItem] : [])];
+
   return (
     <aside className={cn(
       "fixed inset-y-0 left-0 z-50 w-72 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-r border-slate-200/50 dark:border-slate-800/50 transform transition-transform duration-300 ease-in-out lg:relative lg:translate-x-0 flex flex-col",
@@ -79,8 +87,8 @@ export function Sidebar({
       <div className="p-4 border-b border-slate-200/50 dark:border-slate-800/50">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
-            <img src="/logoAI.png" alt="Tax Assistant Logo" className="w-7 h-7 object-contain" />
-            <h1 className="text-lg font-bold tracking-tight text-slate-800 dark:text-slate-100">Tax Assistant</h1>
+            <img src="/logoAI.png" alt="Smart AI Logo" className="w-7 h-7 object-contain" />
+            <h1 className="text-lg font-bold tracking-tight text-slate-800 dark:text-slate-100">Smart AI</h1>
           </div>
           <button
             onClick={onClose}
@@ -92,14 +100,14 @@ export function Sidebar({
 
         {/* Navigation Tabs */}
         <div className="flex flex-wrap gap-0.5 mb-3 bg-slate-100 dark:bg-slate-800/50 p-1 rounded-xl">
-          {[...baseNavItems, ...(user?.role === 'admin' ? [adminNavItem] : [])].map((item) => {
+          {navItems.map((item) => {
             const Icon = item.icon;
             return (
               <button
                 key={item.id}
                 onClick={() => handleNavClick(item.id)}
                 className={cn(
-                  "flex-1 min-w-[60px] flex items-center justify-center gap-1 px-1.5 py-1.5 text-[11px] font-medium rounded-lg transition-all",
+                  "flex-1 min-w-[50px] flex items-center justify-center gap-1 px-1 py-1.5 text-[11px] font-medium rounded-lg transition-all",
                   activeView === item.id
                     ? "bg-white dark:bg-slate-700 text-[#B8860B] dark:text-[#D4A020] shadow-sm"
                     : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
@@ -129,18 +137,7 @@ export function Sidebar({
         {activeView === 'chat' ? (
           <>
             <h2 className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider px-2 py-2">Chat History</h2>
-            {isGuest ? (
-              <div className="px-3 py-6 text-center">
-                <p className="text-sm text-slate-400 dark:text-slate-500 mb-3">Sign in to save your chat history</p>
-                <button
-                  onClick={onLogout}
-                  className="flex items-center justify-center gap-2 mx-auto px-4 py-2 text-sm text-[#B8860B] dark:text-[#D4A020] border border-[#D4A020]/30 dark:border-[#B8860B]/30 rounded-xl hover:bg-[#D4A020]/10 dark:hover:bg-[#B8860B]/10 transition-colors"
-                >
-                  <LogIn className="w-4 h-4" />
-                  Sign in
-                </button>
-              </div>
-            ) : chatList.length === 0 ? (
+            {chatList.length === 0 ? (
               <p className="text-sm text-slate-400 dark:text-slate-500 px-3 py-4 text-center">No chats yet. Start one!</p>
             ) : (
               <div className="space-y-0.5">
@@ -192,14 +189,14 @@ export function Sidebar({
           {isDarkMode ? 'Light Mode' : 'Dark Mode'}
         </button>
 
-        {user ? (
+        {user && (
           <div className="flex items-center gap-2 px-3 py-2">
-            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-xs font-bold shrink-0">
+            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#D4A020] to-[#B8860B] flex items-center justify-center text-white text-xs font-bold shrink-0">
               {getInitials(user.name)}
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-slate-700 dark:text-slate-200 truncate">{user.name}</p>
-              <p className="text-[11px] text-slate-400 truncate">{user.email}</p>
+              <p className="text-[11px] text-slate-400 truncate">{planLabel(user.plan)} plan</p>
             </div>
             <button
               onClick={onLogout}
@@ -209,12 +206,7 @@ export function Sidebar({
               <LogOut className="w-4 h-4 text-red-500" />
             </button>
           </div>
-        ) : isGuest ? (
-          <div className="flex items-center gap-2 px-3 py-2">
-            <div className="w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-slate-500 text-xs font-bold shrink-0">G</div>
-            <p className="text-sm text-slate-500 dark:text-slate-400">Guest</p>
-          </div>
-        ) : null}
+        )}
       </div>
     </aside>
   );

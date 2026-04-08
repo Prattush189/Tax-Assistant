@@ -26,26 +26,13 @@ export async function sendChatMessage(
   onChunk: (text: string) => void,
   onError: (msg: string) => void,
   fileContext?: { filename: string; mimeType: string; extractedData?: unknown },
-  localHistory?: Message[],
   onDone?: (stopReason: string | null) => void,
 ): Promise<void> {
-  // Build body — guest mode sends history, authenticated sends chatId
   const body: Record<string, unknown> = {
     message,
+    chatId: chatId ?? undefined,
     fileContext: fileContext ?? null,
   };
-
-  if (chatId && chatId !== 'guest') {
-    body.chatId = chatId;
-  }
-
-  if (localHistory) {
-    // Guest mode: send conversation history so server can forward to Gemini
-    body.history = localHistory.map(m => ({
-      role: m.role,
-      parts: [{ text: m.content }],
-    }));
-  }
 
   const response = await fetch('/api/chat', {
     method: 'POST',
@@ -215,4 +202,11 @@ export async function adminBlockIp(ip: string, hours: number, reason?: string) {
 
 export async function adminUnblockIp(ip: string) {
   return authFetch(`/api/admin/ip/${encodeURIComponent(ip)}/unblock`, { method: 'POST' });
+}
+
+export async function adminChangePlan(userId: string, plan: 'free' | 'pro' | 'enterprise') {
+  return authFetch(`/api/admin/users/${userId}/plan`, {
+    method: 'POST',
+    body: JSON.stringify({ plan }),
+  });
 }
