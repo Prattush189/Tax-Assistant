@@ -52,7 +52,7 @@ const STOPWORDS = new Set([
   'amount', 'income', 'total', 'purposes', 'provisions', 'provided',
 ]);
 
-// ── Section-based text splitter ──
+// ── Section-based text splitter (used as helper by splitActWithChaptersAndSchedules) ──
 
 function splitIntoSections(text: string): { section: string; text: string }[] {
   // Match section starts: "80C. " or "393. (1)" at line start
@@ -78,6 +78,173 @@ function splitIntoSections(text: string): { section: string; text: string }[] {
   }
 
   return sections;
+}
+
+// ── Schedule boundary regexes (cover both Act file formats) ──
+
+// act-2025.txt: "SCHEDULE I", "SCHEDULE II" ... "SCHEDULE XVI"
+// act-1961.txt: "THE FIRST SCHEDULE", "THE SECOND SCHEDULE" ...
+const SCHEDULE_BOUNDARY_REGEX = /^(?:SCHEDULE\s+[IVXLC]+|THE\s+\w+\s+SCHEDULE)\s*$/m;
+
+// Chapter header: "CHAPTER IV" or "CHAPTER XIX-C" — always alone on a line, no period
+const CHAPTER_LINE_REGEX = /^(CHAPTER\s+[IVX]+(?:-[A-Z]+)?)\s*$/gm;
+
+// ── Schedule-specific splitter (no section regex applied) ──
+
+function splitScheduleArea(text: string): { section: string; text: string }[] {
+  // Split on SCHEDULE and PART boundaries
+  // Matches: "SCHEDULE I", "THE FIRST SCHEDULE", "PART A", "PART I", etc.
+  const boundaryRegex = /^(?:(?:THE\s+\w+\s+)?SCHEDULE\s*[IVXLC]*|SCHEDULE\s+[IVXLC]+|PART\s+[A-Z]+)\s*$/gm;
+
+  const boundaries: { label: string; index: number }[] = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = boundaryRegex.exec(text)) !== null) {
+    boundaries.push({ label: match[0].trim(), index: match.index });
+  }
+
+  if (boundaries.length === 0) {
+    const trimmed = text.trim();
+    if (trimmed.length >= 50) {
+      return [{ section: 'Schedule', text: trimmed }];
+    }
+    return [];
+  }
+
+  const results: { section: string; text: string }[] = [];
+
+  // Track context: current schedule name + current part name
+  // IMPORTANT: always update currentSchedule even if the segment is too short to emit,
+  // so that subsequent PART boundaries inherit the correct schedule name.
+  let currentSchedule = '';
+  let currentPart = '';
+
+  for (let i = 0; i < boundaries.length; i++) {
+    const { label, index } = boundaries[i];
+    const end = i + 1 < boundaries.length ? boundaries[i + 1].index : text.length;
+    const segmentText = text.slice(index, end).trim();
+
+    // Update context based on boundary type (always, before the length check)
+    const isPart = /^PART\s+[A-Z]+$/.test(label);
+    if (!isPart) {
+      // This is a SCHEDULE boundary — reset context
+      currentSchedule = label
+        .replace(/^THE\s+/, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      currentPart = '';
+    } else {
+      // This is a PART boundary — append to current schedule
+      currentPart = label;
+    }
+
+    if (segmentText.length < 50) continue;
+
+    // Build human-readable section label
+    const sectionLabel = currentPart
+      ? `${currentSchedule} -- ${currentPart}`
+      : currentSchedule;
+
+    results.push({ section: sectionLabel, text: segmentText });
+  }
+
+  return results;
+}
+
+// ── Chapter-aware Act body splitter ──
+// Runs the section regex on the Act body only (never on schedule text).
+// Tracks current chapter heading and annotates each section label.
+
+function splitActBodyWithChapters(text: string): { section: string; text: string }[] {
+  // Collect CHAPTER header positions and their titles
+  const chapterMatches = [...text.matchAll(CHAPTER_LINE_REGEX)];
+  const chapterBoundaries: { label: string; title: string; index: number }[] = [];
+
+  for (const cm of chapterMatches) {
+    const afterHeader = cm.index! + cm[0].length;
+    // The next non-empty line after a CHAPTER header is the chapter title
+    const remaining = text.slice(afterHeader);
+    const titleMatch = remaining.match(/^\s*\n([^\n]+)/);
+    let title = titleMatch ? titleMatch[1].trim() : '';
+    // Truncate very long titles
+    if (title.length > 60) {
+      title = title.slice(0, 57) + '...';
+    }
+    chapterBoundaries.push({
+      label: cm[1].trim(),
+      title,
+      index: cm.index!,
+    });
+  }
+
+  // Get raw sections (section regex only applied to actBody)
+  const rawSections = splitIntoSections(text);
+
+  // For each section, find which chapter it belongs to
+  const sectionRegex = /^(\d+[A-Z]*(?:-[A-Z]+)?)\.\s/gm;
+  const sectionMatches = [...text.matchAll(sectionRegex)];
+  const sectionIndexMap = new Map<string, number>(); // section number → char index in text
+  for (const sm of sectionMatches) {
+    sectionIndexMap.set(sm[1], sm.index!);
+  }
+
+  function getChapterForIndex(charIndex: number): { label: string; title: string } | null {
+    let current: { label: string; title: string } | null = null;
+    for (const cb of chapterBoundaries) {
+      if (cb.index <= charIndex) {
+        current = { label: cb.label, title: cb.title };
+      } else {
+        break;
+      }
+    }
+    return current;
+  }
+
+  const results: { section: string; text: string }[] = [];
+
+  for (const sec of rawSections) {
+    const charIndex = sectionIndexMap.get(sec.section);
+    if (charIndex === undefined) {
+      // Fallback: no positional info (shouldn't happen for normal sections)
+      results.push(sec);
+      continue;
+    }
+
+    const chapter = getChapterForIndex(charIndex);
+    if (chapter) {
+      const chapterLabel = chapter.title
+        ? `${chapter.label} \u2014 ${chapter.title}`
+        : chapter.label;
+      results.push({
+        section: `${sec.section} [${chapterLabel}]`,
+        text: sec.text,
+      });
+    } else {
+      // Before any CHAPTER header — preamble/preliminary sections
+      results.push(sec);
+    }
+  }
+
+  return results;
+}
+
+// ── Main Act splitter: chapter-aware + schedule-aware ──
+
+function splitActWithChaptersAndSchedules(text: string): { section: string; text: string }[] {
+  // Step 1: Find the first schedule boundary
+  const scheduleMatch = SCHEDULE_BOUNDARY_REGEX.exec(text);
+  const scheduleStartIndex = scheduleMatch ? scheduleMatch.index : text.length;
+
+  const actBody = text.slice(0, scheduleStartIndex);
+  const scheduleBody = text.slice(scheduleStartIndex);
+
+  // Step 2: Process Act body with chapter context
+  const actSections = splitActBodyWithChapters(actBody);
+
+  // Step 3: Process schedule area (no section regex)
+  const scheduleSections = scheduleBody.trim() ? splitScheduleArea(scheduleBody) : [];
+
+  return [...actSections, ...scheduleSections];
 }
 
 // ── Sub-chunk large sections with overlap ──
@@ -140,7 +307,7 @@ function buildChunks(filePath: string, config: SourceConfig): Chunk[] {
   if (config.splitter === 'comparison') {
     rawSections = splitComparisonSections(text);
   } else if (config.splitter === 'act') {
-    rawSections = splitIntoSections(text);
+    rawSections = splitActWithChaptersAndSchedules(text);
   } else {
     throw new Error(`Splitter '${config.splitter}' is not implemented yet`);
   }
