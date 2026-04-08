@@ -44,9 +44,9 @@ const plans = [
   {
     id: 'enterprise' as const,
     name: 'Enterprise',
-    price: 5000,
+    price: 7000,
     originalPrice: '₹10,000',
-    priceLabel: '₹5,000',
+    priceLabel: '₹7,000',
     period: '/month',
     description: 'For teams and businesses',
     icon: Building2,
@@ -61,7 +61,7 @@ const plans = [
     gradient: 'from-indigo-500 to-purple-600',
     shadow: 'shadow-indigo-500/20',
     ring: 'ring-indigo-400 dark:ring-indigo-500',
-    discount: '50% OFF',
+    discount: '30% OFF',
   },
 ];
 
@@ -149,7 +149,9 @@ export function PlanPage() {
                   </div>
                 ) : (
                   <a
-                    href="mailto:prattyush.jain@gmail.com?subject=Upgrade to Smart AI ${plan.name} Plan"
+                    href="https://assist.smartbizin.com/get-demo"
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className={cn(
                       "block w-full py-3 text-center text-sm font-semibold text-white rounded-xl transition-all",
                       `bg-gradient-to-r ${plan.gradient} hover:opacity-90 ${plan.shadow} shadow-lg`
@@ -174,7 +176,7 @@ export function PlanPage() {
             <div className="flex-1 bg-slate-50 dark:bg-slate-800/50 rounded-xl p-4">
               <p className="text-sm text-slate-500 dark:text-slate-400 mb-1">Message Limit</p>
               <p className="text-lg font-bold text-slate-800 dark:text-white">
-                {currentPlan === 'free' ? '10/day' : currentPlan === 'pro' ? '1,000/month' : '10,000/month'}
+                {currentPlan === 'free' ? '10/day' : currentPlan === 'pro' ? '1,000/mo' : '10,000/mo'}
               </p>
             </div>
             <div className="flex-1 bg-slate-50 dark:bg-slate-800/50 rounded-xl p-4">
@@ -183,7 +185,7 @@ export function PlanPage() {
             </div>
           </div>
           <p className="text-xs text-slate-400 dark:text-slate-500 mt-4">
-            To upgrade your plan, contact us at prattyush.jain@gmail.com. Plan changes are managed by the administrator.
+            To upgrade your plan, <a href="https://assist.smartbizin.com/get-demo" target="_blank" rel="noopener noreferrer" className="text-[#D4A020] hover:underline">contact us</a>. Plan changes are managed by the administrator.
           </p>
         </div>
       </div>
