@@ -7,13 +7,37 @@ const __dirname = dirname(__filename);
 
 // ── Types ──
 
+interface SourceConfig {
+  id: string;
+  filePath: string;
+  label: string;
+  splitter: 'act' | 'comparison' | 'reference';
+  boost?: number;
+}
+
 interface Chunk {
   id: number;
-  source: 'act-2025' | 'act-1961' | 'comparison';
+  source: string; // valid values come from SOURCE_CONFIGS.id
   section: string;
   text: string;
   lowerText: string; // pre-computed for scoring
 }
+
+// ── Source registry ──
+
+const SOURCE_CONFIGS: SourceConfig[] = [
+  { id: 'comparison', filePath: 'comparison.txt', label: 'Comparison Guide', splitter: 'comparison', boost: 1.5 },
+  { id: 'act-2025', filePath: 'act-2025.txt', label: 'IT Act 2025', splitter: 'act' },
+  { id: 'act-1961', filePath: 'act-1961.txt', label: 'IT Act 1961', splitter: 'act' },
+];
+
+const sourceConfigMap = new Map<string, SourceConfig>(
+  SOURCE_CONFIGS.map(cfg => [cfg.id, cfg])
+);
+
+// ── topK default ──
+
+const DEFAULT_TOP_K = 5;
 
 // ── Stopwords to skip during scoring ──
 
@@ -102,26 +126,39 @@ function splitComparisonSections(text: string): { section: string; text: string 
   return sections;
 }
 
-// ── Build chunks from a source file ──
+// ── Stable chunk Map (globally monotonic IDs) ──
 
-function buildChunks(filePath: string, source: Chunk['source']): Chunk[] {
+const chunkMap = new Map<number, Chunk>();
+let nextChunkId = 0;
+
+// ── Build chunks from a source config ──
+
+function buildChunks(filePath: string, config: SourceConfig): Chunk[] {
   const text = readFileSync(filePath, 'utf-8');
-  const sections = source === 'comparison'
-    ? splitComparisonSections(text)
-    : splitIntoSections(text);
-  const chunks: Chunk[] = [];
-  let id = 0;
 
-  for (const sec of sections) {
+  let rawSections: { section: string; text: string }[];
+  if (config.splitter === 'comparison') {
+    rawSections = splitComparisonSections(text);
+  } else if (config.splitter === 'act') {
+    rawSections = splitIntoSections(text);
+  } else {
+    throw new Error(`Splitter '${config.splitter}' is not implemented yet`);
+  }
+
+  const chunks: Chunk[] = [];
+
+  for (const sec of rawSections) {
     const subChunks = subChunk(sec.text, sec.section);
     for (const sc of subChunks) {
-      chunks.push({
-        id: id++,
-        source,
+      const chunk: Chunk = {
+        id: nextChunkId++,
+        source: config.id,
         section: sc.section,
         text: sc.text,
         lowerText: sc.text.toLowerCase(),
-      });
+      };
+      chunks.push(chunk);
+      chunkMap.set(chunk.id, chunk);
     }
   }
 
@@ -187,16 +224,25 @@ function scoreChunk(chunk: Chunk, tokens: string[], sectionNumbers: string[]): n
     }
   }
 
-  if (chunk.source === 'comparison' && score > 0) {
-    score = Math.ceil(score * 1.5);
+  // Apply boost from source config (replaces hardcoded comparison check)
+  const cfg = sourceConfigMap.get(chunk.source);
+  if (cfg?.boost && score > 0) {
+    score = Math.ceil(score * cfg.boost);
   }
 
   return score;
 }
 
+// ── Scored chunk type ──
+
+interface ScoredChunk {
+  chunk: Chunk;
+  score: number;
+}
+
 // ── Retrieve top chunks using inverted index ──
 
-function retrieve(chunks: Chunk[], query: string, topK = 3): Chunk[] {
+function retrieve(query: string, topK = DEFAULT_TOP_K): Chunk[] {
   const tokens = tokenize(query);
   if (tokens.length === 0) return [];
 
@@ -215,8 +261,10 @@ function retrieve(chunks: Chunk[], query: string, topK = 3): Chunk[] {
 
   if (candidateIds.size === 0) return [];
 
-  // Only score candidate chunks, not all chunks
-  const candidates = [...candidateIds].map(id => chunks[id]).filter(Boolean);
+  // Look up chunks from the stable chunkMap
+  const candidates = [...candidateIds]
+    .map(id => chunkMap.get(id))
+    .filter((c): c is Chunk => c !== undefined);
 
   const scored = candidates
     .map(chunk => ({ chunk, score: scoreChunk(chunk, tokens, sectionNumbers) }))
@@ -225,36 +273,43 @@ function retrieve(chunks: Chunk[], query: string, topK = 3): Chunk[] {
 
   if (scored.length === 0 || scored[0].score < 2) return [];
 
-  // Ensure balanced results: comparison + both acts
-  const fromComparison: typeof scored = [];
-  const from2025: typeof scored = [];
-  const from1961: typeof scored = [];
+  // Dynamic bucket balancing — works with any number of sources
+  const buckets = new Map<string, ScoredChunk[]>();
+  for (const cfg of SOURCE_CONFIGS) {
+    buckets.set(cfg.id, []);
+  }
 
+  // First pass — guarantee one slot per source (if available)
+  let guaranteedCount = 0;
   for (const s of scored) {
-    if (s.chunk.source === 'comparison' && fromComparison.length < 1) {
-      fromComparison.push(s);
-    } else if (s.chunk.source === 'act-2025' && from2025.length < 1) {
-      from2025.push(s);
-    } else if (s.chunk.source === 'act-1961' && from1961.length < 1) {
-      from1961.push(s);
+    const bucket = buckets.get(s.chunk.source);
+    if (bucket && bucket.length < 1) {
+      bucket.push(s);
+      guaranteedCount++;
+      if (guaranteedCount >= topK) break;
     }
-    if (fromComparison.length + from2025.length + from1961.length >= topK) break;
   }
 
-  // Fill remaining slots from highest-scoring unused results
-  const used = new Set([...fromComparison, ...from2025, ...from1961].map(s => s.chunk.id));
-  const remaining = scored.filter(s => !used.has(s.chunk.id));
-  const combined = [...fromComparison, ...from2025, ...from1961];
-  for (const s of remaining) {
+  // Collect guaranteed entries
+  const combined: ScoredChunk[] = [];
+  for (const bucket of buckets.values()) {
+    combined.push(...bucket);
+  }
+
+  // Second pass — fill remaining slots from highest-scoring unused chunks
+  const usedIds = new Set(combined.map(s => s.chunk.id));
+  for (const s of scored) {
     if (combined.length >= topK) break;
-    combined.push(s);
+    if (!usedIds.has(s.chunk.id)) {
+      combined.push(s);
+      usedIds.add(s.chunk.id);
+    }
   }
 
-  const balanced = combined
+  return combined
     .sort((a, b) => b.score - a.score)
-    .slice(0, topK);
-
-  return balanced.map(s => s.chunk);
+    .slice(0, topK)
+    .map(s => s.chunk);
 }
 
 // ── Initialize at startup ──
@@ -264,34 +319,25 @@ let allChunks: Chunk[] = [];
 export function initRAG(): void {
   const dataDir = join(__dirname, '..', 'data');
 
-  // Load comparison mapping first (highest priority for cross-reference queries)
-  try {
-    const chunksComp = buildChunks(join(dataDir, 'comparison.txt'), 'comparison');
-    console.log(`[RAG] Loaded comparison: ${chunksComp.length} chunks`);
-    allChunks.push(...chunksComp);
-  } catch (err) {
-    console.warn('[RAG] comparison.txt not found, skipping');
-  }
+  // Reset state for clean re-initialization
+  allChunks = [];
+  chunkMap.clear();
+  invertedIndex.clear();
+  nextChunkId = 0;
 
-  try {
-    const chunks2025 = buildChunks(join(dataDir, 'act-2025.txt'), 'act-2025');
-    console.log(`[RAG] Loaded act-2025: ${chunks2025.length} chunks`);
-    allChunks.push(...chunks2025);
-  } catch (err) {
-    console.warn('[RAG] act-2025.txt not found, skipping');
-  }
-
-  try {
-    const chunks1961 = buildChunks(join(dataDir, 'act-1961.txt'), 'act-1961');
-    console.log(`[RAG] Loaded act-1961: ${chunks1961.length} chunks`);
-    allChunks.push(...chunks1961);
-  } catch (err) {
-    console.warn('[RAG] act-1961.txt not found, skipping');
+  for (const cfg of SOURCE_CONFIGS) {
+    try {
+      const chunks = buildChunks(join(dataDir, cfg.filePath), cfg);
+      console.log(`[RAG] Loaded ${cfg.id}: ${chunks.length} chunks`);
+      allChunks.push(...chunks);
+    } catch {
+      console.warn(`[RAG] ${cfg.filePath} not found, skipping`);
+    }
   }
 
   // Build inverted index for fast lookup
   buildIndex(allChunks);
-  console.log(`[RAG] Total chunks: ${allChunks.length}, index keys: ${invertedIndex.size}`);
+  console.log(`[RAG] Total chunks: ${chunkMap.size}, index keys: ${invertedIndex.size}`);
 }
 
 // Progressively broaden section numbers: 15CG → 15C → 15
@@ -309,8 +355,8 @@ function broadenSectionNumbers(query: string): string[] {
   return broadened;
 }
 
-export function retrieveContext(query: string, topK = 3): string | null {
-  let chunks = retrieve(allChunks, query, topK);
+export function retrieveContext(query: string, topK = DEFAULT_TOP_K): string | null {
+  let chunks = retrieve(query, topK);
 
   // If poor results, try broadening section numbers (15CG → 15C → 15)
   if (chunks.length === 0) {
@@ -318,7 +364,7 @@ export function retrieveContext(query: string, topK = 3): string | null {
     for (const broadSection of broader) {
       // Replace the original section number in query with broader version
       const broadQuery = query + ` section ${broadSection}`;
-      chunks = retrieve(allChunks, broadQuery, topK);
+      chunks = retrieve(broadQuery, topK);
       if (chunks.length > 0) break;
     }
   }
@@ -327,8 +373,9 @@ export function retrieveContext(query: string, topK = 3): string | null {
 
   const context = chunks
     .map(c => {
-      const label = c.source === 'comparison' ? 'Comparison Guide' : c.source === 'act-2025' ? 'IT Act 2025' : 'IT Act 1961';
-      return `[${label} — ${c.section}]\n${c.text}`;
+      const cfg = sourceConfigMap.get(c.source);
+      const label = cfg?.label ?? c.source;
+      return `[${label} \u2014 ${c.section}]\n${c.text}`;
     })
     .join('\n\n---\n\n');
 
