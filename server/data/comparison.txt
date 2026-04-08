@@ -1,0 +1,367 @@
+INCOME TAX ACT 1961 vs INCOME TAX ACT 2025 — COMPREHENSIVE COMPARISON
+======================================================================
+Effective: IT Act 2025 applies from 1 April 2026 onwards.
+Payments credited before 31 March 2026 are governed by 1961 Act.
+Payments credited from 1 April 2026 are governed by 2025 Act.
+
+======================================================================
+1. TERMINOLOGY CHANGES
+======================================================================
+Old (1961 Act)              | New (2025 Act)
+Previous Year               | Tax Year (Section 3)
+Assessment Year             | Removed — only "Tax Year" used
+Assessee                    | Assessee (same, Section 2(11))
+Block of Assets             | Block of Assets (same, Section 2(17))
+
+The 2025 Act eliminates the dual "Previous Year / Assessment Year" concept.
+FY 2025-26 = Tax Year 2025-26 = AY 2026-27 (last AY used).
+
+======================================================================
+2. STRUCTURAL CHANGES
+======================================================================
+1961 Act: 298 sections + 14 schedules, heavily amended over 60+ years.
+2025 Act: 536 sections + 16 schedules, consolidated and reorganized.
+
+Key reorganization:
+- All TDS provisions (192-196 series) consolidated into Sections 392-394.
+- All deductions (80C-80U series) reorganized into Sections 123-154.
+- Exemptions (Section 10) moved to Section 11 with Schedules V, VI.
+- Capital gains (45-55 series) reorganized into Sections 67-95.
+- Tax rates and regimes reorganized into Sections 194-214.
+- Return filing (139 series) moved to Section 263.
+
+======================================================================
+3. TDS SECTION MAPPING (COMPLETE)
+======================================================================
+The 2025 Act consolidates ALL TDS into 3 sections:
+- Section 392: TDS on salary
+- Section 393: TDS on all other payments (replaces 193-194 series)
+  - 393(1) Table 1: Payments to residents
+  - 393(2) Table 2: Payments to non-residents
+  - 393(3) Table 3: Payments to any person (resident + non-resident)
+- Section 394: TCS (Tax Collected at Source)
+
+New 4-digit payment codes (1001-1067) replace old section numbers for TRACES.
+
+Old Section (1961)  | Nature of Payment                    | New (2025)                          | Payment Code | Rate
+192                 | Salary                               | 392(1)                              | 1001-1003    | Slab rate
+192A                | EPF premature withdrawal             | 392(7)                              | 1004         | 10%
+193                 | Interest on securities               | 393(1) Table 1, S.No. 5(i)         | 1019         | 10%
+194                 | Dividends                            | 393(1) Table 1, S.No. 7            | 1029         | 10%
+194A                | Interest (banks, senior)             | 393(1) Table 1, S.No. 5(ii)        | 1020-1021    | 10%
+194A                | Interest (others)                    | 393(1) Table 1, S.No. 5(iii)       | 1022         | 10%
+194B                | Lottery / gambling winnings          | 393(3) Table 3, S.No. 1            | 1058-1059    | 30%
+194BA               | Online gaming winnings               | 393(3) Table 3, S.No. 2            | 1060-1061    | 30%
+194BB               | Horse race winnings                  | 393(3) Table 3, S.No. 3            | 1062         | 30%
+194C(1)             | Contractor (individual/HUF)          | 393(1) Table 1, S.No. 6(i)         | 1023         | 1%
+194C(2)             | Contractor (others)                  | 393(1) Table 1, S.No. 6(i)         | 1024         | 2%
+194D                | Insurance commission                 | 393(1) Table 1, S.No. 1(i)         | 1005         | 5%
+194DA               | Life insurance payout                | 393(1) Table 1, S.No. 8(i)         | 1030         | 2%
+194E                | NR sportsperson/entertainer          | 393(2) Table 2, S.No. 1            | 1039         | 20%
+194EE               | NSS deposits                         | 393(1) Table 1, S.No. 8(iii)       | 1033         | 10%
+194F                | Repurchase of MF units               | Omitted in 2025 Act                | —            | —
+194G                | Lottery commission                   | 393(1) Table 1, S.No. 1(iii)       | —            | 5%
+194H                | Commission / brokerage               | 393(1) Table 1, S.No. 1(ii)        | 1006-1007    | 5%
+194I(a)             | Rent - plant & machinery             | 393(1) Table 1, S.No. 2(ii)        | 1008         | 2%
+194I(b)             | Rent - land/building/furniture       | 393(1) Table 1, S.No. 2(ii)        | 1009         | 10%
+194IA               | Immovable property purchase (>50L)   | 393(1) Table 1, S.No. 3(i)         | 1010         | 1%
+194IB               | Rent by individual/HUF (>50K/month)  | 393(1) Table 1, S.No. 2(i)         | —            | 2%
+194IC               | JDA consideration                    | 393(1) Table 1, S.No. 3(ii)        | 1011         | 10%
+194J(a)             | Technical services / royalty          | 393(1) Table 1, S.No. 6(iii)       | 1026         | 2%
+194J(b)             | Professional services / director fees | 393(1) Table 1, S.No. 6(iii)       | 1027-1028    | 10%
+194K                | MF/UTI income                        | 393(1) Table 1, S.No. 8(iv)        | 1034         | 10%
+194LA               | Compulsory acquisition compensation  | 393(1) Table 1, S.No. 4            | 1012-1013    | 10%
+194LBA              | Business trust income                | 393(1) Table 1, S.No. 9            | —            | Various
+194LBB              | Investment fund income               | 393(1) Table 1, S.No. 10           | —            | 10%
+194LBC              | Securitisation trust income           | 393(1) Table 1, S.No. 11           | —            | 25/30%
+194M                | Commission to individual/HUF (>50L)  | 393(1) Table 1, S.No. 1(iv)        | —            | 5%
+194N                | Cash withdrawal (>1Cr)               | 393(3) Table 3, S.No. 5            | 1063-1064    | 2%/5%
+194O                | E-commerce participant               | 393(1) Table 1, S.No. 8(v)         | 1035         | 0.1%
+194P                | Senior citizen TDS by bank           | 393(1) Note to Table 1             | —            | Slab
+194Q                | Purchase of goods (>50L)             | 393(1) Table 1, S.No. 8(ii)        | 1031         | 0.1%
+194R                | Perquisite/benefit (business)        | 393(1) Table 1, S.No. 8(vii)       | —            | 10%
+194S                | Virtual digital asset transfer       | 393(1) Table 1, S.No. 8(vi)        | 1037-1038    | 1%
+194T                | Partner salary/interest/commission   | 393(3) Table 3, S.No. 7            | 1067         | 10%
+195                 | Non-resident (other income)          | 393(2) Table 2, S.No. 17           | 1057         | Rates in force
+196A                | NR income from units (MF)            | 393(2) Table 2, S.No. 10           | 1049-1050    | 10/20%
+196B                | NR offshore fund income              | 393(2) Table 2, S.No. 11-12        | 1051-1052    | 10%
+196C                | NR foreign currency bonds/GDR        | 393(2) Table 2, S.No. 13-14        | 1053-1054    | 10%
+196D                | NR FII income from securities        | 393(2) Table 2, S.No. 15-16        | 1055-1056    | 20%
+
+TDS THRESHOLD CHANGES (2025 Act):
+- 194A interest from banks/PO: 50,000 (was 40,000). Senior citizens: 1,00,000 (was 50,000).
+- 194I rent: 50,000 per month i.e. 6,00,000/year (was 2,40,000/year).
+- 194C contractor: Single 30,000 / Aggregate 1,00,000 (unchanged).
+- 194H commission: 20,000 (was 15,000).
+- 194J professional fees: 50,000 (was 30,000). Now 50,000 in 2025 Act.
+
+NEW TDS FORMS (replacing old forms):
+Old Form 24Q (salary) → New Form 138
+Old Form 26Q (non-salary resident) → New Form 140
+Old Form 27Q (non-resident) → New Form 144
+Old Form 26QAA → New Form 142 (for 393(3))
+Old Form 27EQ (TCS) → New Form 146
+
+======================================================================
+4. DEDUCTIONS MAPPING (80C-80U SERIES)
+======================================================================
+The 2025 Act reorganizes all deductions from Chapter VI-A into Sections 123-154.
+
+Old Section (1961) | Nature                                    | New Section (2025) | Limit
+80C                | LIC, PPF, ELSS, EPF, NSC, tuition, etc.  | 123                | 1,50,000
+80CCC              | Pension fund contribution                 | 124                | Within 80C limit
+80CCD(1)           | Employee NPS contribution                 | 124                | 10% of salary (within 80C)
+80CCD(1B)          | Additional NPS contribution               | 124                | 50,000 (above 80C limit)
+80CCD(2)           | Employer NPS (available in BOTH regimes)  | 124                | 14% salary (new) / 10% (old)
+80D                | Health insurance premium                  | 126                | 25,000/50,000 (self) + 25,000/50,000 (parents)
+80DD               | Disabled dependent maintenance            | 127                | 75,000/1,25,000
+80DDB              | Medical treatment for specified diseases  | 128                | 40,000/1,00,000
+80E                | Education loan interest                   | 129                | No limit (8 years)
+80EE               | First-time homebuyer interest (pre-2020)  | Omitted             | —
+80EEA              | Affordable housing interest               | 130                | 1,50,000
+80EEB              | Electric vehicle loan interest            | 131                | 1,50,000
+80G                | Donations to specified funds/charities    | 133                | 50% or 100%
+80GG               | Rent paid (no HRA)                        | 134                | 60,000/year
+80GGA              | Scientific research donations             | 135                | 100%
+80GGC              | Political party contributions             | 137                | 100%
+80IA/80IAB/80IB    | Profit-linked deductions (old)            | Omitted or transitional | —
+80JJAA             | Employment generation                     | 140                | 30% of additional wages
+80P                | Co-operative societies                    | 148                | Various
+80QQB              | Royalty income (authors)                  | 149                | 3,00,000
+80RRB              | Patent royalty                            | 150                | 3,00,000
+80TTA              | Savings account interest (non-seniors)    | 153                | 10,000
+80TTB              | Deposit interest (seniors 60+)            | 153                | 50,000
+80U                | Disabled person                           | 154                | 75,000/1,25,000
+
+NOTE: Under the new tax regime (Section 202 of 2025 Act / 115BAC of 1961 Act):
+Only Section 124 (80CCD(2) employer NPS) and standard deduction are available.
+No 80C/80D/HRA/24(b) deductions in new regime.
+
+======================================================================
+5. EXEMPTIONS MAPPING (SECTION 10)
+======================================================================
+Old Section (1961) | Nature                                | New Section (2025)
+10(1)              | Agricultural income                   | 11(1) / Schedule II
+10(2)              | Hindu Undivided Family receipts       | 11 / Schedule II
+10(10)             | Gratuity                              | 19 (Table: Sl. No. 3-7)
+10(10A)            | Commuted pension                      | 19 (Table: Sl. No. 7-9)
+10(10AA)           | Leave encashment                      | 19 (Table: Sl. No. 10)
+10(10D)            | Life insurance maturity               | 11 / Schedule II, Sl. No. 2
+10(13A)            | HRA exemption                         | 11 read with Schedule V
+10(14)             | Special allowances                    | 11 read with Schedule VI
+10(23C)            | Educational/hospital trust income     | 11 / Schedule VII
+10(38)             | LTCG on equity (pre-2018, abolished)  | Omitted
+10(10CC)           | Tax on perquisites paid by employer   | Omitted in 2025 Act
+
+======================================================================
+6. SALARY & HOUSE PROPERTY
+======================================================================
+Old Section (1961) | Nature                                | New Section (2025)
+15                 | Salary - charging section             | 15
+16                 | Deductions from salary                | 19
+16(ia)             | Standard deduction                    | 19 (Table: Sl. No. 2)
+16(ii)             | Entertainment allowance               | 19 (Table: Sl. No. 1)
+17(1)              | Salary definition                     | 16
+17(2)              | Perquisites                           | 17
+17(3)              | Profits in lieu of salary             | 18
+22                 | Income from house property (charge)   | 20
+23                 | Annual value determination            | 21
+24(a)              | Standard deduction 30% from HP        | 22
+24(b)              | Home loan interest deduction           | 22 (2,00,000 self-occupied, unlimited let-out)
+
+Standard deduction amounts (unchanged in 2025 Act):
+- New regime: 75,000
+- Old regime: 50,000
+
+======================================================================
+7. CAPITAL GAINS MAPPING
+======================================================================
+Old Section (1961) | Nature                                | New Section (2025)
+45                 | Capital gains - charging section      | 67
+47                 | Transactions not regarded as transfer  | 70
+48                 | Mode of computation                   | 72
+49                 | Cost with reference to certain modes   | 73
+50                 | Depreciable assets                    | 74
+50C                | FMV for stamp duty purposes           | 75
+54                 | Residential property reinvestment      | 82 (max 10Cr)
+54B                | Agricultural land reinvestment         | 83
+54D                | Industrial undertaking reinvestment    | 84
+54EC               | Investment in specified bonds          | 85 (max 50L, 5yr lock-in, NHAI/REC)
+54F                | Any asset sale, reinvest in house      | 86
+111A               | STCG on equity (STT paid)             | 196 — Rate: 20%
+112                | LTCG general                          | 197 — Rate: 12.5% (no indexation)
+112A               | LTCG on equity (STT paid)             | 198 — Rate: 12.5% (exempt up to 1,25,000)
+
+MAJOR CAPITAL GAINS CHANGES (Budget 2024 onwards, continued in 2025 Act):
+- Indexation benefit REMOVED for all assets (effective 23 July 2024)
+- LTCG rate unified at 12.5% (was 20% with indexation)
+- STCG on equity: 20% (was 15%)
+- LTCG equity exemption: 1,25,000/year (was 1,00,000)
+- Holding periods: Listed equity 12 months, all others 24 months
+- Debt mutual funds: Always taxed at slab rate (no LTCG benefit since FY 2023-24)
+- Property bought before 23 July 2024: Option of 20% with indexation OR 12.5% without
+
+======================================================================
+8. TAX REGIME & RATES
+======================================================================
+Old Section (1961) | Nature                    | New Section (2025)
+115BAC             | New tax regime (default)  | 202
+87A                | Rebate                    | 155 / 156
+89                 | Relief for arrears        | 157
+
+NEW TAX REGIME SLABS (Section 202 of 2025 Act) — FY 2025-26:
+Income Range        | Rate
+Up to 4,00,000      | Nil
+4,00,001 - 8,00,000 | 5%
+8,00,001 - 12,00,000| 10%
+12,00,001-16,00,000 | 15%
+16,00,001-20,00,000 | 20%
+20,00,001-24,00,000 | 25%
+Above 24,00,000     | 30%
+
+Section 87A rebate (new regime): Up to 60,000 for income <= 12,00,000.
+Zero tax up to 12,00,000 (12,75,000 for salaried with standard deduction).
+
+OLD TAX REGIME SLABS (unchanged, individuals below 60):
+Up to 2,50,000       | Nil
+2,50,001 - 5,00,000  | 5%
+5,00,001 - 10,00,000 | 20%
+Above 10,00,000      | 30%
+
+Section 87A rebate (old regime): Up to 12,500 for income <= 5,00,000.
+
+SURCHARGE (both regimes):
+Up to 50L: Nil | 50L-1Cr: 10% | 1Cr-2Cr: 15% | 2Cr-5Cr: 25% | Above 5Cr: 37% (old) / 25% cap (new)
+Health & Education Cess: 4% on (tax + surcharge)
+
+======================================================================
+9. RETURN FILING & COMPLIANCE
+======================================================================
+Old Section (1961) | Nature                        | New Section (2025)
+139(1)             | Filing return of income       | 263(1)
+139(3)             | Filing return of loss          | 263(10)
+139(4)             | Belated return                 | 263(7)
+139(5)             | Revised return                 | 263(8)
+140A               | Self-assessment tax            | 400(1)
+143(1)             | Intimation / processing        | 270(1)
+143(3)             | Scrutiny assessment            | 271
+144                | Best judgment assessment        | 272
+147                | Reassessment                   | 279
+148                | Notice for reassessment        | 280
+245                | Set off of refunds             | 356
+234A               | Interest on late filing         | Restructured in new Act
+234B               | Interest on advance tax default | Restructured in new Act
+234C               | Interest on deferment           | Restructured in new Act
+
+Return filing deadlines (unchanged):
+- Non-audit cases: 31 July
+- Audit cases: 31 October
+- Transfer pricing: 30 November
+
+======================================================================
+10. GST — KEY PROVISIONS (SEPARATE ACT, NOT RENUMBERED)
+======================================================================
+GST is governed by CGST Act 2017, SGST/UTGST Acts, and IGST Act 2017.
+These are NOT part of the Income Tax Act and were NOT changed by the 2025 Act.
+
+GST Rate Structure (Post September 2025 Reform):
+Rate  | Category          | Examples
+0%    | Essentials         | Fresh fruits, vegetables, milk, bread, eggs, education, healthcare
+5%    | Daily needs        | Packaged food, butter, cheese, transport, footwear (<1000)
+18%   | Standard rate      | Most goods & services, IT services, restaurants, financial services
+40%   | Demerit/sin goods  | Tobacco, pan masala, aerated beverages
+3%    | Special            | Gold, silver, platinum
+0.25% | Special            | Rough diamonds
+
+Key GST Sections:
+Section 9 CGST / Section 5 IGST: Levy and collection of tax
+Section 16 CGST: Input Tax Credit (ITC) eligibility and conditions
+Section 17 CGST: Apportionment of credit and blocked credits
+Section 31 CGST: Tax invoice requirements
+Section 37 CGST: GSTR-1 (outward supply)
+Section 39 CGST: GSTR-3B (monthly return)
+Section 44 CGST: Annual return (GSTR-9)
+Section 49 CGST: Payment of tax, utilization of ITC
+Section 51 CGST: TDS under GST (1% CGST + 1% SGST by government bodies)
+Section 52 CGST: TCS by e-commerce operators
+Section 54 CGST: Refund of tax
+Section 73/74 CGST: Demand and recovery (non-fraud / fraud)
+
+GST Registration Thresholds:
+- Goods: 40,00,000 (20,00,000 for special category states)
+- Services: 20,00,000 (10,00,000 for special category states)
+- Composition scheme: Turnover <= 1.5Cr (goods) / 50L (services)
+
+======================================================================
+11. HRA EXEMPTION (OLD REGIME ONLY)
+======================================================================
+Old: Section 10(13A) read with Rule 2A
+New: Section 11 read with Schedule V of 2025 Act
+
+Formula (unchanged):
+Exempt amount = Least of:
+1. Actual HRA received
+2. Rent paid minus 10% of basic salary
+3. 50% of basic salary (metro: Mumbai, Delhi, Kolkata, Chennai)
+   40% of basic salary (non-metro)
+
+Salary = Basic + DA + Commission (% of turnover)
+Rent receipts required if annual rent > 1,00,000.
+Landlord PAN required if annual rent > 1,00,000.
+
+Change from FY 2026-27: Bangalore, Hyderabad, Pune, Ahmedabad will also qualify as metro (50% rate).
+
+======================================================================
+12. KEY BUDGET 2025 CHANGES (APPLICABLE IN 2025 ACT)
+======================================================================
+1. New regime basic exemption: 3,00,000 → 4,00,000
+2. New regime: 6 slabs → 7 slabs with wider bands
+3. Section 87A/155 rebate: 25,000 (<=7L) → 60,000 (<=12L)
+4. Effective zero-tax income: 7,00,000 → 12,00,000 (12,75,000 for salaried)
+5. TDS 194A interest (senior citizens): 50,000 → 1,00,000 threshold
+6. TDS 194I/393 rent: 2,40,000/year → 6,00,000/year (50,000/month)
+7. TDS 194H commission: 15,000 → 20,000 threshold
+8. No changes to old regime slabs, deduction limits, or capital gains rates
+9. "Tax Year" replaces "Previous Year" / "Assessment Year"
+10. All TDS sections consolidated into 392-394 with payment codes 1001-1067
+
+======================================================================
+13. PENALTIES AND PROSECUTION
+======================================================================
+Old Section (1961) | Nature                            | New Section (2025)
+270A               | Under-reporting / misreporting    | 464
+271(1)(c)          | Concealment penalty               | 464 (consolidated)
+271B               | Failure to get accounts audited   | 467
+271H               | TDS/TCS statement filing delay     | 470
+272A               | Failure to comply with notices     | 472
+276B               | Failure to deposit TDS            | 492
+276C               | Wilful evasion                    | 490
+276CC              | Failure to file return            | 493
+278                | Abetment of false return          | 498
+278A               | Compounding of offences           | 504
+
+======================================================================
+14. ADVANCE TAX (UNCHANGED)
+======================================================================
+Due Date         | Individual/Corporate | Amount
+15 June          | 15% of estimated tax
+15 September     | 45% of estimated tax
+15 December      | 75% of estimated tax
+15 March         | 100% of estimated tax
+
+Advance tax not required if total tax liability < 10,000.
+Senior citizens (60+) with no business income are exempt from advance tax.
+
+Old: Section 208-211 | New: Chapter XIX-C of 2025 Act
+
+======================================================================
+15. VIRTUAL DIGITAL ASSETS (CRYPTO)
+======================================================================
+Old: Section 115BBH (2022 onwards)
+New: Section 214 of 2025 Act
+
+- Income from transfer of VDA: 30% flat tax (no deductions allowed except cost of acquisition)
+- TDS on VDA transfer: 1% (old 194S / new 393(1) Table 1, S.No. 8(vi))
+- No set-off of losses against any other income
+- No carry-forward of losses from VDA transfers
+- Definition of VDA: Section 2(111) of 2025 Act (crypto, NFTs, tokens)
