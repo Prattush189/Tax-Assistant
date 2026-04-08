@@ -11,8 +11,8 @@ import { AuthRequest } from '../types.js';
 const router = Router();
 const ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_AI_API_KEY! });
 
-const PRIMARY_MODEL = 'gemini-2.0-flash';
-const FALLBACK_MODEL = 'gemini-2.0-flash-lite';
+const PRIMARY_MODEL = 'gemini-2.5-flash';
+const FALLBACK_MODEL = 'gemini-1.5-flash';
 const MAX_TOKENS = 8192;
 
 // Gemini Flash pricing (conservative — uses 2.5 rates)
@@ -227,7 +227,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
       break; // Success — exit retry loop
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      const isRetryable = errMsg.includes('503') || errMsg.includes('UNAVAILABLE') || errMsg.includes('overloaded') || errMsg.includes('500');
+      const isRetryable = errMsg.includes('503') || errMsg.includes('UNAVAILABLE') || errMsg.includes('overloaded') || errMsg.includes('500') || errMsg.includes('404') || errMsg.includes('no longer available');
       console.warn(`[chat] Attempt ${attempt + 1}/${MAX_RETRIES} failed (${model}): ${errMsg.slice(0, 100)}`);
 
       if (!isRetryable || attempt === MAX_RETRIES - 1) {
