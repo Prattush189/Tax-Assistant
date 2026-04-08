@@ -85,6 +85,54 @@ Requirements for RAG Data Completeness & Quality milestone. Each maps to roadmap
 - [ ] **SCOR-03**: Length normalization prevents dense GST/legal text from crowding out relevant IT Act chunks
 - [ ] **SCOR-04**: Adding new data sources does not regress retrieval quality for existing IT Act queries
 
+## v1.2 Requirements
+
+Requirements for UI Revamp milestone. Premium fintech-grade redesign across all pages.
+
+### Auth & Onboarding
+
+- [ ] **AUTH-UI-01**: Login page fully redesigned with premium fintech aesthetic, animated gradient background, and floating card
+- [ ] **AUTH-UI-02**: Signup page matches login design with consistent styling
+- [ ] **AUTH-UI-03**: Framer Motion entrance animations on auth pages (fade-in, slide-up for form elements)
+- [ ] **AUTH-UI-04**: Animated logo and brand element on auth pages
+
+### Color Palette & Theme
+
+- [ ] **THEME-01**: New color palette with 2-3 options presented for user selection (refined gold, blue/indigo, green)
+- [ ] **THEME-02**: Dark mode uses proper contrast ratios and premium fintech-grade color pairings
+- [ ] **THEME-03**: Consistent color tokens applied across all components (no ad-hoc hex values)
+
+### Sidebar & Navigation
+
+- [ ] **NAV-01**: Sidebar redesigned with better typography, spacing, and visual hierarchy
+- [ ] **NAV-02**: Active tab has premium indicator (not just background color change)
+- [ ] **NAV-03**: Chat history items have better cards with hover states
+- [ ] **NAV-04**: User profile section in footer polished with cleaner layout
+
+### Chat Page
+
+- [ ] **CHAT-UI-01**: Message bubbles redesigned — better shapes, spacing, avatar indicators
+- [ ] **CHAT-UI-02**: Input area refined — cleaner button placement, attachment indicator, polished borders
+- [ ] **CHAT-UI-03**: Empty state redesigned with premium landing (feature highlights, cleaner quick queries)
+- [ ] **CHAT-UI-04**: Thinking indicator refined for premium feel
+
+### Calculator & Dashboard
+
+- [ ] **CALC-UI-01**: Calculator tabs and input forms redesigned with fintech-grade styling
+- [ ] **CALC-UI-02**: Dashboard cards, stat widgets, and chart containers have premium styling
+- [ ] **CALC-UI-03**: Result displays use polished typography and number formatting
+
+### Notice Drafter & Plan Pages
+
+- [ ] **PAGE-UI-01**: Notice Drafter page form and preview styled consistently with new theme
+- [ ] **PAGE-UI-02**: Plan page cards redesigned with premium layout
+
+### Micro-Interactions
+
+- [ ] **ANIM-01**: Subtle page transitions when switching views (fade, no flashy slides)
+- [ ] **ANIM-02**: Button hover/press effects (subtle scale or glow)
+- [ ] **ANIM-03**: Smooth loading states (skeleton loaders or gentle fade-ins for data)
+
 ## v2 Requirements
 
 Deferred to future release. Tracked but not in current roadmap.
@@ -186,12 +234,37 @@ Deferred to future release. Tracked but not in current roadmap.
 | SCOR-03 | Phase 10 | Pending |
 | SCOR-04 | Phase 10 | Pending |
 
+| AUTH-UI-01 | Phase 11 | Pending |
+| AUTH-UI-02 | Phase 11 | Pending |
+| AUTH-UI-03 | Phase 11 | Pending |
+| AUTH-UI-04 | Phase 11 | Pending |
+| THEME-01 | Phase 11 | Pending |
+| THEME-02 | Phase 11 | Pending |
+| THEME-03 | Phase 11 | Pending |
+| NAV-01 | Phase 12 | Pending |
+| NAV-02 | Phase 12 | Pending |
+| NAV-03 | Phase 12 | Pending |
+| NAV-04 | Phase 12 | Pending |
+| CHAT-UI-01 | Phase 13 | Pending |
+| CHAT-UI-02 | Phase 13 | Pending |
+| CHAT-UI-03 | Phase 13 | Pending |
+| CHAT-UI-04 | Phase 13 | Pending |
+| CALC-UI-01 | Phase 14 | Pending |
+| CALC-UI-02 | Phase 14 | Pending |
+| CALC-UI-03 | Phase 14 | Pending |
+| PAGE-UI-01 | Phase 14 | Pending |
+| PAGE-UI-02 | Phase 14 | Pending |
+| ANIM-01 | Phase 15 | Pending |
+| ANIM-02 | Phase 15 | Pending |
+| ANIM-03 | Phase 15 | Pending |
+
 **Coverage:**
 - v1.0 requirements: 27 total (all complete)
-- v1.1 requirements: 17 total
-- Mapped to phases: 17
+- v1.1 requirements: 17 total (pending)
+- v1.2 requirements: 23 total
+- Mapped to phases: 23
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-04-04*
-*Last updated: 2026-04-08 after v1.1 roadmap created (phases 7-10)*
+*Last updated: 2026-04-08 after v1.2 requirements defined*
