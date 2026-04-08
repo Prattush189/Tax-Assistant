@@ -13,7 +13,7 @@ const ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_AI_API_KEY! });
 
 const PRIMARY_MODEL = 'gemini-2.5-flash';
 const FALLBACK_MODEL = 'gemini-2.0-flash';
-const MAX_TOKENS = 4096;
+const MAX_TOKENS = 8192;
 
 // Gemini Flash pricing (conservative — uses 2.5 rates)
 const INPUT_COST_PER_TOKEN = 0.15 / 1_000_000;

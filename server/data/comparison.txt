@@ -19,8 +19,9 @@ FY 2025-26 = Tax Year 2025-26 = AY 2026-27 (last AY used).
 ======================================================================
 2. STRUCTURAL CHANGES
 ======================================================================
-1961 Act: 298 sections + 14 schedules, heavily amended over 60+ years.
-2025 Act: 536 sections + 16 schedules, consolidated and reorganized.
+1961 Act: Originally 298 sections + 14 schedules; after 65+ years & 4000+ amendments,
+         effective count grew to 800+ sections (with sub-sections, provisos, explanations).
+2025 Act: 536 sections + 16 schedules across 23 chapters, consolidated and reorganized.
 
 Key reorganization:
 - All TDS provisions (192-196 series) consolidated into Sections 392-394.
@@ -104,6 +105,12 @@ S.No. | Old Section | Nature of Payment                    | Payment Code | Rate
 5     | 194N        | Cash withdrawal (>1Cr)               | 1063-1064    | 2%/5%
 6     | 80CCA(2)(a) | NSS withdrawal                      | —            | —
 7     | 194T        | Partner salary/interest/commission   | 1067         | 10%
+      |             | Threshold: Rs. 20,000 aggregate per FY (all partner payments combined).
+      |             | Effective 1 April 2025 (inserted by Finance (No.2) Act, 2024).
+      |             | Covers: salary, remuneration, commission, bonus, interest (incl.
+      |             | capital account credits). Excludes: drawings, capital repayment,
+      |             | profit share. No Form 15G/15H or Sec 197 relief available.
+      |             | TDS at time of credit to partner's account or payment, whichever earlier.
 
 Section 392 — TDS on Salary:
 Old Section (1961) | New (2025)   | Payment Code
@@ -140,6 +147,13 @@ S.No. | Old Section   | Nature                              | Rate (2025)  | Pay
 —     | NEW           | Luxury goods TCS (watches, art, yachts, etc.) | 1% | 1076-1085
 
 Removed: 206C(1H) (TCS on sale of goods >50L) — removed effective April 2025.
+
+NEW in 2025 Act — Luxury Goods TCS under Section 394:
+TCS at 1% on purchase of specified luxury goods exceeding Rs. 10 lakh:
+Goods covered: Wrist watches, art & paintings, collectibles, yachts, rowing boats,
+helicopters, sunglasses, handbags, footwear, sportswear, home theatre systems.
+Payment codes 1076-1085 (verify against final CBDT notification for exact mapping).
+Effective from 1 April 2026 under the 2025 Act.
 
 ======================================================================
 4. DEDUCTIONS MAPPING (80C-80U SERIES → SECTIONS 123-154)
@@ -395,16 +409,26 @@ Health & Education Cess: 4% on (tax + surcharge)
 ======================================================================
 Old Section (1961) | Nature                        | New Section (2025)
 139(1)             | Filing return of income       | 263(1)
-139(3)             | Filing return of loss          | 263(10)
-139(4)             | Belated return                 | 263(7)
-139(5)             | Revised return                 | 263(8)
+139(3)             | Filing return of loss          | 263(3) — must file within due date for
+                                                       carry-forward of losses
+139(4)             | Belated return                 | 263(4) — within 9 months from end of tax year
+                                                       or before completion of assessment, whichever earlier
+139(5)             | Revised return                 | 263(5) — within 12 months from end of tax year
+                                                       (expanded from 9 months by Budget 2026)
+139(8A)            | Updated return (ITR-U)          | 263(6) — within 48 months from end of tax year
+                                                       Budget 2025 extended from 24 to 48 months.
+                                                       Additional tax: 25% (≤12m), 50% (≤24m),
+                                                       60% (≤36m), 70% (≤48m).
+                                                       Budget 2026: Can now file after reassessment
+                                                       notice (10% extra premium); can reduce losses
+                                                       from 1 March 2026.
 140A               | Self-assessment tax            | 400(1)
 143(1)             | Intimation / processing        | 270(1)
 143(3)             | Scrutiny assessment            | 271
 144                | Best judgment assessment        | 272
 147                | Reassessment                   | 279
 148                | Notice for reassessment        | 280
-245                | Set off of refunds             | 356
+245                | Set off of refunds             | 435 (approx, Chapter on Refunds)
 234A               | Interest on late filing         | Restructured in new Act
 234B               | Interest on advance tax default | Restructured in new Act
 234C               | Interest on deferment           | Restructured in new Act
@@ -420,14 +444,25 @@ Return filing deadlines (unchanged):
 GST is governed by CGST Act 2017, SGST/UTGST Acts, and IGST Act 2017.
 These are NOT part of the Income Tax Act and were NOT changed by the 2025 Act.
 
-GST Rate Structure (Post September 2025 Reform):
+GST Rate Structure (Post September 2025 Next-Gen Reform, effective 22 Sep 2025):
 Rate  | Category          | Examples
-0%    | Essentials         | Fresh fruits, vegetables, milk, bread, eggs, education, healthcare
-5%    | Daily needs        | Packaged food, butter, cheese, transport, footwear (<1000)
-18%   | Standard rate      | Most goods & services, IT services, restaurants, financial services
-40%   | Demerit/sin goods  | Tobacco, pan masala, aerated beverages
+0%    | Essentials         | Fresh fruits, vegetables, milk, bread, eggs, education, healthcare,
+      |                    | individual life & health insurance policies (newly exempt)
+5%    | Daily needs/merit  | Packaged food, butter, cheese, medicines, footwear, bicycles,
+      |                    | EVs, restaurants (non-AC), hotel stay ≤7500/day, gyms/salons
+18%   | Standard rate      | Most goods & services, IT services, electronics, ACs, TVs, fridges,
+      |                    | washing machines, cement, vehicles, financial services, works contracts
+40%   | Demerit/sin/luxury | Tobacco*, pan masala*, aerated beverages, high-end cars, yachts,
+      |                    | private aircraft, premium bikes >350cc
+      |                    | *NOTE: For cigarettes, chewing tobacco (zarda), unmanufactured
+      |                    | tobacco, and beedi — old GST + compensation cess rates continue
+      |                    | until loan obligations under compensation cess account are fully
+      |                    | discharged (expected before Dec 2025). New 40% rate deferred.
 3%    | Special            | Gold, silver, platinum
 0.25% | Special            | Rough diamonds
+
+Old slabs REMOVED: 12% (99% items moved to 5%) and 28% (90% items moved to 18%).
+Compensation cess on most products scrapped from 22 Sep 2025 (except tobacco products).
 
 Key GST Sections:
 Section 9 CGST / Section 5 IGST: Levy and collection of tax
@@ -728,3 +763,523 @@ Old Section (1961) | Nature                                | New Section (2025)
 
 Equalization Levy: Completely abolished. 2% EL 2.0 removed by Finance Act 2024 (Aug 2024).
 6% EL 1.0 removed effective 1 April 2025. No mapping in 2025 Act.
+
+======================================================================
+24. MSME PAYMENT COMPLIANCE (43B(h) → 37(2)(g))
+======================================================================
+Old Section (1961) | Nature                                | New Section (2025)
+43B(h)             | MSME payment deduction on actual       | 37(2)(g)
+                   | payment basis                          |
+
+Key provisions (substantively unchanged in 2025 Act):
+- Any sum payable to a micro or small enterprise (registered under MSMED Act 2006)
+  must be paid within the timeline specified under Section 15 of MSMED Act.
+- No written agreement: payment within 15 days of acceptance.
+- Written agreement: payment within agreed period, not exceeding 45 days.
+- If not paid within the above limits: deduction allowed ONLY in the year of
+  actual payment (not on accrual basis).
+- CRITICAL: The "due date of ITR filing" extension (proviso to Section 43B) does
+  NOT apply to MSME payments. Payment must be within 15/45 days, period.
+- Applicable only to registered micro & small enterprises (not medium enterprises).
+- Does NOT apply to wholesale/retail traders (even if Udyam-registered).
+- Late payment interest: compound interest at 3x RBI bank rate (not deductible).
+- Effective from AY 2024-25 (FY 2023-24) onwards.
+- Disallowance under Section 40(a)(ia) / 38 also applies if TDS not deducted.
+
+======================================================================
+25. GST — ADDITIONAL KEY PROVISIONS FOR RAG COVERAGE
+======================================================================
+GST is governed by CGST Act 2017, SGST/UTGST Acts, and IGST Act 2017.
+NOT part of the Income Tax Act. NOT changed by the IT Act 2025.
+
+A. GST COMPOSITION SCHEME (Section 10 CGST):
+- Available for suppliers with aggregate turnover ≤ 1.5 Cr (75L for special states).
+- Tax rates: 1% for manufacturers/traders, 6% for restaurants, 0.5% for other services.
+- Cannot collect tax from recipients. No ITC available.
+- Cannot make inter-state supplies or supply through e-commerce.
+- Must file GSTR-4 (annual) instead of monthly returns.
+- Special scheme for services: 6% (3% CGST + 3% SGST) for turnover ≤ 50L.
+
+B. REVERSE CHARGE MECHANISM (Section 9(3)/(4) CGST):
+- Section 9(3): Notified goods/services where recipient pays GST instead of supplier.
+  Covers: legal services by advocate, GTA services, import of services, etc.
+- Section 9(4): Supplies from unregistered to registered person.
+  Currently applicable only for specified categories (real estate sector).
+- Recipient must self-invoice and pay GST. ITC available on reverse charge tax paid.
+
+C. E-INVOICING:
+- Mandatory for businesses with aggregate turnover exceeding Rs. 5 Cr
+  (threshold reduced from 10 Cr effective 1 August 2023).
+- E-invoice generated through IRP (Invoice Registration Portal).
+- Mandatory for B2B supplies, exports, and supplies to SEZ.
+- Not required for: B2C supplies, imports, nil-rated/exempt supplies.
+- E-invoice JSON schema includes IRN (Invoice Reference Number) and QR code.
+
+D. GST TDS & TCS:
+- Section 51 (GST TDS): 1% CGST + 1% SGST (total 2%) by government bodies,
+  local authorities, PSUs on contracts > 2.5 lakh.
+- Section 52 (GST TCS): E-commerce operators collect 0.5% CGST + 0.5% SGST
+  (total 1%) on net value of taxable supplies made through platform.
+
+E. KEY GST RETURN FORMS:
+GSTR-1   | Outward supply details (monthly/quarterly)
+GSTR-2B  | Auto-populated ITC statement (monthly, read-only)
+GSTR-3B  | Summary return with tax payment (monthly)
+GSTR-4   | Composition dealer annual return
+GSTR-9   | Annual return (turnover > 2 Cr)
+GSTR-9C  | Reconciliation statement (turnover > 5 Cr, self-certified)
+
+F. ITC RESTRICTIONS (Section 17(5) CGST — Blocked Credits):
+- Motor vehicles and conveyances (except specified)
+- Food, beverages, outdoor catering, beauty treatment, health services,
+  cosmetic/plastic surgery (unless used for further supply or as employer obligation)
+- Membership of club, health, fitness centre
+- Travel, hotel stays (unless for specified purposes)
+- Works contract services for construction of immovable property
+- Goods/services for personal consumption
+- Goods lost, stolen, destroyed, written off, or disposed by way of gift/free samples
+
+G. PLACE OF SUPPLY RULES:
+- Goods: Location of goods at time of delivery (Section 10/11 IGST)
+- Services (general): Location of recipient (Section 12/13 IGST)
+- Immovable property services: Location of property
+- Restaurant/catering: Place where service performed
+- Telecom: Address of recipient (registered) or billing address (unregistered)
+
+======================================================================
+26. VIVAD SE VISHWAS 2.0 (DIRECT TAX DISPUTE RESOLUTION)
+======================================================================
+- Standalone scheme under Finance (No. 2) Act 2024, effective 1 Oct 2024.
+- NOT part of the Income Tax Act 2025 — separate legislation.
+- Covers: Pending appeals before CIT(A), ITAT, High Court, Supreme Court.
+- Also covers: Pending DRP objections, revision applications u/s 264.
+- Settlement amount:
+  Disputed tax: 100% of disputed tax (110% if filed after 31 Dec 2024)
+  Disputed penalty/interest/fee: 25% (30% if filed after 31 Dec 2024)
+  Search cases: additional 10% premium
+- Immunity from penalty and prosecution upon settlement.
+- Not available if: prosecution already filed and convicted, PMLA proceedings,
+  undisclosed foreign income/assets under Black Money Act.
+
+======================================================================
+27. TRANSITIONAL PROVISIONS (Section 536 of 2025 Act)
+======================================================================
+Key transitional rules for smooth changeover:
+- Section 536(2)(b): Rights acquired under old Act (loss carry-forward,
+  depreciation, deduction claims) continue under new Act.
+- Section 536(2)(j): Circulars, notifications, instructions issued under old Act
+  remain valid unless they conflict with the new Act.
+- Existing schemes (faceless assessment, etc.) treated as made under corresponding
+  provisions of new Act, or under Section 532 if no corresponding section.
+- Existing PAN, TAN, faceless frameworks continue without change.
+- Search/seizure proceedings initiated before 1 April 2026 continue under old Act.
+- ITR forms for AY 2026-27 and earlier years will continue under old Act forms.
+  New ITR forms under IT Rules 2026 to be notified for Tax Year 2026-27 onwards.
+
+======================================================================
+28. LEGISLATIVE HISTORY — INCOME TAX ACT 2025
+======================================================================
+13 Feb 2025  | Income Tax Bill 2025 introduced in Lok Sabha
+             | Referred to Select Committee (Chair: Baijayant Panda)
+21 Jul 2025  | Select Committee submitted report (285 recommendations)
+08 Aug 2025  | Original Bill withdrawn from Lok Sabha
+11 Aug 2025  | Income Tax (No. 2) Bill 2025 introduced & passed by Lok Sabha
+12 Aug 2025  | Passed by Rajya Sabha
+21 Aug 2025  | Presidential assent received → becomes Act 30 of 2025
+01 Apr 2026  | Income Tax Act, 2025 comes into force; IT Act 1961 repealed
+
+======================================================================
+29. SECTION 43B — FULL MAPPING (OLD → NEW)
+======================================================================
+Old Section 43B of 1961 Act → New Section 37 of 2025 Act
+
+Old Clause | Nature                                        | New Clause
+43B(a)     | Tax/duty/cess/fee under any law                | 37(2)(a)
+43B(b)     | Employer PF contribution                       | 37(2)(b)
+43B(c)     | Gratuity fund contribution                     | 37(2)(b)
+43B(d)     | Superannuation/any employee welfare fund        | 37(2)(b)
+43B(da)    | Leave encashment provision                     | 37(2)(c)
+43B(e)     | Interest on loans from scheduled banks/         | 37(2)(e)
+           | co-operative banks/public financial institutions|
+43B(f)     | Payment to Indian Railways for asset use        | 37(2)(f)
+43B(g)     | Bonus/commission (as per Sec 36(1)(ii))         | 37(2)(d)
+43B(h)     | Sum payable to micro/small enterprise           | 37(2)(g)
+           | (MSMED Act compliance)                          |
+
+======================================================================
+30. KEY DEFINITIONS MAPPING (SECTION 2 — 2025 ACT)
+======================================================================
+Term                     | Old Reference        | New Section 2(...)
+Assessee                 | 2(7)                 | 2(11)
+Assessment Year          | 2(9)                 | REMOVED (Tax Year used)
+Block of Assets          | 2(11)                | 2(17)
+Capital Asset            | 2(14)                | 2(22)
+Company                  | 2(17)                | 2(27)
+Dividend                 | 2(22)                | 2(35)
+Income                   | 2(24)                | 2(53)
+Long-term capital asset  | 2(29A)               | 2(67)
+Non-resident             | 2(30)                | 2(77)
+Person                   | 2(31)                | 2(84)
+Previous Year            | 2(34)                | REMOVED (Tax Year: Sec 3)
+Resident                 | 2(42)                | 2(92)
+Short-term capital asset | 2(42A)               | 2(101)
+Total Income             | 2(45)                | 2(108)
+Transfer                 | 2(47)                | 2(109)
+Virtual Digital Asset    | 2(47A)               | 2(111)
+Tax Year                 | N/A (new concept)    | Section 3
+
+======================================================================
+31. ERRATA & VERIFICATION NOTES
+======================================================================
+Items in the original document that need independent verification:
+
+1. HRA METRO EXPANSION (Line 468 of original):
+   Claim: Bangalore, Hyderabad, Pune, Ahmedabad qualify as metro from FY 2026-27.
+   Status: VERIFY against final Finance Act 2025/2026 notification.
+   This was widely reported but confirmation of gazette notification needed.
+
+2. LUXURY GOODS TCS CODES (1076-1085):
+   Claim: New TCS at 1% on luxury goods with specific payment codes.
+   Status: Verify exact payment code mapping against CBDT's final notified
+   TDS/TCS return form instructions (Forms 138/140/143/144 under IT Rules 2026).
+
+3. SECTION 245 MAPPING:
+   Original mapped old Section 245 (set off of refunds) to Section 356.
+   CORRECTED: Section 356 is for appeals (CIT(A)/JCIT(A)). Set off of refunds
+   is in the Refunds chapter (Sections 431-438 area). Verify exact section.
+
+4. FORMS MAPPING:
+   New form numbers (Form 121, 128, 130-146, etc.) are based on IT Rules 2026
+   notifications. Some forms may be pending final CBDT notification.
+   Form 26AS continues alongside AIS (Annual Information Statement).
+
+======================================================================
+32. RAG MODEL — DOCUMENT TAXONOMY & CHUNKING STRATEGY
+======================================================================
+
+FOR A COMPREHENSIVE RAG MODEL COVERING INDIAN TAXATION:
+
+LAYER 1: STATUTE TEXT (Primary Source Documents)
+─────────────────────────────────────────────────
+A. Income Tax Act 2025
+   - Full text of all 536 sections (chunk by section + subsection)
+   - 16 Schedules (chunk each schedule separately)
+   - Section-to-section cross-reference index
+   - Old-to-new section mapping table (this document)
+
+B. CGST Act 2017 + IGST Act 2017
+   - Full text (chunk by section)
+   - GST rate schedules (chunk by rate slab)
+   - Place of supply rules (chunk by service type)
+
+C. Finance Acts (annual)
+   - Finance Act 2024, 2025, 2026 — amendment text
+   - Budget speech extracts for intent/interpretation
+
+LAYER 2: RULES, FORMS & NOTIFICATIONS
+──────────────────────────────────────
+A. Income Tax Rules 2026
+   - All rule text (chunk by rule number)
+   - Form templates and instructions
+   - Computation methods, depreciation tables
+
+B. CBDT Circulars & Notifications
+   - TDS/TCS operational circulars
+   - Transitional circulars under Section 536
+   - Cost Inflation Index table (base year 2001-02)
+   - Threshold revisions, rate notifications
+
+C. CGST Rules 2017
+   - ITC rules (Rule 36/37/42/43)
+   - E-invoicing schema and thresholds
+   - Valuation rules, refund rules
+
+D. GST Notifications & Circulars
+   - Rate notifications (effective dates)
+   - Exemption notifications
+   - Reverse charge notifications
+
+LAYER 3: COMPLIANCE PROCEDURES & PRACTICAL KNOWLEDGE
+─────────────────────────────────────────────────────
+A. Return Filing
+   - ITR form selection logic (which ITR for which assessee type)
+   - TDS return filing workflow (Forms 138/140/143/144)
+   - Due dates calendar (advance tax, TDS, ITR, GST returns)
+   - Penalty computation (234A/B/C interest, 270A penalties)
+
+B. TDS/TCS Operational
+   - Section 194T partner payment workflow
+   - TDS rate chart with thresholds (for each payment code)
+   - Higher rate TDS (no PAN/Aadhaar: 20%)
+   - Lower/nil TDS certificate process (Form 128)
+   - Form 15G/15H applicability matrix
+
+C. GST Compliance
+   - GSTR-1 → GSTR-2B → GSTR-3B reconciliation workflow
+   - ITC matching and reversal procedures
+   - E-invoicing JSON schema
+   - Composition scheme eligibility and filing
+   - GST audit (GSTR-9/9C) checklist
+
+D. Specific Tax Computations
+   - Capital gains computation with examples
+   - Presumptive taxation (Section 58) calculations
+   - MAT/AMT computation under Section 206
+   - HRA exemption calculation with metro/non-metro
+   - Advance tax installment computation
+
+LAYER 4: INTERPRETIVE & DISPUTE RESOLUTION
+───────────────────────────────────────────
+A. Key Case Law
+   - Residential status landmark cases
+   - PE determination under DTAAs
+   - Capital vs. revenue expenditure
+   - Bogus purchases / unexplained credits
+   - Transfer pricing disputes
+
+B. DTAA Application
+   - Treaty override principles
+   - Most favoured nation (MFN) clause application
+   - PE determination framework
+   - Beneficial ownership tests
+
+C. Anti-Avoidance
+   - GAAR application thresholds and procedure
+   - Thin capitalisation (Section 177) computation
+   - Non-cooperative jurisdiction implications
+
+D. Dispute Resolution
+   - Vivad Se Vishwas 2.0 eligibility and computation
+   - DRC procedure for small taxpayers
+   - Advance ruling (BAR) application process
+   - Faceless assessment response strategy
+
+CHUNKING STRATEGY RECOMMENDATIONS:
+───────────────────────────────────
+1. Primary chunk unit: Individual section/rule/form
+2. Chunk size: 500-1000 tokens per chunk
+3. Metadata per chunk:
+   - Act/Rule name + section number
+   - Old section number (for cross-reference queries)
+   - Effective date / applicable from date
+   - Category tags (TDS, TCS, Deduction, Exemption, CG, etc.)
+   - Assessee type applicability (Individual, Company, Firm, etc.)
+   - Regime applicability (Old/New/Both)
+
+4. Query archetype index (top 50 patterns):
+   #1  "What TDS rate for [payment type]?"        → TDS table + threshold + form
+   #2  "What deductions available in new regime?"  → Sec 202 + Sec 124 + std deduction
+   #3  "Capital gains tax on property sale"        → Sec 67-90 + rate (196-198) + exemptions (82-89)
+   #4  "ITR form for salaried person"              → ITR selection matrix
+   #5  "TDS on rent payment"                       → 393(1) Table 1 S.No.2 + threshold
+   #6  "GST on [specific good/service]"            → Rate schedule + HSN/SAC code
+   #7  "Due date for TDS return"                   → Calendar + penalty computation
+   #8  "How to claim 80C/Section 123"              → Eligible investments + limits
+   #9  "MSME payment compliance"                   → 37(2)(g) + MSMED Act Sec 15
+   #10 "Tax on cryptocurrency"                     → Sec 214 + 30% + no set-off
+   ... (build remaining 40 based on actual user query analysis)
+
+5. Cross-reference links: Each chunk should link to related chunks
+   (e.g., TDS rate chunk links to threshold chunk, form chunk, penalty chunk)
+
+6. Temporal versioning: Tag each chunk with applicable date range
+   so queries about "FY 2024-25" retrieve old Act provisions while
+   "Tax Year 2026-27" retrieves new Act provisions.
+
+======================================================================
+33. CHAPTER STRUCTURE — INCOME TAX ACT 2025 (23 CHAPTERS)
+======================================================================
+The 2025 Act reorganises 819+ sections (old Act) into 536 sections across 23 chapters.
+Old Act had 47 chapters; new Act has 23 with subparts.
+
+Ch. | Title                                              | Sections
+I   | Preliminary (Short title, definitions, tax year)    | 1-3
+II  | Basis of Charge                                     | 4-10
+III | Incomes not included in total income (Exemptions)   | 11-14
+IV  | Computation of Total Income                         | 15-122
+    |   Part A: Salaries                                  | 15-19
+    |   Part B: Income from House Property                | 20-25
+    |   Part C: Profits and Gains of Business/Profession  | 26-66
+    |   Part D: Capital Gains                             | 67-90
+    |   Part E: Income from Other Sources                 | 91-122
+V   | Income of Other Persons included in total income    | (Clubbing)
+VI  | Aggregation / Set-off / Carry-forward of Losses     |
+VII | Deductions from Total Income                        | 123-154
+VIII| Rebates, Reliefs, and Deductions from Tax           | 155-158
+IX  | Double Taxation Relief                              | 159-160
+X   | Transfer Pricing & Anti-Avoidance                   | 161-184
+XI  | Special Provisions for Certain Income               | 185-214
+XII | Tax Rates and Minimum Tax                           | 194-214
+XIII| Exempt Entities (Trusts, NPOs)                      | 330-355
+XIV | Income Tax Authorities                              | 235-246
+XV  | Search, Survey, Information                         | 247-262
+XVI | Assessment and Reassessment                         | 263-300
+XVII| Appeals and Dispute Resolution                      | 356-390
+XVIII| Collection (TDS/TCS/Advance Tax)                   | 391-410
+XIX | Recovery, Refunds, Interest                         | 411-438
+XX  | Penalties and Prosecution                           | 439-486
+XXI | Miscellaneous                                       | 487-532
+XXII| Power to frame Schemes, Rules                       | 532-535
+XXIII| Repeal and Savings (Transitional)                  | 536
+
+NOTE: Section numbers are approximate ranges. Some chapters have lettered
+sub-parts (e.g., Chapter IV-A through IV-E for heads of income).
+
+======================================================================
+34. SCHEDULE INDEX — INCOME TAX ACT 2025 (16 SCHEDULES)
+======================================================================
+Schedule | Subject                                           | Old Reference
+I        | Tax rates (Finance Act reference)                  | First Schedule
+II       | Exempt income - General (agricultural, PF, etc.)   | Sec 10(1),(10D),(11),(12) etc.
+III      | Exempt income - Individuals/HUF/Employees          | Sec 10(2),(5),(7),(13A) etc.
+IV       | Exempt income - Non-residents                       | Sec 10(4)(ii),(6) etc.
+V        | Exempt income - Investment/Business Trusts, SWFs    | Sec 10(23FB),(23FE) etc.
+VI       | Exempt income - IFSC entities                       | Sec 10(4F),(4G) etc.
+VII      | Exempt entities (educational, hospital, political)  | Sec 10(23C),(23A) etc.
+VIII     | Exempt entities - continuation                      | Related to Schedule VII
+IX       | Depreciation rates and block of assets              | Old Rule / Schedule XIV
+X        | Perquisite valuation rules                          | Old Rule 3
+XI       | Provident fund rules                                | Part A of old Fourth Schedule
+XII      | Superannuation fund rules                           | Old Rules
+XIII     | Gratuity fund rules                                 | Old Rules
+XIV      | Not used / Reserved                                 |
+XV       | Specified domestic transactions                     | Old 92BA reference
+XVI      | Cost Inflation Index / other tables                 | Old Notification
+
+======================================================================
+35. SET-OFF AND CARRY-FORWARD OF LOSSES
+======================================================================
+Old Section (1961) | Nature                                | New Section (2025)
+70                 | Set off of loss from one source        | 104
+                   | against income from another source     |
+                   | under same head                        |
+71                 | Set off of loss from one head against  | 105
+                   | income from another head               |
+71B                | Carry-forward of house property loss   | 106 (8 years)
+72                 | Carry-forward of business loss         | 107 (8 years)
+72A                | Amalgamation - carry-forward           | 108
+73                 | Speculation loss set off restrictions   | 109
+73A                | Specified business loss                | 110
+74                 | Capital loss carry-forward             | 111 (8 years, LTCL against LTCG only)
+74A                | Horse race loss                        | 112
+79                 | Company loss carry-forward: change in  | 114
+                   | shareholding restrictions              |
+
+KEY RULES (unchanged):
+- STCL can be set off against both STCG and LTCG.
+- LTCL can be set off ONLY against LTCG.
+- Business loss cannot be set off against salary income.
+- House property loss set-off limited to Rs. 2,00,000/year (inter-head).
+- Speculation loss set off only against speculation profit (carry 4 years).
+- VDA (crypto) loss CANNOT be set off against any other income (Section 214).
+- All losses must be reported in ITR filed within due date for carry-forward.
+
+======================================================================
+36. AUDIT PROVISIONS MAPPING
+======================================================================
+Old Section (1961) | Nature                                | New Section (2025)
+44AB               | Tax audit (turnover > limits)          | 63
+                   | Old Forms 3CA/3CB/3CD                 | New Form 26 (unified)
+
+44AB Thresholds (unchanged):
+- Business: Turnover > 1 Cr (10 Cr if digital receipts > 95%)
+- Profession: Gross receipts > 50 lakh
+- Presumptive (44AD): Opted in but income < prescribed %, turnover > 2 Cr
+
+NPO/Trust Audit:
+Old Form 10B/10BB                                         | New Form 112 (Section 348)
+Required: If NPO income exceeds basic exemption limit.
+Filing: 1 month before ITR due date (pre-condition for exemption claim).
+
+Transfer Pricing Audit:
+Old Form 3CEB                                             | New Form 48 (Section 172)
+Required: International transactions or specified domestic transactions.
+
+======================================================================
+37. BUDGET 2026 CHANGES (FINANCE ACT 2026)
+======================================================================
+Key changes applicable from Tax Year 2026-27 under Finance Act 2026:
+
+1. REVISED RETURN WINDOW: Extended from 9 months to 12 months from end of
+   tax year (Section 263(5) amended).
+
+2. UPDATED RETURN AFTER REASSESSMENT: ITR-U can now be filed even after
+   reassessment proceedings have begun, with 10% additional tax premium.
+   ITR-U can now also be filed to reduce losses (effective 1 March 2026).
+
+3. CBDT CIRCULAR BINDING: Section 400(2) makes all CBDT circulars on TDS/TCS
+   mandatorily binding on all deductors and tax authorities. Earlier argument
+   that circulars were "merely advisory" is overturned.
+
+4. TDS REFUND ON BELATED RETURNS: Taxpayers can now claim TDS refunds even
+   on belated returns (Section 263(4) read with refund provisions).
+
+5. NO CHANGES to tax slabs, capital gains rates, or deduction limits.
+
+======================================================================
+38. INTEREST PROVISIONS MAPPING
+======================================================================
+Old Section (1961) | Nature                                | New Section (2025)
+234A               | Interest on late filing of return      | Restructured in Ch. XIX
+                   | 1% per month (part) on outstanding tax |
+234B               | Interest on default of advance tax     | Restructured in Ch. XIX
+                   | 1% per month (part) on shortfall       |
+234C               | Interest on deferment of advance tax   | Restructured in Ch. XIX
+                   | 1% per month on installment shortfall  |
+234D               | Interest on excess refund              | Restructured
+244A               | Interest on delayed refund to assessee | 437 (0.5% per month)
+
+NOTE: The interest computation methodology remains substantively the same
+under the 2025 Act. The rates (1% for 234A/B/C, 0.5% for 244A) are unchanged.
+
+======================================================================
+39. SCHEDULE VIII — EXEMPT ENTITIES COMPLETE LIST
+======================================================================
+Schedule VII & VIII provide complete list of entities whose income is exempt:
+
+Sl.No | Entity Type                                        | Old Reference
+1-3   | Central/State Government specified income           | 10(20)/(20A)
+4-6   | Local authorities                                   | 10(20A)
+7-9   | Statutory bodies (RBI, IRDAI, specified corporations)| 10(23BB),(23BBA)
+10-16 | Welfare/pension/mutual funds                         | 10(23AAA),(23D),(25)
+17-19 | Educational institutions, hospitals, trusts          | 10(23C)
+20+   | Political parties (with conditions)                  | 13A
+      | Electoral trusts                                     | 13B
+
+======================================================================
+40. NEW REGIME vs OLD REGIME — QUICK COMPARISON
+======================================================================
+Feature              | NEW Regime (Sec 202)        | OLD Regime
+Default              | YES (must opt out for old)  | Must opt in
+Basic exemption      | 4,00,000                    | 2,50,000
+Zero-tax income      | 12,00,000 (12,75,000 sal.)  | 5,00,000
+Rebate (87A/155)     | 60,000 (income ≤ 12L)       | 12,500 (income ≤ 5L)
+Standard deduction   | 75,000                      | 50,000
+80C deduction        | NOT available               | 1,50,000
+80D (health ins.)    | NOT available               | 25,000-50,000
+HRA exemption        | NOT available               | Available (10(13A))
+24(b) home loan int. | NOT available               | 2,00,000
+Employer NPS (124)   | Available (14% salary)      | Available (10% salary)
+LTA                  | NOT available               | Available
+Number of slabs      | 7 (5% to 30%)               | 4 (5% to 30%)
+Max marginal rate    | 30% + surcharge + cess      | 30% + surcharge + cess
+Surcharge cap        | 25% (income > 5 Cr)         | 37% (income > 5 Cr)
+
+Switch rules (Section 202(4)):
+- Business/profession: Must opt before ITR due date; applies to subsequent years;
+  can withdraw ONLY ONCE; after withdrawal, cannot re-opt (permanent old regime).
+- Non-business: Can switch every year at time of filing.
+
+======================================================================
+END OF DOCUMENT
+======================================================================
+Document version: 2.1
+Last updated: April 2026
+Total sections covered: 40 (numbered 1-40)
+Covers: Income Tax Act 2025 (Act 30 of 2025, as amended by Finance Act 2026)
+        GST (CGST/IGST/SGST Acts, post Next-Gen Reform effective 22 Sep 2025)
+        Vivad Se Vishwas 2.0 (Finance (No. 2) Act 2024)
+        Transitional provisions (Section 536 of IT Act 2025)
+Sources: incometaxindia.gov.in, incometax.gov.in FAQs, PIB releases,
+         CBDT notifications, PRS India, Wikipedia, ClearTax, TaxGuru,
+         Official Income Tax Act 2025 booklet (as amended by FA 2026)

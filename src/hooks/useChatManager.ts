@@ -101,31 +101,52 @@ export function useChatManager() {
     };
 
     const messageText = input.trim();
-    setMessages(prev => [...prev, userMessage]);
+    // Add user message + empty model message for streaming
+    setMessages(prev => [...prev, userMessage, {
+      role: 'model',
+      content: '',
+      timestamp: new Date(),
+    }]);
     setInput('');
     setIsLoading(true);
 
-    let fullResponse = '';
     let wasTruncated = false;
 
     try {
       await sendChatMessage(
         chatId,
         messageText,
-        (text) => { fullResponse += text; },
-        (msg) => { fullResponse = msg; },
+        (text) => {
+          // Stream: append each chunk to the last (model) message
+          setMessages(prev => {
+            const updated = [...prev];
+            const last = updated[updated.length - 1];
+            updated[updated.length - 1] = { ...last, content: last.content + text };
+            return updated;
+          });
+        },
+        (errorMsg) => {
+          // Error: replace model message content with error
+          setMessages(prev => {
+            const updated = [...prev];
+            updated[updated.length - 1] = { ...updated[updated.length - 1], content: errorMsg };
+            return updated;
+          });
+        },
         activeDocument ? { filename: activeDocument.filename, mimeType: activeDocument.mimeType, extractedData: activeDocument.extractedData } : undefined,
         (stopReason) => {
           if (stopReason === 'max_tokens') wasTruncated = true;
         },
       );
 
-      setMessages(prev => [...prev, {
-        role: 'model',
-        content: fullResponse,
-        timestamp: new Date(),
-        truncated: wasTruncated,
-      }]);
+      // Mark truncated if needed
+      if (wasTruncated) {
+        setMessages(prev => {
+          const updated = [...prev];
+          updated[updated.length - 1] = { ...updated[updated.length - 1], truncated: true };
+          return updated;
+        });
+      }
 
       await loadChatList();
     } finally {
@@ -140,6 +161,7 @@ export function useChatManager() {
 
     setIsLoading(true);
 
+    // Remove truncated flag from last message
     setMessages(prev => {
       const updated = [...prev];
       if (updated.length > 0) {
@@ -148,27 +170,47 @@ export function useChatManager() {
       return updated;
     });
 
-    let contResponse = '';
+    // Add empty model message for streaming continuation
+    setMessages(prev => [...prev, {
+      role: 'model' as const,
+      content: '',
+      timestamp: new Date(),
+    }]);
+
     let contTruncated = false;
 
     try {
       await sendChatMessage(
         chatId,
         'Continue from where you left off. Do not repeat what you already said.',
-        (text) => { contResponse += text; },
-        (msg) => { contResponse = msg; },
+        (text) => {
+          setMessages(prev => {
+            const updated = [...prev];
+            const last = updated[updated.length - 1];
+            updated[updated.length - 1] = { ...last, content: last.content + text };
+            return updated;
+          });
+        },
+        (errorMsg) => {
+          setMessages(prev => {
+            const updated = [...prev];
+            updated[updated.length - 1] = { ...updated[updated.length - 1], content: errorMsg };
+            return updated;
+          });
+        },
         undefined,
         (stopReason) => {
           if (stopReason === 'max_tokens') contTruncated = true;
         },
       );
 
-      setMessages(prev => [...prev, {
-        role: 'model' as const,
-        content: contResponse,
-        timestamp: new Date(),
-        truncated: contTruncated,
-      }]);
+      if (contTruncated) {
+        setMessages(prev => {
+          const updated = [...prev];
+          updated[updated.length - 1] = { ...updated[updated.length - 1], truncated: true };
+          return updated;
+        });
+      }
     } finally {
       setIsLoading(false);
     }

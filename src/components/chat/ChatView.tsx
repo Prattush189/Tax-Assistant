@@ -99,7 +99,7 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
         ) : (
           <div className="max-w-4xl mx-auto space-y-6">
             <AnimatePresence initial={false}>
-              {messages.map((msg, idx) => (
+              {messages.filter(msg => msg.role === 'user' || msg.content !== '').map((msg, idx) => (
                 <motion.div
                   key={`${idx}-${msg.content.slice(0, 20)}`}
                   initial={{ opacity: 0, y: 12, scale: 0.98 }}
@@ -111,8 +111,8 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
               ))}
             </AnimatePresence>
 
-            {/* Thinking indicator — shows animated logo while waiting */}
-            {isLoading && (
+            {/* Thinking indicator — shows only while waiting for first chunk */}
+            {isLoading && messages.length > 0 && messages[messages.length - 1].content === '' && (
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}

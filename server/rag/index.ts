@@ -58,8 +58,8 @@ function splitIntoSections(text: string): { section: string; text: string }[] {
 
 // ── Sub-chunk large sections with overlap ──
 
-const MAX_CHUNK_SIZE = 2000;
-const CHUNK_OVERLAP = 300;
+const MAX_CHUNK_SIZE = 1200;
+const CHUNK_OVERLAP = 200;
 
 function subChunk(text: string, section: string): { section: string; text: string }[] {
   if (text.length <= MAX_CHUNK_SIZE) {
@@ -180,7 +180,7 @@ function scoreChunk(chunk: Chunk, tokens: string[], sectionNumbers: string[]): n
 
 // ── Retrieve top chunks ──
 
-function retrieve(chunks: Chunk[], query: string, topK = 6): Chunk[] {
+function retrieve(chunks: Chunk[], query: string, topK = 3): Chunk[] {
   const tokens = tokenize(query);
   if (tokens.length === 0) return [];
 
@@ -200,11 +200,11 @@ function retrieve(chunks: Chunk[], query: string, topK = 6): Chunk[] {
   const from1961: typeof scored = [];
 
   for (const s of scored) {
-    if (s.chunk.source === 'comparison' && fromComparison.length < 2) {
+    if (s.chunk.source === 'comparison' && fromComparison.length < 1) {
       fromComparison.push(s);
-    } else if (s.chunk.source === 'act-2025' && from2025.length < 2) {
+    } else if (s.chunk.source === 'act-2025' && from2025.length < 1) {
       from2025.push(s);
-    } else if (s.chunk.source === 'act-1961' && from1961.length < 2) {
+    } else if (s.chunk.source === 'act-1961' && from1961.length < 1) {
       from1961.push(s);
     }
     if (fromComparison.length + from2025.length + from1961.length >= topK) break;
@@ -261,8 +261,35 @@ export function initRAG(): void {
   console.log(`[RAG] Total chunks: ${allChunks.length}`);
 }
 
-export function retrieveContext(query: string, topK = 6): string | null {
-  const chunks = retrieve(allChunks, query, topK);
+// Progressively broaden section numbers: 15CG → 15C → 15
+function broadenSectionNumbers(query: string): string[] {
+  const sections = query.match(/\b(\d+[A-Z]*)\b/g) || [];
+  const broadened: string[] = [];
+  for (const sec of sections) {
+    // Strip trailing letters one at a time: 15CG → 15C → 15
+    let s = sec;
+    while (s.length > 0 && /[A-Z]$/.test(s)) {
+      s = s.slice(0, -1);
+      if (s.length > 0) broadened.push(s);
+    }
+  }
+  return broadened;
+}
+
+export function retrieveContext(query: string, topK = 3): string | null {
+  let chunks = retrieve(allChunks, query, topK);
+
+  // If poor results, try broadening section numbers (15CG → 15C → 15)
+  if (chunks.length === 0) {
+    const broader = broadenSectionNumbers(query);
+    for (const broadSection of broader) {
+      // Replace the original section number in query with broader version
+      const broadQuery = query + ` section ${broadSection}`;
+      chunks = retrieve(allChunks, broadQuery, topK);
+      if (chunks.length > 0) break;
+    }
+  }
+
   if (chunks.length === 0) return null;
 
   const context = chunks
