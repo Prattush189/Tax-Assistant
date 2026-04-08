@@ -81,18 +81,20 @@ export function ChartRenderer({ jsonString }: ChartRendererProps) {
             </LineChart>
           );
         case 'stacked-bar':
+        case 'grouped-bar':
           return (
             <BarChart data={data}>
               <CartesianGrid strokeDasharray="3 3" stroke="#94a3b8" opacity={0.2} />
               <XAxis dataKey="name" fontSize={12} stroke="#94a3b8" />
-              <YAxis fontSize={12} stroke="#94a3b8" />
+              <YAxis fontSize={12} stroke="#94a3b8" tickFormatter={(v: number) => v >= 100000 ? `₹${(v / 100000).toFixed(1)}L` : v >= 1000 ? `₹${(v / 1000).toFixed(0)}K` : `₹${v}`} />
               <Tooltip
                 contentStyle={{ backgroundColor: '#1e293b', border: 'none', borderRadius: '8px', color: '#fff' }}
                 itemStyle={{ color: '#fff' }}
+                formatter={(v: number) => v >= 100000 ? `₹${(v / 100000).toFixed(2)}L` : `₹${v.toLocaleString('en-IN')}`}
               />
               <Legend />
               {(chartData.keys ?? ['value']).map((key: string, i: number) => (
-                <Bar key={key} dataKey={key} stackId="a" fill={COLORS[i % COLORS.length]} />
+                <Bar key={key} dataKey={key} fill={COLORS[i % COLORS.length]} radius={[4, 4, 0, 0]} />
               ))}
             </BarChart>
           );
