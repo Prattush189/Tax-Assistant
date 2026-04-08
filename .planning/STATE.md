@@ -9,29 +9,39 @@ See: .planning/PROJECT.md (updated 2026-04-08)
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-04-08 — Milestone v1.1 started
+Phase: 7 — RAG Infrastructure Fixes
+Plan: Not started
+Status: Roadmap created, ready for planning
+Last activity: 2026-04-08 — v1.1 roadmap created (phases 7-10)
+
+```
+v1.1 Progress: [░░░░░░░░░░░░░░░░░░░░] 0% — Phase 7 not started
+Phase 7: [ ] Phase 8: [ ] Phase 9: [ ] Phase 10: [ ]
+```
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 0
+- Total plans completed: 17 (v1.0 all phases)
 - Average duration: -
-- Total execution time: 0 hours
+- Total execution time: -
 
-**By Phase:**
+**By Phase (v1.1):**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| - | - | - | - |
+| 7. RAG Infrastructure Fixes | TBD | - | - |
+| 8. GST Act Data | TBD | - | - |
+| 9. Reference Data | TBD | - | - |
+| 10. Scoring & Integration Validation | TBD | - | - |
 
 **Recent Trend:**
-- Last 5 plans: -
-- Trend: -
+- Last 5 plans: v1.0 complete
+- Trend: Beginning v1.1
 
 *Updated after each plan completion*
+
+**v1.0 Historical (reference):**
 | Phase 01-express-backend-api-key-migration P03 | 2 | 2 tasks | 4 files |
 | Phase 02-component-architecture P02 | 8 | 2 tasks | 3 files |
 | Phase 03-tax-calculator P01 | 2 | 2 tasks | 5 files |
@@ -50,6 +60,7 @@ Last activity: 2026-04-08 — Milestone v1.1 started
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
+**v1.0 decisions (preserved for reference):**
 - Roadmap: Express backend before any feature work — API key must leave client bundle first
 - Roadmap: Architecture refactor (Phase 2) before new features — prevents monolith from becoming unmanageable
 - Roadmap: Tax calculator (Phase 3) is client-side only — no new backend dependencies needed
@@ -112,18 +123,27 @@ Recent decisions affecting current work:
 - [Phase 06-02]: overflow-x-auto applied globally (not isPluginMode conditional) — responsive behavior benefits all users
 - [Phase 06-02]: TaxSummaryCards grid-cols-2 changed to grid-cols-1 sm:grid-cols-2 so cards stack at 400px rather than squeeze
 
+**v1.1 decisions (accumulate here during execution):**
+- Roadmap: Phase 7 (infrastructure fixes) must precede all data phases — hardcoded three-bucket retrieval silently blocks any fourth source; schedule regex drops entire schedules as single unchunkable blobs
+- Roadmap: CGST and IGST Act bundled in Phase 8 — logically paired, both needed for complete GST query chain
+- Roadmap: Reference data (Phase 9) independent of GST data (Phase 8) but both require Phase 7 infrastructure
+- Roadmap: Phase 10 is validation-only — no new data added; all regression testing after full corpus is loaded
+- Data: BM25 libraries and embedding models explicitly rejected — marginal improvement does not justify 100MB+ dependency at current scale
+- Data: Full CGST Rules 2017 deferred to v2 — ITC reversal rules create retrieval noise without dedicated query routing
+- Data: HSN/SAC rate schedule deferred — too frequently amended, requires dedicated lookup UI
+- Infrastructure: CGST PDF extraction quality is unknown until attempted — section-count validation gate (>150 chunks) is the early-warning check before writing chunker code
+
 ### Pending Todos
 
-None yet.
+- Verify CGST Act PDF extraction quality from CBIC source before finalizing Phase 8 plan (section-count assertion required)
+- Confirm topK=5 token budget impact after Phase 8 deploys (check against usageRepo inputTok averages before Phase 10)
 
 ### Blockers/Concerns
 
-- Phase 3: FY 2025-26 tax slab values and 87A rebate threshold RESOLVED — verified and coded in 03-01 (Finance Act 2025 confirmed)
-- Phase 5: Gemini Files API behavior for password-protected Form 16 PDFs (TRACES format) is LOW confidence — test before planning tasks
-- Phase 6: Smart Assist postMessage contract (origin domain, event types, data shapes) not yet confirmed with Smart Assist team — gate Phase 6 planning on this input
+- Phase 8: CGST Act PDF extraction quality from CBIC PDF is MEDIUM confidence — validate with chunk-count assertion (>150 sections) before writing chunker code; fallback is India Code HTML source (indiacode.nic.in)
 
 ## Session Continuity
 
-Last session: 2026-04-04
-Stopped at: Completed 06-02-PLAN.md — responsive 400px layout fixes for plugin iframe mode; Phase 6 and full roadmap complete
-Resume file: None — all plans complete
+Last session: 2026-04-08
+Stopped at: v1.1 roadmap created — phases 7-10 defined with success criteria and requirement mappings
+Resume file: None — ready to plan Phase 7 via /gsd:plan-phase 7

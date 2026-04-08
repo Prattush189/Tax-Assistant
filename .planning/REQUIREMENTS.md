@@ -168,30 +168,30 @@ Deferred to future release. Tracked but not in current roadmap.
 | PLUG-02 | Phase 6 | Complete |
 | PLUG-03 | Phase 6 | Complete |
 | PLUG-04 | Phase 6 | Complete |
-| RAGI-01 | — | Pending |
-| RAGI-02 | — | Pending |
-| RAGI-03 | — | Pending |
-| RAGI-04 | — | Pending |
-| RAGI-05 | — | Pending |
-| GST-01 | — | Pending |
-| GST-02 | — | Pending |
-| GST-03 | — | Pending |
-| GST-04 | — | Pending |
-| REF-01 | — | Pending |
-| REF-02 | — | Pending |
-| REF-03 | — | Pending |
-| REF-04 | — | Pending |
-| SCOR-01 | — | Pending |
-| SCOR-02 | — | Pending |
-| SCOR-03 | — | Pending |
-| SCOR-04 | — | Pending |
+| RAGI-01 | Phase 7 | Pending |
+| RAGI-02 | Phase 7 | Pending |
+| RAGI-03 | Phase 7 | Pending |
+| RAGI-04 | Phase 7 | Pending |
+| RAGI-05 | Phase 7 | Pending |
+| GST-01 | Phase 8 | Pending |
+| GST-02 | Phase 8 | Pending |
+| GST-03 | Phase 8 | Pending |
+| GST-04 | Phase 8 | Pending |
+| REF-01 | Phase 9 | Pending |
+| REF-02 | Phase 9 | Pending |
+| REF-03 | Phase 9 | Pending |
+| REF-04 | Phase 9 | Pending |
+| SCOR-01 | Phase 10 | Pending |
+| SCOR-02 | Phase 10 | Pending |
+| SCOR-03 | Phase 10 | Pending |
+| SCOR-04 | Phase 10 | Pending |
 
 **Coverage:**
 - v1.0 requirements: 27 total (all complete)
 - v1.1 requirements: 17 total
-- Mapped to phases: 0
-- Unmapped: 17
+- Mapped to phases: 17
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-04-04*
-*Last updated: 2026-04-08 after v1.1 requirements added*
+*Last updated: 2026-04-08 after v1.1 roadmap created (phases 7-10)*
