@@ -13,10 +13,10 @@ export function AuthGuard({ children }: AuthGuardProps) {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 via-[#FDF6E3] to-indigo-50 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950">
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-[#0A0F14]">
         <div className="flex flex-col items-center gap-4">
-          <div className="w-12 h-12 border-4 border-[#D4A020]/30 border-t-[#D4A020] rounded-full animate-spin" />
-          <p className="text-slate-500 dark:text-slate-400 text-sm">Loading...</p>
+          <div className="w-12 h-12 border-4 border-emerald-600/30 border-t-emerald-600 rounded-full animate-spin" />
+          <p className="text-gray-500 dark:text-gray-400 text-sm">Loading...</p>
         </div>
       </div>
     );

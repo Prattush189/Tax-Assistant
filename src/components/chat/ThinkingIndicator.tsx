@@ -59,13 +59,13 @@ export function ThinkingIndicator() {
 
   return (
     <div className="flex items-center gap-2 py-3 px-2">
-      <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-[#D4A020]/20 to-[#B8860B]/20 flex items-center justify-center shrink-0">
+      <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-[#059669]/20 to-[#047857]/20 flex items-center justify-center shrink-0">
         <img src="/logoAI.png" alt="" className="w-4 h-4 object-contain" />
       </div>
       <span className="text-sm text-slate-500 dark:text-slate-400">
         {displayText}
       </span>
-      <span className="inline-block w-0.5 h-3.5 bg-[#D4A020] animate-pulse" />
+      <span className="inline-block w-0.5 h-3.5 bg-[#059669] animate-pulse" />
     </div>
   );
 }

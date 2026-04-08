@@ -91,7 +91,7 @@ export function AdminDashboard() {
         {/* Header */}
         <div className="flex items-center justify-between flex-wrap gap-2">
           <h1 className="text-xl font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
-            <Shield className="w-5 h-5 text-[#D4A020]" />
+            <Shield className="w-5 h-5 text-[#059669]" />
             Admin Dashboard
           </h1>
           <div className="flex items-center gap-2">
@@ -157,7 +157,7 @@ export function AdminDashboard() {
                     <td className="px-4 py-3 text-slate-500 dark:text-slate-400 text-xs">{u.email}</td>
                     <td className="px-4 py-3">
                       {u.role === 'admin' ? (
-                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-[#D4A020]/20 text-[#B8860B] dark:text-[#D4A020]">
+                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-[#059669]/20 text-[#047857] dark:text-[#059669]">
                           {u.plan}
                         </span>
                       ) : (
@@ -173,7 +173,7 @@ export function AdminDashboard() {
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${u.role === 'admin' ? 'bg-[#D4A020]/20 text-[#B8860B] dark:text-[#D4A020]' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'}`}>
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${u.role === 'admin' ? 'bg-[#059669]/20 text-[#047857] dark:text-[#059669]' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'}`}>
                         {u.role}
                       </span>
                     </td>
@@ -222,8 +222,8 @@ function StatCard({ icon: Icon, label, value }: { icon: typeof Users; label: str
   return (
     <div className="bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm border border-slate-200/50 dark:border-slate-800/50 rounded-xl p-4">
       <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-xl bg-[#D4A020]/10 flex items-center justify-center">
-          <Icon className="w-5 h-5 text-[#D4A020]" />
+        <div className="w-10 h-10 rounded-xl bg-[#059669]/10 flex items-center justify-center">
+          <Icon className="w-5 h-5 text-[#059669]" />
         </div>
         <div>
           <p className="text-[11px] text-slate-400 uppercase font-medium">{label}</p>

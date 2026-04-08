@@ -30,9 +30,9 @@ const plans = [
       'Full chat history',
       'Email support',
     ],
-    gradient: 'from-[#D4A020] to-[#B8860B]',
-    shadow: 'shadow-[#D4A020]/20',
-    ring: 'ring-[#D4A020] dark:ring-[#B8860B]',
+    gradient: 'from-[#059669] to-[#047857]',
+    shadow: 'shadow-[#059669]/20',
+    ring: 'ring-[#059669] dark:ring-[#047857]',
     popular: true,
   },
   {
@@ -82,12 +82,12 @@ export function PlanPage() {
                   isCurrent
                     ? `${plan.ring} ring-2`
                     : "border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700",
-                  plan.popular && !isCurrent && "border-[#D4A020]/50 dark:border-[#B8860B]/50"
+                  plan.popular && !isCurrent && "border-[#059669]/50 dark:border-[#047857]/50"
                 )}
               >
                 {/* Badge */}
                 {plan.popular && (
-                  <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 bg-gradient-to-r from-[#D4A020] to-[#B8860B] text-white text-xs font-bold rounded-full">
+                  <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 bg-gradient-to-r from-[#059669] to-[#047857] text-white text-xs font-bold rounded-full">
                     MOST POPULAR
                   </div>
                 )}
@@ -119,7 +119,7 @@ export function PlanPage() {
 
                 {/* Button */}
                 {isCurrent ? (
-                  <div className="w-full py-3 text-center text-sm font-semibold text-[#B8860B] dark:text-[#D4A020] bg-[#D4A020]/10 dark:bg-[#B8860B]/10 rounded-xl">
+                  <div className="w-full py-3 text-center text-sm font-semibold text-[#047857] dark:text-[#059669] bg-[#059669]/10 dark:bg-[#047857]/10 rounded-xl">
                     Current Plan
                   </div>
                 ) : (
@@ -160,7 +160,7 @@ export function PlanPage() {
             </div>
           </div>
           <p className="text-xs text-slate-400 dark:text-slate-500 mt-4">
-            To upgrade your plan, <a href="https://assist.smartbizin.com/get-demo" target="_blank" rel="noopener noreferrer" className="text-[#D4A020] hover:underline">contact us</a>. Plan changes are managed by the administrator.
+            To upgrade your plan, <a href="https://assist.smartbizin.com/get-demo" target="_blank" rel="noopener noreferrer" className="text-[#059669] hover:underline">contact us</a>. Plan changes are managed by the administrator.
           </p>
         </div>
       </div>

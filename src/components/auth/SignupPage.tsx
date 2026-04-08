@@ -1,10 +1,17 @@
 import { useState } from 'react';
+import { motion } from 'motion/react';
 import { useAuth } from '../../contexts/AuthContext';
-import { UserPlus, Eye, EyeOff } from 'lucide-react';
+import { UserPlus, Eye, EyeOff, Shield, Zap, BarChart3 } from 'lucide-react';
 
 interface SignupPageProps {
   onSwitchToLogin: () => void;
 }
+
+const features = [
+  { icon: Shield, label: 'Income Tax & GST Expert' },
+  { icon: Zap, label: 'AI-Powered Notice Drafting' },
+  { icon: BarChart3, label: 'Tax Calculator & Dashboard' },
+];
 
 export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
   const { signup } = useAuth();
@@ -39,50 +46,95 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
     }
   };
 
+  const inputClass = "w-full px-4 py-3 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 text-gray-900 dark:text-white transition-all placeholder:text-gray-400";
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 via-[#FDF6E3] to-indigo-50 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 p-4">
-      <div className="w-full max-w-md">
-        <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border border-white/20 dark:border-slate-700/50 rounded-3xl shadow-2xl p-8">
-          {/* Logo */}
-          <div className="text-center mb-8">
-            <img src="/logoAI.png" alt="Smart AI" className="w-16 h-16 object-contain mb-4" />
-            <h1 className="text-2xl font-bold text-slate-800 dark:text-white">Create your account</h1>
-            <p className="text-slate-500 dark:text-slate-400 mt-1">Get started with Smart AI</p>
+    <div className="min-h-screen flex dark:bg-[#0A0F14] bg-gray-50">
+      {/* Left panel — branding */}
+      <div className="hidden lg:flex lg:w-[45%] relative overflow-hidden bg-gradient-to-br from-emerald-700 via-emerald-600 to-teal-700">
+        <div className="absolute -top-24 -left-24 w-96 h-96 bg-white/5 rounded-full" />
+        <div className="absolute -bottom-32 -right-32 w-[500px] h-[500px] bg-white/5 rounded-full" />
+        <div className="absolute top-1/3 right-12 w-48 h-48 bg-white/5 rounded-full" />
+
+        <div className="relative z-10 flex flex-col justify-center px-16 py-12">
+          <motion.div
+            initial={{ opacity: 0, x: -30 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.6 }}
+          >
+            <div className="flex items-center gap-3 mb-8">
+              <img src="/logoAI.png" alt="Smart AI" className="w-12 h-12 object-contain" />
+              <span className="text-2xl font-bold text-white tracking-tight">Smart AI</span>
+            </div>
+
+            <h2 className="text-4xl font-bold text-white leading-tight mb-4">
+              Start Your Tax<br />Journey Today
+            </h2>
+            <p className="text-emerald-100/80 text-lg mb-12 max-w-md">
+              Join thousands of professionals who trust Smart AI for accurate tax guidance and notice drafting.
+            </p>
+
+            <div className="space-y-4">
+              {features.map((f, i) => (
+                <motion.div
+                  key={f.label}
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ duration: 0.4, delay: 0.3 + i * 0.15 }}
+                  className="flex items-center gap-3"
+                >
+                  <div className="w-10 h-10 rounded-xl bg-white/10 backdrop-blur-sm flex items-center justify-center">
+                    <f.icon className="w-5 h-5 text-emerald-200" />
+                  </div>
+                  <span className="text-white/90 font-medium">{f.label}</span>
+                </motion.div>
+              ))}
+            </div>
+          </motion.div>
+        </div>
+      </div>
+
+      {/* Right panel — form */}
+      <div className="flex-1 flex items-center justify-center p-6 lg:p-12">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="w-full max-w-md"
+        >
+          <div className="lg:hidden flex items-center gap-2 mb-8">
+            <img src="/logoAI.png" alt="Smart AI" className="w-10 h-10 object-contain" />
+            <span className="text-xl font-bold text-gray-800 dark:text-white">Smart AI</span>
           </div>
 
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }}>
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">Create your account</h1>
+            <p className="text-gray-500 dark:text-gray-400 mb-8">Get started with Smart AI</p>
+          </motion.div>
+
           {error && (
-            <div className="mb-4 p-3 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-xl text-sm text-red-600 dark:text-red-400">
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mb-6 p-3.5 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800/50 rounded-xl text-sm text-red-600 dark:text-red-400"
+            >
               {error}
-            </div>
+            </motion.div>
           )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Full Name</label>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                required
-                className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#D4A020] focus:border-transparent text-slate-800 dark:text-white transition-all"
-                placeholder="John Doe"
-              />
-            </div>
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }}>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Full Name</label>
+              <input type="text" value={name} onChange={(e) => setName(e.target.value)} required className={inputClass} placeholder="John Doe" />
+            </motion.div>
 
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Email</label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#D4A020] focus:border-transparent text-slate-800 dark:text-white transition-all"
-                placeholder="you@example.com"
-              />
-            </div>
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Email</label>
+              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required className={inputClass} placeholder="you@example.com" />
+            </motion.div>
 
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Password</label>
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }}>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Password</label>
               <div className="relative">
                 <input
                   type={showPassword ? 'text' : 'password'}
@@ -90,35 +142,32 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
                   onChange={(e) => setPassword(e.target.value)}
                   required
                   minLength={8}
-                  className="w-full px-4 py-3 pr-12 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#D4A020] focus:border-transparent text-slate-800 dark:text-white transition-all"
+                  className={`${inputClass} pr-12`}
                   placeholder="Min. 8 characters"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
                 >
                   {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                 </button>
               </div>
-            </div>
+            </motion.div>
 
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Confirm Password</label>
-              <input
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                required
-                className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#D4A020] focus:border-transparent text-slate-800 dark:text-white transition-all"
-                placeholder="Confirm your password"
-              />
-            </div>
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Confirm Password</label>
+              <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} required className={inputClass} placeholder="Confirm your password" />
+            </motion.div>
 
-            <button
+            <motion.button
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.45 }}
+              whileTap={{ scale: 0.98 }}
               type="submit"
               disabled={isSubmitting}
-              className="w-full py-3 bg-gradient-to-r from-[#D4A020] to-[#B8860B] hover:from-[#B8860B] hover:to-[#9A7209] text-white font-semibold rounded-xl shadow-lg shadow-[#D4A020]/20 dark:shadow-[#B8860B]/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl shadow-lg shadow-emerald-600/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {isSubmitting ? (
                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -128,19 +177,24 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
                   Create Account
                 </>
               )}
-            </button>
+            </motion.button>
           </form>
 
-          <p className="text-center text-sm text-slate-500 dark:text-slate-400 mt-6">
+          <motion.p
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.55 }}
+            className="text-center text-sm text-gray-500 dark:text-gray-400 mt-8"
+          >
             Already have an account?{' '}
             <button
               onClick={onSwitchToLogin}
-              className="text-[#B8860B] dark:text-[#D4A020] font-semibold hover:underline"
+              className="text-emerald-600 dark:text-emerald-400 font-semibold hover:underline"
             >
               Sign in
             </button>
-          </p>
-        </div>
+          </motion.p>
+        </motion.div>
       </div>
     </div>
   );

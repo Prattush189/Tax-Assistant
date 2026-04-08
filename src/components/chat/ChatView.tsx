@@ -62,11 +62,11 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
     >
       {/* Drag overlay */}
       {isDragOver && (
-        <div className="absolute inset-0 z-20 bg-[#FDF6E3]/90 dark:bg-[#5C4505]/90 backdrop-blur-sm flex items-center justify-center">
-          <div className="flex flex-col items-center gap-3 p-8 border-2 border-dashed border-[#D4A020] dark:border-[#B8860B] rounded-3xl">
-            <Upload className="w-12 h-12 text-[#D4A020]" />
-            <p className="text-lg font-semibold text-[#B8860B] dark:text-[#D4A020]">Drop your document here</p>
-            <p className="text-sm text-[#D4A020]">PDF, JPEG, PNG, WebP, or HEIC</p>
+        <div className="absolute inset-0 z-20 bg-[#ECFDF5]/90 dark:bg-[#064E3B]/90 backdrop-blur-sm flex items-center justify-center">
+          <div className="flex flex-col items-center gap-3 p-8 border-2 border-dashed border-[#059669] dark:border-[#047857] rounded-3xl">
+            <Upload className="w-12 h-12 text-[#059669]" />
+            <p className="text-lg font-semibold text-[#047857] dark:text-[#059669]">Drop your document here</p>
+            <p className="text-sm text-[#059669]">PDF, JPEG, PNG, WebP, or HEIC</p>
           </div>
         </div>
       )}
@@ -89,9 +89,9 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
                 <button
                   key={i}
                   onClick={() => setInput(q)}
-                  className="p-4 bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm border border-slate-200/50 dark:border-slate-800/50 rounded-2xl text-left hover:border-[#D4A020] dark:hover:border-[#B8860B] hover:shadow-lg transition-all group"
+                  className="p-4 bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm border border-slate-200/50 dark:border-slate-800/50 rounded-2xl text-left hover:border-[#059669] dark:hover:border-[#047857] hover:shadow-lg transition-all group"
                 >
-                  <p className="text-sm font-medium text-slate-700 dark:text-slate-300 group-hover:text-[#B8860B] dark:group-hover:text-[#D4A020]">{q}</p>
+                  <p className="text-sm font-medium text-slate-700 dark:text-slate-300 group-hover:text-[#047857] dark:group-hover:text-[#059669]">{q}</p>
                 </button>
               ))}
             </div>

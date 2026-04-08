@@ -49,7 +49,7 @@ export function MessageBubble({ message, onContinue }: MessageBubbleProps) {
       <div className={cn(
         "w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0",
         role === 'user'
-          ? 'bg-gradient-to-br from-[#D4A020] to-[#B8860B] text-white'
+          ? 'bg-gradient-to-br from-[#059669] to-[#047857] text-white'
           : ''
       )}>
         {role === 'user' ? <User className="w-4 h-4" /> : <img src="/logoAI.png" alt="Assistant" className="w-5 h-5 object-contain" />}
@@ -58,7 +58,7 @@ export function MessageBubble({ message, onContinue }: MessageBubbleProps) {
         <div className={cn(
           "p-4 rounded-2xl shadow-sm",
           role === 'user'
-            ? 'bg-gradient-to-br from-[#D4A020] to-[#B8860B] text-white rounded-tr-none'
+            ? 'bg-gradient-to-br from-[#059669] to-[#047857] text-white rounded-tr-none'
             : 'bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm border border-slate-200/50 dark:border-slate-800/50 text-slate-800 dark:text-slate-200 rounded-tl-none'
         )}>
           {attachment && (
@@ -109,7 +109,7 @@ export function MessageBubble({ message, onContinue }: MessageBubbleProps) {
             </p>
             <button
               onClick={onContinue}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#B8860B] dark:text-[#D4A020] bg-[#D4A020]/10 dark:bg-[#B8860B]/10 border border-[#D4A020]/20 dark:border-[#B8860B]/20 rounded-lg hover:bg-[#D4A020]/20 dark:hover:bg-[#B8860B]/20 transition-all"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#047857] dark:text-[#059669] bg-[#059669]/10 dark:bg-[#047857]/10 border border-[#059669]/20 dark:border-[#047857]/20 rounded-lg hover:bg-[#059669]/20 dark:hover:bg-[#047857]/20 transition-all"
             >
               <ChevronRight className="w-3.5 h-3.5" />
               Continue response
