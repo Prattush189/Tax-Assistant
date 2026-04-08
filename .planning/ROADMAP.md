@@ -271,7 +271,7 @@ Phases execute in numeric order: 7 → 8 → 9 → 10
 | 4. Enhanced Visualizations + Dashboard | v1.0 | 3/3 | Complete | 2026-04-04 |
 | 5. Document Handling | v1.0 | 4/4 | Complete | 2026-04-04 |
 | 6. Iframe Plugin Mode Hardening | v1.0 | 2/2 | Complete | 2026-04-06 |
-| 7. RAG Infrastructure Fixes | 2/2 | Complete   | 2026-04-08 | - |
+| 7. RAG Infrastructure Fixes | 2/2 | Complete    | 2026-04-08 | - |
 | 8. GST Act Data | v1.1 | 0/TBD | Not started | - |
 | 9. Reference Data | v1.1 | 0/TBD | Not started | - |
 | 10. Scoring & Integration Validation | v1.1 | 0/TBD | Not started | - |
