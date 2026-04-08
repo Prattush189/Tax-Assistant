@@ -11,10 +11,11 @@ import { AuthRequest } from '../types.js';
 const router = Router();
 const ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_AI_API_KEY! });
 
-const MODEL = 'gemini-2.5-flash';
+const PRIMARY_MODEL = 'gemini-2.5-flash';
+const FALLBACK_MODEL = 'gemini-2.0-flash';
 const MAX_TOKENS = 4096;
 
-// Gemini 2.5 Flash pricing
+// Gemini Flash pricing (conservative — uses 2.5 rates)
 const INPUT_COST_PER_TOKEN = 0.15 / 1_000_000;
 const OUTPUT_COST_PER_TOKEN = 0.60 / 1_000_000;
 
@@ -142,17 +143,29 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
   let fullResponse = '';
 
   try {
-    const stream = await ai.models.generateContentStream({
-      model: MODEL,
+    const requestBody = {
       contents: [
         ...history,
-        { role: 'user', parts: [{ text: userContent }] },
+        { role: 'user' as const, parts: [{ text: userContent }] },
       ],
       config: {
         maxOutputTokens: MAX_TOKENS,
         systemInstruction: SYSTEM_INSTRUCTION,
       },
-    });
+    };
+
+    let stream;
+    try {
+      stream = await ai.models.generateContentStream({ model: PRIMARY_MODEL, ...requestBody });
+    } catch (primaryErr) {
+      const msg = primaryErr instanceof Error ? primaryErr.message : '';
+      if (msg.includes('503') || msg.includes('UNAVAILABLE') || msg.includes('overloaded')) {
+        console.warn(`[chat] ${PRIMARY_MODEL} unavailable, falling back to ${FALLBACK_MODEL}`);
+        stream = await ai.models.generateContentStream({ model: FALLBACK_MODEL, ...requestBody });
+      } else {
+        throw primaryErr;
+      }
+    }
 
     let stopReason: string | null = null;
     let inputTok = 0;
