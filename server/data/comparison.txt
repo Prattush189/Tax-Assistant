@@ -25,8 +25,8 @@ FY 2025-26 = Tax Year 2025-26 = AY 2026-27 (last AY used).
 Key reorganization:
 - All TDS provisions (192-196 series) consolidated into Sections 392-394.
 - All deductions (80C-80U series) reorganized into Sections 123-154.
-- Exemptions (Section 10) moved to Section 11 with Schedules V, VI.
-- Capital gains (45-55 series) reorganized into Sections 67-95.
+- Exemptions (Section 10) moved to Section 11 with Schedules II, III, IV, V, VI, VII.
+- Capital gains (45-55 series) reorganized into Sections 67-90.
 - Tax rates and regimes reorganized into Sections 194-214.
 - Return filing (139 series) moved to Section 263.
 
@@ -41,69 +41,108 @@ The 2025 Act consolidates ALL TDS into 3 sections:
   - 393(3) Table 3: Payments to any person (resident + non-resident)
 - Section 394: TCS (Tax Collected at Source)
 
-New 4-digit payment codes (1001-1067) replace old section numbers for TRACES.
+New 4-digit payment codes (1001-1092) replace old section numbers for TRACES.
 
-Old Section (1961)  | Nature of Payment                    | New (2025)                          | Payment Code | Rate
-192                 | Salary                               | 392(1)                              | 1001-1003    | Slab rate
-192A                | EPF premature withdrawal             | 392(7)                              | 1004         | 10%
-193                 | Interest on securities               | 393(1) Table 1, S.No. 5(i)         | 1019         | 10%
-194                 | Dividends                            | 393(1) Table 1, S.No. 7            | 1029         | 10%
-194A                | Interest (banks, senior)             | 393(1) Table 1, S.No. 5(ii)        | 1020-1021    | 10%
-194A                | Interest (others)                    | 393(1) Table 1, S.No. 5(iii)       | 1022         | 10%
-194B                | Lottery / gambling winnings          | 393(3) Table 3, S.No. 1            | 1058-1059    | 30%
-194BA               | Online gaming winnings               | 393(3) Table 3, S.No. 2            | 1060-1061    | 30%
-194BB               | Horse race winnings                  | 393(3) Table 3, S.No. 3            | 1062         | 30%
-194C(1)             | Contractor (individual/HUF)          | 393(1) Table 1, S.No. 6(i)         | 1023         | 1%
-194C(2)             | Contractor (others)                  | 393(1) Table 1, S.No. 6(i)         | 1024         | 2%
-194D                | Insurance commission                 | 393(1) Table 1, S.No. 1(i)         | 1005         | 5%
-194DA               | Life insurance payout                | 393(1) Table 1, S.No. 8(i)         | 1030         | 2%
-194E                | NR sportsperson/entertainer          | 393(2) Table 2, S.No. 1            | 1039         | 20%
-194EE               | NSS deposits                         | 393(1) Table 1, S.No. 8(iii)       | 1033         | 10%
-194F                | Repurchase of MF units               | Omitted in 2025 Act                | —            | —
-194G                | Lottery commission                   | 393(1) Table 1, S.No. 1(iii)       | —            | 5%
-194H                | Commission / brokerage               | 393(1) Table 1, S.No. 1(ii)        | 1006-1007    | 5%
-194I(a)             | Rent - plant & machinery             | 393(1) Table 1, S.No. 2(ii)        | 1008         | 2%
-194I(b)             | Rent - land/building/furniture       | 393(1) Table 1, S.No. 2(ii)        | 1009         | 10%
-194IA               | Immovable property purchase (>50L)   | 393(1) Table 1, S.No. 3(i)         | 1010         | 1%
-194IB               | Rent by individual/HUF (>50K/month)  | 393(1) Table 1, S.No. 2(i)         | —            | 2%
-194IC               | JDA consideration                    | 393(1) Table 1, S.No. 3(ii)        | 1011         | 10%
-194J(a)             | Technical services / royalty          | 393(1) Table 1, S.No. 6(iii)       | 1026         | 2%
-194J(b)             | Professional services / director fees | 393(1) Table 1, S.No. 6(iii)       | 1027-1028    | 10%
-194K                | MF/UTI income                        | 393(1) Table 1, S.No. 8(iv)        | 1034         | 10%
-194LA               | Compulsory acquisition compensation  | 393(1) Table 1, S.No. 4            | 1012-1013    | 10%
-194LBA              | Business trust income                | 393(1) Table 1, S.No. 9            | —            | Various
-194LBB              | Investment fund income               | 393(1) Table 1, S.No. 10           | —            | 10%
-194LBC              | Securitisation trust income           | 393(1) Table 1, S.No. 11           | —            | 25/30%
-194M                | Commission to individual/HUF (>50L)  | 393(1) Table 1, S.No. 1(iv)        | —            | 5%
-194N                | Cash withdrawal (>1Cr)               | 393(3) Table 3, S.No. 5            | 1063-1064    | 2%/5%
-194O                | E-commerce participant               | 393(1) Table 1, S.No. 8(v)         | 1035         | 0.1%
-194P                | Senior citizen TDS by bank           | 393(1) Note to Table 1             | —            | Slab
-194Q                | Purchase of goods (>50L)             | 393(1) Table 1, S.No. 8(ii)        | 1031         | 0.1%
-194R                | Perquisite/benefit (business)        | 393(1) Table 1, S.No. 8(vii)       | —            | 10%
-194S                | Virtual digital asset transfer       | 393(1) Table 1, S.No. 8(vi)        | 1037-1038    | 1%
-194T                | Partner salary/interest/commission   | 393(3) Table 3, S.No. 7            | 1067         | 10%
-195                 | Non-resident (other income)          | 393(2) Table 2, S.No. 17           | 1057         | Rates in force
-196A                | NR income from units (MF)            | 393(2) Table 2, S.No. 10           | 1049-1050    | 10/20%
-196B                | NR offshore fund income              | 393(2) Table 2, S.No. 11-12        | 1051-1052    | 10%
-196C                | NR foreign currency bonds/GDR        | 393(2) Table 2, S.No. 13-14        | 1053-1054    | 10%
-196D                | NR FII income from securities        | 393(2) Table 2, S.No. 15-16        | 1055-1056    | 20%
+TABLE 1 — Section 393(1): Payments to Residents
 
-TDS THRESHOLD CHANGES (2025 Act):
-- 194A interest from banks/PO: 50,000 (was 40,000). Senior citizens: 1,00,000 (was 50,000).
-- 194I rent: 50,000 per month i.e. 6,00,000/year (was 2,40,000/year).
+S.No. | Old Section | Nature of Payment                    | Payment Code | Rate
+1(i)  | 194D        | Insurance commission                 | 1005         | Rates in force
+1(ii) | 194H        | Commission / brokerage               | 1006-1007    | 2%
+2(i)  | 194IB       | Rent by individual/HUF (>50K/month)  | —            | 2%
+2(ii) | 194I(a)     | Rent - plant & machinery             | 1008         | 2%
+2(ii) | 194I(b)     | Rent - land/building/furniture       | 1009         | 10%
+3(i)  | 194IA       | Immovable property purchase (>50L)   | 1010         | 1%
+3(ii) | 194IC       | JDA consideration                    | 1011         | 10%
+3(iii)| 194LA       | Compulsory acquisition compensation  | 1012-1013    | 10%
+4(i)  | 194K        | MF/UTI/company unit income           | 1034         | 10%
+4(ii) | 194LBA      | Business trust distribution          | —            | 10%
+4(iii)| 194LBB      | Investment fund income               | —            | 10%
+4(iv) | 194LBC      | Securitisation trust income          | —            | 25/30%
+5(i)  | 193         | Interest on securities               | 1019         | 10%
+5(ii) | 194A (bank) | Interest (banks/PO, senior citizen)  | 1020-1021    | 10%
+5(iii)| 194A (other)| Interest (other sources)             | 1022         | 10%
+6(i)  | 194C(1)     | Contractor (individual/HUF)          | 1023         | 1%
+6(i)  | 194C(2)     | Contractor (others)                  | 1024         | 2%
+6(ii) | 194M        | Contractor/professional by Indiv/HUF (>50L) | —    | 2%
+6(iii)| 194J(a)     | Technical services / royalty          | 1026         | 2%
+6(iii)| 194J(b)     | Professional services / director fees | 1027-1028    | 10%
+7     | 194         | Dividends                            | 1029         | 10%
+8(i)  | 194DA       | Life insurance payout                | 1030         | 2%
+8(ii) | 194Q        | Purchase of goods (>50L)             | 1031         | 0.1%
+8(iii)| 194P        | Senior citizen income (bank TDS)     | 1033         | Slab rate
+8(iv) | 194R        | Perquisite/benefit (business)        | —            | 10%
+8(v)  | 194O        | E-commerce participant               | 1035         | 0.1%
+8(vi) | 194S        | Virtual digital asset transfer       | 1037-1038    | 1%
+
+TABLE 2 — Section 393(2): Payments to Non-Residents
+
+S.No. | Old Section | Nature of Payment                    | Payment Code | Rate
+1     | 194E        | NR sportsperson/entertainer          | 1039         | 20%
+2     | 194LB/LC    | Interest on foreign currency loans   | —            | 5%
+3     | 194LC       | Interest on rupee-denominated bonds  | —            | 5%
+4     | 194LC       | Interest on IFSC-listed bonds        | —            | 4%/9%
+5     | 194LB       | Interest from infrastructure debt fund| —           | 5%
+6-7   | 194LBA(NR)  | Business trust distribution (NR)     | —            | 5%/10%
+8     | 194LBB(NR)  | Investment fund units (NR)           | —            | Rates in force
+9     | 194LBC(NR)  | Securitization trust (NR)            | —            | Rates in force
+10    | 196A        | NR income from MF units              | 1049-1050    | 20%/treaty rate
+11    | 196B        | NR offshore fund income              | 1051         | 10%
+12    | 196B        | NR LTCG from offshore fund           | 1052         | 12.5%
+13    | 196C        | NR interest/dividends on bonds/GDRs  | 1053         | 10%
+14    | 196C        | NR LTCG from bonds/GDRs              | 1054         | 12.5%
+15    | 196D        | NR FII securities income             | 1055         | As per Note
+16    | 196D        | NR specified fund income             | 1056         | 10%
+17    | 195         | NR other income (catch-all)          | 1057         | Rates in force
+
+TABLE 3 — Section 393(3): Payments to Any Person
+
+S.No. | Old Section | Nature of Payment                    | Payment Code | Rate
+1     | 194B        | Lottery/gambling/puzzle winnings      | 1058-1059    | 30%
+2     | 194BA       | Online gaming winnings                | 1060-1061    | 30%
+3     | 194BB       | Horse race winnings                  | 1062         | 30%
+4     | 194G        | Lottery agent/seller commission       | —            | 2%
+5     | 194N        | Cash withdrawal (>1Cr)               | 1063-1064    | 2%/5%
+6     | 80CCA(2)(a) | NSS withdrawal                      | —            | —
+7     | 194T        | Partner salary/interest/commission   | 1067         | 10%
+
+Section 392 — TDS on Salary:
+Old Section (1961) | New (2025)   | Payment Code
+192                | 392(1)       | 1001-1003
+192A (EPF premature)| 392(7)      | 1004
+
+Omitted in 2025 Act:
+194F (repurchase of MF units) — no longer applicable.
+194LD (interest on bonds to FIIs) — deprecated after 31 March 2026.
+
+TDS THRESHOLD CHANGES (Old → New):
+- 194A bank interest: 40,000 → 50,000. Senior citizens: 50,000 → 1,00,000.
+- 194I rent: 2,40,000/year → 6,00,000/year (50,000/month).
+- 194H commission: 15,000 → 20,000.
+- 194J professional fees: 30,000 → 50,000.
+- 194DA life insurance: rate reduced from 5% to 2%, threshold Rs. 1,00,000.
 - 194C contractor: Single 30,000 / Aggregate 1,00,000 (unchanged).
-- 194H commission: 20,000 (was 15,000).
-- 194J professional fees: 50,000 (was 30,000). Now 50,000 in 2025 Act.
-
-NEW TDS FORMS (replacing old forms):
-Old Form 24Q (salary) → New Form 138
-Old Form 26Q (non-salary resident) → New Form 140
-Old Form 27Q (non-resident) → New Form 144
-Old Form 26QAA → New Form 142 (for 393(3))
-Old Form 27EQ (TCS) → New Form 146
 
 ======================================================================
-4. DEDUCTIONS MAPPING (80C-80U SERIES)
+3A. TCS SECTION MAPPING (206C → 394)
+======================================================================
+Section 394 of 2025 Act consolidates all TCS provisions (old Section 206C).
+
+S.No. | Old Section   | Nature                              | Rate (2025)  | Payment Code
+1     | 206C(1)(a)    | Alcoholic liquor                    | 2%           | 1068
+2     | 206C(1)(b)    | Tendu leaves                        | 2%           | 1069
+3     | 206C(1)(c)    | Timber/forest produce               | 2%           | 1070
+4     | 206C(1)(d)    | Scrap                               | 2%           | 1071
+5     | 206C(1)(e)    | Minerals (coal/lignite/iron ore)    | 2%           | 1072
+6     | 206C(1F)      | Motor vehicles/notified goods >10L  | 1%           | 1073
+7     | 206C(1G)      | LRS remittance >10L                 | 2% (edu/med); 20% (others) | 1074
+8     | 206C(1G)      | Overseas tour packages              | 2%           | 1075
+9     | 206C(1C)      | Parking/toll/mine/quarry usage      | 2%           | —
+—     | NEW           | Luxury goods TCS (watches, art, yachts, etc.) | 1% | 1076-1085
+
+Removed: 206C(1H) (TCS on sale of goods >50L) — removed effective April 2025.
+
+======================================================================
+4. DEDUCTIONS MAPPING (80C-80U SERIES → SECTIONS 123-154)
 ======================================================================
 The 2025 Act reorganizes all deductions from Chapter VI-A into Sections 123-154.
 
@@ -113,22 +152,34 @@ Old Section (1961) | Nature                                    | New Section (20
 80CCD(1)           | Employee NPS contribution                 | 124                | 10% of salary (within 80C)
 80CCD(1B)          | Additional NPS contribution               | 124                | 50,000 (above 80C limit)
 80CCD(2)           | Employer NPS (available in BOTH regimes)  | 124                | 14% salary (new) / 10% (old)
+80CCH              | Agnipath Scheme contributions             | 125                | As notified
 80D                | Health insurance premium                  | 126                | 25,000/50,000 (self) + 25,000/50,000 (parents)
 80DD               | Disabled dependent maintenance            | 127                | 75,000/1,25,000
 80DDB              | Medical treatment for specified diseases  | 128                | 40,000/1,00,000
 80E                | Education loan interest                   | 129                | No limit (8 years)
-80EE               | First-time homebuyer interest (pre-2020)  | Omitted             | —
-80EEA              | Affordable housing interest               | 130                | 1,50,000
-80EEB              | Electric vehicle loan interest            | 131                | 1,50,000
+80EE               | First-time homebuyer interest (pre-2020)  | 130                | 50,000
+80EEA              | Affordable housing interest               | 131                | 1,50,000
+80EEB              | Electric vehicle loan interest            | 132                | 1,50,000
 80G                | Donations to specified funds/charities    | 133                | 50% or 100%
-80GG               | Rent paid (no HRA)                        | 134                | 60,000/year
-80GGA              | Scientific research donations             | 135                | 100%
-80GGC              | Political party contributions             | 137                | 100%
-80IA/80IAB/80IB    | Profit-linked deductions (old)            | Omitted or transitional | —
-80JJAA             | Employment generation                     | 140                | 30% of additional wages
-80P                | Co-operative societies                    | 148                | Various
-80QQB              | Royalty income (authors)                  | 149                | 3,00,000
-80RRB              | Patent royalty                            | 150                | 3,00,000
+80GG               | Rent paid (no HRA from employer)          | 134                | 60,000/year
+80GGA              | Scientific research/rural development     | 135                | 100%
+80GGB              | Company contributions to political parties| 136                | 100%
+80GGC              | Individual contributions to political parties | 137             | 100%
+80-IA              | Infrastructure development undertakings   | 138                | Profit-linked (transitional)
+80-IAB             | SEZ development undertakings              | 139                | Profit-linked (transitional)
+80-IAC             | Specified business / eligible startups    | 140                | Profit-linked (transitional)
+80-IB              | Certain industrial undertakings           | 141                | Profit-linked (transitional)
+80-IBA             | Housing projects deduction                | 142                | Profit-linked (transitional)
+80-IE              | North-Eastern States undertakings         | 143                | Profit-linked (transitional)
+80-IC/80-ID        | Special category states / hotels          | 144                | Profit-linked (transitional)
+80JJA              | Bio-degradable waste processing           | 145                | Profit-linked
+80JJAA             | Additional employee cost / employment     | 146                | 30% of additional wages
+80LA               | Offshore Banking Units and IFSC           | 147                | Various
+80M                | Inter-corporate dividends                 | 148                | Various
+80P                | Co-operative societies income             | 149                | Various
+80PA               | Producer Companies income                 | 150                | Various
+80QQB              | Royalty income of book authors            | 151                | 3,00,000
+80RRB              | Patent royalty                            | 152                | 3,00,000
 80TTA              | Savings account interest (non-seniors)    | 153                | 10,000
 80TTB              | Deposit interest (seniors 60+)            | 153                | 50,000
 80U                | Disabled person                           | 154                | 75,000/1,25,000
@@ -138,20 +189,76 @@ Only Section 124 (80CCD(2) employer NPS) and standard deduction are available.
 No 80C/80D/HRA/24(b) deductions in new regime.
 
 ======================================================================
-5. EXEMPTIONS MAPPING (SECTION 10)
+5. EXEMPTIONS MAPPING (SECTION 10 → SECTION 11 + SCHEDULES)
 ======================================================================
-Old Section (1961) | Nature                                | New Section (2025)
-10(1)              | Agricultural income                   | 11(1) / Schedule II
-10(2)              | Hindu Undivided Family receipts       | 11 / Schedule II
-10(10)             | Gratuity                              | 19 (Table: Sl. No. 3-7)
-10(10A)            | Commuted pension                      | 19 (Table: Sl. No. 7-9)
-10(10AA)           | Leave encashment                      | 19 (Table: Sl. No. 10)
-10(10D)            | Life insurance maturity               | 11 / Schedule II, Sl. No. 2
-10(13A)            | HRA exemption                         | 11 read with Schedule V
-10(14)             | Special allowances                    | 11 read with Schedule VI
-10(23C)            | Educational/hospital trust income     | 11 / Schedule VII
-10(38)             | LTCG on equity (pre-2018, abolished)  | Omitted
-10(10CC)           | Tax on perquisites paid by employer   | Omitted in 2025 Act
+Section 10 exemptions are reorganized across Section 11, Section 19, and Schedules II-VII.
+
+SALARY-RELATED EXEMPTIONS (moved to Section 19):
+Old (1961)    | Nature                                | New (2025)
+10(10)        | Gratuity                              | 19 (Table: Sl. No. 3-7)
+10(10A)       | Commuted pension                      | 19 (Table: Sl. No. 7-9)
+10(10AA)      | Leave encashment on retirement        | 19 (Table: Sl. No. 10)
+10(10B)       | Retrenchment compensation             | 19
+10(10C)       | VRS compensation (up to 5L)           | 19
+16(ia)        | Standard deduction                    | 19 (Table: Sl. No. 2)
+16(ii)        | Entertainment allowance               | 19 (Table: Sl. No. 1)
+
+SCHEDULE II EXEMPTIONS (general):
+Old (1961)    | Nature                                | New (2025)
+10(1)         | Agricultural income                   | Schedule II, Sl. No. 1
+10(10D)       | Life insurance policy maturity         | Schedule II, Sl. No. 2
+10(11)        | Provident fund payments               | Schedule II, Sl. No. 3
+10(12)        | Recognized provident fund balance     | Schedule II, Sl. No. 4
+10(11A)       | Sukanya Samriddhi Account             | Schedule II, Sl. No. 5
+10(12A)       | NPS payments (60% of corpus)          | Schedule II, Sl. No. 6
+10(12C)       | Agniveer Corpus Fund payments         | Schedule II, Sl. No. 7
+10(13)        | Approved superannuation fund          | Schedule II, Sl. No. 8
+10(16)        | Scholarships                          | Schedule II, Sl. No. 9
+10(17A)       | Awards and rewards (gallantry etc.)   | Schedule II, Sl. No. 10
+10(15)        | Interest on govt securities/bonds     | Schedule II
+
+SCHEDULE III EXEMPTIONS (individuals, HUF, employees):
+Old (1961)    | Nature                                | New (2025)
+10(2)         | HUF member sum receipt                | Schedule III, Sl. No. 1
+10(2A)        | Partner share in firm income           | Schedule III, Sl. No. 2
+10(5)         | Leave travel concession/allowance     | Schedule III
+10(7)         | Overseas allowances (govt employees)  | Schedule III
+10(10CC)      | Non-monetary perquisites (employer tax)| Schedule III
+10(13A)       | HRA exemption                         | Schedule III, Sl. No. 11
+10(14)        | Special allowances / cost-of-living   | Schedule III
+10(18)        | Gallantry awardee pensions            | Schedule III
+10(19)        | Armed forces family pensions          | Schedule III
+10(26)        | Scheduled tribe / Sikkim income       | Schedule III, Sl. No. 19
+10(37)        | Agricultural land compulsory acquisition| Schedule III, Sl. No. 18
+10(43)        | Reverse mortgage loans                | Schedule III
+
+SCHEDULE IV EXEMPTIONS (non-residents):
+Old (1961)    | Nature                                | New (2025)
+10(4)(ii)     | NRE account interest                  | Schedule IV, Sl. No. 1
+10(6)         | Foreign official remuneration         | Schedule IV
+10(6)(ii)     | Foreign enterprise employee (<=90 days)| Schedule IV
+10(6)(vi)     | Foreign ship crew salaries            | Schedule IV
+
+SCHEDULE V EXEMPTIONS (investment/business trusts, sovereign funds):
+Old (1961)    | Nature                                | New (2025)
+10(23FB)      | Venture capital fund income           | Schedule V
+10(23FBA)     | Business trust dividends/interest/LTCG| Schedule V
+10(23FE)      | Sovereign wealth fund / pension fund  | Schedule V
+
+SCHEDULE VI EXEMPTIONS (IFSC):
+Old (1961)    | Nature                                | New (2025)
+10(4F/4G)     | IFSC-related income                   | Schedule VI
+
+SCHEDULE VII EXEMPTIONS (exempt entities):
+Old (1961)    | Nature                                | New (2025)
+10(23C)       | Educational/hospital trust/institution| Schedule VII
+10(23A/23B)   | Statutory bodies, welfare funds       | Schedule VII
+13A/13B       | Political parties and electoral trusts| Schedule VII
+
+OMITTED IN 2025 ACT:
+10(34)        | Dividend income (abolished FY 2020-21, dividends now taxable)
+10(35)        | Mutual fund income (abolished FY 2020-21)
+10(38)        | LTCG on equity (abolished 2018)
 
 ======================================================================
 6. SALARY & HOUSE PROPERTY
@@ -176,38 +283,87 @@ Standard deduction amounts (unchanged in 2025 Act):
 ======================================================================
 7. CAPITAL GAINS MAPPING
 ======================================================================
-Old Section (1961) | Nature                                | New Section (2025)
-45                 | Capital gains - charging section      | 67
-47                 | Transactions not regarded as transfer  | 70
-48                 | Mode of computation                   | 72
-49                 | Cost with reference to certain modes   | 73
-50                 | Depreciable assets                    | 74
-50C                | FMV for stamp duty purposes           | 75
-54                 | Residential property reinvestment      | 82 (max 10Cr)
-54B                | Agricultural land reinvestment         | 83
-54D                | Industrial undertaking reinvestment    | 84
-54EC               | Investment in specified bonds          | 85 (max 50L, 5yr lock-in, NHAI/REC)
-54F                | Any asset sale, reinvest in house      | 86
-111A               | STCG on equity (STT paid)             | 196 — Rate: 20%
-112                | LTCG general                          | 197 — Rate: 12.5% (no indexation)
-112A               | LTCG on equity (STT paid)             | 198 — Rate: 12.5% (exempt up to 1,25,000)
+Old Section (1961) | Nature                                         | New Section (2025)
+45                 | Capital gains - charging section               | 67
+46                 | Capital gains on liquidation of company         | 68
+46A                | Capital gains on buy-back of shares             | 69
+47                 | Transactions not regarded as transfer           | 70
+—                  | Withdrawal of exemption in certain cases (new)  | 71
+48                 | Mode of computation                            | 72
+49                 | Cost with reference to certain modes            | 73
+50                 | Depreciable assets - computation                | 74
+50A                | Depreciable assets - cost of acquisition        | 75
+50AA               | Market Linked Debentures (always STCG)          | 76
+50B                | Slump sale computation                          | 77
+50C                | Stamp duty value as consideration               | 78
+50CA               | FMV for unquoted share transfer                 | 79
+—                  | FMV deemed as consideration (unascertainable)   | 80
+—                  | Advance money received and forfeited            | 81
+54                 | Residential property reinvestment               | 82 (max 10Cr)
+54B                | Agricultural land reinvestment                  | 83
+54D                | Compulsory acquisition - industrial undertaking | 84
+54EC               | Investment in specified bonds                   | 85 (max 50L, 5yr lock-in, NHAI/REC)
+54F                | Any asset sale, reinvest in house                | 86
+54G                | Shifting industrial undertaking (urban to rural) | 87
+54GA               | Shifting industrial undertaking to SEZ          | 88
+54H/others         | Extension of time for new asset/deposit          | 89
+55                 | Meaning of cost of acquisition & improvement    | 90
 
-MAJOR CAPITAL GAINS CHANGES (Budget 2024 onwards, continued in 2025 Act):
+TAX RATE SECTIONS FOR CAPITAL GAINS:
+111A               | STCG on equity (STT paid)                      | 196 — Rate: 20%
+112                | LTCG general                                   | 197 — Rate: 12.5% (no indexation)
+112A               | LTCG on equity (STT paid)                      | 198 — Rate: 12.5% (exempt up to 1,25,000)
+
+DEFINITIONS (in Section 2 of 2025 Act):
+Capital asset           | Section 2(22) of 2025 Act
+Transfer                | Section 2(109) of 2025 Act
+Short-term capital asset | Section 2(101) of 2025 Act
+Long-term capital asset  | Section 2(67) of 2025 Act
+
+HOLDING PERIOD DEFINITIONS (Simplified in 2025 Act):
+- Listed equity shares, equity-oriented MF, units of business trust: 12 months
+- All other capital assets (property, gold, unlisted shares, etc.): 24 months
+- Only two holding periods now (was three earlier — 12/24/36 months)
+
+INDEXATION CHANGES:
 - Indexation benefit REMOVED for all assets (effective 23 July 2024)
 - LTCG rate unified at 12.5% (was 20% with indexation)
 - STCG on equity: 20% (was 15%)
 - LTCG equity exemption: 1,25,000/year (was 1,00,000)
-- Holding periods: Listed equity 12 months, all others 24 months
 - Debt mutual funds: Always taxed at slab rate (no LTCG benefit since FY 2023-24)
 - Property bought before 23 July 2024: Option of 20% with indexation OR 12.5% without
+- Cost Inflation Index (CII) base year remains 2001-02 (for grandfathering older assets)
 
 ======================================================================
 8. TAX REGIME & RATES
 ======================================================================
-Old Section (1961) | Nature                    | New Section (2025)
-115BAC             | New tax regime (default)  | 202
-87A                | Rebate                    | 155 / 156
-89                 | Relief for arrears        | 157
+Old Section (1961) | Nature                                         | New Section (2025)
+115BAC             | New tax regime (default for individuals)        | 202
+87A                | Rebate of income-tax                            | 155 (general) / 156 (individuals)
+89                 | Relief for arrears of salary                    | 157
+
+SPECIAL TAX RATE SECTIONS:
+Old Section (1961) | Nature                                         | New Section (2025)
+115A               | NR income (dividend/royalty/FTS)                | 207
+115AD              | Foreign Institutional Investor income            | 208-209
+115BAA             | Concessional tax for domestic companies (22%)   | 200
+115BAB             | New manufacturing companies (15%)                | 201
+115BAC             | New tax regime for individuals                   | 202
+115BAD             | Resident co-operative societies                  | 203
+115BAE             | New manufacturing co-operative societies         | 204
+115BBA             | NR sportsperson income                           | 209
+115BBH             | Virtual digital assets (30%, crypto/NFT)         | 214
+115JB              | Minimum Alternate Tax (MAT) — companies          | 206 (unified)
+115JC              | Alternate Minimum Tax (AMT) — non-corporates     | 206 (unified)
+115JD              | MAT/AMT credit carry-forward                     | 206 (unified)
+
+NOTE: Section 206 of 2025 Act UNIFIES MAT (115JB) and AMT (115JC) into
+a single minimum tax computation framework. Subsections 206(2)-(5) cover
+book profit computation, adjustments, and credit mechanisms for both
+corporate (MAT) and non-corporate (AMT) assessees.
+
+MAT rate: 15% of book profits (companies). AMT rate: 18.5% of adjusted total income (non-corporates).
+MAT/AMT credit carry-forward: 15 years.
 
 NEW TAX REGIME SLABS (Section 202 of 2025 Act) — FY 2025-26:
 Income Range        | Rate
@@ -296,7 +452,7 @@ GST Registration Thresholds:
 11. HRA EXEMPTION (OLD REGIME ONLY)
 ======================================================================
 Old: Section 10(13A) read with Rule 2A
-New: Section 11 read with Schedule V of 2025 Act
+New: Section 11 read with Schedule III, Sl. No. 11 of 2025 Act
 
 Formula (unchanged):
 Exempt amount = Least of:
@@ -323,22 +479,30 @@ Change from FY 2026-27: Bangalore, Hyderabad, Pune, Ahmedabad will also qualify 
 7. TDS 194H commission: 15,000 → 20,000 threshold
 8. No changes to old regime slabs, deduction limits, or capital gains rates
 9. "Tax Year" replaces "Previous Year" / "Assessment Year"
-10. All TDS sections consolidated into 392-394 with payment codes 1001-1067
+10. All TDS sections consolidated into 392-394 with payment codes 1001-1092
 
 ======================================================================
 13. PENALTIES AND PROSECUTION
 ======================================================================
+PENALTIES (Old Sections 270A-275 → New Sections 439-465):
 Old Section (1961) | Nature                            | New Section (2025)
-270A               | Under-reporting / misreporting    | 464
-271(1)(c)          | Concealment penalty               | 464 (consolidated)
-271B               | Failure to get accounts audited   | 467
+270A               | Under-reporting / misreporting    | 439 (50% under-reporting, 200% misreporting)
+271(1)(c)          | Concealment penalty               | 439 (consolidated with 270A)
+271A               | Failure to maintain books          | 441
+271AA              | TP documentation failure           | 442
+271B               | Failure to get accounts audited   | 446
+271BA              | TP report failure                  | 447
+271GB              | Country-by-country reporting       | 459
 271H               | TDS/TCS statement filing delay     | 470
 272A               | Failure to comply with notices     | 472
-276B               | Failure to deposit TDS            | 492
-276C               | Wilful evasion                    | 490
-276CC              | Failure to file return            | 493
-278                | Abetment of false return          | 498
-278A               | Compounding of offences           | 504
+
+PROSECUTION/OFFENCES (Old Sections 276-280 → New Sections 476-486):
+Old Section (1961) | Nature                            | New Section (2025)
+276B               | Failure to deposit TDS            | 476
+276C               | Wilful evasion of tax             | 478
+276CC              | Failure to file return            | 479
+278                | Abetment of false return          | 484
+278A               | Compounding of offences           | 486 (approx)
 
 ======================================================================
 14. ADVANCE TAX (UNCHANGED)
@@ -365,3 +529,202 @@ New: Section 214 of 2025 Act
 - No set-off of losses against any other income
 - No carry-forward of losses from VDA transfers
 - Definition of VDA: Section 2(111) of 2025 Act (crypto, NFTs, tokens)
+
+======================================================================
+16. FORMS MAPPING (OLD → NEW)
+======================================================================
+TDS/TCS Returns:
+Old Form 24Q (salary TDS quarterly)         → New Form 138
+Old Form 26Q (non-salary TDS quarterly)     → New Form 140
+Old Form 27Q (non-resident TDS quarterly)   → New Form 144
+Old Form 26QAA (TDS by specified persons)   → New Form 142
+Old Form 27EQ (TCS quarterly)               → New Form 143
+
+TDS/TCS Certificates:
+Old Form 16 (salary TDS certificate)        → New Form 130
+Old Form 16A (non-salary TDS certificate)   → New Form 131
+Old Form 16B (property TDS certificate)     → New Form 132
+Old Form 16C (rent TDS certificate)         → New Form 131
+Old Form 16D (contract TDS certificate)     → New Form 131
+Old Form 16E (VDA TDS certificate)          → New Form 131
+Old Form 27D (TCS certificate)              → New Form 133
+
+Self-Declaration Forms:
+Old Form 15G (below 60, no tax liability)   → New Form 121 (unified)
+Old Form 15H (senior citizen, no tax)       → New Form 121 (unified with 15G)
+Old Form 15CA (foreign remittance info)     → New Form 145
+Old Form 15CB (CA certificate for remittance) → New Form 146
+
+Other Key Forms:
+Old Form 13 (lower/nil TDS certificate)     → New Form 128
+Old Form 3CA/3CB/3CD (tax audit report)     → New Form 26 (merged)
+Old Form 10E (relief u/s 89)               → New Form 39
+Old Form 49A (PAN application)              → New Form 93/94
+Old Form 49B (TAN application)              → New Form 134/135
+Old Form 26AS (Annual Tax Statement)        → Form 26AS continues + AIS (Annual Information Statement)
+Old Form 12BB (investment declaration)      → Expected new form (CBDT notification pending)
+
+======================================================================
+17. INTERNATIONAL TAXATION
+======================================================================
+Old Section (1961) | Nature                                    | New Section (2025)
+9                  | Income deemed to accrue/arise in India     | 9
+90                 | DTAA (Double Taxation Avoidance Agreement) | 159
+91                 | Unilateral relief (no DTAA)                | 160
+92                 | Transfer Pricing computation                | 161
+92A                | Associated enterprise definition            | 162
+92B                | International transaction definition        | 163
+92BA               | Specified domestic transaction              | 164
+92C                | Arm's length price determination            | 165
+92CA               | Reference to TPO                            | 166
+92CB               | Safe harbour rules                          | 167
+92CC               | Advance Pricing Agreement (APA)             | 168
+92CE               | Secondary adjustment                        | 170
+92D                | TP documentation                            | 171 / 511 (CbCR)
+92E                | TP accountant's report (Form 3CEB→Form 48)  | 172
+94A                | Non-cooperative jurisdictions               | 175
+94B                | Thin capitalisation                         | 177
+115A               | NR dividend/royalty/FTS                     | 207
+115BBA             | NR sportsperson income                     | 209
+115C               | NR (Indian citizen) special income          | 210
+115D               | NR specified fund income                   | 211
+115E               | NR investment income                       | 210
+160                | Representative assessee                     | 303
+161-167            | Representative assessee provisions          | 303-312
+195                | TDS on NR payments                          | 393(2) Table 2
+206AA              | Mandatory quoting of PAN (NR)               | 400
+
+DTAA benefits continue to apply under Section 159 of 2025 Act.
+Non-residents can claim treaty rate if lower than domestic rate.
+
+======================================================================
+18. CHARITABLE TRUSTS & INSTITUTIONS
+======================================================================
+Old Section (1961) | Nature                                    | New Section (2025)
+11                 | Income from property held for charity      | 336
+12                 | Voluntary contributions                    | 336-338
+12A                | Registration of trust                      | 337
+12AA               | Registration procedure                     | 337
+12AB               | Registration procedure (new)               | 337
+13                 | Denial of exemption                        | 339
+80G                | Donation deduction                         | 133
+115BBC             | Anonymous donations                        | Covered in 339
+115TD              | Trust conversion to non-charitable          | 340
+
+New regime for trusts under 2025 Act streamlines registration into single section.
+
+======================================================================
+19. BUSINESS & PROFESSION
+======================================================================
+Old Section (1961) | Nature                                    | New Section (2025)
+28                 | Profits and gains of business/profession   | 26
+29                 | Income from business — how computed        | 27
+30-36              | Specific deductions                        | 28-37
+32                 | Depreciation                               | 33
+35                 | Scientific research expenditure             | 35
+35AD               | Capital expenditure deduction               | 36
+37                 | General deduction (wholly & exclusively)   | 37
+40(a)(ia)          | TDS disallowance (30%)                     | 38
+40(b)              | Partner remuneration limits                 | 38
+43B                | Certain deductions on actual payment only   | 43
+44AA               | Maintenance of accounts                     | 44
+44AB               | Tax audit (turnover > 1Cr/10Cr)             | 63
+44AD               | Presumptive income (business)               | 58 (unified)
+44ADA              | Presumptive income (profession, 75L)        | 58 (unified)
+44AE               | Presumptive income (goods carriage)         | 58 (unified)
+
+NOTE: Section 58 of 2025 Act UNIFIES all three presumptive taxation sections
+(44AD, 44ADA, 44AE) into a single section with subsections for each category.
+
+Presumptive taxation limits (unchanged):
+- Business (44AD→58): Turnover up to 3Cr (if digital receipts > 95%), else 2Cr. 6% digital / 8% cash.
+- Profession (44ADA→58): Gross receipts up to 75L. 50% deemed profit.
+- Goods carriage (44AE→58): Per vehicle per month deemed income.
+
+Tax audit threshold (44AB→63): Business >1Cr (10Cr if 95% digital), Profession >50L.
+
+======================================================================
+20. SEARCH, SURVEY & ASSESSMENT
+======================================================================
+Old Section (1961) | Nature                                | New Section (2025)
+131                | Power to call for information          | 247
+132                | Search and seizure                     | 248
+132A               | Powers of investigation                | 249
+133                | Power to call for information          | 250
+133A               | Power of survey                        | 251
+133B               | Power to collect information           | 252
+142                | Inquiry before assessment              | 269
+143(1)             | Summary assessment / intimation        | 270
+143(3)             | Scrutiny assessment                    | 271
+144                | Best judgment assessment               | 272
+144B               | Faceless assessment                    | 270-273 (faceless by default)
+147                | Income escaping assessment              | 279
+148                | Notice for reassessment                | 280
+148A               | Prior approval for reassessment        | 281
+149                | Time limit for reassessment            | 282
+
+Faceless assessment is now the default under 2025 Act for all proceedings.
+
+======================================================================
+21. APPEALS & DISPUTE RESOLUTION
+======================================================================
+Old Section (1961) | Nature                                | New Section (2025)
+246A               | First appeal to CIT(A)/JCIT(A)        | 356
+250                | CIT(A) procedure                       | 361
+253                | Second appeal to ITAT                  | 361-362
+260A               | Appeal to High Court                   | 365
+261                | Appeal to Supreme Court                | 367
+263                | Revision (erroneous & prejudicial)     | 377
+264                | Revision by Commissioner               | 378
+144C               | Dispute Resolution Panel (DRP)         | 275/532
+245C-245L          | Settlement Commission                  | Abolished (Feb 2021). No revival in 2025 Act.
+245MA              | Dispute Resolution Committee (DRC)     | 379 (for small taxpayers)
+245N-245T          | Advance Rulings (AAR → BAR)            | 380-385
+
+Settlement Commission was abolished effective 1 February 2021.
+Board for Advance Rulings (BAR) replaced the Authority for Advance Rulings (AAR).
+Vivad Se Vishwas 2.0 was a standalone scheme (Finance Act 2024), not in 2025 Act.
+
+======================================================================
+22. COLLECTION, RECOVERY & REFUNDS
+======================================================================
+COLLECTION & RECOVERY (Old 220-232 → New Chapter XIX, Sections 390-430):
+Old Section (1961) | Nature                                | New Section (2025)
+220                | When tax payable, deemed in default    | 411
+222                | Certificate to Tax Recovery Officer    | 413
+226                | Other modes of recovery                | 416
+231/232            | Recovery through state/foreign govts   | 417-421
+
+REFUNDS (New Sections 431-438):
+Old Section (1961) | Nature                                | New Section (2025)
+237                | Refund eligibility                     | 431
+240                | Refund on appeal                       | 432
+241                | Refund claim procedure                 | 433
+244A               | Interest on delayed refunds (0.5%/month)| 437
+
+======================================================================
+23. ANTI-AVOIDANCE PROVISIONS
+======================================================================
+GAAR (General Anti-Avoidance Rules):
+Old Section (1961) | Nature                                | New Section (2025)
+95                 | Applicability of GAAR                 | 178
+96                 | Impermissible avoidance arrangement    | 179
+97                 | Arrangement lacking commercial substance| 180
+98                 | Consequences of impermissible arrangement| 181
+99                 | Treatment of connected person          | 182
+100                | Application of GAAR chapter            | 183
+101-102            | Interpretation/definitions             | 184
+
+New: "Accommodating party" concept introduced to capture third-party facilitators.
+GAAR scope widened to explicitly include permanent establishments and treaty arrangements.
+
+Other Anti-Avoidance:
+Old Section (1961) | Nature                                | New Section (2025)
+94A                | Non-cooperative jurisdictions          | 175
+94B                | Thin capitalisation                   | 177
+269SS             | Cash loan/deposit restrictions (>20K)  | 454
+269ST             | Cash receipt restrictions (>2L)        | 455
+269T              | Cash repayment restrictions            | 456
+
+Equalization Levy: Completely abolished. 2% EL 2.0 removed by Finance Act 2024 (Aug 2024).
+6% EL 1.0 removed effective 1 April 2025. No mapping in 2025 Act.

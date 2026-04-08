@@ -6,9 +6,6 @@ const plans = [
   {
     id: 'free' as const,
     name: 'Free',
-    price: 0,
-    priceLabel: '₹0',
-    period: '/forever',
     description: 'Get started with basic tax assistance',
     icon: Sparkles,
     features: [
@@ -24,9 +21,6 @@ const plans = [
   {
     id: 'pro' as const,
     name: 'Pro',
-    price: 1000,
-    priceLabel: '₹1,000',
-    period: '/month',
     description: 'For professionals who need more',
     icon: Crown,
     features: [
@@ -44,10 +38,6 @@ const plans = [
   {
     id: 'enterprise' as const,
     name: 'Enterprise',
-    price: 7000,
-    originalPrice: '₹10,000',
-    priceLabel: '₹7,000',
-    period: '/month',
     description: 'For teams and businesses',
     icon: Building2,
     features: [
@@ -61,7 +51,6 @@ const plans = [
     gradient: 'from-indigo-500 to-purple-600',
     shadow: 'shadow-indigo-500/20',
     ring: 'ring-indigo-400 dark:ring-indigo-500',
-    discount: '30% OFF',
   },
 ];
 
@@ -96,15 +85,10 @@ export function PlanPage() {
                   plan.popular && !isCurrent && "border-[#D4A020]/50 dark:border-[#B8860B]/50"
                 )}
               >
-                {/* Badges */}
+                {/* Badge */}
                 {plan.popular && (
                   <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 bg-gradient-to-r from-[#D4A020] to-[#B8860B] text-white text-xs font-bold rounded-full">
                     MOST POPULAR
-                  </div>
-                )}
-                {plan.discount && (
-                  <div className="absolute -top-3 right-4 px-3 py-1 bg-gradient-to-r from-green-500 to-emerald-600 text-white text-xs font-bold rounded-full">
-                    {plan.discount}
                   </div>
                 )}
 
@@ -118,16 +102,7 @@ export function PlanPage() {
 
                 {/* Name & Description */}
                 <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-1">{plan.name}</h3>
-                <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">{plan.description}</p>
-
-                {/* Price */}
-                <div className="mb-6">
-                  {plan.originalPrice && (
-                    <span className="text-lg text-slate-400 line-through mr-2">{plan.originalPrice}</span>
-                  )}
-                  <span className="text-3xl font-bold text-slate-800 dark:text-white">{plan.priceLabel}</span>
-                  <span className="text-slate-500 dark:text-slate-400 text-sm">{plan.period}</span>
-                </div>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">{plan.description}</p>
 
                 {/* Features */}
                 <ul className="space-y-3 mb-6">
@@ -157,7 +132,7 @@ export function PlanPage() {
                       `bg-gradient-to-r ${plan.gradient} hover:opacity-90 ${plan.shadow} shadow-lg`
                     )}
                   >
-                    {plan.price === 0 ? 'Downgrade' : 'Contact to Upgrade'}
+                    Contact Us
                   </a>
                 )}
               </div>

@@ -1,6 +1,6 @@
 // server/routes/chat.ts
 import { Router, Response } from 'express';
-import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenAI } from '@google/genai';
 import { chatRepo } from '../db/repositories/chatRepo.js';
 import { messageRepo } from '../db/repositories/messageRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
@@ -9,14 +9,14 @@ import { retrieveContext } from '../rag/index.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
+const ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_AI_API_KEY! });
 
-const MODEL = 'claude-haiku-4-5-20251001';
+const MODEL = 'gemini-2.5-flash';
 const MAX_TOKENS = 4096;
 
-// Haiku 4.5 pricing
-const INPUT_COST_PER_TOKEN = 1 / 1_000_000;
-const OUTPUT_COST_PER_TOKEN = 5 / 1_000_000;
+// Gemini 2.5 Flash pricing
+const INPUT_COST_PER_TOKEN = 0.15 / 1_000_000;
+const OUTPUT_COST_PER_TOKEN = 0.60 / 1_000_000;
 
 // ── Plan-based message limits ──
 interface PlanConfig {
@@ -56,7 +56,9 @@ RULES:
 - Be concise: answer in the fewest words possible while staying accurate
 - Mention consulting a CA for official filing
 - For comparisons, include a json-chart block: \`\`\`json-chart {"type":"bar"|"pie"|"line","title":"...","data":[{"name":"...","value":0}]} \`\`\`
-- When reference context from the Income Tax Act is provided, use it as the authoritative source`;
+- When reference context is provided in the message, use it to answer accurately. DO NOT mention the reference, say "your reference", "your materials", or tell the user what was or wasn't found in the reference. Just answer the question directly using whatever knowledge you have.
+- If the reference does not cover the topic, answer from your own knowledge. NEVER say "I cannot find this in the reference" or ask the user to provide more data. You are the expert — give your best answer.
+- The Income Tax Act 2025 (effective 1 April 2026) replaced the 1961 Act. Use "Tax Year" not "Assessment Year" for the new Act.`;
 
 const MAX_HISTORY_MESSAGES = 10;
 
@@ -116,13 +118,13 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
   // Persist user message
   messageRepo.create(chatId, 'user', message.trim(), fileContext?.filename, fileContext?.mimeType);
 
-  // Load history from DB
+  // Load history from DB — Gemini uses 'user'/'model' roles
   const dbMessages = messageRepo.findByChatId(chatId);
   const history = dbMessages.slice(0, -1)
     .slice(-MAX_HISTORY_MESSAGES)
     .map(m => ({
-      role: (m.role === 'model' ? 'assistant' : 'user') as 'user' | 'assistant',
-      content: m.content,
+      role: m.role as 'user' | 'model',
+      parts: [{ text: m.content }],
     }));
 
   if (history.length > 0 && history[0].role !== 'user') {
@@ -137,7 +139,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
   // RAG: retrieve relevant Act sections
   const ragContext = retrieveContext(userContent);
   if (ragContext) {
-    userContent = `[Reference from Income Tax Act — use as authoritative source]:\n\n${ragContext}\n\n---\n\nUser question: ${userContent}`;
+    userContent = `[Relevant sections from the Income Tax Acts]:\n\n${ragContext}\n\n---\n\n${userContent}`;
   }
 
   // SSE headers
@@ -149,33 +151,41 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
   let fullResponse = '';
 
   try {
-    // Mark the last history message for caching so the prefix is reused across turns
-    const cachedHistory = history.map((msg: { role: string; content: string }, i: number) => {
-      if (i === history.length - 1) {
-        return { ...msg, content: [{ type: 'text' as const, text: msg.content, cache_control: { type: 'ephemeral' as const } }] };
-      }
-      return msg;
-    });
-
-    const stream = anthropic.messages.stream({
+    const stream = await ai.models.generateContentStream({
       model: MODEL,
-      max_tokens: MAX_TOKENS,
-      system: [{ type: 'text', text: SYSTEM_INSTRUCTION, cache_control: { type: 'ephemeral' } }],
-      messages: [
-        ...cachedHistory,
-        { role: 'user', content: userContent },
+      contents: [
+        ...history,
+        { role: 'user', parts: [{ text: userContent }] },
       ],
+      config: {
+        maxOutputTokens: MAX_TOKENS,
+        systemInstruction: SYSTEM_INSTRUCTION,
+      },
     });
 
     let stopReason: string | null = null;
+    let inputTok = 0;
+    let outputTok = 0;
 
-    stream.on('text', (text) => {
-      fullResponse += text;
-      res.write(`data: ${JSON.stringify({ text })}\n\n`);
-    });
+    for await (const chunk of stream) {
+      const text = chunk.text;
+      if (text) {
+        fullResponse += text;
+        res.write(`data: ${JSON.stringify({ text })}\n\n`);
+      }
 
-    const finalMsg = await stream.finalMessage();
-    stopReason = finalMsg.stop_reason;
+      // Capture usage from the last chunk
+      if (chunk.usageMetadata) {
+        inputTok = chunk.usageMetadata.promptTokenCount ?? 0;
+        outputTok = chunk.usageMetadata.candidatesTokenCount ?? 0;
+      }
+
+      // Capture stop reason from candidates
+      if (chunk.candidates?.[0]?.finishReason) {
+        const reason = chunk.candidates[0].finishReason;
+        stopReason = reason === 'MAX_TOKENS' ? 'max_tokens' : 'end_turn';
+      }
+    }
 
     // Persist model response
     if (fullResponse) {
@@ -190,14 +200,12 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
     chatRepo.touchTimestamp(chatId);
 
     // Log usage
-    const inputTok = finalMsg.usage.input_tokens;
-    const outputTok = finalMsg.usage.output_tokens;
     const cost = (inputTok * INPUT_COST_PER_TOKEN) + (outputTok * OUTPUT_COST_PER_TOKEN);
     usageRepo.log(clientIp, req.user.id, inputTok, outputTok, cost, false);
 
     res.write(`data: ${JSON.stringify({ done: true, stop_reason: stopReason })}\n\n`);
   } catch (err) {
-    console.error('[chat] Anthropic API error:', err);
+    console.error('[chat] Gemini API error:', err);
     const errMsg = err instanceof Error ? err.message : String(err);
     const isRateLimit = errMsg.includes('429') || errMsg.toLowerCase().includes('rate');
     const clientMessage = isRateLimit
