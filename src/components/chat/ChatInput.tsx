@@ -29,49 +29,45 @@ export function ChatInput({
   const isUploading = uploadPhase === 'uploading' || uploadPhase === 'analyzing';
 
   return (
-    <div className="shrink-0 p-4 lg:p-6 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-t border-slate-200/50 dark:border-slate-800/50">
+    <div className="shrink-0 p-4 lg:p-6 bg-white dark:bg-[#111827] border-t border-gray-200 dark:border-gray-800">
       <div className="max-w-4xl mx-auto">
-        <div className="relative flex items-center gap-2">
-          {/* Spacer to align badge with textarea (same width as paperclip button) */}
-          {(activeDocument || isUploading) && <div className="w-10 shrink-0" />}
-          {(activeDocument || isUploading) && (
-            <div className={cn(
-              "flex-1 px-3 py-2 border border-b-0 rounded-t-xl flex items-center gap-2 text-xs",
-              uploadPhase === 'error'
-                ? "bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-800 text-red-600 dark:text-red-400"
-                : "bg-green-50 dark:bg-green-950/30 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400"
-            )}>
-              {isUploading ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-                  <span>{uploadPhase === 'uploading' ? 'Uploading document...' : 'Analyzing document...'}</span>
-                </>
-              ) : activeDocument ? (
-                <>
-                  <FileText className="w-3.5 h-3.5 shrink-0" />
-                  <span className="truncate">{activeDocument.filename} attached</span>
-                  <button
-                    onClick={onDetachDocument}
-                    className="ml-auto p-0.5 hover:bg-green-100 dark:hover:bg-green-900/30 rounded transition-colors"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </>
-              ) : null}
-            </div>
-          )}
-        </div>
+        {/* Attachment badge */}
+        {(activeDocument || isUploading) && (
+          <div className={cn(
+            "mx-12 mb-0 px-3 py-2 border border-b-0 rounded-t-xl flex items-center gap-2 text-xs",
+            uploadPhase === 'error'
+              ? "bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-800 text-red-600 dark:text-red-400"
+              : "bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800/40 text-emerald-700 dark:text-emerald-400"
+          )}>
+            {isUploading ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                <span>{uploadPhase === 'uploading' ? 'Uploading document...' : 'Analyzing document...'}</span>
+              </>
+            ) : activeDocument ? (
+              <>
+                <FileText className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">{activeDocument.filename} attached</span>
+                <button
+                  onClick={onDetachDocument}
+                  className="ml-auto p-0.5 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 rounded transition-colors"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </>
+            ) : null}
+          </div>
+        )}
 
         <div className="relative flex items-center gap-2">
-          {/* Paperclip button */}
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={isUploading}
             className={cn(
               "p-2.5 rounded-xl transition-all shrink-0",
               isUploading
-                ? "text-slate-300 dark:text-slate-600 cursor-not-allowed"
-                : "text-slate-400 hover:text-[#059669] hover:bg-[#059669]/10 dark:hover:bg-[#047857]/10"
+                ? "text-gray-300 dark:text-gray-600 cursor-not-allowed"
+                : "text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/15"
             )}
             title="Attach document"
           >
@@ -97,7 +93,7 @@ export function ChatInput({
               }}
               placeholder="Ask about income tax, GST, or tax saving..."
               className={cn(
-                "w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-4 py-3 pr-14 focus:outline-none focus:ring-2 focus:ring-[#059669] focus:border-transparent resize-none min-h-[52px] max-h-32 transition-all text-slate-800 dark:text-slate-100 text-sm",
+                "w-full bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 px-4 py-3 pr-14 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 resize-none min-h-[52px] max-h-32 transition-all text-gray-800 dark:text-gray-100 text-sm placeholder:text-gray-400",
                 activeDocument || isUploading ? "rounded-b-2xl rounded-t-none" : "rounded-2xl"
               )}
               rows={1}
@@ -108,8 +104,8 @@ export function ChatInput({
               className={cn(
                 "absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-xl transition-all",
                 isLoading || input.trim() === ''
-                  ? 'text-slate-300 dark:text-slate-600 cursor-not-allowed'
-                  : 'text-white bg-gradient-to-r from-[#059669] to-[#047857] hover:from-[#047857] hover:to-[#065F46] shadow-lg shadow-[#059669]/20 dark:shadow-none'
+                  ? 'text-gray-300 dark:text-gray-600 cursor-not-allowed'
+                  : 'text-white bg-emerald-600 hover:bg-emerald-700 shadow-md shadow-emerald-600/15'
               )}
             >
               <Send className="w-5 h-5" />
@@ -117,7 +113,7 @@ export function ChatInput({
           </div>
         </div>
       </div>
-      <p className="text-[10px] text-center text-slate-400 dark:text-slate-500 mt-3">
+      <p className="text-[10px] text-center text-gray-400 dark:text-gray-500 mt-3">
         Smart AI can make mistakes. Always verify with a qualified professional.
       </p>
     </div>

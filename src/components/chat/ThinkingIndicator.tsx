@@ -58,14 +58,14 @@ export function ThinkingIndicator() {
   }, [phraseIndex]);
 
   return (
-    <div className="flex items-center gap-2 py-3 px-2">
-      <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-[#059669]/20 to-[#047857]/20 flex items-center justify-center shrink-0">
-        <img src="/logoAI.png" alt="" className="w-4 h-4 object-contain" />
+    <div className="flex items-center gap-3 py-3 px-1">
+      <div className="w-8 h-8 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center shrink-0">
+        <img src="/logoAI.png" alt="" className="w-5 h-5 object-contain" />
       </div>
-      <span className="text-sm text-slate-500 dark:text-slate-400">
-        {displayText}
-      </span>
-      <span className="inline-block w-0.5 h-3.5 bg-[#059669] animate-pulse" />
+      <div className="flex items-center gap-1.5">
+        <span className="text-sm text-gray-500 dark:text-gray-400">{displayText}</span>
+        <span className="inline-block w-0.5 h-4 bg-emerald-500 animate-pulse rounded-full" />
+      </div>
     </div>
   );
 }

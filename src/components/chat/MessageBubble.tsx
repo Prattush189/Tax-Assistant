@@ -16,7 +16,7 @@ function renderContent(content: string, role: 'user' | 'model') {
     return (
       <div key={index} className={cn(
         "markdown-body prose max-w-none prose-sm sm:prose-base overflow-x-auto",
-        role === 'user' ? 'prose-invert' : 'prose-slate dark:prose-invert'
+        role === 'user' ? 'prose-invert' : 'prose-gray dark:prose-invert'
       )}>
         <Markdown remarkPlugins={[remarkGfm]}>{part}</Markdown>
       </div>
@@ -46,27 +46,30 @@ export function MessageBubble({ message, onContinue }: MessageBubbleProps) {
 
   return (
     <div className={cn("flex gap-3", role === 'user' ? 'flex-row-reverse' : '')}>
+      {/* Avatar */}
       <div className={cn(
-        "w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0",
+        "w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 mt-1",
         role === 'user'
-          ? 'bg-gradient-to-br from-[#059669] to-[#047857] text-white'
-          : ''
+          ? 'bg-emerald-600 text-white'
+          : 'bg-gray-100 dark:bg-gray-800'
       )}>
-        {role === 'user' ? <User className="w-4 h-4" /> : <img src="/logoAI.png" alt="Assistant" className="w-5 h-5 object-contain" />}
+        {role === 'user' ? <User className="w-4 h-4" /> : <img src="/logoAI.png" alt="" className="w-5 h-5 object-contain" />}
       </div>
-      <div className="max-w-[85%]">
+
+      <div className="max-w-[85%] min-w-0">
+        {/* Message body */}
         <div className={cn(
-          "p-4 rounded-2xl shadow-sm",
+          "px-4 py-3 rounded-2xl",
           role === 'user'
-            ? 'bg-gradient-to-br from-[#059669] to-[#047857] text-white rounded-tr-none'
-            : 'bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm border border-slate-200/50 dark:border-slate-800/50 text-slate-800 dark:text-slate-200 rounded-tl-none'
+            ? 'bg-emerald-600 text-white rounded-tr-sm'
+            : 'bg-white dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700/50 text-gray-800 dark:text-gray-200 rounded-tl-sm'
         )}>
           {attachment && (
             <div className={cn(
               "flex items-center gap-1.5 mb-2 px-2 py-1 rounded-lg text-xs w-fit",
               role === 'user'
-                ? "bg-white/20 text-white/90"
-                : "bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400"
+                ? "bg-white/15 text-white/90"
+                : "bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400"
             )}>
               <FileText className="w-3 h-3" />
               <span className="truncate max-w-[200px]">{attachment.filename}</span>
@@ -74,26 +77,26 @@ export function MessageBubble({ message, onContinue }: MessageBubbleProps) {
           )}
           {renderContent(content, role)}
           <div className={cn(
-            "text-[10px] mt-2 opacity-0 hover:opacity-50 transition-opacity",
-            role === 'user' ? 'text-right' : ''
+            "text-[10px] mt-2 opacity-0 hover:opacity-40 transition-opacity select-none",
+            role === 'user' ? 'text-right text-white/60' : 'text-gray-400'
           )}>
             {timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </div>
         </div>
 
-        {/* Action buttons for model responses */}
+        {/* Action buttons */}
         {role === 'model' && content.length > 0 && (
-          <div className="flex items-center gap-1 mt-1 ml-1">
+          <div className="flex items-center gap-0.5 mt-1.5 ml-1">
             <button
               onClick={handleCopy}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all"
+              className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-all"
               title="Copy response"
             >
-              {copied ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+              {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
             </button>
             <button
               onClick={handleReport}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all"
+              className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all"
               title="Report response"
             >
               <Flag className="w-3.5 h-3.5" />
@@ -101,15 +104,15 @@ export function MessageBubble({ message, onContinue }: MessageBubbleProps) {
           </div>
         )}
 
-        {/* Truncated — continue button */}
+        {/* Continue button */}
         {truncated && (
           <div className="mt-2 ml-1">
-            <p className="text-[11px] text-slate-400 dark:text-slate-500 mb-1.5">
+            <p className="text-[11px] text-gray-400 dark:text-gray-500 mb-1.5">
               Response was cut short due to message length limit.
             </p>
             <button
               onClick={onContinue}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#047857] dark:text-[#059669] bg-[#059669]/10 dark:bg-[#047857]/10 border border-[#059669]/20 dark:border-[#047857]/20 rounded-lg hover:bg-[#059669]/20 dark:hover:bg-[#047857]/20 transition-all"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/15 border border-emerald-200 dark:border-emerald-800/30 rounded-lg hover:bg-emerald-100 dark:hover:bg-emerald-900/25 transition-all"
             >
               <ChevronRight className="w-3.5 h-3.5" />
               Continue response
