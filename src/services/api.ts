@@ -34,11 +34,21 @@ export async function sendChatMessage(
     fileContext: fileContext ?? null,
   };
 
-  const response = await fetch('/api/chat', {
+  const doStreamFetch = () => fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
     body: JSON.stringify(body),
   });
+
+  let response = await doStreamFetch();
+
+  // Auto-refresh on 401
+  if (response.status === 401) {
+    const refreshed = await tryRefreshToken();
+    if (refreshed) {
+      response = await doStreamFetch();
+    }
+  }
 
   if (!response.ok || !response.body) {
     let errorMessage = "I encountered an error while processing your request. Please try again.";
@@ -126,8 +136,29 @@ export interface ChatMessage {
   created_at: string;
 }
 
+const REFRESH_KEY = 'tax_refresh_token';
+
+async function tryRefreshToken(): Promise<boolean> {
+  const refreshToken = localStorage.getItem(REFRESH_KEY);
+  if (!refreshToken) return false;
+  try {
+    const res = await fetch('/api/auth/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken }),
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    localStorage.setItem(TOKEN_KEY, data.accessToken);
+    localStorage.setItem(REFRESH_KEY, data.refreshToken);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function authFetch(url: string, options: RequestInit = {}) {
-  const res = await fetch(url, {
+  const doFetch = () => fetch(url, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
@@ -135,6 +166,17 @@ async function authFetch(url: string, options: RequestInit = {}) {
       ...options.headers,
     },
   });
+
+  let res = await doFetch();
+
+  // Auto-refresh on 401
+  if (res.status === 401) {
+    const refreshed = await tryRefreshToken();
+    if (refreshed) {
+      res = await doFetch();
+    }
+  }
+
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     throw new Error(data.error || `Request failed (${res.status})`);

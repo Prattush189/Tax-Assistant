@@ -53,6 +53,9 @@ if (!existing) {
   console.log(`[ADMIN] ⚠️  Save this password — it won't be shown again.`);
 }
 
+// Ensure admin has enterprise plan
+db.prepare("UPDATE users SET plan = 'enterprise' WHERE email = ? AND role = 'admin'").run(ADMIN_EMAIL);
+
 console.log(`[DB] SQLite initialized at ${dbPath}`);
 
 export default db;
