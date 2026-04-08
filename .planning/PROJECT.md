@@ -8,42 +8,49 @@ An AI-powered Indian tax assistant that helps users with income tax, GST, deduct
 
 Users get accurate, visual, step-by-step answers to Indian tax questions — from simple queries to complex calculations with document analysis.
 
-## Current Milestone: v1.0 — Foundation & Gaps
+## Current Milestone: v1.1 — RAG Data Completeness & Quality
 
-**Goal:** Transform the prototype into a production-ready, secure, well-architected app with enhanced visualizations, a dedicated tax calculator, and document handling.
+**Goal:** Ensure the RAG system has comprehensive, well-structured data covering both Income Tax Acts, GST, supplementary reference data, and improved chunking/retrieval quality — while preserving existing data files as fallback.
 
 **Target features:**
-- Express backend with Gemini API proxy (security)
-- Full project architecture (components, hooks, services, types)
-- Enhanced data visualization (more chart types, interactive dashboard)
-- Dedicated tax calculator UI
-- Document handling (Form 16, salary slips, general doc Q&A)
-- Clean iframe plugin mode for Smart Assist embedding
+- Add CGST/IGST Act full text for deep GST query support
+- Add supplementary reference data (CII table, due dates calendar, ITR form matrix)
+- Fix RAG chunker to properly handle schedules, chapters, and non-section-numbered content
+- Improve retrieval quality and scoring for common query patterns
+- Keep existing act-1961.txt, act-2025.txt, comparison.txt as stable fallback
 
 ## Requirements
 
 ### Validated
 
-<!-- Shipped and confirmed valuable. Inferred from existing codebase. -->
+<!-- Shipped and confirmed valuable. -->
 
-- ✓ Chat interface with Gemini AI for Indian tax queries — v0 (prototype)
+- ✓ Chat interface with Gemini AI for Indian tax queries — v0
 - ✓ Dark/light mode with localStorage persistence — v0
 - ✓ Basic chart rendering (bar + pie) from AI responses — v0
 - ✓ Markdown rendering with GFM tables — v0
 - ✓ Responsive layout with mobile sidebar — v0
 - ✓ Plugin mode via URL param — v0
 - ✓ Quick query shortcuts and resource links — v0
+- ✓ Express backend proxying Gemini API (hide API key) — v1.0
+- ✓ Component-based architecture — v1.0
+- ✓ Enhanced visualization (waterfall, line, stacked charts; interactive dashboard) — v1.0
+- ✓ Dedicated tax calculator UI — v1.0
+- ✓ Document upload and analysis (Form 16, salary slips, general docs) — v1.0
+- ✓ Production-ready iframe plugin mode — v1.0
+- ✓ Complete IT Act 1961 + IT Act 2025 text data (full extraction from PDFs) — v1.0
+- ✓ Comprehensive old-to-new Act comparison document (40 sections) — v1.0
+- ✓ Keyword-based RAG with inverted index and section scoring — v1.0
 
 ### Active
 
 <!-- Current scope. Building toward these. -->
 
-- [ ] Express backend proxying Gemini API (hide API key)
-- [ ] Component-based architecture (split monolithic App.tsx)
-- [ ] Enhanced visualization (waterfall, line, stacked charts; interactive dashboard)
-- [ ] Dedicated tax calculator UI
-- [ ] Document upload and analysis (Form 16, salary slips, general docs)
-- [ ] Production-ready iframe plugin mode
+- [ ] CGST/IGST Act full text for deep GST query support
+- [ ] Supplementary reference data (CII table, due dates, ITR form matrix)
+- [ ] Schedule-aware RAG chunking (handle non-section-numbered content)
+- [ ] Improved retrieval quality and scoring for common queries
+- [ ] Existing data files preserved as stable fallback
 
 ### Out of Scope
 
@@ -79,4 +86,4 @@ Users get accurate, visual, step-by-step answers to Indian tax questions — fro
 | Keep Gemini model | Existing system prompt tuned for Indian tax domain | ✓ Good |
 
 ---
-*Last updated: 2026-04-04 after milestone v1.0 initialization*
+*Last updated: 2026-04-08 after milestone v1.1 initialization*

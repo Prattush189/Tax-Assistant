@@ -2,19 +2,17 @@
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-04-04)
+See: .planning/PROJECT.md (updated 2026-04-08)
 
 **Core value:** Users get accurate, visual, step-by-step answers to Indian tax questions — from simple queries to complex calculations with document analysis.
-**Current focus:** Phase 6 complete — all PLUG requirements delivered
+**Current focus:** Milestone v1.1 — RAG Data Completeness & Quality
 
 ## Current Position
 
-Phase: 6 of 6 (iFrame Plugin Mode Hardening)
-Plan: 2 of 2 in current phase (06-02 complete — ALL PLANS DONE)
-Status: Phase 6 complete — PLUG-01 through PLUG-04 all implemented and hardened
-Last activity: 2026-04-04 — Plan 06-02 complete: responsive 400px fixes (overflow-x-auto, grid-cols-1 sm:grid-cols-2); Phase 6 and full project roadmap done
-
-Progress: [███████████████] 100% (all 6 phases complete)
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-04-08 — Milestone v1.1 started
 
 ## Performance Metrics
 
