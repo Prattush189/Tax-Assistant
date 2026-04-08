@@ -4,6 +4,7 @@
 
 - ✅ **v1.0 MVP** — Phases 1-6 (shipped 2026-04-06)
 - 🚧 **v1.1 RAG Data Completeness & Quality** — Phases 7-10 (in progress)
+- 🔮 **v1.2 UI Revamp (Premium Fintech Look)** — Phases 11-15 (planned)
 
 ## Phases
 
@@ -183,6 +184,76 @@ Plans:
   4. topK=5 retrieval produces responses within an acceptable input token budget (confirmed against usageRepo averages)
 **Plans**: TBD
 
+---
+
+### 🔮 v1.2 UI Revamp — Premium Fintech Look
+
+**Milestone Goal:** Transform the entire UI from prototype-quality to premium fintech-grade — new color palette, polished layouts, Framer Motion animations, and a professional login experience.
+
+- [ ] **Phase 11: Design System & Auth Pages** - Establish color palette, CSS tokens, and redesign login/signup with Framer Motion animations
+- [ ] **Phase 12: Sidebar & Navigation** - Redesign sidebar layout, nav tabs, chat history, and user profile section
+- [ ] **Phase 13: Chat Page Overhaul** - Redesign message bubbles, input area, empty state, and thinking indicator
+- [ ] **Phase 14: Calculator, Dashboard & Secondary Pages** - Premium styling for calculator, dashboard, notice drafter, and plan pages
+- [ ] **Phase 15: Micro-Interactions & Polish** - Page transitions, button effects, loading states, final consistency pass
+
+## Phase Details (v1.2)
+
+### Phase 11: Design System & Auth Pages
+**Goal**: A unified color palette is established and login/signup pages showcase the premium fintech aesthetic with smooth animations
+**Depends on**: Phase 10 (or can run independently of v1.1)
+**Requirements**: AUTH-UI-01, AUTH-UI-02, AUTH-UI-03, AUTH-UI-04, THEME-01, THEME-02, THEME-03
+**Success Criteria** (what must be TRUE):
+  1. User presented with 2-3 color palette options and selects one before any UI work begins
+  2. CSS custom properties (tokens) for primary, secondary, accent, surface, and text colors exist in a single source file
+  3. Login page has animated gradient background, floating card with entrance animation, and smooth field focus transitions
+  4. Signup page matches login design with consistent styling and animations
+  5. Dark mode on auth pages uses proper contrast ratios (WCAG AA minimum)
+**Plans**: TBD
+
+### Phase 12: Sidebar & Navigation
+**Goal**: The sidebar and navigation feel like a premium fintech app with clear visual hierarchy and polished interactions
+**Depends on**: Phase 11
+**Requirements**: NAV-01, NAV-02, NAV-03, NAV-04
+**Success Criteria** (what must be TRUE):
+  1. Sidebar has improved typography (font sizes, weights, spacing) with clear visual hierarchy between sections
+  2. Active nav tab has a premium indicator distinct from inactive tabs (not just background color)
+  3. Chat history items are styled as polished cards with smooth hover transitions
+  4. User profile section in sidebar footer has cleaner layout with proper alignment
+**Plans**: TBD
+
+### Phase 13: Chat Page Overhaul
+**Goal**: The chat experience matches premium AI products — clean message bubbles, polished input area, and engaging empty state
+**Depends on**: Phase 11
+**Requirements**: CHAT-UI-01, CHAT-UI-02, CHAT-UI-03, CHAT-UI-04
+**Success Criteria** (what must be TRUE):
+  1. Message bubbles have refined styling with proper spacing, avatar indicators, and visual distinction between user/AI
+  2. Input area has cleaner button placement, visible attachment indicator, and polished border treatment
+  3. Empty state shows premium landing with feature highlights and refined quick query cards
+  4. Thinking indicator has a refined animation that feels premium
+**Plans**: TBD
+
+### Phase 14: Calculator, Dashboard & Secondary Pages
+**Goal**: All secondary pages (calculator, dashboard, notice drafter, plan) match the premium standard set in phases 11-13
+**Depends on**: Phase 11
+**Requirements**: CALC-UI-01, CALC-UI-02, CALC-UI-03, PAGE-UI-01, PAGE-UI-02
+**Success Criteria** (what must be TRUE):
+  1. Calculator tabs, input forms, and result displays use the new design tokens consistently
+  2. Dashboard stat cards, chart containers, and comparison widgets have premium styling
+  3. Notice drafter form and preview panel styled with new theme
+  4. Plan page tier cards redesigned with premium layout
+**Plans**: TBD
+
+### Phase 15: Micro-Interactions & Polish
+**Goal**: Subtle animations and transitions give the app a polished, cohesive feel throughout
+**Depends on**: Phase 12, Phase 13, Phase 14
+**Requirements**: ANIM-01, ANIM-02, ANIM-03
+**Success Criteria** (what must be TRUE):
+  1. Switching between views (Chat, Calc, Dashboard, etc.) has a subtle fade transition
+  2. Buttons have consistent hover/press feedback (subtle scale or glow)
+  3. Data-loading states use skeleton loaders or smooth fade-ins instead of jarring content pops
+  4. No animation is distracting or flashy — all feel natural and understated
+**Plans**: TBD
+
 ## Progress
 
 **Execution Order:**
@@ -200,3 +271,8 @@ Phases execute in numeric order: 7 → 8 → 9 → 10
 | 8. GST Act Data | v1.1 | 0/TBD | Not started | - |
 | 9. Reference Data | v1.1 | 0/TBD | Not started | - |
 | 10. Scoring & Integration Validation | v1.1 | 0/TBD | Not started | - |
+| 11. Design System & Auth Pages | v1.2 | 0/TBD | Not started | - |
+| 12. Sidebar & Navigation | v1.2 | 0/TBD | Not started | - |
+| 13. Chat Page Overhaul | v1.2 | 0/TBD | Not started | - |
+| 14. Calc, Dashboard & Secondary | v1.2 | 0/TBD | Not started | - |
+| 15. Micro-Interactions & Polish | v1.2 | 0/TBD | Not started | - |
