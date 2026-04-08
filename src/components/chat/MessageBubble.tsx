@@ -103,13 +103,18 @@ export function MessageBubble({ message, onContinue }: MessageBubbleProps) {
 
         {/* Truncated — continue button */}
         {truncated && (
-          <button
-            onClick={onContinue}
-            className="flex items-center gap-1.5 mt-2 ml-1 px-3 py-1.5 text-xs font-medium text-[#B8860B] dark:text-[#D4A020] bg-[#D4A020]/10 dark:bg-[#B8860B]/10 border border-[#D4A020]/20 dark:border-[#B8860B]/20 rounded-lg hover:bg-[#D4A020]/20 dark:hover:bg-[#B8860B]/20 transition-all"
-          >
-            <ChevronRight className="w-3.5 h-3.5" />
-            Continue response
-          </button>
+          <div className="mt-2 ml-1">
+            <p className="text-[11px] text-slate-400 dark:text-slate-500 mb-1.5">
+              Response was cut short due to message length limit.
+            </p>
+            <button
+              onClick={onContinue}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#B8860B] dark:text-[#D4A020] bg-[#D4A020]/10 dark:bg-[#B8860B]/10 border border-[#D4A020]/20 dark:border-[#B8860B]/20 rounded-lg hover:bg-[#D4A020]/20 dark:hover:bg-[#B8860B]/20 transition-all"
+            >
+              <ChevronRight className="w-3.5 h-3.5" />
+              Continue response
+            </button>
+          </div>
         )}
       </div>
     </div>

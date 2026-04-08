@@ -1,17 +1,12 @@
 // server/routes/chat.ts
 import { Router, Response } from 'express';
 import Anthropic from '@anthropic-ai/sdk';
-import { readFileSync } from 'fs';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
 import { chatRepo } from '../db/repositories/chatRepo.js';
 import { messageRepo } from '../db/repositories/messageRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
+import { retrieveContext } from '../rag/index.js';
 import { AuthRequest } from '../types.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 const router = Router();
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
@@ -50,25 +45,18 @@ function getMessageCount(userId: string, period: 'day' | 'month'): number {
   return result;
 }
 
-// Load tax reference data at startup
-const TAX_REFERENCE = readFileSync(join(__dirname, '..', 'data', 'tax-reference.md'), 'utf-8');
-
 const SYSTEM_INSTRUCTION = `You are "Smart AI" — an expert on Indian Income Tax, GST, and financial planning.
 
 SCOPE: Only answer questions about Indian tax, GST, deductions, capital gains, and financial planning. Politely decline other topics.
 
 RULES:
 - Default to FY 2025-26 (AY 2026-27) unless user specifies otherwise
-- Specify FY/AY for all calculations
+- Cite specific section numbers when referencing the Act
 - Show tax breakdowns in compact Markdown tables (GFM syntax, blank lines before/after tables)
 - Be concise: answer in the fewest words possible while staying accurate
 - Mention consulting a CA for official filing
 - For comparisons, include a json-chart block: \`\`\`json-chart {"type":"bar"|"pie"|"line","title":"...","data":[{"name":"...","value":0}]} \`\`\`
-- ALWAYS use the tax reference data below for rates, slabs, and limits — never guess or use outdated figures
-
-<tax-reference>
-${TAX_REFERENCE}
-</tax-reference>`;
+- When reference context from the Income Tax Act is provided, use it as the authoritative source`;
 
 const MAX_HISTORY_MESSAGES = 10;
 
@@ -146,6 +134,12 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
     userContent = `[Attached document context: ${JSON.stringify(fileContext.extractedData)}]\n\n${userContent}`;
   }
 
+  // RAG: retrieve relevant Act sections
+  const ragContext = retrieveContext(userContent);
+  if (ragContext) {
+    userContent = `[Reference from Income Tax Act — use as authoritative source]:\n\n${ragContext}\n\n---\n\nUser question: ${userContent}`;
+  }
+
   // SSE headers
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -158,7 +152,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
     const stream = anthropic.messages.stream({
       model: MODEL,
       max_tokens: MAX_TOKENS,
-      system: SYSTEM_INSTRUCTION,
+      system: [{ type: 'text', text: SYSTEM_INSTRUCTION, cache_control: { type: 'ephemeral' } }],
       messages: [
         ...history,
         { role: 'user', content: userContent },

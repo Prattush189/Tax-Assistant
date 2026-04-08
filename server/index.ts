@@ -1,7 +1,11 @@
 // server/index.ts
 import 'dotenv/config';
 import './db/index.js';
+import { initRAG } from './rag/index.js';
 import express from 'express';
+
+// Initialize RAG chunks at startup
+initRAG();
 import chatRouter from './routes/chat.js';
 import uploadRouter from './routes/upload.js';
 import chatsRouter from './routes/chats.js';
