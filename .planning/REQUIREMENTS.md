@@ -59,8 +59,8 @@ Requirements for RAG Data Completeness & Quality milestone. Each maps to roadmap
 ### RAG Infrastructure
 
 - [x] **RAGI-01**: Retrieval function supports any number of data sources without hardcoded bucket limits
-- [ ] **RAGI-02**: Chunker detects CHAPTER headers and creates chapter-level chunks with proper labels
-- [ ] **RAGI-03**: Chunker detects SCHEDULE / PART boundaries and creates schedule-aware chunks separate from Act section numbering
+- [x] **RAGI-02**: Chunker detects CHAPTER headers and creates chapter-level chunks with proper labels
+- [x] **RAGI-03**: Chunker detects SCHEDULE / PART boundaries and creates schedule-aware chunks separate from Act section numbering
 - [x] **RAGI-04**: Chunk source type is extensible (TypeScript union accepts new source types without code duplication)
 - [x] **RAGI-05**: Existing act-1961.txt, act-2025.txt, comparison.txt data files preserved unchanged as fallback
 
@@ -217,8 +217,8 @@ Deferred to future release. Tracked but not in current roadmap.
 | PLUG-03 | Phase 6 | Complete |
 | PLUG-04 | Phase 6 | Complete |
 | RAGI-01 | Phase 7 | Complete |
-| RAGI-02 | Phase 7 | Pending |
-| RAGI-03 | Phase 7 | Pending |
+| RAGI-02 | Phase 7 | Complete |
+| RAGI-03 | Phase 7 | Complete |
 | RAGI-04 | Phase 7 | Complete |
 | RAGI-05 | Phase 7 | Complete |
 | GST-01 | Phase 8 | Pending |

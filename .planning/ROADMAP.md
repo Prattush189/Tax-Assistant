@@ -132,7 +132,7 @@ Plans:
 
 **Milestone Goal:** Ensure the RAG system has comprehensive, well-structured data covering both Income Tax Acts, GST legislation, and supplementary reference data — with improved chunking and retrieval quality that does not regress existing IT Act query performance.
 
-- [ ] **Phase 7: RAG Infrastructure Fixes** - Fix schedule-aware chunking and hardcoded retrieval bucket limits that silently break all new data sources
+- [x] **Phase 7: RAG Infrastructure Fixes** - Fix schedule-aware chunking and hardcoded retrieval bucket limits that silently break all new data sources (completed 2026-04-08)
 - [ ] **Phase 8: GST Act Data** - Add CGST Act 2017 and IGST Act 2017 full text as indexed RAG sources for deep GST query support
 - [ ] **Phase 9: Reference Data** - Add CII table, due dates calendar, and ITR form selection matrix as structured lookup data sources
 - [ ] **Phase 10: Scoring & Integration Validation** - Tune retrieval scoring, validate 15-query golden set, confirm no regression against existing IT Act queries
@@ -271,7 +271,7 @@ Phases execute in numeric order: 7 → 8 → 9 → 10
 | 4. Enhanced Visualizations + Dashboard | v1.0 | 3/3 | Complete | 2026-04-04 |
 | 5. Document Handling | v1.0 | 4/4 | Complete | 2026-04-04 |
 | 6. Iframe Plugin Mode Hardening | v1.0 | 2/2 | Complete | 2026-04-06 |
-| 7. RAG Infrastructure Fixes | 1/2 | In Progress|  | - |
+| 7. RAG Infrastructure Fixes | 2/2 | Complete   | 2026-04-08 | - |
 | 8. GST Act Data | v1.1 | 0/TBD | Not started | - |
 | 9. Reference Data | v1.1 | 0/TBD | Not started | - |
 | 10. Scoring & Integration Validation | v1.1 | 0/TBD | Not started | - |

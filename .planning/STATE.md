@@ -53,6 +53,7 @@ Phase 11: [ ] Phase 12: [ ] Phase 13: [ ] Phase 14: [ ] Phase 15: [ ]
 | Phase 06-iframe-plugin-mode-hardening P01 | 2 | 2 tasks | 4 files |
 | Phase 06-iframe-plugin-mode-hardening P02 | 8 | 2 tasks | 4 files |
 | Phase 07-rag-infrastructure-fixes P01 | 1 | 2 tasks | 1 files |
+| Phase 07-rag-infrastructure-fixes P02 | 4 | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -137,6 +138,9 @@ Recent decisions affecting current work:
 - [Phase 07-01]: retrieve() signature simplified to (query, topK) — reads from module-level chunkMap, no external callers
 - [Phase 07-01]: comparison.txt boost retained at 1.5x via cfg.boost field in SourceConfig (not hardcoded)
 - [Phase 07-01]: DEFAULT_TOP_K = 5 locked; new source registration requires only SOURCE_CONFIGS array entry
+- [Phase 07-02]: Section regex applied only to Act body portion (before first SCHEDULE boundary) — eliminates 299 false matches in act-2025.txt schedule area
+- [Phase 07-02]: Chapter annotation format: "14 [CHAPTER IV — Computation of Total Income]" — both Roman numeral and title, truncated at 60 chars
+- [Phase 07-02]: splitIntoSections() retained as private helper called by splitActBodyWithChapters() — clean refactor, one call site change in buildChunks()
 
 ### Pending Todos
 
@@ -150,5 +154,5 @@ Recent decisions affecting current work:
 ## Session Continuity
 
 Last session: 2026-04-08
-Stopped at: Completed 07-01-PLAN.md — RAG refactored to SOURCE_CONFIGS-driven architecture
-Resume file: .planning/phases/07-rag-infrastructure-fixes/07-01-SUMMARY.md
+Stopped at: Completed 07-02-PLAN.md — Chapter-aware and schedule-aware Act splitter added
+Resume file: .planning/phases/07-rag-infrastructure-fixes/07-02-SUMMARY.md
