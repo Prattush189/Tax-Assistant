@@ -149,12 +149,20 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
   let fullResponse = '';
 
   try {
+    // Mark the last history message for caching so the prefix is reused across turns
+    const cachedHistory = history.map((msg: { role: string; content: string }, i: number) => {
+      if (i === history.length - 1) {
+        return { ...msg, content: [{ type: 'text' as const, text: msg.content, cache_control: { type: 'ephemeral' as const } }] };
+      }
+      return msg;
+    });
+
     const stream = anthropic.messages.stream({
       model: MODEL,
       max_tokens: MAX_TOKENS,
       system: [{ type: 'text', text: SYSTEM_INSTRUCTION, cache_control: { type: 'ephemeral' } }],
       messages: [
-        ...history,
+        ...cachedHistory,
         { role: 'user', content: userContent },
       ],
     });
