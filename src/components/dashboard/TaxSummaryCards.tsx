@@ -36,12 +36,12 @@ export function TaxSummaryCards({ result, regimeLabel, className }: TaxSummaryCa
       {cards.map((card) => (
         <div
           key={card.label}
-          className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4"
+          className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4"
         >
-          <p className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">{card.label}</p>
-          <p className="text-xl font-bold text-slate-800 dark:text-slate-100">{card.value}</p>
+          <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">{card.label}</p>
+          <p className="text-xl font-bold text-gray-800 dark:text-gray-100">{card.value}</p>
           {card.subLabel && (
-            <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">{card.subLabel}</p>
+            <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">{card.subLabel}</p>
           )}
         </div>
       ))}

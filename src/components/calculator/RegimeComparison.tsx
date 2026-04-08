@@ -19,13 +19,13 @@ function RegimeCard({ label, result, isWinner, showOldOnlyFields }: RegimeCardPr
   return (
     <div
       className={cn(
-        'flex-1 rounded-xl border bg-white dark:bg-slate-800 p-4',
+        'flex-1 rounded-xl border bg-white dark:bg-gray-800 p-4',
         isWinner
           ? 'border-blue-300 dark:border-blue-600 ring-2 ring-blue-500'
-          : 'border-slate-200 dark:border-slate-700',
+          : 'border-gray-200 dark:border-gray-700',
       )}
     >
-      <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3 pb-2 border-b border-slate-100 dark:border-slate-700">
+      <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 pb-2 border-b border-gray-100 dark:border-gray-700">
         {label}
         {isWinner && (
           <span className="ml-2 text-xs bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded-full">
@@ -37,42 +37,42 @@ function RegimeCard({ label, result, isWinner, showOldOnlyFields }: RegimeCardPr
       {/* Income breakdown */}
       <div className="space-y-1 text-xs mb-3">
         <div className="flex justify-between">
-          <span className="text-slate-500 dark:text-slate-400">Gross income</span>
-          <span className="font-medium text-slate-700 dark:text-slate-300">{formatINR(result.grossIncome)}</span>
+          <span className="text-gray-500 dark:text-gray-400">Gross income</span>
+          <span className="font-medium text-gray-700 dark:text-gray-300">{formatINR(result.grossIncome)}</span>
         </div>
         <div className="flex justify-between">
-          <span className="text-slate-500 dark:text-slate-400">Standard deduction</span>
+          <span className="text-gray-500 dark:text-gray-400">Standard deduction</span>
           <span className="text-red-600 dark:text-red-400">- {formatINR(result.standardDeduction)}</span>
         </div>
         {showOldOnlyFields && result.hraExemption > 0 && (
           <div className="flex justify-between">
-            <span className="text-slate-500 dark:text-slate-400">HRA exemption</span>
+            <span className="text-gray-500 dark:text-gray-400">HRA exemption</span>
             <span className="text-red-600 dark:text-red-400">- {formatINR(result.hraExemption)}</span>
           </div>
         )}
         {showOldOnlyFields && result.totalDeductions - result.standardDeduction - result.hraExemption > 0 && (
           <div className="flex justify-between">
-            <span className="text-slate-500 dark:text-slate-400">Other deductions</span>
+            <span className="text-gray-500 dark:text-gray-400">Other deductions</span>
             <span className="text-red-600 dark:text-red-400">
               - {formatINR(result.totalDeductions - result.standardDeduction - result.hraExemption)}
             </span>
           </div>
         )}
-        <div className="flex justify-between border-t border-slate-100 dark:border-slate-700 pt-1 mt-1">
-          <span className="text-slate-600 dark:text-slate-300 font-medium">Taxable income</span>
-          <span className="font-semibold text-slate-700 dark:text-slate-200">{formatINR(result.taxableIncome)}</span>
+        <div className="flex justify-between border-t border-gray-100 dark:border-gray-700 pt-1 mt-1">
+          <span className="text-gray-600 dark:text-gray-300 font-medium">Taxable income</span>
+          <span className="font-semibold text-gray-700 dark:text-gray-200">{formatINR(result.taxableIncome)}</span>
         </div>
       </div>
 
       {/* Slab breakdown */}
       {result.slabBreakdown.length > 0 && (
         <div className="mb-3">
-          <p className="text-xs text-slate-400 dark:text-slate-500 mb-1 font-medium uppercase tracking-wide">Slab tax</p>
+          <p className="text-xs text-gray-400 dark:text-gray-500 mb-1 font-medium uppercase tracking-wide">Slab tax</p>
           <div className="space-y-1">
             {result.slabBreakdown.map((row, i) => (
               <div key={i} className="flex justify-between text-xs">
-                <span className="text-slate-500 dark:text-slate-400">{row.slab}</span>
-                <span className="text-slate-700 dark:text-slate-300">{formatINR(row.tax)}</span>
+                <span className="text-gray-500 dark:text-gray-400">{row.slab}</span>
+                <span className="text-gray-700 dark:text-gray-300">{formatINR(row.tax)}</span>
               </div>
             ))}
           </div>
@@ -80,30 +80,30 @@ function RegimeCard({ label, result, isWinner, showOldOnlyFields }: RegimeCardPr
       )}
 
       {/* Rebate / marginal relief / cess / total */}
-      <div className="space-y-1 text-xs border-t border-slate-100 dark:border-slate-700 pt-2">
+      <div className="space-y-1 text-xs border-t border-gray-100 dark:border-gray-700 pt-2">
         {result.rebate87A > 0 && (
           <div className="flex justify-between">
-            <span className="text-slate-500 dark:text-slate-400">Section 87A rebate</span>
+            <span className="text-gray-500 dark:text-gray-400">Section 87A rebate</span>
             <span className="text-green-600 dark:text-green-400">- {formatINR(result.rebate87A)}</span>
           </div>
         )}
         {result.marginalRelief > 0 && (
           <div className="flex justify-between">
-            <span className="text-slate-500 dark:text-slate-400">Marginal relief</span>
+            <span className="text-gray-500 dark:text-gray-400">Marginal relief</span>
             <span className="text-green-600 dark:text-green-400">- {formatINR(result.marginalRelief)}</span>
           </div>
         )}
         <div className="flex justify-between">
-          <span className="text-slate-500 dark:text-slate-400">Cess (4%)</span>
-          <span className="text-slate-700 dark:text-slate-300">{formatINR(result.cess)}</span>
+          <span className="text-gray-500 dark:text-gray-400">Cess (4%)</span>
+          <span className="text-gray-700 dark:text-gray-300">{formatINR(result.cess)}</span>
         </div>
-        <div className="flex justify-between border-t border-slate-200 dark:border-slate-600 pt-1 mt-1">
-          <span className="text-slate-800 dark:text-slate-100 font-bold text-sm">Total Tax</span>
-          <span className="text-slate-800 dark:text-slate-100 font-bold text-sm">{formatINR(result.totalTax)}</span>
+        <div className="flex justify-between border-t border-gray-200 dark:border-gray-600 pt-1 mt-1">
+          <span className="text-gray-800 dark:text-gray-100 font-bold text-sm">Total Tax</span>
+          <span className="text-gray-800 dark:text-gray-100 font-bold text-sm">{formatINR(result.totalTax)}</span>
         </div>
         <div className="flex justify-between">
-          <span className="text-slate-400 dark:text-slate-500">Effective rate</span>
-          <span className="text-slate-500 dark:text-slate-400">{result.effectiveRate.toFixed(2)}%</span>
+          <span className="text-gray-400 dark:text-gray-500">Effective rate</span>
+          <span className="text-gray-500 dark:text-gray-400">{result.effectiveRate.toFixed(2)}%</span>
         </div>
       </div>
     </div>
@@ -119,7 +119,7 @@ export function RegimeComparison({ oldResult, newResult, fy }: RegimeComparisonP
     <div className="mt-6">
       {/* Recommendation banner */}
       {savings === 0 ? (
-        <div className="bg-slate-50 dark:bg-slate-700/40 border border-slate-200 dark:border-slate-600 rounded-xl p-4 mb-4 text-slate-600 dark:text-slate-300 font-medium text-sm">
+        <div className="bg-gray-50 dark:bg-gray-700/40 border border-gray-200 dark:border-gray-600 rounded-xl p-4 mb-4 text-gray-600 dark:text-gray-300 font-medium text-sm">
           Both regimes result in equal tax for FY {fy}.
         </div>
       ) : (

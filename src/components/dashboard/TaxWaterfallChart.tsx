@@ -20,8 +20,8 @@ export function TaxWaterfallChart({ result, className }: TaxWaterfallChartProps)
   const data = buildWaterfallData(result);
 
   return (
-    <div className={cn('bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4', className)}>
-      <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-4">Income to Tax Flow</h3>
+    <div className={cn('bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4', className)}>
+      <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">Income to Tax Flow</h3>
       <div className="h-64">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>

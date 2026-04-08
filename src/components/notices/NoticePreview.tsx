@@ -70,11 +70,11 @@ export function NoticePreview({ content, onContentChange, isGenerating, onClear 
     return (
       <div className="flex-1 flex items-center justify-center text-center p-8">
         <div className="space-y-3">
-          <div className="w-16 h-16 mx-auto rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
+          <div className="w-16 h-16 mx-auto rounded-2xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
             <img src="/logoAI.png" alt="" className="w-10 h-10 object-contain" />
           </div>
-          <h3 className="text-lg font-semibold text-slate-700 dark:text-slate-300">Notice Draft Preview</h3>
-          <p className="text-sm text-slate-400 max-w-xs">
+          <h3 className="text-lg font-semibold text-gray-700 dark:text-gray-300">Notice Draft Preview</h3>
+          <p className="text-sm text-gray-400 max-w-xs">
             Fill in the details and click "Generate Draft" to create a professional notice reply.
           </p>
         </div>
@@ -85,13 +85,13 @@ export function NoticePreview({ content, onContentChange, isGenerating, onClear 
   return (
     <div className="flex-1 flex flex-col min-h-0">
       {/* Toolbar */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-200 dark:border-slate-700/50 shrink-0">
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-200 dark:border-gray-700/50 shrink-0">
         <button
           onClick={() => setIsEditing(!isEditing)}
           className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
             isEditing
               ? 'bg-[#059669]/10 text-[#047857] dark:text-[#059669]'
-              : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'
+              : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'
           }`}
         >
           <Edit3 className="w-3.5 h-3.5" />
@@ -100,7 +100,7 @@ export function NoticePreview({ content, onContentChange, isGenerating, onClear 
         <button
           onClick={handleCopy}
           disabled={!content}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors disabled:opacity-50"
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors disabled:opacity-50"
         >
           {copied ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
           {copied ? 'Copied' : 'Copy'}
@@ -108,7 +108,7 @@ export function NoticePreview({ content, onContentChange, isGenerating, onClear 
         <button
           onClick={handleDownloadPdf}
           disabled={!content || isGenerating}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors disabled:opacity-50"
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors disabled:opacity-50"
         >
           <Download className="w-3.5 h-3.5" />
           PDF
@@ -124,14 +124,14 @@ export function NoticePreview({ content, onContentChange, isGenerating, onClear 
       </div>
 
       {/* PDF-style preview */}
-      <div className="flex-1 overflow-y-auto p-4 lg:p-8 bg-slate-100 dark:bg-slate-900/50">
-        <div className="max-w-[210mm] mx-auto bg-white dark:bg-slate-800 shadow-xl rounded-sm min-h-[297mm]">
+      <div className="flex-1 overflow-y-auto p-4 lg:p-8 bg-gray-100 dark:bg-gray-900/50">
+        <div className="max-w-[210mm] mx-auto bg-white dark:bg-gray-800 shadow-xl rounded-sm min-h-[297mm]">
           <div
             ref={previewRef}
             contentEditable={isEditing}
             suppressContentEditableWarning
             onBlur={handleEditBlur}
-            className={`p-[20mm] font-serif text-[12px] leading-[1.8] text-slate-800 dark:text-slate-200 whitespace-pre-wrap outline-none min-h-[297mm] ${
+            className={`p-[20mm] font-serif text-[12px] leading-[1.8] text-gray-800 dark:text-gray-200 whitespace-pre-wrap outline-none min-h-[297mm] ${
               isEditing ? 'ring-2 ring-[#059669]/30 ring-inset' : ''
             }`}
             style={{ fontFamily: "'Times New Roman', 'Georgia', serif" }}

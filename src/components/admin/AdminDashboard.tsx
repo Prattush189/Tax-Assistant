@@ -90,7 +90,7 @@ export function AdminDashboard() {
       <div className="max-w-6xl mx-auto space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between flex-wrap gap-2">
-          <h1 className="text-xl font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+          <h1 className="text-xl font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
             <Shield className="w-5 h-5 text-[#059669]" />
             Admin Dashboard
           </h1>
@@ -98,14 +98,14 @@ export function AdminDashboard() {
             <select
               value={period}
               onChange={e => setPeriod(e.target.value)}
-              className="px-3 py-1.5 text-sm bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300"
+              className="px-3 py-1.5 text-sm bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-700 dark:text-gray-300"
             >
               <option value="day">Today</option>
               <option value="week">This Week</option>
               <option value="month">This Month</option>
             </select>
-            <button onClick={loadData} disabled={loading} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
-              <RefreshCw className={`w-4 h-4 text-slate-500 ${loading ? 'animate-spin' : ''}`} />
+            <button onClick={loadData} disabled={loading} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors">
+              <RefreshCw className={`w-4 h-4 text-gray-500 ${loading ? 'animate-spin' : ''}`} />
             </button>
           </div>
         </div>
@@ -131,30 +131,30 @@ export function AdminDashboard() {
         </div>
 
         {/* Users Table */}
-        <div className="bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm border border-slate-200/50 dark:border-slate-800/50 rounded-2xl overflow-hidden">
-          <div className="px-4 py-3 border-b border-slate-200/50 dark:border-slate-800/50">
-            <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-300">Users ({users.length})</h2>
+        <div className="bg-white/70 dark:bg-gray-900/70 backdrop-blur-sm border border-gray-200/50 dark:border-gray-800/50 rounded-2xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-200/50 dark:border-gray-800/50">
+            <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Users ({users.length})</h2>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-slate-200 dark:border-slate-700">
-                  <th className="text-left px-4 py-3 font-medium text-slate-500">Name</th>
-                  <th className="text-left px-4 py-3 font-medium text-slate-500">Email</th>
-                  <th className="text-left px-4 py-3 font-medium text-slate-500">Plan</th>
-                  <th className="text-left px-4 py-3 font-medium text-slate-500">Role</th>
-                  <th className="text-left px-4 py-3 font-medium text-slate-500">IPs</th>
-                  <th className="text-left px-4 py-3 font-medium text-slate-500">Chats</th>
-                  <th className="text-left px-4 py-3 font-medium text-slate-500">Msgs</th>
-                  <th className="text-left px-4 py-3 font-medium text-slate-500">Status</th>
-                  <th className="text-left px-4 py-3 font-medium text-slate-500">Actions</th>
+                <tr className="border-b border-gray-200 dark:border-gray-700">
+                  <th className="text-left px-4 py-3 font-medium text-gray-500">Name</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-500">Email</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-500">Plan</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-500">Role</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-500">IPs</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-500">Chats</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-500">Msgs</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-500">Status</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-500">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {users.map(u => (
-                  <tr key={u.id} className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                    <td className="px-4 py-3 text-slate-800 dark:text-slate-200 font-medium">{u.name}</td>
-                    <td className="px-4 py-3 text-slate-500 dark:text-slate-400 text-xs">{u.email}</td>
+                  <tr key={u.id} className="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                    <td className="px-4 py-3 text-gray-800 dark:text-gray-200 font-medium">{u.name}</td>
+                    <td className="px-4 py-3 text-gray-500 dark:text-gray-400 text-xs">{u.email}</td>
                     <td className="px-4 py-3">
                       {u.role === 'admin' ? (
                         <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-[#059669]/20 text-[#047857] dark:text-[#059669]">
@@ -164,7 +164,7 @@ export function AdminDashboard() {
                         <select
                           value={u.plan}
                           onChange={e => handlePlanChange(u.id, e.target.value as 'free' | 'pro' | 'enterprise')}
-                          className="px-2 py-1 text-xs bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 cursor-pointer"
+                          className="px-2 py-1 text-xs bg-transparent border border-gray-200 dark:border-gray-700 rounded-lg text-gray-700 dark:text-gray-300 cursor-pointer"
                         >
                           <option value="free">Free</option>
                           <option value="pro">Pro</option>
@@ -173,15 +173,15 @@ export function AdminDashboard() {
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${u.role === 'admin' ? 'bg-[#059669]/20 text-[#047857] dark:text-[#059669]' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'}`}>
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${u.role === 'admin' ? 'bg-[#059669]/20 text-[#047857] dark:text-[#059669]' : 'bg-gray-100 dark:bg-gray-800 text-gray-500'}`}>
                         {u.role}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-xs font-mono text-slate-400 max-w-[150px] truncate" title={u.ips}>
+                    <td className="px-4 py-3 text-xs font-mono text-gray-400 max-w-[150px] truncate" title={u.ips}>
                       {u.ips ? u.ips.split(',').length + ' IP' + (u.ips.split(',').length > 1 ? 's' : '') : '—'}
                     </td>
-                    <td className="px-4 py-3 text-slate-600 dark:text-slate-400">{u.chat_count}</td>
-                    <td className="px-4 py-3 text-slate-600 dark:text-slate-400">{u.message_count}</td>
+                    <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{u.chat_count}</td>
+                    <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{u.message_count}</td>
                     <td className="px-4 py-3">
                       {u.suspended_until ? (
                         <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400">Suspended</span>
@@ -199,7 +199,7 @@ export function AdminDashboard() {
                           <select
                             onChange={e => { const h = parseInt(e.target.value); if (h > 0) handleSuspend(u.id, h); e.target.value = ''; }}
                             defaultValue=""
-                            className="px-2 py-1 text-xs bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg text-red-500 cursor-pointer"
+                            className="px-2 py-1 text-xs bg-transparent border border-gray-200 dark:border-gray-700 rounded-lg text-red-500 cursor-pointer"
                           >
                             <option value="" disabled>Suspend...</option>
                             {SUSPEND_OPTIONS.map(o => <option key={o.hours} value={o.hours}>{o.label}</option>)}
@@ -220,14 +220,14 @@ export function AdminDashboard() {
 
 function StatCard({ icon: Icon, label, value }: { icon: typeof Users; label: string; value: string | number }) {
   return (
-    <div className="bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm border border-slate-200/50 dark:border-slate-800/50 rounded-xl p-4">
+    <div className="bg-white/70 dark:bg-gray-900/70 backdrop-blur-sm border border-gray-200/50 dark:border-gray-800/50 rounded-xl p-4">
       <div className="flex items-center gap-3">
         <div className="w-10 h-10 rounded-xl bg-[#059669]/10 flex items-center justify-center">
           <Icon className="w-5 h-5 text-[#059669]" />
         </div>
         <div>
-          <p className="text-[11px] text-slate-400 uppercase font-medium">{label}</p>
-          <p className="text-lg font-bold text-slate-800 dark:text-slate-100">{value}</p>
+          <p className="text-[11px] text-gray-400 uppercase font-medium">{label}</p>
+          <p className="text-lg font-bold text-gray-800 dark:text-gray-100">{value}</p>
         </div>
       </div>
     </div>
@@ -236,9 +236,9 @@ function StatCard({ icon: Icon, label, value }: { icon: typeof Users; label: str
 
 function MiniStat({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm border border-slate-200/50 dark:border-slate-800/50 rounded-xl px-4 py-3 flex items-center justify-between">
-      <span className="text-xs text-slate-500">{label}</span>
-      <span className="text-sm font-semibold text-slate-800 dark:text-slate-200">{value}</span>
+    <div className="bg-white/70 dark:bg-gray-900/70 backdrop-blur-sm border border-gray-200/50 dark:border-gray-800/50 rounded-xl px-4 py-3 flex items-center justify-between">
+      <span className="text-xs text-gray-500">{label}</span>
+      <span className="text-sm font-semibold text-gray-800 dark:text-gray-200">{value}</span>
     </div>
   );
 }

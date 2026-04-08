@@ -26,19 +26,19 @@ function NumberInput({
 }) {
   return (
     <div>
-      <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
         {label}
       </label>
-      {hint && <p className="text-xs text-slate-400 dark:text-slate-500 mb-1">{hint}</p>}
+      {hint && <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">{hint}</p>}
       <div className="relative">
-        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500 text-sm">₹</span>
+        <span className="absolute left-3 top-1/2 -trangray-y-1/2 text-gray-400 dark:text-gray-500 text-sm">₹</span>
         <input
           type="number"
           min="0"
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder="0"
-          className="w-full pl-7 pr-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="w-full pl-7 pr-3 py-2 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
       </div>
     </div>
@@ -80,7 +80,7 @@ export function CapitalGainsTab() {
     <div className="max-w-2xl">
       {/* FY selector */}
       <div className="mb-5">
-        <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Financial Year</p>
+        <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Financial Year</p>
         <div className="flex gap-3">
           {(['2025-26', '2024-25'] as FY[]).map((f) => (
             <label key={f} className="flex items-center gap-2 cursor-pointer">
@@ -92,7 +92,7 @@ export function CapitalGainsTab() {
                 onChange={() => setFy(f)}
                 className="accent-blue-600"
               />
-              <span className="text-sm text-slate-700 dark:text-slate-300">FY {f}</span>
+              <span className="text-sm text-gray-700 dark:text-gray-300">FY {f}</span>
             </label>
           ))}
         </div>
@@ -100,7 +100,7 @@ export function CapitalGainsTab() {
 
       {/* Asset type selector */}
       <div className="mb-5">
-        <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Asset Type</p>
+        <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Asset Type</p>
         <div className="flex flex-wrap gap-2">
           {ASSET_OPTIONS.map((opt) => (
             <button
@@ -114,7 +114,7 @@ export function CapitalGainsTab() {
                 'px-4 py-2 rounded-lg text-sm font-medium border transition-colors',
                 assetType === opt.value
                   ? 'bg-blue-600 border-blue-600 text-white'
-                  : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:border-blue-400',
+                  : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:border-blue-400',
               )}
             >
               {opt.label}
@@ -129,7 +129,7 @@ export function CapitalGainsTab() {
         <NumberInput label="Purchase Price (₹)" value={purchasePrice} onChange={setPurchasePrice} />
       </div>
       <div className="mb-5">
-        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
           Holding Period (months)
         </label>
         <input
@@ -138,13 +138,13 @@ export function CapitalGainsTab() {
           value={holdingMonths}
           onChange={(e) => setHoldingMonths(e.target.value)}
           placeholder="0"
-          className="w-full md:w-40 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="w-full md:w-40 px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
       </div>
 
       {/* Real estate: pre-July-2024 indexation option */}
       {assetType === 'realEstate' && (
-        <div className="mb-5 border border-slate-200 dark:border-slate-700 rounded-xl p-4 bg-slate-50 dark:bg-slate-800/40">
+        <div className="mb-5 border border-gray-200 dark:border-gray-700 rounded-xl p-4 bg-gray-50 dark:bg-gray-800/40">
           <label className="flex items-center gap-2 cursor-pointer mb-3">
             <input
               type="checkbox"
@@ -155,7 +155,7 @@ export function CapitalGainsTab() {
               }}
               className="accent-blue-600"
             />
-            <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
               Acquired before 23 July 2024
             </span>
           </label>
@@ -172,7 +172,7 @@ export function CapitalGainsTab() {
 
       {/* Result card */}
       {result && (
-        <div className="border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 p-5">
+        <div className="border border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-800 p-5">
           {/* Gain type badge */}
           <div className="flex items-center gap-3 mb-4">
             <span
@@ -185,7 +185,7 @@ export function CapitalGainsTab() {
             >
               {result.gainType}
             </span>
-            <span className="text-sm text-slate-500 dark:text-slate-400">
+            <span className="text-sm text-gray-500 dark:text-gray-400">
               {result.gainType === 'LTCG' ? 'Long-term capital gain' : 'Short-term capital gain'}
             </span>
           </div>
@@ -193,30 +193,30 @@ export function CapitalGainsTab() {
           {/* Basic breakdown */}
           <div className="space-y-2 text-sm mb-4">
             <div className="flex justify-between">
-              <span className="text-slate-500 dark:text-slate-400">Raw gain</span>
-              <span className="font-medium text-slate-700 dark:text-slate-300">{formatINR(result.rawGain)}</span>
+              <span className="text-gray-500 dark:text-gray-400">Raw gain</span>
+              <span className="font-medium text-gray-700 dark:text-gray-300">{formatINR(result.rawGain)}</span>
             </div>
             {result.exemptionApplied > 0 && (
               <div className="flex justify-between">
-                <span className="text-slate-500 dark:text-slate-400">Annual exemption (₹1.25L)</span>
+                <span className="text-gray-500 dark:text-gray-400">Annual exemption (₹1.25L)</span>
                 <span className="text-green-600 dark:text-green-400">- {formatINR(result.exemptionApplied)}</span>
               </div>
             )}
             <div className="flex justify-between">
-              <span className="text-slate-500 dark:text-slate-400">Taxable gain</span>
-              <span className="font-medium text-slate-700 dark:text-slate-300">{formatINR(result.taxableGain)}</span>
+              <span className="text-gray-500 dark:text-gray-400">Taxable gain</span>
+              <span className="font-medium text-gray-700 dark:text-gray-300">{formatINR(result.taxableGain)}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-500 dark:text-slate-400">Tax rate</span>
-              <span className="font-medium text-slate-700 dark:text-slate-300">
+              <span className="text-gray-500 dark:text-gray-400">Tax rate</span>
+              <span className="font-medium text-gray-700 dark:text-gray-300">
                 {result.taxRate === 'slab'
                   ? 'At slab rate (added to normal income)'
                   : `${(result.taxRate * 100).toFixed(1)}%`}
               </span>
             </div>
-            <div className="flex justify-between border-t border-slate-100 dark:border-slate-700 pt-2 mt-2">
-              <span className="text-slate-700 dark:text-slate-200 font-semibold">Estimated tax</span>
-              <span className="font-bold text-slate-800 dark:text-slate-100">
+            <div className="flex justify-between border-t border-gray-100 dark:border-gray-700 pt-2 mt-2">
+              <span className="text-gray-700 dark:text-gray-200 font-semibold">Estimated tax</span>
+              <span className="font-bold text-gray-800 dark:text-gray-100">
                 {result.taxAmount !== null
                   ? formatINR(result.taxAmount)
                   : 'Added to income — calculate in Income Tax tab'}
@@ -226,8 +226,8 @@ export function CapitalGainsTab() {
 
           {/* Indexation comparison (pre-July-2024 real estate) */}
           {result.indexationOption && (
-            <div className="border-t border-slate-200 dark:border-slate-600 pt-4 mt-2">
-              <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3">
+            <div className="border-t border-gray-200 dark:border-gray-600 pt-4 mt-2">
+              <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">
                 Indexation Comparison
               </p>
               <div className="overflow-x-auto">
@@ -238,21 +238,21 @@ export function CapitalGainsTab() {
                     'rounded-lg border p-3',
                     result.indexationOption.recommendedOption === 'withIndexation'
                       ? 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-900/20'
-                      : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40',
+                      : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/40',
                   )}
                 >
                   <div className="flex items-center gap-2 mb-2">
-                    <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">With Indexation (20%)</span>
+                    <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">With Indexation (20%)</span>
                     {result.indexationOption.recommendedOption === 'withIndexation' && (
                       <span className="text-xs bg-green-200 dark:bg-green-800 text-green-800 dark:text-green-200 px-1.5 py-0.5 rounded font-semibold">
                         Lower Tax
                       </span>
                     )}
                   </div>
-                  <div className="text-xs text-slate-500 dark:text-slate-400">
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
                     Taxable: {formatINR(result.indexationOption.withIndexation.taxableGain)}
                   </div>
-                  <div className="text-sm font-bold text-slate-700 dark:text-slate-200 mt-1">
+                  <div className="text-sm font-bold text-gray-700 dark:text-gray-200 mt-1">
                     Tax: {formatINR(result.indexationOption.withIndexation.taxAmount)}
                   </div>
                 </div>
@@ -263,27 +263,27 @@ export function CapitalGainsTab() {
                     'rounded-lg border p-3',
                     result.indexationOption.recommendedOption === 'withoutIndexation'
                       ? 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-900/20'
-                      : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40',
+                      : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/40',
                   )}
                 >
                   <div className="flex items-center gap-2 mb-2">
-                    <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">Without Indexation (12.5%)</span>
+                    <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">Without Indexation (12.5%)</span>
                     {result.indexationOption.recommendedOption === 'withoutIndexation' && (
                       <span className="text-xs bg-green-200 dark:bg-green-800 text-green-800 dark:text-green-200 px-1.5 py-0.5 rounded font-semibold">
                         Lower Tax
                       </span>
                     )}
                   </div>
-                  <div className="text-xs text-slate-500 dark:text-slate-400">
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
                     Taxable: {formatINR(result.indexationOption.withoutIndexation.taxableGain)}
                   </div>
-                  <div className="text-sm font-bold text-slate-700 dark:text-slate-200 mt-1">
+                  <div className="text-sm font-bold text-gray-700 dark:text-gray-200 mt-1">
                     Tax: {formatINR(result.indexationOption.withoutIndexation.taxAmount)}
                   </div>
                 </div>
               </div>
               </div>
-              <p className="text-xs text-slate-400 dark:text-slate-500">
+              <p className="text-xs text-gray-400 dark:text-gray-500">
                 Taxpayers who acquired property BEFORE 23 July 2024 may choose either option.
               </p>
             </div>

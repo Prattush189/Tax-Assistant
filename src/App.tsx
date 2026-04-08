@@ -33,8 +33,8 @@ function AppContent() {
 
   return (
     <div className={cn(
-      "flex h-screen bg-slate-50 dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 overflow-hidden transition-colors duration-300",
-      isPluginMode && "rounded-2xl border border-slate-200 dark:border-slate-800"
+      "flex h-screen bg-gray-50 dark:bg-[#0A0F14] font-sans text-gray-900 dark:text-gray-100 overflow-hidden transition-colors duration-300",
+      isPluginMode && "rounded-2xl border border-gray-200 dark:border-gray-800"
     )}>
       {!isPluginMode && (
         <Sidebar
@@ -76,7 +76,7 @@ function AppContent() {
       </TaxCalculatorProvider>
       {isSidebarOpen && !isPluginMode && (
         <div
-          className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-40 lg:hidden"
+          className="fixed inset-0 bg-gray-900/50 backdrop-blur-sm z-40 lg:hidden"
           onClick={() => setIsSidebarOpen(false)}
         />
       )}

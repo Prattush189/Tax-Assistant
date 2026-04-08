@@ -126,8 +126,8 @@ export function ChartRenderer({ jsonString }: ChartRendererProps) {
     if (chart === null) return null;
 
     return (
-      <div className="my-4 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700">
-        {title && <h4 className="text-sm font-semibold mb-4 text-slate-700 dark:text-slate-300">{title}</h4>}
+      <div className="my-4 p-4 bg-gray-50 dark:bg-gray-800/50 rounded-xl border border-gray-200 dark:border-gray-700">
+        {title && <h4 className="text-sm font-semibold mb-4 text-gray-700 dark:text-gray-300">{title}</h4>}
         <div className="h-64 w-full">
           <ResponsiveContainer width="100%" height="100%">
             {chart}

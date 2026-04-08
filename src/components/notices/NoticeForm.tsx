@@ -103,14 +103,14 @@ export function NoticeForm({ onGenerate, isGenerating, usage }: NoticeFormProps)
     });
   };
 
-  const inputClass = "w-full px-3 py-2 text-sm bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg focus:ring-2 focus:ring-[#059669]/50 focus:border-[#059669] outline-none transition-all text-slate-800 dark:text-slate-200";
-  const labelClass = "block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1";
+  const inputClass = "w-full px-3 py-2 text-sm bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-[#059669]/50 focus:border-[#059669] outline-none transition-all text-gray-800 dark:text-gray-200";
+  const labelClass = "block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1";
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4 overflow-y-auto flex-1 pr-1">
       {/* Usage counter */}
       <div className="flex items-center justify-between px-1">
-        <span className="text-xs text-slate-400">{usage.used}/{usage.limit} drafts this month</span>
+        <span className="text-xs text-gray-400">{usage.used}/{usage.limit} drafts this month</span>
         {usage.used >= usage.limit && (
           <span className="text-xs text-red-500 font-medium">Limit reached</span>
         )}
@@ -140,15 +140,15 @@ export function NoticeForm({ onGenerate, isGenerating, usage }: NoticeFormProps)
       {/* Upload notice document */}
       <div>
         <label className={labelClass}>Upload Notice (optional)</label>
-        <label className="flex items-center gap-2 px-3 py-2.5 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-lg cursor-pointer hover:border-[#059669] transition-colors">
+        <label className="flex items-center gap-2 px-3 py-2.5 border-2 border-dashed border-gray-200 dark:border-gray-700 rounded-lg cursor-pointer hover:border-[#059669] transition-colors">
           {fileUpload.uploadPhase === 'uploading' || fileUpload.uploadPhase === 'analyzing' ? (
             <Loader2 className="w-4 h-4 text-[#059669] animate-spin" />
           ) : extractedText ? (
             <FileText className="w-4 h-4 text-green-500" />
           ) : (
-            <Upload className="w-4 h-4 text-slate-400" />
+            <Upload className="w-4 h-4 text-gray-400" />
           )}
-          <span className="text-sm text-slate-500 dark:text-slate-400">
+          <span className="text-sm text-gray-500 dark:text-gray-400">
             {extractedText ? 'Document uploaded' : 'PDF, JPEG, PNG'}
           </span>
           <input type="file" accept=".pdf,image/jpeg,image/png,image/webp" onChange={handleFileUpload} className="hidden" />
@@ -157,7 +157,7 @@ export function NoticeForm({ onGenerate, isGenerating, usage }: NoticeFormProps)
 
       {/* Sender details */}
       <details className="group" open>
-        <summary className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider cursor-pointer select-none">
+        <summary className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer select-none">
           Sender Details
         </summary>
         <div className="mt-2 space-y-2">
@@ -184,7 +184,7 @@ export function NoticeForm({ onGenerate, isGenerating, usage }: NoticeFormProps)
 
       {/* Recipient details */}
       <details className="group">
-        <summary className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider cursor-pointer select-none">
+        <summary className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer select-none">
           Recipient (Officer) Details
         </summary>
         <div className="mt-2 space-y-2">
@@ -207,7 +207,7 @@ export function NoticeForm({ onGenerate, isGenerating, usage }: NoticeFormProps)
 
       {/* Notice reference */}
       <details className="group" open>
-        <summary className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider cursor-pointer select-none">
+        <summary className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer select-none">
           Notice Reference
         </summary>
         <div className="mt-2 grid grid-cols-2 gap-2">

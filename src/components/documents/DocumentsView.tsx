@@ -78,7 +78,7 @@ export function DocumentsView({ activeDocument, onDocumentAttach, onDocumentDeta
       <div className="space-y-6">
         <div>
           <h2 className="text-2xl font-bold bg-gradient-to-r from-orange-600 to-amber-600 dark:from-orange-400 dark:to-amber-400 bg-clip-text text-transparent">Documents</h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
             Upload Form 16, salary slips, or investment proofs for AI analysis. Ask follow-up questions in the Chat tab.
           </p>
         </div>
@@ -106,7 +106,7 @@ export function DocumentsView({ activeDocument, onDocumentAttach, onDocumentDeta
                   "relative overflow-hidden border-2 border-dashed rounded-2xl p-10 text-center transition-all cursor-pointer backdrop-blur-sm",
                   isDraggingOver
                     ? "border-orange-500 bg-orange-50/80 dark:bg-orange-950/40 shadow-lg shadow-orange-500/10"
-                    : "border-slate-300 dark:border-slate-700 hover:border-orange-400 hover:bg-slate-50/50 dark:hover:bg-slate-800/30",
+                    : "border-gray-300 dark:border-gray-700 hover:border-orange-400 hover:bg-gray-50/50 dark:hover:bg-gray-800/30",
                   isProcessing && "cursor-not-allowed border-orange-300 dark:border-orange-700 bg-orange-50/50 dark:bg-orange-900/20"
                 )}
               >
@@ -151,14 +151,14 @@ export function DocumentsView({ activeDocument, onDocumentAttach, onDocumentDeta
                       </motion.div>
                     </div>
                     <div>
-                      <p className="font-semibold text-slate-800 dark:text-slate-200 text-lg">
+                      <p className="font-semibold text-gray-800 dark:text-gray-200 text-lg">
                         {isDraggingOver ? "Drop it here!" : "Click or drag document"}
                       </p>
-                      <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">We support PDF and image files</p>
+                      <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">We support PDF and image files</p>
                     </div>
                     <div className="flex items-center justify-center gap-2 flex-wrap pt-2">
                       {['PDF', 'JPEG', 'PNG'].map(fmt => (
-                        <span key={fmt} className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-md bg-slate-100/80 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400">
+                        <span key={fmt} className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-md bg-gray-100/80 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400">
                           <FileText className="w-3.5 h-3.5" />{fmt}
                         </span>
                       ))}

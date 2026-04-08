@@ -23,7 +23,7 @@ export function CalculatorView() {
         <motion.div 
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="flex flex-wrap gap-2 mb-8 p-1.5 bg-white/70 dark:bg-slate-900/70 backdrop-blur-md border border-slate-200/80 dark:border-slate-800/80 rounded-2xl shadow-sm w-fit max-w-full overflow-x-auto"
+          className="flex flex-wrap gap-2 mb-8 p-1.5 bg-white dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700/50 rounded-2xl shadow-sm w-fit max-w-full overflow-x-auto"
         >
           {TABS.map((tab) => (
             <button
@@ -32,14 +32,14 @@ export function CalculatorView() {
               className={cn(
                 'relative px-5 py-2.5 text-sm font-medium transition-colors rounded-xl z-10 whitespace-nowrap',
                 activeTab === tab.id
-                  ? 'text-blue-700 dark:text-blue-300'
-                  : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100',
+                  ? 'text-emerald-700 dark:text-emerald-300'
+                  : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100',
               )}
             >
               {activeTab === tab.id && (
                 <motion.div
                   layoutId="activeCalculatorTab"
-                  className="absolute inset-0 bg-blue-100/60 dark:bg-blue-900/40 border border-blue-200/50 dark:border-blue-800/50 rounded-xl -z-10 shadow-[0_2px_10px_-2px_rgba(59,130,246,0.1)] dark:shadow-none"
+                  className="absolute inset-0 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200/50 dark:border-emerald-800/30 rounded-xl -z-10 shadow-sm dark:shadow-none"
                   initial={false}
                   transition={{ type: "spring", stiffness: 400, damping: 30 }}
                 />

@@ -23,8 +23,8 @@ export function DashboardView() {
           <LayoutDashboard className="w-12 h-12 text-blue-600 dark:text-blue-400" />
         </div>
         <div className="space-y-3 text-center max-w-md">
-          <h3 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Your Personalised Dashboard</h3>
-          <p className="text-slate-500 dark:text-slate-400 text-base leading-relaxed">
+          <h3 className="text-2xl font-bold text-gray-800 dark:text-gray-100">Your Personalised Dashboard</h3>
+          <p className="text-gray-500 dark:text-gray-400 text-base leading-relaxed">
             Enter your gross income in the <span className="font-semibold text-blue-600 dark:text-blue-400">Calculator</span> tab to generate your tax breakdown, regime comparison, and visual charts.
           </p>
         </div>
@@ -53,9 +53,9 @@ export function DashboardView() {
       className="flex-1 overflow-y-auto p-4 md:p-6 scroll-smooth"
     >
       <div className="max-w-4xl mx-auto space-y-6">
-        <motion.div variants={itemVariants} className="bg-white/50 dark:bg-slate-900/50 backdrop-blur-md p-4 rounded-2xl border border-slate-200/60 dark:border-slate-800/60 shadow-sm">
+        <motion.div variants={itemVariants} className="bg-white/50 dark:bg-gray-900/50 backdrop-blur-md p-4 rounded-2xl border border-gray-200/60 dark:border-gray-800/60 shadow-sm">
           <h2 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 dark:from-blue-400 dark:to-indigo-400 bg-clip-text text-transparent">Tax Dashboard</h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1 font-medium">
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1 font-medium">
             Based on {betterLabel} — FY {fy}
           </p>
         </motion.div>
@@ -69,8 +69,8 @@ export function DashboardView() {
         </motion.div>
 
         {/* VIZ-04: RegimeComparison already implements full slab-by-slab table — reuse, do not rebuild */}
-        <motion.div variants={itemVariants} className="bg-white/30 dark:bg-slate-900/30 backdrop-blur-sm p-4 rounded-2xl border border-slate-200/50 dark:border-slate-800/50">
-          <h3 className="text-base font-semibold text-slate-800 dark:text-slate-200 mb-4 flex items-center gap-2">
+        <motion.div variants={itemVariants} className="bg-white/30 dark:bg-gray-900/30 backdrop-blur-sm p-4 rounded-2xl border border-gray-200/50 dark:border-gray-800/50">
+          <h3 className="text-base font-semibold text-gray-800 dark:text-gray-200 mb-4 flex items-center gap-2">
             <span className="w-1.5 h-6 bg-blue-500 rounded-full"></span>
             Regime Comparison
           </h3>
