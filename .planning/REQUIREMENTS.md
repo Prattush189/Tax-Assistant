@@ -80,10 +80,10 @@ Requirements for RAG Data Completeness & Quality milestone. Each maps to roadmap
 
 ### Scoring & Retrieval Quality
 
-- [ ] **SCOR-01**: Retrieval uses configurable topK (increased from 3 to 5) for richer context
-- [ ] **SCOR-02**: Source-type labels in retrieval output distinguish IT Act 1961, IT Act 2025, Comparison, CGST, IGST, and Reference sources
+- [x] **SCOR-01**: Retrieval uses configurable topK (increased from 3 to 5) for richer context
+- [x] **SCOR-02**: Source-type labels in retrieval output distinguish IT Act 1961, IT Act 2025, Comparison, CGST, IGST, and Reference sources
 - [ ] **SCOR-03**: Length normalization prevents dense GST/legal text from crowding out relevant IT Act chunks
-- [ ] **SCOR-04**: Adding new data sources does not regress retrieval quality for existing IT Act queries
+- [x] **SCOR-04**: Adding new data sources does not regress retrieval quality for existing IT Act queries
 
 ## v1.2 Requirements
 
@@ -229,10 +229,10 @@ Deferred to future release. Tracked but not in current roadmap.
 | REF-02 | Phase 9 | Complete |
 | REF-03 | Phase 9 | Complete |
 | REF-04 | Phase 9 | Complete |
-| SCOR-01 | Phase 10 | Pending |
-| SCOR-02 | Phase 10 | Pending |
+| SCOR-01 | Phase 10 | Complete |
+| SCOR-02 | Phase 10 | Complete |
 | SCOR-03 | Phase 10 | Pending |
-| SCOR-04 | Phase 10 | Pending |
+| SCOR-04 | Phase 10 | Complete |
 
 | AUTH-UI-01 | Phase 11 | Pending |
 | AUTH-UI-02 | Phase 11 | Pending |

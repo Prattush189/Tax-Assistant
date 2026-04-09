@@ -149,10 +149,14 @@ Recent decisions affecting current work:
 - [Phase 08-02]: GST queries return Comparison Guide as top result due to 1.5x boost — expected, scoring review is Phase 10 concern (SCOR-03)
 - [Phase 09-01]: Reference data boost: 1.3 added to SOURCE_CONFIGS entry -- CII section scored lower than calendar for 'cii' query; boost + 'CII FY XXXX-XX = YYY' row format fixes retrieval; defer fine-tuning to Phase 10 SCOR-02/03
 - [Phase 09-01]: reference-data.txt sections use 'CII FY XXXX-XX = YYY' row format -- 25 'cii' token occurrences in CII section ensures accurate retrieval for CII-specific queries via keyword scoring
+- [Phase 10-01]: Token budget healthy at baseline: avg=1449 max=1500 tokens vs 3000 target -- length normalization NOT needed; revisit only if scoring changes push avg above 2500
+- [Phase 10-01]: SCOR-01 confirmed: topK=5 returns exactly 5 chunks; SCOR-02 confirmed: all refs have human-readable labels at baseline
+- [Phase 10-01]: REF-01 CII=376 is primary Plan 02 fix target: reference source returned correctly but CII section with value not making top-5
 
 ### Pending Todos
 
-- Confirm topK=5 token budget impact after Phase 8 deploys (check against usageRepo inputTok averages before Phase 10)
+- Phase 10 Plan 01 complete: golden-queries.json + validate-golden.ts baseline established
+- REF-01 CII=376 not in top-5: primary fix target for Phase 10 Plan 02 scoring tuning
 
 ### Blockers/Concerns
 
@@ -161,5 +165,5 @@ None active for v1.1.
 ## Session Continuity
 
 Last session: 2026-04-09
-Stopped at: Phase 10 context gathered — ready for planning
-Resume file: .planning/phases/10-scoring-integration-validation/10-CONTEXT.md
+Stopped at: Completed 10-01-PLAN.md — golden-queries.json + validate-golden.ts baseline diagnostic done
+Resume file: .planning/phases/10-scoring-integration-validation/10-01-SUMMARY.md
