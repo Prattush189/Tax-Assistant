@@ -461,7 +461,7 @@ Rate  | Category          | Examples
 3%    | Special            | Gold, silver, platinum
 0.25% | Special            | Rough diamonds
 
-Old slabs REMOVED: 12% (99% items moved to 5%) and 28% (90% items moved to 18%).
+Old slabs REMOVED: 12% slab merged into 5%, and 28% slab merged into 18% (simplified two-slab structure effective 22 Sep 2025).
 Compensation cess on most products scrapped from 22 Sep 2025 (except tobacco products).
 
 Key GST Sections:

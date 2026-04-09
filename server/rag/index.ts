@@ -30,7 +30,7 @@ interface Chunk {
 
 const SOURCE_CONFIGS: SourceConfig[] = [
   {
-    id: 'comparison', filePath: 'comparison.txt', label: 'Comparison Guide', splitter: 'comparison', boost: 1.5,
+    id: 'comparison', filePath: 'comparison.txt', label: 'Comparison Guide', splitter: 'comparison', boost: 0.7,
     pdfFiles: [
       { label: 'IT Act 2025', file: 'Income Tax Acts/Income_Tax_Act_2025_as_amended_by_FA_Act_2026.pdf' },
       { label: 'IT Act 1961', file: 'Income Tax Acts/Income_Tax_Act_1961_as_amended_by_FA_Act_2026.pdf' },
@@ -72,6 +72,65 @@ const SOURCE_CONFIGS: SourceConfig[] = [
 const sourceConfigMap = new Map<string, SourceConfig>(
   SOURCE_CONFIGS.map(cfg => [cfg.id, cfg])
 );
+
+// ── Query routing ──
+
+const SOURCE_GROUPS = {
+  IT_PRIMARY: ['act-2025'],
+  IT_OLD: ['act-1961'],
+  CGST: ['cgst-2017', 'cgst-amend-2018', 'cgst-amend-2023', 'gst-changes-2025'],
+  IGST: ['igst-2017', 'igst-amend-2018', 'gst-changes-2025'],
+  SGST: ['sgst-delhi', 'sgst-haryana', 'sgst-himachal', 'sgst-punjab', 'sgst-jk',
+         'utgst-2017', 'utgst-amend-2018', 'cgst-jk-2017'],
+  GST_ALL: ['cgst-2017', 'igst-2017', 'gst-changes-2025', 'cgst-amend-2018',
+            'cgst-amend-2023', 'igst-amend-2018'],
+  FINANCE: ['fa-2019', 'fa-2020', 'fa-2021', 'fa-2022', 'fa-2023'],
+};
+
+interface ClassificationResult {
+  primary: string[];
+  fallback: string[];
+}
+
+function classifyQuery(query: string): ClassificationResult {
+  const q = query.toLowerCase();
+
+  // Rule 1: CGST specific
+  if (/\bcgst\b|central goods and services/i.test(q)) {
+    return { primary: SOURCE_GROUPS.CGST, fallback: ['reference'] };
+  }
+  // Rule 2: IGST specific
+  if (/\bigst\b|integrated goods and services/i.test(q)) {
+    return { primary: SOURCE_GROUPS.IGST, fallback: ['reference'] };
+  }
+  // Rule 3: SGST / UTGST specific
+  if (/\bsgst\b|\butgst\b|state goods and services/i.test(q)) {
+    return { primary: SOURCE_GROUPS.SGST, fallback: ['cgst-2017', 'reference'] };
+  }
+  // Rule 4: GST general
+  if (/\bgst\b|goods and services tax/i.test(q)) {
+    return { primary: SOURCE_GROUPS.GST_ALL, fallback: ['reference'] };
+  }
+  // Rule 5: Finance Act
+  if (/\bfinance act\b|\bfinance bill\b/i.test(q)) {
+    return { primary: SOURCE_GROUPS.FINANCE, fallback: ['reference'] };
+  }
+  // Rule 6: Due dates / compliance / reference data
+  if (/\bdue date\b|\bdeadline\b|\bfiling date\b|\bcii\b|\bcost inflation\b|\bitr form\b/i.test(q)) {
+    return { primary: ['reference'], fallback: SOURCE_GROUPS.IT_PRIMARY };
+  }
+  // Rule 7: Comparison / old vs new
+  if (/\bcompar(e|ison)\b|\bold vs new\b|\b1961 vs 2025\b|\bmapping\b|\bold act\b|\bnew act\b/i.test(q)) {
+    return { primary: ['comparison', ...SOURCE_GROUPS.IT_PRIMARY, ...SOURCE_GROUPS.IT_OLD], fallback: ['reference'] };
+  }
+  // Rule 8: Income tax (default IT route)
+  if (/\bincome tax\b|\bit act\b|\btds\b|\btcs\b|\bcapital gain\b|\bdeduction\b|\b80[a-z]\b|\bsalary\b|\bexemption\b|\bassessment year\b|\btax year\b|\bitr\b|\bold regime\b|\bnew regime\b|\badvance tax\b|\bpenalty\b|\bsection\s+\d+[a-z]*/i.test(q)) {
+    return { primary: SOURCE_GROUPS.IT_PRIMARY, fallback: [...SOURCE_GROUPS.IT_OLD, 'comparison', 'reference'] };
+  }
+  // Rule 9: No match — search all
+  const allSources = SOURCE_CONFIGS.filter(c => !c.disabled).map(c => c.id);
+  return { primary: allSources, fallback: [] };
+}
 
 // ── topK default ──
 
@@ -450,7 +509,7 @@ interface ScoredChunk {
 
 // ── Retrieve top chunks using inverted index ──
 
-function retrieve(query: string, topK = DEFAULT_TOP_K): Chunk[] {
+function retrieve(query: string, topK = DEFAULT_TOP_K, sourceFilter?: Set<string>): Chunk[] {
   const tokens = tokenize(query);
   if (tokens.length === 0) return [];
 
@@ -469,10 +528,10 @@ function retrieve(query: string, topK = DEFAULT_TOP_K): Chunk[] {
 
   if (candidateIds.size === 0) return [];
 
-  // Look up chunks from the stable chunkMap
+  // Look up chunks from the stable chunkMap, apply source filter
   const candidates = [...candidateIds]
     .map(id => chunkMap.get(id))
-    .filter((c): c is Chunk => c !== undefined);
+    .filter((c): c is Chunk => c !== undefined && (!sourceFilter || sourceFilter.has(c.source)));
 
   const scored = candidates
     .map(chunk => ({ chunk, score: scoreChunk(chunk, tokens, sectionNumbers) }))
@@ -484,7 +543,7 @@ function retrieve(query: string, topK = DEFAULT_TOP_K): Chunk[] {
   // Dynamic bucket balancing — works with any number of active sources
   const buckets = new Map<string, ScoredChunk[]>();
   for (const cfg of SOURCE_CONFIGS) {
-    if (!cfg.disabled) {
+    if (!cfg.disabled && (!sourceFilter || sourceFilter.has(cfg.id))) {
       buckets.set(cfg.id, []);
     }
   }
@@ -584,14 +643,27 @@ export interface RetrievalResult {
 }
 
 function doRetrieve(query: string, topK: number): Chunk[] {
-  let chunks = retrieve(query, topK);
+  const { primary, fallback } = classifyQuery(query);
+  const primarySet = new Set(primary);
 
-  // If poor results, try broadening section numbers (15CG → 15C → 15)
+  // Phase 1: Search primary sources
+  let chunks = retrieve(query, topK, primarySet);
+
+  // Phase 2: Fill remaining slots from fallback sources
+  if (chunks.length < topK && fallback.length > 0) {
+    const fallbackSet = new Set(fallback);
+    const usedIds = new Set(chunks.map(c => c.id));
+    const extra = retrieve(query, topK - chunks.length, fallbackSet)
+      .filter(c => !usedIds.has(c.id));
+    chunks = [...chunks, ...extra].slice(0, topK);
+  }
+
+  // Phase 3: If still empty, try broadening section numbers (15CG → 15C → 15)
   if (chunks.length === 0) {
     const broader = broadenSectionNumbers(query);
     for (const broadSection of broader) {
       const broadQuery = query + ` section ${broadSection}`;
-      chunks = retrieve(broadQuery, topK);
+      chunks = retrieve(broadQuery, topK, primarySet);
       if (chunks.length > 0) break;
     }
   }
