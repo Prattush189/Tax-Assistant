@@ -71,6 +71,37 @@
   }
 }
 
+/* Blur-reveal streaming effect */
+.streaming-reveal {
+  mask-image: linear-gradient(
+    to bottom,
+    #000 0%,
+    #000 calc(100% - 3em),
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    #000 0%,
+    #000 calc(100% - 3em),
+    transparent 100%
+  );
+}
+
+.streaming-done {
+  animation: revealDone 0.4s ease-out forwards;
+}
+
+@keyframes revealDone {
+  from {
+    mask-image: linear-gradient(to bottom, #000 0%, #000 calc(100% - 3em), transparent 100%);
+    -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 calc(100% - 3em), transparent 100%);
+  }
+  to {
+    mask-image: none;
+    -webkit-mask-image: none;
+  }
+}
+
 /* Custom radio buttons */
 input[type="radio"] {
   appearance: none;

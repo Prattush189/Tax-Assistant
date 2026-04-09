@@ -26,33 +26,31 @@ function renderContent(content: string, role: 'user' | 'model') {
   });
 }
 
-/** Smooth-height wrapper: animates height changes during streaming */
+/** Blur-reveal wrapper: content appears top-to-bottom with blur-to-sharp transition */
 function StreamingWrapper({ children, isStreaming }: { children: React.ReactNode; isStreaming: boolean }) {
-  const contentRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const prevHeightRef = useRef(0);
 
   useEffect(() => {
-    if (!isStreaming || !contentRef.current || !wrapperRef.current) return;
-    const height = contentRef.current.scrollHeight;
-    wrapperRef.current.style.height = `${height}px`;
+    if (!isStreaming || !wrapperRef.current) return;
+    const el = wrapperRef.current;
+    const newHeight = el.scrollHeight;
+    // Only animate when height actually increases (new content)
+    if (newHeight > prevHeightRef.current) {
+      prevHeightRef.current = newHeight;
+    }
   });
 
-  // When streaming stops, switch to auto height
-  useEffect(() => {
-    if (!isStreaming && wrapperRef.current) {
-      wrapperRef.current.style.height = 'auto';
-    }
-  }, [isStreaming]);
-
-  if (!isStreaming) return <>{children}</>;
+  if (!isStreaming) {
+    return <div className="streaming-done">{children}</div>;
+  }
 
   return (
     <div
       ref={wrapperRef}
-      className="overflow-hidden transition-[height] duration-300 ease-out"
-      style={{ height: 0 }}
+      className="streaming-reveal"
     >
-      <div ref={contentRef}>{children}</div>
+      {children}
     </div>
   );
 }

@@ -19,9 +19,33 @@ export function useChatManager() {
   const [isLoading, setIsLoading] = useState(false);
   const [activeDocument, setActiveDocument] = useState<DocumentContext | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLElement | null>(null);
+  const userScrolledUpRef = useRef(false);
 
+  // Track if user has scrolled up away from bottom
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // Find the scroll container (parent of messagesEndRef)
+    const endEl = messagesEndRef.current;
+    if (!endEl) return;
+    const container = endEl.closest('[class*="overflow-y-auto"]') as HTMLElement | null;
+    if (!container) return;
+    scrollContainerRef.current = container;
+
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      // Consider "near bottom" if within 150px of the bottom
+      userScrolledUpRef.current = scrollHeight - scrollTop - clientHeight > 150;
+    };
+
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  // Auto-scroll only if user is near bottom
+  useEffect(() => {
+    if (!userScrolledUpRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [messages]);
 
   const loadChatList = useCallback(async () => {
