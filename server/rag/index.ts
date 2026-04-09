@@ -124,7 +124,7 @@ function classifyQuery(query: string): ClassificationResult {
     return { primary: ['comparison', ...SOURCE_GROUPS.IT_PRIMARY, ...SOURCE_GROUPS.IT_OLD], fallback: ['reference'] };
   }
   // Rule 8: Income tax (default IT route)
-  if (/\bincome tax\b|\bit act\b|\btds\b|\btcs\b|\bcapital gain\b|\bdeduction\b|\b80[a-z]\b|\bsalary\b|\bexemption\b|\bassessment year\b|\btax year\b|\bitr\b|\bold regime\b|\bnew regime\b|\badvance tax\b|\bpenalty\b|\bsection\s+\d+[a-z]*/i.test(q)) {
+  if (/\bincome tax\b|\bit act\b|\btds\b|\btcs\b|\bcapital gain\b|\bdeduction\b|\b80[a-z]\b|\bsalary\b|\bexemption\b|\bassessment year\b|\btax year\b|\bitr\b|\bregime\b|\badvance tax\b|\bpenalty\b|\bsection\s+\d+[a-z]*|\bslab\b|\btax slab\b|\bhra\b|\b115bac\b/i.test(q)) {
     return { primary: SOURCE_GROUPS.IT_PRIMARY, fallback: [...SOURCE_GROUPS.IT_OLD, 'comparison', 'reference'] };
   }
   // Rule 9: No match — search all
