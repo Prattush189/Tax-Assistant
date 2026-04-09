@@ -31,7 +31,7 @@ Phase 11: [ ] Phase 12: [ ] Phase 13: [ ] Phase 14: [ ] Phase 15: [ ]
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 7. RAG Infrastructure Fixes | TBD | - | - |
-| 8. GST Act Data | TBD | - | - |
+| 8. GST Act Data | 2 | 35min | 17.5min |
 | 9. Reference Data | TBD | - | - |
 | 10. Scoring & Integration Validation | TBD | - | - |
 
@@ -141,18 +141,22 @@ Recent decisions affecting current work:
 - [Phase 07-02]: Section regex applied only to Act body portion (before first SCHEDULE boundary) — eliminates 299 false matches in act-2025.txt schedule area
 - [Phase 07-02]: Chapter annotation format: "14 [CHAPTER IV — Computation of Total Income]" — both Roman numeral and title, truncated at 60 chars
 - [Phase 07-02]: splitIntoSections() retained as private helper called by splitActBodyWithChapters() — clean refactor, one call site change in buildChunks()
+- [Phase 08-01]: CGST/IGST text extracted from official CBIC gazette PDFs via PyMuPDF; gazette artifacts (Hindi text, marginal notes, page headers) cleaned via pattern matching
+- [Phase 08-01]: Schedule IV and V added as omission placeholders (Finance Act 2023) to maintain splitter boundary integrity
+- [Phase 08-01]: No boost for GST sources — scoring adjustments deferred to Phase 10
+- [Phase 08-02]: CGST produces 428 chunks (far exceeding 150 threshold), IGST produces 65 chunks (exceeding 20 threshold)
+- [Phase 08-02]: GST queries return Comparison Guide as top result due to 1.5x boost — expected, scoring review is Phase 10 concern (SCOR-03)
 
 ### Pending Todos
 
-- Verify CGST Act PDF extraction quality from CBIC source before finalizing Phase 8 plan (section-count assertion required)
 - Confirm topK=5 token budget impact after Phase 8 deploys (check against usageRepo inputTok averages before Phase 10)
 
 ### Blockers/Concerns
 
-- Phase 8: CGST Act PDF extraction quality from CBIC PDF is MEDIUM confidence — validate with chunk-count assertion (>150 sections) before writing chunker code; fallback is India Code HTML source (indiacode.nic.in)
+None active for v1.1.
 
 ## Session Continuity
 
-Last session: 2026-04-08
-Stopped at: Completed 07-02-PLAN.md — Chapter-aware and schedule-aware Act splitter added
-Resume file: .planning/phases/07-rag-infrastructure-fixes/07-02-SUMMARY.md
+Last session: 2026-04-09
+Stopped at: Completed Phase 8 (08-01 and 08-02) — CGST/IGST Act data files created and validated
+Resume file: .planning/phases/08-gst-act-data/08-02-SUMMARY.md
