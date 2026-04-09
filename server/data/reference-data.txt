@@ -35,37 +35,37 @@ Choose whichever option results in lower tax. Both options are valid.
 This applies ONLY to property acquired before 23-07-2024 and sold after that date.
 
 Complete CII Table (FY 2001-02 to FY 2025-26):
-CII values verified from CBDT official notification:
+CII values verified from CBDT official notification. Format: CII FY XXXX-XX = YYY
 
-FY 2001-02 | 100
-FY 2002-03 | 105
-FY 2003-04 | 109
-FY 2004-05 | 113
-FY 2005-06 | 117
-FY 2006-07 | 122
-FY 2007-08 | 129
-FY 2008-09 | 137
-FY 2009-10 | 148
-FY 2010-11 | 167
-FY 2011-12 | 184
-FY 2012-13 | 200
-FY 2013-14 | 220
-FY 2014-15 | 240
-FY 2015-16 | 254
-FY 2016-17 | 264
-FY 2017-18 | 272
-FY 2018-19 | 280
-FY 2019-20 | 289
-FY 2020-21 | 301
-FY 2021-22 | 317
-FY 2022-23 | 331
-FY 2023-24 | 348
-FY 2024-25 | 363
-FY 2025-26 | 376
+CII FY 2001-02 = 100  (base year)
+CII FY 2002-03 = 105
+CII FY 2003-04 = 109
+CII FY 2004-05 = 113
+CII FY 2005-06 = 117
+CII FY 2006-07 = 122
+CII FY 2007-08 = 129
+CII FY 2008-09 = 137
+CII FY 2009-10 = 148
+CII FY 2010-11 = 167
+CII FY 2011-12 = 184
+CII FY 2012-13 = 200
+CII FY 2013-14 = 220
+CII FY 2014-15 = 240
+CII FY 2015-16 = 254
+CII FY 2016-17 = 264
+CII FY 2017-18 = 272
+CII FY 2018-19 = 280
+CII FY 2019-20 = 289
+CII FY 2020-21 = 301
+CII FY 2021-22 = 317
+CII FY 2022-23 = 331
+CII FY 2023-24 = 348
+CII FY 2024-25 = 363
+CII FY 2025-26 = 376
 
-FY 2026-27: NOT YET NOTIFIED by CBDT (as of April 2026). Do not estimate.
+CII FY 2026-27: NOT YET NOTIFIED by CBDT (as of April 2026). Do not estimate.
 
-Total: 25 years of data, base year FY 2001-02 = 100.
+Total: 25 rows of CII data. CII base year FY 2001-02 = 100. CII for current year FY 2025-26 = 376.
 
 ======================================================================
 2. DUE DATES -- INCOME TAX
@@ -355,10 +355,13 @@ Charitable trust: ITR-7
 ======================================================================
 7. QUICK LOOKUP -- KEY VALUES (FY 2025-26 / AY 2026-27)
 ======================================================================
-CII for FY 2025-26 = 376
-CII for FY 2024-25 = 363
-CII for FY 2023-24 = 348
-CII Base Year = FY 2001-02 = 100
+CII FY 2025-26 = 376
+CII FY 2024-25 = 363
+CII FY 2023-24 = 348
+CII FY 2022-23 = 331
+CII FY 2021-22 = 317
+CII base year FY 2001-02 = 100
+CII (Cost Inflation Index) lookup: FY 2025-26 CII is 376 per CBDT Notification No. 70/2025
 
 Advance Tax Q1 deadline = 15 June 2025
 Advance Tax Q2 deadline = 15 September 2025

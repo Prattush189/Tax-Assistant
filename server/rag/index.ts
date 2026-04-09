@@ -39,7 +39,7 @@ const SOURCE_CONFIGS: SourceConfig[] = [
   { id: 'act-1961', filePath: 'act-1961.txt', label: 'IT Act 1961', splitter: 'act', pdfFile: 'Income Tax Acts/Income_Tax_Act_1961_as_amended_by_FA_Act_2026.pdf' },
   { id: 'cgst-2017', filePath: 'cgst-act.txt', label: 'CGST Act 2017', splitter: 'act', pdfFile: 'GST Acts/annexure-3_cgst-act_2017.pdf' },
   { id: 'igst-2017', filePath: 'igst-act.txt', label: 'IGST Act 2017', splitter: 'act', pdfFile: 'GST Acts/annexure-5-igst-act_2017.pdf' },
-  { id: 'reference', filePath: 'reference-data.txt', label: 'Tax Reference Guide', splitter: 'reference' },
+  { id: 'reference', filePath: 'reference-data.txt', label: 'Tax Reference Guide', splitter: 'reference', boost: 1.3 },
 ];
 
 const sourceConfigMap = new Map<string, SourceConfig>(
