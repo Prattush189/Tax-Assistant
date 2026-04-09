@@ -128,7 +128,7 @@ export function useChatManager() {
 
     const messageText = input.trim();
     const thisChatId = chatId; // capture for closure
-    scrollActionRef.current = 'user-to-top';
+    scrollActionRef.current = 'to-bottom';
     streamingChatIdRef.current = thisChatId;
 
     setMessages(prev => [...prev, userMessage, {
