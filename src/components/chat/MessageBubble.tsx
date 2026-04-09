@@ -6,6 +6,7 @@ import { Message, SectionReference } from '../../types';
 import { cn } from '../../lib/utils';
 import { ChartRenderer } from './ChartRenderer';
 import { PdfReferenceModal } from './PdfReferenceModal';
+import { SectionModal } from './SectionModal';
 import toast from 'react-hot-toast';
 
 function renderContent(content: string, role: 'user' | 'model') {
@@ -142,10 +143,12 @@ export function MessageBubble({ message, onContinue }: MessageBubbleProps) {
         )}
       </div>
 
-      {/* Section modal */}
-      {activeRef && (
+      {/* Section modal — PDF viewer if PDF available, text fallback otherwise */}
+      {activeRef && (activeRef.pdfFile || activeRef.pdfFiles) ? (
         <PdfReferenceModal reference={activeRef} onClose={() => setActiveRef(null)} />
-      )}
+      ) : activeRef ? (
+        <SectionModal reference={activeRef} onClose={() => setActiveRef(null)} />
+      ) : null}
     </div>
   );
 }

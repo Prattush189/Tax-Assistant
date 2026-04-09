@@ -632,7 +632,11 @@ export function retrieveContextWithRefs(query: string, topK = DEFAULT_TOP_K): Re
       text: c.text,
     };
     if (cfg?.pdfFile) ref.pdfFile = cfg.pdfFile;
-    if (cfg?.pdfFiles) ref.pdfFiles = cfg.pdfFiles;
+    // For comparison source: only attach IT Act PDFs if the chunk is about IT, not GST
+    if (cfg?.pdfFiles) {
+      const isGstChunk = /\bGST\b|\bCGST\b|\bSGST\b|\bIGST\b|\bUTGST\b/i.test(c.text);
+      if (!isGstChunk) ref.pdfFiles = cfg.pdfFiles;
+    }
     return ref;
   });
 
