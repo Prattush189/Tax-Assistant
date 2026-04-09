@@ -137,15 +137,15 @@ router.post('/google', async (req: Request, res: Response) => {
   }
 
   try {
-    // Exchange auth code for tokens
-    const { tokens } = await googleClient.getToken({
+    // Exchange auth code for Google tokens
+    const tokenResponse = await googleClient.getToken({
       code,
       redirect_uri: 'postmessage',
     });
 
     // Verify the ID token from the token exchange
     const ticket = await googleClient.verifyIdToken({
-      idToken: tokens.id_token!,
+      idToken: tokenResponse.tokens.id_token!,
       audience: GOOGLE_CLIENT_ID,
     });
     const payload = ticket.getPayload();
