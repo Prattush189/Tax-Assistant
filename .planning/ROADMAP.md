@@ -193,11 +193,7 @@ Plans:
   2. Retrieval output for any query includes source-type labels that correctly identify IT Act 1961, IT Act 2025, Comparison, CGST, IGST, or Reference as the chunk origin
   3. A mixed-domain query (e.g., "What is taxable supply under GST vs taxable income under IT Act?") returns chunks from both domains without one crowding out the other
   4. topK=5 retrieval produces responses within an acceptable input token budget (confirmed against usageRepo averages)
-**Plans**: 2 plans
-
-Plans:
-- [ ] 10-01-PLAN.md 2014 Golden query fixture (15 queries) + validation harness + baseline diagnostic
-- [ ] 10-02-PLAN.md 2014 Disable secondary sources, tune boost factors, validate all SCOR requirements
+**Plans**: TBD
 
 ---
 
@@ -223,11 +219,7 @@ Plans:
   3. Login page has animated gradient background, floating card with entrance animation, and smooth field focus transitions
   4. Signup page matches login design with consistent styling and animations
   5. Dark mode on auth pages uses proper contrast ratios (WCAG AA minimum)
-**Plans**: 2 plans
-
-Plans:
-- [ ] 10-01-PLAN.md 2014 Golden query fixture (15 queries) + validation harness + baseline diagnostic
-- [ ] 10-02-PLAN.md 2014 Disable secondary sources, tune boost factors, validate all SCOR requirements
+**Plans**: TBD
 
 ### Phase 12: Sidebar & Navigation
 **Goal**: The sidebar and navigation feel like a premium fintech app with clear visual hierarchy and polished interactions
@@ -238,11 +230,7 @@ Plans:
   2. Active nav tab has a premium indicator distinct from inactive tabs (not just background color)
   3. Chat history items are styled as polished cards with smooth hover transitions
   4. User profile section in sidebar footer has cleaner layout with proper alignment
-**Plans**: 2 plans
-
-Plans:
-- [ ] 10-01-PLAN.md 2014 Golden query fixture (15 queries) + validation harness + baseline diagnostic
-- [ ] 10-02-PLAN.md 2014 Disable secondary sources, tune boost factors, validate all SCOR requirements
+**Plans**: TBD
 
 ### Phase 13: Chat Page Overhaul
 **Goal**: The chat experience matches premium AI products — clean message bubbles, polished input area, and engaging empty state
@@ -253,11 +241,7 @@ Plans:
   2. Input area has cleaner button placement, visible attachment indicator, and polished border treatment
   3. Empty state shows premium landing with feature highlights and refined quick query cards
   4. Thinking indicator has a refined animation that feels premium
-**Plans**: 2 plans
-
-Plans:
-- [ ] 10-01-PLAN.md 2014 Golden query fixture (15 queries) + validation harness + baseline diagnostic
-- [ ] 10-02-PLAN.md 2014 Disable secondary sources, tune boost factors, validate all SCOR requirements
+**Plans**: TBD
 
 ### Phase 14: Calculator, Dashboard & Secondary Pages
 **Goal**: All secondary pages (calculator, dashboard, notice drafter, plan) match the premium standard set in phases 11-13
@@ -268,11 +252,7 @@ Plans:
   2. Dashboard stat cards, chart containers, and comparison widgets have premium styling
   3. Notice drafter form and preview panel styled with new theme
   4. Plan page tier cards redesigned with premium layout
-**Plans**: 2 plans
-
-Plans:
-- [ ] 10-01-PLAN.md 2014 Golden query fixture (15 queries) + validation harness + baseline diagnostic
-- [ ] 10-02-PLAN.md 2014 Disable secondary sources, tune boost factors, validate all SCOR requirements
+**Plans**: TBD
 
 ### Phase 15: Micro-Interactions & Polish
 **Goal**: Subtle animations and transitions give the app a polished, cohesive feel throughout
@@ -283,11 +263,7 @@ Plans:
   2. Buttons have consistent hover/press feedback (subtle scale or glow)
   3. Data-loading states use skeleton loaders or smooth fade-ins instead of jarring content pops
   4. No animation is distracting or flashy — all feel natural and understated
-**Plans**: 2 plans
-
-Plans:
-- [ ] 10-01-PLAN.md 2014 Golden query fixture (15 queries) + validation harness + baseline diagnostic
-- [ ] 10-02-PLAN.md 2014 Disable secondary sources, tune boost factors, validate all SCOR requirements
+**Plans**: TBD
 
 ## Progress
 
