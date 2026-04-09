@@ -13,6 +13,7 @@ interface SourceConfig {
   label: string;
   splitter: 'act' | 'comparison' | 'reference';
   boost?: number;
+  disabled?: boolean;  // skip loading and indexing if true
   pdfFile?: string;
   pdfFiles?: { label: string; file: string }[];
 }
@@ -39,32 +40,32 @@ const SOURCE_CONFIGS: SourceConfig[] = [
   { id: 'act-1961', filePath: 'act-1961.txt', label: 'IT Act 1961', splitter: 'act', pdfFile: 'Income Tax Acts/Income_Tax_Act_1961_as_amended_by_FA_Act_2026.pdf' },
   { id: 'cgst-2017', filePath: 'cgst-act.txt', label: 'CGST Act 2017', splitter: 'act', pdfFile: 'GST Acts/annexure-3_cgst-act_2017.pdf' },
   { id: 'igst-2017', filePath: 'igst-act.txt', label: 'IGST Act 2017', splitter: 'act', pdfFile: 'GST Acts/annexure-5-igst-act_2017.pdf' },
-  { id: 'reference', filePath: 'reference-data.txt', label: 'Tax Reference Guide', splitter: 'reference', boost: 1.3 },
+  { id: 'reference', filePath: 'reference-data.txt', label: 'Tax Reference Guide', splitter: 'reference', boost: 1.5 },
 
-  // GST Amendments
-  { id: 'cgst-amend-2018', filePath: 'GST Acts/cgst_amendment_2018_raw.txt', label: 'CGST Amendment 2018', splitter: 'act', pdfFile: 'GST Acts/annexure-3_cgst-amendment-act_2018.pdf' },
-  { id: 'cgst-amend-2023', filePath: 'GST Acts/cgst_amendment_2023_raw.txt', label: 'CGST Amendment 2023', splitter: 'act', pdfFile: 'GST Acts/cgst_ammendment_act_2023.pdf' },
-  { id: 'igst-amend-2018', filePath: 'GST Acts/igst_amendment_2018_raw.txt', label: 'IGST Amendment 2018', splitter: 'act', pdfFile: 'GST Acts/annexure-5-igst-amendment-act_2018_1.pdf' },
-  { id: 'cgst-jk-2017', filePath: 'GST Acts/cgst_jk_extension_raw.txt', label: 'CGST J&K Extension 2017', splitter: 'act', pdfFile: 'GST Acts/annexure-3_cgst-extension-to-jammu-and-kashmir-act_2017.pdf' },
+  // GST Amendments (disabled — secondary sources; re-enable in future versions if needed)
+  { id: 'cgst-amend-2018', filePath: 'GST Acts/cgst_amendment_2018_raw.txt', label: 'CGST Amendment 2018', splitter: 'act', disabled: true, pdfFile: 'GST Acts/annexure-3_cgst-amendment-act_2018.pdf' },
+  { id: 'cgst-amend-2023', filePath: 'GST Acts/cgst_amendment_2023_raw.txt', label: 'CGST Amendment 2023', splitter: 'act', disabled: true, pdfFile: 'GST Acts/cgst_ammendment_act_2023.pdf' },
+  { id: 'igst-amend-2018', filePath: 'GST Acts/igst_amendment_2018_raw.txt', label: 'IGST Amendment 2018', splitter: 'act', disabled: true, pdfFile: 'GST Acts/annexure-5-igst-amendment-act_2018_1.pdf' },
+  { id: 'cgst-jk-2017', filePath: 'GST Acts/cgst_jk_extension_raw.txt', label: 'CGST J&K Extension 2017', splitter: 'act', disabled: true, pdfFile: 'GST Acts/annexure-3_cgst-extension-to-jammu-and-kashmir-act_2017.pdf' },
 
-  // UTGST
-  { id: 'utgst-2017', filePath: 'GST Acts/utgst_raw.txt', label: 'UTGST Act 2017', splitter: 'act', pdfFile: 'GST Acts/anneure_6_utgst-act_2017.pdf' },
-  { id: 'utgst-amend-2018', filePath: 'GST Acts/utgst_amendment_2018_raw.txt', label: 'UTGST Amendment 2018', splitter: 'act', pdfFile: 'GST Acts/annexure-6-utgst-amendment-act_2018.pdf' },
+  // UTGST (disabled — secondary sources; re-enable in future versions if needed)
+  { id: 'utgst-2017', filePath: 'GST Acts/utgst_raw.txt', label: 'UTGST Act 2017', splitter: 'act', disabled: true, pdfFile: 'GST Acts/anneure_6_utgst-act_2017.pdf' },
+  { id: 'utgst-amend-2018', filePath: 'GST Acts/utgst_amendment_2018_raw.txt', label: 'UTGST Amendment 2018', splitter: 'act', disabled: true, pdfFile: 'GST Acts/annexure-6-utgst-amendment-act_2018.pdf' },
 
-  // SGSTs
-  { id: 'sgst-delhi', filePath: 'GST Acts/delhi_sgst_raw.txt', label: 'Delhi SGST', splitter: 'act', pdfFile: 'GST Acts/delhi-sgst.pdf' },
-  { id: 'sgst-haryana', filePath: 'GST Acts/haryana_sgst_raw.txt', label: 'Haryana SGST', splitter: 'act', pdfFile: 'GST Acts/haryana-sgst.pdf' },
-  { id: 'sgst-himachal', filePath: 'GST Acts/hp_sgst_raw.txt', label: 'Himachal Pradesh SGST', splitter: 'act', pdfFile: 'GST Acts/himachal-pradesh-sgst.pdf' },
-  { id: 'sgst-madhya', filePath: 'GST Acts/mp_sgst_raw.txt', label: 'Madhya Pradesh SGST', splitter: 'act', pdfFile: 'GST Acts/madhya-pradesh-sgst.pdf' },
-  { id: 'sgst-punjab', filePath: 'GST Acts/punjab_sgst_raw.txt', label: 'Punjab SGST', splitter: 'act', pdfFile: 'GST Acts/punjab-sgst.pdf' },
-  { id: 'sgst-jk', filePath: 'GST Acts/jk_sgst_raw.txt', label: 'J&K SGST', splitter: 'act', pdfFile: 'GST Acts/jammu-and-kashmir-sgst.pdf' },
+  // SGSTs (disabled — state acts crowd out CGST/IGST; re-enable in future versions if needed)
+  { id: 'sgst-delhi', filePath: 'GST Acts/delhi_sgst_raw.txt', label: 'Delhi SGST', splitter: 'act', disabled: true, pdfFile: 'GST Acts/delhi-sgst.pdf' },
+  { id: 'sgst-haryana', filePath: 'GST Acts/haryana_sgst_raw.txt', label: 'Haryana SGST', splitter: 'act', disabled: true, pdfFile: 'GST Acts/haryana-sgst.pdf' },
+  { id: 'sgst-himachal', filePath: 'GST Acts/hp_sgst_raw.txt', label: 'Himachal Pradesh SGST', splitter: 'act', disabled: true, pdfFile: 'GST Acts/himachal-pradesh-sgst.pdf' },
+  { id: 'sgst-madhya', filePath: 'GST Acts/mp_sgst_raw.txt', label: 'Madhya Pradesh SGST', splitter: 'act', disabled: true, pdfFile: 'GST Acts/madhya-pradesh-sgst.pdf' },
+  { id: 'sgst-punjab', filePath: 'GST Acts/punjab_sgst_raw.txt', label: 'Punjab SGST', splitter: 'act', disabled: true, pdfFile: 'GST Acts/punjab-sgst.pdf' },
+  { id: 'sgst-jk', filePath: 'GST Acts/jk_sgst_raw.txt', label: 'J&K SGST', splitter: 'act', disabled: true, pdfFile: 'GST Acts/jammu-and-kashmir-sgst.pdf' },
 
-  // Finance Acts
-  { id: 'fa-2019', filePath: 'GST Acts/fa_2019_raw.txt', label: 'Finance Act 2019', splitter: 'act', pdfFile: 'GST Acts/finance_act_2019.pdf' },
-  { id: 'fa-2020', filePath: 'GST Acts/fa_2020_raw.txt', label: 'Finance Act 2020', splitter: 'act', pdfFile: 'GST Acts/finance_act_2020.pdf' },
-  { id: 'fa-2021', filePath: 'GST Acts/fa_2021_raw.txt', label: 'Finance Act 2021', splitter: 'act', pdfFile: 'GST Acts/finance_act_2021.pdf' },
-  { id: 'fa-2022', filePath: 'GST Acts/fa_2022_raw.txt', label: 'Finance Act 2022', splitter: 'act', pdfFile: 'GST Acts/finance_act_of_2022.pdf' },
-  { id: 'fa-2023', filePath: 'GST Acts/fa_2023_raw.txt', label: 'Finance Act 2023', splitter: 'act', pdfFile: 'GST Acts/finance_act_of_2023.pdf' },
+  // Finance Acts (disabled — slot waste for core queries; re-enable in future versions if needed)
+  { id: 'fa-2019', filePath: 'GST Acts/fa_2019_raw.txt', label: 'Finance Act 2019', splitter: 'act', disabled: true, pdfFile: 'GST Acts/finance_act_2019.pdf' },
+  { id: 'fa-2020', filePath: 'GST Acts/fa_2020_raw.txt', label: 'Finance Act 2020', splitter: 'act', disabled: true, pdfFile: 'GST Acts/finance_act_2020.pdf' },
+  { id: 'fa-2021', filePath: 'GST Acts/fa_2021_raw.txt', label: 'Finance Act 2021', splitter: 'act', disabled: true, pdfFile: 'GST Acts/finance_act_2021.pdf' },
+  { id: 'fa-2022', filePath: 'GST Acts/fa_2022_raw.txt', label: 'Finance Act 2022', splitter: 'act', disabled: true, pdfFile: 'GST Acts/finance_act_of_2022.pdf' },
+  { id: 'fa-2023', filePath: 'GST Acts/fa_2023_raw.txt', label: 'Finance Act 2023', splitter: 'act', disabled: true, pdfFile: 'GST Acts/finance_act_of_2023.pdf' },
 ];
 
 const sourceConfigMap = new Map<string, SourceConfig>(
@@ -479,10 +480,12 @@ function retrieve(query: string, topK = DEFAULT_TOP_K): Chunk[] {
 
   if (scored.length === 0 || scored[0].score < 2) return [];
 
-  // Dynamic bucket balancing — works with any number of sources
+  // Dynamic bucket balancing — works with any number of active sources
   const buckets = new Map<string, ScoredChunk[]>();
   for (const cfg of SOURCE_CONFIGS) {
-    buckets.set(cfg.id, []);
+    if (!cfg.disabled) {
+      buckets.set(cfg.id, []);
+    }
   }
 
   // First pass — guarantee one slot per source (if available)
@@ -532,6 +535,10 @@ export function initRAG(): void {
   nextChunkId = 0;
 
   for (const cfg of SOURCE_CONFIGS) {
+    if (cfg.disabled) {
+      console.log(`[RAG] Skipping disabled source: ${cfg.id}`);
+      continue;
+    }
     try {
       const chunks = buildChunks(join(dataDir, cfg.filePath), cfg);
       console.log(`[RAG] Loaded ${cfg.id}: ${chunks.length} chunks`);
