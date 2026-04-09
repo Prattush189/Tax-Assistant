@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { User, FileText, Copy, Check, Flag, ChevronRight, BookOpen } from 'lucide-react';
@@ -26,6 +26,37 @@ function renderContent(content: string, role: 'user' | 'model') {
   });
 }
 
+/** Smooth-height wrapper: animates height changes during streaming */
+function StreamingWrapper({ children, isStreaming }: { children: React.ReactNode; isStreaming: boolean }) {
+  const contentRef = useRef<HTMLDivElement>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isStreaming || !contentRef.current || !wrapperRef.current) return;
+    const height = contentRef.current.scrollHeight;
+    wrapperRef.current.style.height = `${height}px`;
+  });
+
+  // When streaming stops, switch to auto height
+  useEffect(() => {
+    if (!isStreaming && wrapperRef.current) {
+      wrapperRef.current.style.height = 'auto';
+    }
+  }, [isStreaming]);
+
+  if (!isStreaming) return <>{children}</>;
+
+  return (
+    <div
+      ref={wrapperRef}
+      className="overflow-hidden transition-[height] duration-300 ease-out"
+      style={{ height: 0 }}
+    >
+      <div ref={contentRef}>{children}</div>
+    </div>
+  );
+}
+
 interface MessageBubbleProps {
   message: Message;
   onContinue?: () => void;
@@ -35,6 +66,7 @@ export function MessageBubble({ message, onContinue }: MessageBubbleProps) {
   const { role, content, timestamp, attachment, truncated, references } = message;
   const [copied, setCopied] = useState(false);
   const [activeRef, setActiveRef] = useState<SectionReference | null>(null);
+  const isStreaming = role === 'model' && !truncated && !references && content.length > 0;
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(content);
@@ -48,7 +80,7 @@ export function MessageBubble({ message, onContinue }: MessageBubbleProps) {
   };
 
   return (
-    <div className={cn("flex gap-3", role === 'user' ? 'flex-row-reverse' : '')}>
+    <div className={cn("flex gap-3 animate-[fadeSlideIn_0.3s_ease-out]", role === 'user' ? 'flex-row-reverse' : '')}>
       {/* Avatar */}
       <div className={cn(
         "w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 mt-1",
@@ -78,7 +110,9 @@ export function MessageBubble({ message, onContinue }: MessageBubbleProps) {
               <span className="truncate max-w-[200px]">{attachment.filename}</span>
             </div>
           )}
-          {renderContent(content, role)}
+          <StreamingWrapper isStreaming={isStreaming}>
+            {renderContent(content, role)}
+          </StreamingWrapper>
           <div className={cn(
             "text-[10px] mt-2 opacity-0 hover:opacity-40 transition-opacity select-none",
             role === 'user' ? 'text-right text-white/60' : 'text-gray-400'
