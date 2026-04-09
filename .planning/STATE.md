@@ -161,5 +161,5 @@ None active for v1.1.
 ## Session Continuity
 
 Last session: 2026-04-09
-Stopped at: Completed 09-01-PLAN.md (reference data — CII table, due dates, ITR form matrix)
-Resume file: .planning/phases/09-reference-data/09-01-SUMMARY.md
+Stopped at: Phase 10 context gathered — ready for planning
+Resume file: .planning/phases/10-scoring-integration-validation/10-CONTEXT.md
