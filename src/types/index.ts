@@ -15,6 +15,10 @@ export interface Message {
     filename: string;
     mimeType: string;
   };
+  attachments?: {
+    filename: string;
+    mimeType: string;
+  }[];
   truncated?: boolean;
   references?: SectionReference[];
 }
@@ -24,7 +28,6 @@ export interface UploadResponse {
   filename: string;
   mimeType: string;
   sizeBytes: number;
-  fileUri: string;             // Gemini Files API URI — session only, never persisted
   extractedData: DocumentSummary;
 }
 
@@ -47,14 +50,7 @@ export interface DocumentSummary {
 export interface DocumentContext {
   filename: string;
   mimeType: string;
-  fileUri: string;
   extractedData: DocumentSummary;
-}
-
-// Shape expected by /api/chat server route
-export interface HistoryItem {
-  role: string;
-  parts: Array<{ text: string }>;
 }
 
 // ── Tax Calculator Types ──────────────────────────────────────────────────

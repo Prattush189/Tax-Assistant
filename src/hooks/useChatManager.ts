@@ -17,7 +17,7 @@ export function useChatManager() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [activeDocument, setActiveDocument] = useState<DocumentContext | null>(null);
+  const [activeDocuments, setActiveDocuments] = useState<DocumentContext[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const lastUserMsgRef = useRef<HTMLDivElement>(null);
@@ -63,7 +63,7 @@ export function useChatManager() {
     streamingChatIdRef.current = null;
     setIsLoading(false);
     setCurrentChatId(chatId);
-    setActiveDocument(null);
+    setActiveDocuments([]);
     scrollActionRef.current = 'to-bottom';
     try {
       const msgs = await fetchChatMessages(chatId);
@@ -88,7 +88,7 @@ export function useChatManager() {
     setChatList(prev => [chat, ...prev]);
     setCurrentChatId(chat.id);
     setMessages([]);
-    setActiveDocument(null);
+    setActiveDocuments([]);
     return chat.id;
   }, []);
 
@@ -98,7 +98,7 @@ export function useChatManager() {
     if (currentChatId === chatId) {
       setCurrentChatId(null);
       setMessages([]);
-      setActiveDocument(null);
+      setActiveDocuments([]);
     }
   }, [currentChatId]);
 
@@ -121,8 +121,8 @@ export function useChatManager() {
       role: 'user',
       content: input.trim(),
       timestamp: new Date(),
-      attachment: activeDocument
-        ? { filename: activeDocument.filename, mimeType: activeDocument.mimeType }
+      attachments: activeDocuments.length > 0
+        ? activeDocuments.map(d => ({ filename: d.filename, mimeType: d.mimeType }))
         : undefined,
     };
 
@@ -200,7 +200,7 @@ export function useChatManager() {
             return updated;
           });
         },
-        activeDocument ? { filename: activeDocument.filename, mimeType: activeDocument.mimeType, extractedData: activeDocument.extractedData } : undefined,
+        activeDocuments.length > 0 ? activeDocuments.map(d => ({ filename: d.filename, mimeType: d.mimeType, extractedData: d.extractedData })) : undefined,
         (stopReason, references) => {
           if (stopReason === 'max_tokens') wasTruncated = true;
           if (references?.length) receivedRefs = references;
@@ -226,7 +226,7 @@ export function useChatManager() {
     } finally {
       if (!isStale()) setIsLoading(false);
     }
-  }, [isLoading, input, currentChatId, activeDocument, createNewChat, loadChatList]);
+  }, [isLoading, input, currentChatId, activeDocuments, createNewChat, loadChatList]);
 
   const continueResponse = useCallback(async () => {
     if (isLoading) return;
@@ -324,14 +324,20 @@ export function useChatManager() {
     }
   }, [isLoading, currentChatId]);
 
-  const attachDocument = (doc: DocumentContext) => setActiveDocument(doc);
-  const detachDocument = () => setActiveDocument(null);
+  const attachDocument = (doc: DocumentContext) => setActiveDocuments(prev => [...prev, doc]);
+  const detachDocument = (index?: number) => {
+    if (index !== undefined) {
+      setActiveDocuments(prev => prev.filter((_, i) => i !== index));
+    } else {
+      setActiveDocuments([]);
+    }
+  };
 
   const clearChat = () => {
     setCurrentChatId(null);
     setMessages([]);
     setInput('');
-    setActiveDocument(null);
+    setActiveDocuments([]);
   };
 
   return {
@@ -349,7 +355,7 @@ export function useChatManager() {
     createNewChat,
     switchChat,
     deleteChatById,
-    activeDocument,
+    activeDocuments,
     attachDocument,
     detachDocument,
     continueResponse,

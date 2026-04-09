@@ -35,7 +35,6 @@ export function DocumentsView({ activeDocument, onDocumentAttach, onDocumentDeta
       const doc: DocumentContext = {
         filename: result.filename,
         mimeType: result.mimeType,
-        fileUri: result.fileUri,
         extractedData: result.extractedData,
       };
 

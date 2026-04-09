@@ -1,14 +1,12 @@
 import { Router, Response } from 'express';
-import { GoogleGenAI } from '@google/genai';
+import { grok, GROK_MODEL } from '../lib/grok.js';
 import { noticeRepo } from '../db/repositories/noticeRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { AuthRequest } from '../types.js';
 import { retrieveContext } from '../rag/index.js';
 
 const router = Router();
-const ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_AI_API_KEY! });
 
-const MODEL = 'gemini-2.5-flash';
 const MAX_TOKENS = 8192;
 
 // ── Plan-based notice limits (per month) ──
@@ -168,20 +166,21 @@ router.post('/generate', async (req: AuthRequest, res: Response) => {
   let fullResponse = '';
 
   try {
-    const stream = await ai.models.generateContentStream({
-      model: MODEL,
-      contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
-      config: {
-        maxOutputTokens: MAX_TOKENS,
-        systemInstruction: NOTICE_SYSTEM_PROMPT,
-      },
+    const stream = await grok.chat.completions.create({
+      model: GROK_MODEL,
+      messages: [
+        { role: 'system', content: NOTICE_SYSTEM_PROMPT },
+        { role: 'user', content: userPrompt },
+      ],
+      max_tokens: MAX_TOKENS,
+      stream: true,
     });
 
     for await (const chunk of stream) {
-      const text = chunk.text;
-      if (text) {
-        fullResponse += text;
-        res.write(`data: ${JSON.stringify({ text })}\n\n`);
+      const delta = chunk.choices?.[0]?.delta?.content;
+      if (delta) {
+        fullResponse += delta;
+        res.write(`data: ${JSON.stringify({ text: delta })}\n\n`);
       }
     }
 

@@ -1,23 +1,30 @@
 // server/routes/chat.ts
 import { Router, Response } from 'express';
-import { GoogleGenAI } from '@google/genai';
+import { grok, GROK_MODEL, INPUT_COST_PER_TOKEN, OUTPUT_COST_PER_TOKEN, WEB_SEARCH_COST } from '../lib/grok.js';
 import { chatRepo } from '../db/repositories/chatRepo.js';
 import { messageRepo } from '../db/repositories/messageRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { retrieveContextWithRefs, SectionReference } from '../rag/index.js';
 import { AuthRequest } from '../types.js';
+import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 
 const router = Router();
-const ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_AI_API_KEY! });
 
-const PRIMARY_MODEL = 'gemini-2.5-flash';
-const FALLBACK_MODEL = 'gemini-2.5-flash-lite';
 const MAX_TOKENS = 8192;
 
-// Gemini Flash pricing (conservative — uses 2.5 rates)
-const INPUT_COST_PER_TOKEN = 0.15 / 1_000_000;
-const OUTPUT_COST_PER_TOKEN = 0.60 / 1_000_000;
+// ── Selective web search — only for queries about recent/latest info ──
+const WEB_SEARCH_PATTERNS = [
+  /\b(latest|recent|new|updated?|current)\s+(change|circular|notification|amendment|rule|budget|reform)/i,
+  /\b(budget\s+20\d{2}|union\s+budget)\b/i,
+  /\b(circular|notification|press\s+release|CBDT|CBIC)\b/i,
+  /\b(announced?|introduced)\s+in\s+20\d{2}/i,
+  /\bchanges?\s+in\s+20(2[5-9]|[3-9]\d)\b/i,
+];
+
+function shouldEnableWebSearch(query: string): boolean {
+  return WEB_SEARCH_PATTERNS.some(p => p.test(query));
+}
 
 // ── Plan-based message limits ──
 interface PlanConfig {
@@ -42,8 +49,7 @@ function getMessageCount(userId: string, period: 'day' | 'month'): number {
     const start = new Date(now.getFullYear(), now.getMonth(), 1);
     since = start.toISOString().replace('Z', '');
   }
-  const result = usageRepo.countByUser(userId, since);
-  return result;
+  return usageRepo.countByUser(userId, since);
 }
 
 const SYSTEM_INSTRUCTION = `You are "Smart AI" — an expert on Indian Income Tax, GST, and financial planning. You give thorough, professional, well-structured answers.
@@ -66,10 +72,6 @@ RESPONSE QUALITY:
 CALCULATION FORMATTING:
 - When showing tax computations, make them READABLE. Use one line per slab, not compressed into a single line.
 - Always express final amounts in Lakhs (e.g., ₹2.96L not ₹296.4K or 296400). Use K only for amounts under ₹1L.
-- Show slab-wise breakdown clearly in a table or list format:
-  - ₹0 – ₹2.5L → Nil
-  - ₹2.5L – ₹5L → ₹12,500 (5%)
-  - ₹5L – ₹10L → ₹1,00,000 (20%)
 - Use Indian number formatting with commas: ₹1,50,000 not ₹150000 or 150K.
 - End with a brief practical tip or recommendation where relevant.
 - Mention consulting a CA for official filing.
@@ -79,10 +81,9 @@ ACCURACY & HONESTY:
 - Cite specific section numbers when referencing the Act (both old and new Act numbers if applicable).
 - The Income Tax Act 2025 (effective 1 April 2026) replaced the 1961 Act. Use "Tax Year" not "Assessment Year" for the new Act.
 - NEVER fabricate or invent section numbers, rates, thresholds, dates, or policy changes. If you are not certain about a specific fact, say so clearly.
-- If no changes exist for what the user asks about, say so directly and confidently: "No GST rate changes were announced in 2026." Do NOT invent changes to fill the response.
-- It is BETTER to give a short, accurate answer than a long, hallucinated one. A confident "No changes were made" is more valuable than a fabricated table of changes.
-- When you don't have specific information, say what you DO know and recommend consulting a CA for the latest updates. Do NOT fill gaps with speculation or made-up data.
-- CONSISTENCY: NEVER show a rate table that contradicts your own changes section. If you mention a rate was reduced from X% to Y%, the rate table must show Y%, not X%.
+- If no changes exist for what the user asks about, say so directly and confidently. Do NOT invent changes to fill the response.
+- It is BETTER to give a short, accurate answer than a long, hallucinated one.
+- CONSISTENCY: NEVER show a rate table that contradicts your own changes section.
 
 CURRENT GST RATE STRUCTURE (Post 56th GST Council, effective 22 Sep 2025):
 Use ONLY these rates when showing current GST slabs. The old 12% and 28% slabs have been largely removed.
@@ -96,36 +97,37 @@ Use ONLY these rates when showing current GST slabs. The old 12% and 28% slabs h
 Do NOT show 12% or 28% as current general slabs. They have been merged into 5% and 18% respectively.
 
 USING REFERENCE CONTEXT:
-- Reference context from the Income Tax Acts and GST Acts may be provided with the question. Use it to answer accurately but DO NOT mention the reference. Just answer directly.
-- Do NOT blindly summarize or parrot the reference. Use your own expertise to craft the answer, and cross-check specific numbers (rates, thresholds, section numbers) against the reference.
-- If the reference contains information that contradicts your knowledge, prefer the reference (it reflects the latest Act amendments).
-- If the reference is not relevant to the question asked, IGNORE it and answer from your own knowledge — but only state facts you are confident about.
-- CRITICAL: If neither the reference context NOR your training data covers the user's question, be honest. Say "I don't have specific information about [topic]" rather than generating plausible-sounding but incorrect information.
+- Official Act text may be included for reference verification. Use it to verify section numbers and rates but answer naturally.
+- If the reference contradicts your knowledge, prefer the reference (it reflects the latest Act amendments).
+- Do NOT mention "provided context", "the context", "based on the context", or "reference context".
 
-BANNED PHRASES — NEVER use these:
-- "provided context", "the context", "based on the context", "reference context"
+BANNED PHRASES:
 - "potential future trends", "might focus on", "could involve" (no speculation)
-- Do NOT list basic/obvious sections as filler (e.g., listing Section 9, 16, 17 of GST Act unless the user specifically asks)
-- Do NOT pad answers with compliance deadlines, generic return filing dates, or section lists to make a thin answer look complete
+- Do NOT list basic/obvious sections as filler
+- Do NOT pad answers with compliance deadlines, generic return filing dates, or section lists
 
 RESPONSE APPROACH:
 - Lead with the ACTUAL answer. If changes exist, list them directly. If no changes exist, say so immediately.
 - If you know the answer, give it confidently. Do not hedge with "based on general knowledge".
-- If there are no changes for what the user asked, state it clearly and directly: "No GST changes were announced in [year]. The last significant changes were [X]."
-- Focus on the LATEST known changes (Budget 2025, Finance Act 2025, IT Act 2025, GST Council decisions). Do not give generic/outdated information.
-- Do NOT pad responses with basic definitions or obvious section listings that the user didn't ask about.
-- NEVER invent tables of rate changes, slab restructurings, or policy announcements that you are not certain actually happened. An honest short answer beats a detailed fabricated one.
+- Focus on the LATEST known changes (Budget 2025, Finance Act 2025, IT Act 2025, GST Council decisions).
+- NEVER invent tables of rate changes, slab restructurings, or policy announcements that you are not certain actually happened.
 
 FOCUS ON THE QUESTION:
 - Read the user's ACTUAL question carefully. Do not repeat the same answer for different questions.
-- If the user asks about a specific form, explain THAT form in detail (purpose, who files it, when, where, new form number).
-- If the user asks for a comparison, give a FULL comparison table covering ALL relevant items, not just one.
-- If the user corrects themselves ("I meant 15CA"), answer about 15CA specifically — do not repeat your previous answer.`;
+- If the user asks about a specific form, explain THAT form in detail.
+- If the user asks for a comparison, give a FULL comparison table covering ALL relevant items.
+- If the user corrects themselves, answer the corrected question specifically.`;
 
 const MAX_HISTORY_MESSAGES = 10;
 
+// Attachment limits per plan
+const ATTACHMENT_LIMITS: Record<string, number> = { free: 1, pro: 3, enterprise: 5 };
+
 router.post('/chat', async (req: AuthRequest, res: Response) => {
-  const { chatId, message, fileContext } = req.body;
+  const { chatId, message, fileContext, fileContexts: rawFileContexts } = req.body;
+  // Normalize: support both single fileContext and array fileContexts
+  const fileContexts: { filename: string; mimeType: string; extractedData?: unknown }[] =
+    rawFileContexts ?? (fileContext ? [fileContext] : []);
 
   if (!req.user) {
     res.status(401).json({ error: 'Authentication required' });
@@ -161,6 +163,13 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
     return;
   }
 
+  // Check attachment limit
+  const attachLimit = ATTACHMENT_LIMITS[plan] ?? 1;
+  if (fileContexts.length > attachLimit) {
+    res.status(400).json({ error: `Your plan allows ${attachLimit} attachment(s) per message. Upgrade for more.`, upgrade: true });
+    return;
+  }
+
   // Verify chat belongs to user
   const chat = chatRepo.findById(chatId);
   if (!chat || chat.user_id !== req.user.id) {
@@ -168,32 +177,40 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
     return;
   }
 
-  // Persist user message
-  messageRepo.create(chatId, 'user', message.trim(), fileContext?.filename, fileContext?.mimeType);
+  // Persist user message (store first attachment for backward compat)
+  const firstFile = fileContexts[0];
+  messageRepo.create(chatId, 'user', message.trim(), firstFile?.filename, firstFile?.mimeType);
 
-  // Load history from DB — Gemini uses 'user'/'model' roles
+  // Load history from DB — convert 'model' role to 'assistant' for OpenAI format
   const dbMessages = messageRepo.findByChatId(chatId);
-  const history = dbMessages.slice(0, -1)
+  const history: ChatCompletionMessageParam[] = dbMessages.slice(0, -1)
     .slice(-MAX_HISTORY_MESSAGES)
     .map(m => ({
-      role: m.role as 'user' | 'model',
-      parts: [{ text: m.content }],
+      role: (m.role === 'model' ? 'assistant' : 'user') as 'user' | 'assistant',
+      content: m.content,
     }));
 
+  // Ensure conversation starts with user message
   if (history.length > 0 && history[0].role !== 'user') {
     history.shift();
   }
 
   let userContent = message.trim();
-  if (fileContext?.extractedData) {
-    userContent = `[Attached document context: ${JSON.stringify(fileContext.extractedData)}]\n\n${userContent}`;
+  if (fileContexts.length > 0) {
+    const contextStr = fileContexts
+      .filter(fc => fc.extractedData)
+      .map(fc => `[Attached: ${fc.filename}]\n${JSON.stringify(fc.extractedData)}`)
+      .join('\n\n');
+    if (contextStr) {
+      userContent = `${contextStr}\n\n${userContent}`;
+    }
   }
 
-  // RAG: retrieve relevant Act sections
+  // RAG: retrieve relevant Act sections (lightweight — 2-3 chunks for reference)
   let ragReferences: SectionReference[] = [];
   const ragResult = retrieveContextWithRefs(userContent);
   if (ragResult) {
-    userContent = `[Relevant sections from the Income Tax Acts]:\n\n${ragResult.context}\n\n---\n\n${userContent}`;
+    userContent = `[Official Act text for reference verification]:\n${ragResult.context}\n\n---\n\n${userContent}`;
     ragReferences = ragResult.references;
   }
 
@@ -205,47 +222,56 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
 
   let fullResponse = '';
 
-  const requestBody = {
-    contents: [
-      ...history,
-      { role: 'user' as const, parts: [{ text: userContent }] },
-    ],
-    config: {
-      maxOutputTokens: MAX_TOKENS,
-      systemInstruction: SYSTEM_INSTRUCTION,
-    },
-  };
+  const messages: ChatCompletionMessageParam[] = [
+    { role: 'system', content: SYSTEM_INSTRUCTION },
+    ...history,
+    { role: 'user', content: userContent },
+  ];
 
-  // Retry logic: try primary model, then fallback, up to 3 total attempts
+  // Retry logic: up to 3 attempts with exponential backoff
   const MAX_RETRIES = 3;
-  const MODELS = [PRIMARY_MODEL, FALLBACK_MODEL, FALLBACK_MODEL];
-
   let success = false;
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    const model = attempt === 0 ? PRIMARY_MODEL : FALLBACK_MODEL;
     try {
-      const stream = await ai.models.generateContentStream({ model, ...requestBody });
+      const useWebSearch = shouldEnableWebSearch(message);
+      const stream = await grok.chat.completions.create({
+        model: GROK_MODEL,
+        messages,
+        max_tokens: MAX_TOKENS,
+        stream: true,
+        stream_options: { include_usage: true },
+        ...(useWebSearch ? { tools: [{ type: 'function' as const, function: { name: 'web_search', description: 'Search the web', parameters: { type: 'object', properties: {} } } }] } : {}),
+      });
 
       let stopReason: string | null = null;
       let inputTok = 0;
       let outputTok = 0;
+      let usedWebSearch = false;
 
       for await (const chunk of stream) {
-        const text = chunk.text;
-        if (text) {
-          fullResponse += text;
-          res.write(`data: ${JSON.stringify({ text })}\n\n`);
+        // Skip tool call deltas (web search internals — don't send to client)
+        if (chunk.choices?.[0]?.delta?.tool_calls) {
+          usedWebSearch = true;
+          continue;
         }
 
-        if (chunk.usageMetadata) {
-          inputTok = chunk.usageMetadata.promptTokenCount ?? 0;
-          outputTok = chunk.usageMetadata.candidatesTokenCount ?? 0;
+        const delta = chunk.choices?.[0]?.delta?.content;
+        if (delta) {
+          fullResponse += delta;
+          res.write(`data: ${JSON.stringify({ text: delta })}\n\n`);
         }
 
-        if (chunk.candidates?.[0]?.finishReason) {
-          const reason = chunk.candidates[0].finishReason;
-          stopReason = reason === 'MAX_TOKENS' ? 'max_tokens' : 'end_turn';
+        // Capture finish reason
+        const finishReason = chunk.choices?.[0]?.finish_reason;
+        if (finishReason) {
+          stopReason = finishReason === 'length' ? 'max_tokens' : 'end_turn';
+        }
+
+        // Capture token usage (arrives in the final chunk)
+        if (chunk.usage) {
+          inputTok = chunk.usage.prompt_tokens ?? 0;
+          outputTok = chunk.usage.completion_tokens ?? 0;
         }
       }
 
@@ -261,21 +287,21 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
       }
       chatRepo.touchTimestamp(chatId);
 
-      // Log usage — only on success (errors don't count toward rate limit)
-      const cost = (inputTok * INPUT_COST_PER_TOKEN) + (outputTok * OUTPUT_COST_PER_TOKEN);
+      // Log usage (include web search cost if used)
+      const cost = (inputTok * INPUT_COST_PER_TOKEN) + (outputTok * OUTPUT_COST_PER_TOKEN) + (usedWebSearch ? WEB_SEARCH_COST : 0);
       usageRepo.log(clientIp, req.user.id, inputTok, outputTok, cost, false);
 
       res.write(`data: ${JSON.stringify({ done: true, stop_reason: stopReason, references: ragReferences })}\n\n`);
       success = true;
-      break; // Success — exit retry loop
+      break;
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      const isRetryable = errMsg.includes('503') || errMsg.includes('UNAVAILABLE') || errMsg.includes('overloaded') || errMsg.includes('500') || errMsg.includes('404') || errMsg.includes('no longer available');
-      console.warn(`[chat] Attempt ${attempt + 1}/${MAX_RETRIES} failed (${model}): ${errMsg.slice(0, 100)}`);
+      const status = (err as any)?.status ?? 0;
+      const isRetryable = [429, 500, 502, 503].includes(status) || errMsg.includes('rate_limit');
+      console.warn(`[chat] Attempt ${attempt + 1}/${MAX_RETRIES} failed: ${errMsg.slice(0, 120)}`);
 
       if (!isRetryable || attempt === MAX_RETRIES - 1) {
-        // Not retryable or last attempt — send error to client
-        const isRateLimit = errMsg.includes('429') || errMsg.toLowerCase().includes('rate');
+        const isRateLimit = status === 429 || errMsg.toLowerCase().includes('rate');
         const clientMessage = isRateLimit
           ? 'Too many requests. Please wait a moment and try again.'
           : "I'm having trouble connecting. Please try again in a moment.";
@@ -283,7 +309,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
         break;
       }
 
-      // Wait before retry (2s, 4s, 6s)
+      // Exponential backoff: 2s, 4s, 6s
       await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
     }
   }

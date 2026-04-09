@@ -134,7 +134,7 @@ function classifyQuery(query: string): ClassificationResult {
 
 // ── topK default ──
 
-const DEFAULT_TOP_K = 5;
+const DEFAULT_TOP_K = 3;
 
 // ── Stopwords to skip during scoring ──
 

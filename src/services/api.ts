@@ -25,13 +25,18 @@ export async function sendChatMessage(
   message: string,
   onChunk: (text: string) => void,
   onError: (msg: string) => void,
-  fileContext?: { filename: string; mimeType: string; extractedData?: unknown },
+  fileContexts?: { filename: string; mimeType: string; extractedData?: unknown }[],
   onDone?: (stopReason: string | null, references?: SectionReference[]) => void,
 ): Promise<void> {
   const body: Record<string, unknown> = {
     message,
     chatId: chatId ?? undefined,
-    fileContext: fileContext ?? null,
+    // Send as single fileContext for backward compat, or array for multi
+    ...(fileContexts && fileContexts.length === 1
+      ? { fileContext: fileContexts[0] }
+      : fileContexts && fileContexts.length > 1
+        ? { fileContexts }
+        : { fileContext: null }),
   };
 
   const doStreamFetch = () => fetch('/api/chat', {

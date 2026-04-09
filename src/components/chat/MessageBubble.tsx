@@ -64,7 +64,7 @@ interface MessageBubbleProps {
 }
 
 export function MessageBubble({ message, onContinue, isLastModel, isLoading }: MessageBubbleProps) {
-  const { role, content, timestamp, attachment, truncated, references } = message;
+  const { role, content, timestamp, attachment, attachments, truncated, references } = message;
   const [copied, setCopied] = useState(false);
   const [activeRef, setActiveRef] = useState<SectionReference | null>(null);
   // Only the last model message while loading is considered "streaming"
@@ -101,17 +101,18 @@ export function MessageBubble({ message, onContinue, isLastModel, isLoading }: M
             ? 'bg-emerald-600 text-white rounded-tr-sm'
             : 'bg-white dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700/50 text-gray-800 dark:text-gray-200 rounded-tl-sm'
         )}>
-          {attachment && (
-            <div className={cn(
-              "flex items-center gap-1.5 mb-2 px-2 py-1 rounded-lg text-xs w-fit",
+          {/* Show attachments (support both single and array) */}
+          {(attachments ?? (attachment ? [attachment] : [])).map((att, i) => (
+            <div key={i} className={cn(
+              "flex items-center gap-1.5 mb-1 px-2 py-1 rounded-lg text-xs w-fit",
               role === 'user'
                 ? "bg-white/15 text-white/90"
                 : "bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400"
             )}>
               <FileText className="w-3 h-3" />
-              <span className="truncate max-w-[200px]">{attachment.filename}</span>
+              <span className="truncate max-w-[200px]">{att.filename}</span>
             </div>
-          )}
+          ))}
           <StreamingWrapper isStreaming={isStreaming}>
             {renderContent(content, role)}
           </StreamingWrapper>

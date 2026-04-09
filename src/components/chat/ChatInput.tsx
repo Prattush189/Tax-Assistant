@@ -1,83 +1,116 @@
-import { useRef } from 'react';
+import { useRef, useCallback } from 'react';
 import { Send, Paperclip, FileText, X, Loader2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { UploadPhase } from '../../hooks/useFileUpload';
+import { DocumentContext } from '../../types';
+import toast from 'react-hot-toast';
 
 interface ChatInputProps {
   input: string;
   isLoading: boolean;
   onInputChange: (value: string) => void;
   onSend: () => void;
-  activeDocument?: { filename: string } | null;
+  activeDocuments: DocumentContext[];
   onFileSelect?: (file: File) => void;
-  onDetachDocument?: () => void;
+  onDetachDocument?: (index: number) => void;
   uploadPhase?: UploadPhase;
+  attachmentLimit: number;
 }
 
 export function ChatInput({
   input, isLoading, onInputChange, onSend,
-  activeDocument, onFileSelect, onDetachDocument, uploadPhase,
+  activeDocuments, onFileSelect, onDetachDocument, uploadPhase, attachmentLimit,
 }: ChatInputProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const canAttachMore = activeDocuments.length < attachmentLimit;
+
+  const handleFiles = useCallback((files: FileList | File[]) => {
+    if (!onFileSelect) return;
+    const fileArray = Array.from(files);
+    const remaining = attachmentLimit - activeDocuments.length;
+    if (remaining <= 0) {
+      toast.error(`Maximum ${attachmentLimit} attachment(s) allowed on your plan.`);
+      return;
+    }
+    const toAdd = fileArray.slice(0, remaining);
+    if (toAdd.length < fileArray.length) {
+      toast.error(`Only ${remaining} more attachment(s) allowed. Some files were skipped.`);
+    }
+    toAdd.forEach(f => onFileSelect(f));
+  }, [onFileSelect, activeDocuments.length, attachmentLimit]);
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file && onFileSelect) onFileSelect(file);
+    if (e.target.files) handleFiles(e.target.files);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  // Clipboard paste — detect images
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const items = Array.from(e.clipboardData.items);
+    const imageItems = items.filter(item => item.type.startsWith('image/'));
+    if (imageItems.length === 0) return; // Let normal text paste proceed
+
+    e.preventDefault();
+    const files = imageItems.map(item => item.getAsFile()).filter(Boolean) as File[];
+    if (files.length > 0) handleFiles(files);
+  }, [handleFiles]);
+
   const isUploading = uploadPhase === 'uploading' || uploadPhase === 'analyzing';
+  const hasAttachments = activeDocuments.length > 0 || isUploading;
 
   return (
     <div className="shrink-0 p-4 lg:p-6 bg-white dark:bg-[#111827] border-t border-gray-200 dark:border-gray-800">
       <div className="max-w-4xl mx-auto">
-        {/* Attachment badge */}
-        {(activeDocument || isUploading) && (
-          <div className={cn(
-            "mx-12 mb-0 px-3 py-2 border border-b-0 rounded-t-xl flex items-center gap-2 text-xs",
-            uploadPhase === 'error'
-              ? "bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-800 text-red-600 dark:text-red-400"
-              : "bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800/40 text-emerald-700 dark:text-emerald-400"
-          )}>
-            {isUploading ? (
-              <>
-                <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-                <span>{uploadPhase === 'uploading' ? 'Uploading document...' : 'Analyzing document...'}</span>
-              </>
-            ) : activeDocument ? (
-              <>
-                <FileText className="w-3.5 h-3.5 shrink-0" />
-                <span className="truncate">{activeDocument.filename} attached</span>
-                <button
-                  onClick={onDetachDocument}
-                  className="ml-auto p-0.5 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 rounded transition-colors"
+        {/* Attachment badges */}
+        {hasAttachments && (
+          <div className="mx-12 mb-0 px-3 py-2 border border-b-0 rounded-t-xl border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/40">
+            <div className="flex flex-wrap gap-1.5">
+              {activeDocuments.map((doc, i) => (
+                <div
+                  key={`${doc.filename}-${i}`}
+                  className="flex items-center gap-1.5 px-2 py-1 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/40 rounded-lg text-xs text-emerald-700 dark:text-emerald-400"
                 >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </>
-            ) : null}
+                  <FileText className="w-3 h-3 shrink-0" />
+                  <span className="truncate max-w-[120px]">{doc.filename}</span>
+                  <button
+                    onClick={() => onDetachDocument?.(i)}
+                    className="p-0.5 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 rounded transition-colors"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              ))}
+              {isUploading && (
+                <div className="flex items-center gap-1.5 px-2 py-1 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/40 rounded-lg text-xs text-emerald-700 dark:text-emerald-400">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  <span>{uploadPhase === 'uploading' ? 'Uploading...' : 'Analyzing...'}</span>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
         <div className="relative flex items-center gap-2">
           <button
             onClick={() => fileInputRef.current?.click()}
-            disabled={isUploading}
+            disabled={isUploading || !canAttachMore}
             className={cn(
               "p-2.5 rounded-xl transition-all shrink-0",
-              isUploading
+              isUploading || !canAttachMore
                 ? "text-gray-300 dark:text-gray-600 cursor-not-allowed"
                 : "text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/15"
             )}
-            title="Attach document"
+            title={canAttachMore ? 'Attach document' : `Max ${attachmentLimit} attachments`}
           >
             <Paperclip className="w-5 h-5" />
           </button>
           <input
             ref={fileInputRef}
             type="file"
-            accept=".pdf,.jpg,.jpeg,.png,.webp,.heic"
+            accept=".pdf,.jpg,.jpeg,.png,.webp"
             onChange={handleFileChange}
+            multiple
             className="hidden"
           />
 
@@ -91,10 +124,11 @@ export function ChatInput({
                   onSend();
                 }
               }}
+              onPaste={handlePaste}
               placeholder="Ask about income tax, GST, or tax saving..."
               className={cn(
                 "w-full bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 px-4 py-3 pr-14 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 resize-none min-h-[52px] max-h-32 transition-all text-gray-800 dark:text-gray-100 text-sm placeholder:text-gray-400",
-                activeDocument || isUploading ? "rounded-b-2xl rounded-t-none" : "rounded-2xl"
+                hasAttachments ? "rounded-b-2xl rounded-t-none" : "rounded-2xl"
               )}
               rows={1}
             />

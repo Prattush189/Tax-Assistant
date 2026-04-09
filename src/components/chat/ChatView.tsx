@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { Upload, MessageCircle, Calculator, FileText, HelpCircle } from 'lucide-react';
 import { useChatManager } from '../../hooks/useChatManager';
 import { useFileUpload } from '../../hooks/useFileUpload';
+import { useAuth } from '../../contexts/AuthContext';
 import { MessageBubble } from './MessageBubble';
 import { ChatInput } from './ChatInput';
 import { ThinkingIndicator } from './ThinkingIndicator';
@@ -20,20 +21,24 @@ interface ChatViewProps {
   chatManager: ReturnType<typeof useChatManager>;
 }
 
+const ATTACHMENT_LIMITS: Record<string, number> = { free: 1, pro: 3, enterprise: 5 };
+
 export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewProps) {
-  const { messages, input, setInput, isLoading, messagesEndRef, scrollAreaRef, lastUserMsgRef, send, activeDocument, attachDocument, detachDocument, continueResponse } = chatManager;
+  const { messages, input, setInput, isLoading, messagesEndRef, scrollAreaRef, lastUserMsgRef, send, activeDocuments, attachDocument, detachDocument, continueResponse } = chatManager;
+  const { user } = useAuth();
   const fileUpload = useFileUpload();
   const [isDragOver, setIsDragOver] = useState(false);
+  const attachmentLimit = ATTACHMENT_LIMITS[user?.plan ?? 'free'] ?? 1;
 
   const handleFileSelect = useCallback(async (file: File) => {
     const doc = await fileUpload.handleFile(file);
     if (doc) attachDocument(doc);
   }, [fileUpload, attachDocument]);
 
-  const handleDetach = useCallback(() => {
-    detachDocument();
-    fileUpload.reset();
-  }, [detachDocument, fileUpload]);
+  const handleDetach = useCallback((index: number) => {
+    detachDocument(index);
+    if (activeDocuments.length <= 1) fileUpload.reset();
+  }, [detachDocument, activeDocuments.length, fileUpload]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -49,8 +54,8 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
-    const file = e.dataTransfer.files[0];
-    if (file) handleFileSelect(file);
+    const files = Array.from(e.dataTransfer.files);
+    files.forEach(f => handleFileSelect(f));
   }, [handleFileSelect]);
 
   return (
@@ -148,10 +153,11 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
         isLoading={isLoading}
         onInputChange={setInput}
         onSend={send}
-        activeDocument={activeDocument}
+        activeDocuments={activeDocuments}
         onFileSelect={handleFileSelect}
         onDetachDocument={handleDetach}
         uploadPhase={fileUpload.uploadPhase}
+        attachmentLimit={attachmentLimit}
       />
     </div>
   );
