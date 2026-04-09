@@ -35,6 +35,9 @@ if (!colNames.includes('plan')) {
 if (!colNames.includes('suspended_until')) {
   db.exec("ALTER TABLE users ADD COLUMN suspended_until TEXT");
 }
+if (!colNames.includes('google_id')) {
+  db.exec("ALTER TABLE users ADD COLUMN google_id TEXT");
+}
 
 // Seed admin account
 const ADMIN_EMAIL = 'prattyush.jain@gmail.com';

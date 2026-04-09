@@ -9,7 +9,8 @@ CREATE TABLE IF NOT EXISTS users (
   updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
   role TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('user', 'admin')),
   plan TEXT NOT NULL DEFAULT 'free' CHECK(plan IN ('free', 'pro', 'enterprise')),
-  suspended_until TEXT
+  suspended_until TEXT,
+  google_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS chats (

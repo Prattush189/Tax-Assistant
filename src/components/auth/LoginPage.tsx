@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { motion } from 'motion/react';
 import { useAuth } from '../../contexts/AuthContext';
 import { LogIn, Eye, EyeOff, Shield, Zap, BarChart3 } from 'lucide-react';
+import { GoogleSignInButton } from './GoogleSignInButton';
 
 interface LoginPageProps {
   onSwitchToSignup: () => void;
@@ -163,10 +164,31 @@ export function LoginPage({ onSwitchToSignup }: LoginPageProps) {
             </motion.button>
           </form>
 
+          {/* Divider */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.55 }}
+            className="flex items-center gap-3 my-6"
+          >
+            <div className="flex-1 h-px bg-gray-200 dark:bg-gray-700" />
+            <span className="text-xs text-gray-400 dark:text-gray-500 font-medium">or</span>
+            <div className="flex-1 h-px bg-gray-200 dark:bg-gray-700" />
+          </motion.div>
+
+          {/* Google Sign-In */}
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.6 }}
+          >
+            <GoogleSignInButton onError={(msg) => setError(msg)} />
+          </motion.div>
+
           <motion.p
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            transition={{ delay: 0.6 }}
+            transition={{ delay: 0.65 }}
             className="text-center text-sm text-gray-500 dark:text-gray-400 mt-8"
           >
             Don't have an account?{' '}

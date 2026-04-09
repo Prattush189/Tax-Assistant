@@ -1,9 +1,13 @@
 import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { OAuth2Client } from 'google-auth-library';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { AuthRequest } from '../types.js';
+
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ?? process.env.VITE_GOOGLE_CLIENT_ID ?? '';
+const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 
 const router = Router();
 
@@ -114,6 +118,62 @@ router.post('/refresh', (req: Request, res: Response) => {
     res.json(tokens);
   } catch {
     res.status(401).json({ error: 'Invalid or expired refresh token' });
+  }
+});
+
+// POST /api/auth/google
+router.post('/google', async (req: Request, res: Response) => {
+  const { idToken } = req.body;
+
+  if (!idToken) {
+    res.status(400).json({ error: 'Google ID token is required' });
+    return;
+  }
+
+  if (!GOOGLE_CLIENT_ID) {
+    res.status(500).json({ error: 'Google OAuth is not configured on the server' });
+    return;
+  }
+
+  try {
+    const ticket = await googleClient.verifyIdToken({
+      idToken,
+      audience: GOOGLE_CLIENT_ID,
+    });
+    const payload = ticket.getPayload();
+    if (!payload || !payload.email) {
+      res.status(401).json({ error: 'Invalid Google token' });
+      return;
+    }
+
+    const { sub: googleId, email, name: googleName } = payload;
+    const displayName = googleName || email.split('@')[0];
+
+    // 1. Check if user exists by Google ID
+    let user = userRepo.findByGoogleId(googleId!);
+
+    if (!user) {
+      // 2. Check if user exists by email → auto-link
+      user = userRepo.findByEmail(email);
+      if (user) {
+        userRepo.linkGoogle(user.id, googleId!);
+        user = userRepo.findById(user.id)!;
+      }
+    }
+
+    if (!user) {
+      // 3. Create new user (no password)
+      user = userRepo.createFromGoogle(email, displayName, googleId!);
+    }
+
+    const tokens = generateTokens(user);
+    res.json({
+      ...tokens,
+      user: { id: user.id, email: user.email, name: user.name, role: user.role ?? 'user', plan: user.plan ?? 'free' },
+    });
+  } catch (err: any) {
+    console.error('[auth/google] Verification failed:', err.message);
+    res.status(401).json({ error: 'Google authentication failed' });
   }
 });
 
