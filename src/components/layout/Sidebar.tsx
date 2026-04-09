@@ -105,8 +105,8 @@ export function Sidebar({
           </button>
         </div>
 
-        {/* Navigation Tabs */}
-        <div className="flex flex-wrap gap-0.5 mb-3 bg-gray-100 dark:bg-gray-800/60 p-1 rounded-xl">
+        {/* Navigation Tabs (mobile only — desktop uses Header nav) */}
+        <div className="lg:hidden flex flex-wrap gap-0.5 mb-3 bg-gray-100 dark:bg-gray-800/60 p-1 rounded-xl">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeView === item.id;

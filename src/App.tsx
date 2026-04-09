@@ -66,6 +66,8 @@ function AppContent() {
             onOpenSidebar={() => setIsSidebarOpen(true)}
             user={user}
             onLogout={logout}
+            activeView={activeView}
+            onViewChange={setActiveView}
           />
           <AnimatePresence mode="wait">
             <motion.div

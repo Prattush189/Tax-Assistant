@@ -33,7 +33,7 @@ export function GstTab() {
           {amountIncludesGST ? 'Amount (including GST)' : 'Amount (excluding GST)'}
         </label>
         <div className="relative">
-          <span className="absolute left-3 top-1/2 -trangray-y-1/2 text-gray-400 dark:text-gray-500 text-sm">₹</span>
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-gray-500 text-sm">₹</span>
           <input
             type="number"
             min="0"

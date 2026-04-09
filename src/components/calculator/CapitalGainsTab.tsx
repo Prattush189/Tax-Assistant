@@ -31,7 +31,7 @@ function NumberInput({
       </label>
       {hint && <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">{hint}</p>}
       <div className="relative">
-        <span className="absolute left-3 top-1/2 -trangray-y-1/2 text-gray-400 dark:text-gray-500 text-sm">₹</span>
+        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-gray-500 text-sm">₹</span>
         <input
           type="number"
           min="0"

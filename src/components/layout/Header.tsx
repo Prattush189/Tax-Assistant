@@ -1,5 +1,7 @@
-import { Menu, Moon, Sun, LogOut } from 'lucide-react';
+import { Menu, Moon, Sun, LogOut, MessageCircle, Calculator, LayoutDashboard, CreditCard, FileText, Shield } from 'lucide-react';
 import { cn } from '../../lib/utils';
+
+type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices';
 
 interface HeaderProps {
   isPluginMode: boolean;
@@ -8,7 +10,17 @@ interface HeaderProps {
   onOpenSidebar: () => void;
   user: { id: string; email: string; name: string; role: string } | null;
   onLogout: () => void;
+  activeView?: ActiveView;
+  onViewChange?: (view: ActiveView) => void;
 }
+
+const navItems: { id: ActiveView; label: string; icon: typeof MessageCircle }[] = [
+  { id: 'chat', label: 'Chat', icon: MessageCircle },
+  { id: 'calculator', label: 'Calculator', icon: Calculator },
+  { id: 'notices', label: 'Notices', icon: FileText },
+  { id: 'dashboard', label: 'Stats', icon: LayoutDashboard },
+  { id: 'plan', label: 'Plan', icon: CreditCard },
+];
 
 function getInitials(name: string): string {
   return name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
@@ -21,13 +33,21 @@ export function Header({
   onOpenSidebar,
   user,
   onLogout,
+  activeView,
+  onViewChange,
 }: HeaderProps) {
+  const allNavItems = [
+    ...navItems,
+    ...(user?.role === 'admin' ? [{ id: 'admin' as ActiveView, label: 'Admin', icon: Shield }] : []),
+  ];
+
   return (
     <header className={cn(
-      "h-14 shrink-0 bg-white dark:bg-[#111827] border-b border-gray-200 dark:border-gray-800 flex items-center justify-between px-4 sticky top-0 z-10",
+      "h-14 shrink-0 bg-white dark:bg-[#111827] border-b border-gray-200 dark:border-gray-800 flex items-center px-4 sticky top-0 z-10 gap-4",
       isPluginMode && "h-12"
     )}>
-      <div className="flex items-center w-20">
+      {/* Left — menu (mobile) + logo */}
+      <div className="flex items-center gap-2 shrink-0">
         {!isPluginMode && (
           <button
             onClick={onOpenSidebar}
@@ -36,16 +56,42 @@ export function Header({
             <Menu className="w-5 h-5 text-gray-500 dark:text-gray-400" />
           </button>
         )}
-      </div>
-
-      <div className="flex items-center gap-2">
         <img src="/logoAI.png" alt="Smart AI Logo" className="w-6 h-6 object-contain" />
-        <span className="font-semibold text-gray-800 dark:text-gray-200 text-sm sm:text-base">
+        <span className="font-semibold text-gray-800 dark:text-gray-200 text-sm">
           Smart AI
         </span>
       </div>
 
-      <div className="flex items-center gap-1 w-20 justify-end">
+      {/* Center — nav tabs (desktop only) */}
+      {activeView && onViewChange && !isPluginMode && (
+        <nav className="hidden lg:flex items-center gap-1 flex-1 justify-center">
+          {allNavItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = activeView === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => onViewChange(item.id)}
+                className={cn(
+                  "flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg transition-all",
+                  isActive
+                    ? "text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/15"
+                    : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800/50"
+                )}
+              >
+                <Icon className={cn("w-4 h-4", isActive && "text-emerald-500")} />
+                {item.label}
+              </button>
+            );
+          })}
+        </nav>
+      )}
+
+      {/* Spacer when no nav */}
+      {(!activeView || isPluginMode) && <div className="flex-1" />}
+
+      {/* Right — theme + user */}
+      <div className="flex items-center gap-1 shrink-0">
         <button
           onClick={onToggleTheme}
           className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl transition-colors"
