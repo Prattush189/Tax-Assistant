@@ -1,16 +1,16 @@
 import { useState, useEffect, useRef } from 'react';
 
 const PHRASES = [
-  'Analyzing your query',
-  'Checking tax provisions',
-  'Reviewing deductions',
-  'Auditing the numbers',
-  'Computing tax liability',
-  'Verifying exemptions',
-  'Consulting tax rules',
-  'Calculating returns',
-  'Processing assessment',
-  'Evaluating compliance',
+  'Looking up relevant sections',
+  'Searching through the Acts',
+  'Pulling up the details',
+  'Checking the latest provisions',
+  'Going through the schedules',
+  'Finding the right section',
+  'Reading through the clauses',
+  'Cross-referencing the rules',
+  'Gathering the information',
+  'Putting together your answer',
 ];
 
 export function ThinkingIndicator() {

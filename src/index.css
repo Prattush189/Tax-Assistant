@@ -71,35 +71,47 @@
   }
 }
 
-/* Blur-reveal streaming effect */
+/* Blur-reveal streaming effect — uses overlay gradient on ::after */
 .streaming-reveal {
-  mask-image: linear-gradient(
-    to bottom,
-    #000 0%,
-    #000 calc(100% - 3em),
-    transparent 100%
-  );
-  -webkit-mask-image: linear-gradient(
-    to bottom,
-    #000 0%,
-    #000 calc(100% - 3em),
-    transparent 100%
-  );
+  position: relative;
+}
+.streaming-reveal::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 4em;
+  background: linear-gradient(to bottom, transparent, #fff);
+  pointer-events: none;
+  filter: blur(2px);
+  transition: opacity 0.3s ease;
+}
+.dark .streaming-reveal::after {
+  background: linear-gradient(to bottom, transparent, rgb(31, 41, 55));
 }
 
 .streaming-done {
-  animation: revealDone 0.4s ease-out forwards;
+  position: relative;
+}
+.streaming-done::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 4em;
+  background: linear-gradient(to bottom, transparent, #fff);
+  pointer-events: none;
+  animation: revealFadeOut 0.5s ease-out forwards;
+}
+.dark .streaming-done::after {
+  background: linear-gradient(to bottom, transparent, rgb(31, 41, 55));
 }
 
-@keyframes revealDone {
-  from {
-    mask-image: linear-gradient(to bottom, #000 0%, #000 calc(100% - 3em), transparent 100%);
-    -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 calc(100% - 3em), transparent 100%);
-  }
-  to {
-    mask-image: none;
-    -webkit-mask-image: none;
-  }
+@keyframes revealFadeOut {
+  from { opacity: 1; height: 4em; }
+  to { opacity: 0; height: 0; }
 }
 
 /* Custom radio buttons */
