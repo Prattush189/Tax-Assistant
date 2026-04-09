@@ -110,9 +110,9 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
           <div className="max-w-4xl mx-auto space-y-6">
             <AnimatePresence initial={false}>
               {messages.filter(msg => msg.role === 'user' || msg.content !== '').map((msg, idx, filtered) => {
-                // Find the last user message to attach the scroll ref
                 const isLastUser = msg.role === 'user' &&
                   filtered.slice(idx + 1).every(m => m.role !== 'user');
+                const isLastModel = msg.role === 'model' && idx === filtered.length - 1;
                 return (
                   <motion.div
                     key={`${idx}-${msg.content.slice(0, 20)}`}
@@ -121,7 +121,12 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.3, ease: 'easeOut' }}
                   >
-                    <MessageBubble message={msg} onContinue={continueResponse} />
+                    <MessageBubble
+                      message={msg}
+                      onContinue={continueResponse}
+                      isLastModel={isLastModel}
+                      isLoading={isLoading}
+                    />
                   </motion.div>
                 );
               })}

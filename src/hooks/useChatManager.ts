@@ -21,14 +21,30 @@ export function useChatManager() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const lastUserMsgRef = useRef<HTMLDivElement>(null);
-  const shouldScrollRef = useRef(false);
+  const scrollActionRef = useRef<'none' | 'user-to-top' | 'to-bottom'>('none');
+  const streamingChatIdRef = useRef<string | null>(null);
 
-  // When user sends a message, scroll so their message is at the TOP of the chat area
   useEffect(() => {
-    if (shouldScrollRef.current && lastUserMsgRef.current) {
-      lastUserMsgRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      shouldScrollRef.current = false;
-    }
+    const action = scrollActionRef.current;
+    if (action === 'none') return;
+
+    requestAnimationFrame(() => {
+      if (action === 'to-bottom') {
+        // Scroll to the very bottom (switching chats, loading history)
+        messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+      } else if (action === 'user-to-top') {
+        // Scroll so the user's new message is near the top of the viewport
+        const container = scrollAreaRef.current;
+        const userEl = lastUserMsgRef.current;
+        if (container && userEl) {
+          const containerRect = container.getBoundingClientRect();
+          const userRect = userEl.getBoundingClientRect();
+          const offset = userRect.top - containerRect.top + container.scrollTop - 16;
+          container.scrollTo({ top: offset, behavior: 'smooth' });
+        }
+      }
+      scrollActionRef.current = 'none';
+    });
   }, [messages]);
 
   const loadChatList = useCallback(async () => {
@@ -44,8 +60,11 @@ export function useChatManager() {
   useEffect(() => { loadChatList(); }, [loadChatList]);
 
   const switchChat = useCallback(async (chatId: string) => {
+    streamingChatIdRef.current = null;
+    setIsLoading(false);
     setCurrentChatId(chatId);
     setActiveDocument(null);
+    scrollActionRef.current = 'to-bottom';
     try {
       const msgs = await fetchChatMessages(chatId);
       setMessages(
@@ -108,8 +127,10 @@ export function useChatManager() {
     };
 
     const messageText = input.trim();
-    // Add user message + empty model message for streaming
-    shouldScrollRef.current = true; // scroll to bottom once for the new message
+    const thisChatId = chatId; // capture for closure
+    scrollActionRef.current = 'user-to-top';
+    streamingChatIdRef.current = thisChatId;
+
     setMessages(prev => [...prev, userMessage, {
       role: 'model',
       content: '',
@@ -122,16 +143,18 @@ export function useChatManager() {
     let receivedRefs: SectionReference[] | undefined;
 
     // Line-buffered streaming: accumulate text and only reveal complete lines
-    let buffer = '';       // unrevealed text waiting for a newline
-    let revealed = '';     // text already shown to the user
+    let buffer = '';
+    let revealed = '';
     let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+    // Guard: only write to state if still on the same chat
+    const isStale = () => streamingChatIdRef.current !== thisChatId;
 
     const flushBuffer = () => {
       if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
-      // Find the last newline in the buffer
+      if (isStale()) return;
       const lastNl = buffer.lastIndexOf('\n');
-      if (lastNl === -1) return; // no complete line yet
-      // Reveal everything up to and including the last newline
+      if (lastNl === -1) return;
       revealed += buffer.slice(0, lastNl + 1);
       buffer = buffer.slice(lastNl + 1);
       const snapshot = revealed;
@@ -144,6 +167,7 @@ export function useChatManager() {
 
     const flushAll = () => {
       if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+      if (isStale()) return;
       revealed += buffer;
       buffer = '';
       const snapshot = revealed;
@@ -159,17 +183,17 @@ export function useChatManager() {
         chatId,
         messageText,
         (text) => {
+          if (isStale()) return;
           buffer += text;
-          // Flush complete lines immediately
           if (buffer.includes('\n')) {
             flushBuffer();
           } else {
-            // If no newline for a while, flush anyway (e.g., long inline text)
             if (flushTimer) clearTimeout(flushTimer);
             flushTimer = setTimeout(flushBuffer, 300);
           }
         },
         (errorMsg) => {
+          if (isStale()) return;
           setMessages(prev => {
             const updated = [...prev];
             updated[updated.length - 1] = { ...updated[updated.length - 1], content: errorMsg };
@@ -186,8 +210,8 @@ export function useChatManager() {
       // Flush any remaining buffered text
       flushAll();
 
-      // Mark truncated and/or attach references
-      if (wasTruncated || receivedRefs) {
+      // Mark truncated and/or attach references (only if still on the same chat)
+      if (!isStale() && (wasTruncated || receivedRefs)) {
         setMessages(prev => {
           const updated = [...prev];
           const last = { ...updated[updated.length - 1] };
@@ -200,7 +224,7 @@ export function useChatManager() {
 
       await loadChatList();
     } finally {
-      setIsLoading(false);
+      if (!isStale()) setIsLoading(false);
     }
   }, [isLoading, input, currentChatId, activeDocument, createNewChat, loadChatList]);
 

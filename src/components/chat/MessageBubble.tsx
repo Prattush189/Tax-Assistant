@@ -28,29 +28,25 @@ function renderContent(content: string, role: 'user' | 'model') {
 
 /** Fade-edge wrapper: soft gradient at bottom while streaming, fades away when done */
 function StreamingWrapper({ children, isStreaming }: { children: React.ReactNode; isStreaming: boolean }) {
-  const [visible, setVisible] = useState(isStreaming);
-  const isDark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
+  const [showOverlay, setShowOverlay] = useState(false);
 
   useEffect(() => {
     if (isStreaming) {
-      setVisible(true);
-    } else {
-      const t = setTimeout(() => setVisible(false), 600);
+      setShowOverlay(true);
+    } else if (showOverlay) {
+      // Fade out then remove
+      const t = setTimeout(() => setShowOverlay(false), 600);
       return () => clearTimeout(t);
     }
   }, [isStreaming]);
 
-  // Match the message bubble background
-  const bgColor = isDark ? 'rgba(31,41,55,0.95)' : 'rgba(255,255,255,0.95)';
-
   return (
     <div className="relative">
       {children}
-      {visible && (
+      {showOverlay && (
         <div
-          className="absolute bottom-0 left-0 right-0 h-10 pointer-events-none rounded-b-2xl"
+          className="absolute bottom-0 left-0 right-0 h-10 pointer-events-none rounded-b-2xl bg-gradient-to-t from-white dark:from-gray-800 to-transparent"
           style={{
-            background: `linear-gradient(to top, ${bgColor}, transparent)`,
             opacity: isStreaming ? 1 : 0,
             transition: 'opacity 0.5s ease-out',
           }}
@@ -63,13 +59,16 @@ function StreamingWrapper({ children, isStreaming }: { children: React.ReactNode
 interface MessageBubbleProps {
   message: Message;
   onContinue?: () => void;
+  isLastModel?: boolean;
+  isLoading?: boolean;
 }
 
-export function MessageBubble({ message, onContinue }: MessageBubbleProps) {
+export function MessageBubble({ message, onContinue, isLastModel, isLoading }: MessageBubbleProps) {
   const { role, content, timestamp, attachment, truncated, references } = message;
   const [copied, setCopied] = useState(false);
   const [activeRef, setActiveRef] = useState<SectionReference | null>(null);
-  const isStreaming = role === 'model' && !truncated && !references && content.length > 0;
+  // Only the last model message while loading is considered "streaming"
+  const isStreaming = !!(role === 'model' && isLastModel && isLoading && content.length > 0);
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(content);
