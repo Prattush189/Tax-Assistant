@@ -261,7 +261,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
         max_tokens: MAX_TOKENS,
         stream: true,
         stream_options: { include_usage: true },
-        ...(useWebSearch ? { tools: [{ type: 'function' as const, function: { name: 'web_search', description: 'Search the web', parameters: { type: 'object', properties: {} } } }] } : {}),
+        ...(useWebSearch ? { tools: [{ type: 'web_search' }] as any } : {}),
       });
 
       let stopReason: string | null = null;
