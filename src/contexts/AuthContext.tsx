@@ -103,10 +103,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(data.user);
   };
 
-  const loginWithGoogle = async (idToken: string) => {
+  const loginWithGoogle = async (code: string) => {
     const data = await apiFetch('/api/auth/google', {
       method: 'POST',
-      body: JSON.stringify({ idToken }),
+      body: JSON.stringify({ code }),
     });
     localStorage.setItem(TOKEN_KEY, data.accessToken);
     localStorage.setItem(REFRESH_KEY, data.refreshToken);

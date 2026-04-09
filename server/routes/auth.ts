@@ -7,7 +7,8 @@ import { authMiddleware } from '../middleware/auth.js';
 import { AuthRequest } from '../types.js';
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ?? process.env.VITE_GOOGLE_CLIENT_ID ?? '';
-const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET ?? '';
+const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET);
 
 const router = Router();
 
@@ -123,10 +124,10 @@ router.post('/refresh', (req: Request, res: Response) => {
 
 // POST /api/auth/google
 router.post('/google', async (req: Request, res: Response) => {
-  const { idToken } = req.body;
+  const { code } = req.body;
 
-  if (!idToken) {
-    res.status(400).json({ error: 'Google ID token is required' });
+  if (!code) {
+    res.status(400).json({ error: 'Google authorization code is required' });
     return;
   }
 
@@ -136,8 +137,15 @@ router.post('/google', async (req: Request, res: Response) => {
   }
 
   try {
+    // Exchange auth code for tokens
+    const { tokens } = await googleClient.getToken({
+      code,
+      redirect_uri: 'postmessage',
+    });
+
+    // Verify the ID token from the token exchange
     const ticket = await googleClient.verifyIdToken({
-      idToken,
+      idToken: tokens.id_token!,
       audience: GOOGLE_CLIENT_ID,
     });
     const payload = ticket.getPayload();
