@@ -20,10 +20,73 @@ const WEB_SEARCH_PATTERNS = [
   /\b(circular|notification|press\s+release|CBDT|CBIC)\b/i,
   /\b(announced?|introduced)\s+in\s+20\d{2}/i,
   /\bchanges?\s+in\s+20(2[5-9]|[3-9]\d)\b/i,
+  /\b(today|yesterday|this\s+week|this\s+month|right\s+now)\b/i,
+  /\blatest\b/i,
+  /\b(news|update|announcement)\b/i,
 ];
 
 function shouldEnableWebSearch(query: string): boolean {
   return WEB_SEARCH_PATTERNS.some(p => p.test(query));
+}
+
+// ── Web search via xAI Responses API ──
+async function* streamWithWebSearch(
+  systemPrompt: string,
+  history: { role: string; content: string }[],
+  userContent: string,
+): AsyncGenerator<{ type: 'text'; text: string } | { type: 'usage'; input: number; output: number } | { type: 'done'; reason: string }> {
+  const input = [
+    { role: 'system', content: systemPrompt },
+    ...history,
+    { role: 'user', content: userContent },
+  ];
+
+  const response = await fetch('https://api.x.ai/v1/responses', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${process.env.XAI_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: GROK_MODEL,
+      input,
+      tools: [{ type: 'web_search' }],
+      stream: true,
+    }),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`${response.status} ${errText.slice(0, 200)}`);
+  }
+
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+
+    for (const line of lines) {
+      if (!line.startsWith('data: ') || line === 'data: [DONE]') continue;
+      try {
+        const event = JSON.parse(line.slice(6));
+        // Response API streams different event types
+        if (event.type === 'response.output_text.delta' && event.delta) {
+          yield { type: 'text', text: event.delta };
+        } else if (event.type === 'response.completed' && event.response?.usage) {
+          const u = event.response.usage;
+          yield { type: 'usage', input: u.input_tokens ?? 0, output: u.output_tokens ?? 0 };
+          yield { type: 'done', reason: 'end_turn' };
+        }
+      } catch { /* skip unparseable lines */ }
+    }
+  }
 }
 
 // ── Plan-based message limits ──
@@ -255,43 +318,53 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
       const useWebSearch = shouldEnableWebSearch(message);
-      const stream = await grok.chat.completions.create({
-        model: GROK_MODEL,
-        messages,
-        max_tokens: MAX_TOKENS,
-        stream: true,
-        stream_options: { include_usage: true },
-        ...(useWebSearch ? { tools: [{ type: 'web_search' }] as any } : {}),
-      });
 
       let stopReason: string | null = null;
       let inputTok = 0;
       let outputTok = 0;
-      let usedWebSearch = false;
 
-      for await (const chunk of stream) {
-        // Skip tool call deltas (web search internals — don't send to client)
-        if (chunk.choices?.[0]?.delta?.tool_calls) {
-          usedWebSearch = true;
-          continue;
+      if (useWebSearch) {
+        // Use xAI Responses API for web search (Chat Completions doesn't support it)
+        const historyPlain = history.map(m => ({ role: m.role as string, content: m.content as string }));
+        const webStream = streamWithWebSearch(SYSTEM_INSTRUCTION, historyPlain, userContent);
+
+        for await (const event of webStream) {
+          if (event.type === 'text') {
+            fullResponse += event.text;
+            res.write(`data: ${JSON.stringify({ text: event.text })}\n\n`);
+          } else if (event.type === 'usage') {
+            inputTok = event.input;
+            outputTok = event.output;
+          } else if (event.type === 'done') {
+            stopReason = event.reason;
+          }
         }
+      } else {
+        // Standard Chat Completions API (no web search)
+        const stream = await grok.chat.completions.create({
+          model: GROK_MODEL,
+          messages,
+          max_tokens: MAX_TOKENS,
+          stream: true,
+          stream_options: { include_usage: true },
+        });
 
-        const delta = chunk.choices?.[0]?.delta?.content;
-        if (delta) {
-          fullResponse += delta;
-          res.write(`data: ${JSON.stringify({ text: delta })}\n\n`);
-        }
+        for await (const chunk of stream) {
+          const delta = chunk.choices?.[0]?.delta?.content;
+          if (delta) {
+            fullResponse += delta;
+            res.write(`data: ${JSON.stringify({ text: delta })}\n\n`);
+          }
 
-        // Capture finish reason
-        const finishReason = chunk.choices?.[0]?.finish_reason;
-        if (finishReason) {
-          stopReason = finishReason === 'length' ? 'max_tokens' : 'end_turn';
-        }
+          const finishReason = chunk.choices?.[0]?.finish_reason;
+          if (finishReason) {
+            stopReason = finishReason === 'length' ? 'max_tokens' : 'end_turn';
+          }
 
-        // Capture token usage (arrives in the final chunk)
-        if (chunk.usage) {
-          inputTok = chunk.usage.prompt_tokens ?? 0;
-          outputTok = chunk.usage.completion_tokens ?? 0;
+          if (chunk.usage) {
+            inputTok = chunk.usage.prompt_tokens ?? 0;
+            outputTok = chunk.usage.completion_tokens ?? 0;
+          }
         }
       }
 
@@ -308,7 +381,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
       chatRepo.touchTimestamp(chatId);
 
       // Log usage (include web search cost if used)
-      const cost = (inputTok * INPUT_COST_PER_TOKEN) + (outputTok * OUTPUT_COST_PER_TOKEN) + (usedWebSearch ? WEB_SEARCH_COST : 0);
+      const cost = (inputTok * INPUT_COST_PER_TOKEN) + (outputTok * OUTPUT_COST_PER_TOKEN) + (useWebSearch ? WEB_SEARCH_COST : 0);
       usageRepo.log(clientIp, req.user.id, inputTok, outputTok, cost, false);
 
       res.write(`data: ${JSON.stringify({ done: true, stop_reason: stopReason, references: ragReferences })}\n\n`);
