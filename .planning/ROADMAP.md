@@ -281,7 +281,7 @@ Phases execute in numeric order: 7 → 8 → 9 → 10
 | 7. RAG Infrastructure Fixes | 2/2 | Complete    | 2026-04-08 | - |
 | 8. GST Act Data | v1.1 | 0/TBD | Not started | - |
 | 9. Reference Data | 1/1 | Complete   | 2026-04-09 | - |
-| 10. Scoring & Integration Validation | v1.1 | 2/2 | Complete | 2026-04-09 |
+| 10. Scoring & Integration Validation | v1.1 | Complete    | 2026-04-09 | 2026-04-09 |
 | 11. Design System & Auth Pages | v1.2 | 0/TBD | Not started | - |
 | 12. Sidebar & Navigation | v1.2 | 0/TBD | Not started | - |
 | 13. Chat Page Overhaul | v1.2 | 0/TBD | Not started | - |
