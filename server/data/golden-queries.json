@@ -1,0 +1,126 @@
+[
+  {
+    "id": "IT-01",
+    "query": "What are the deductions available under section 80C?",
+    "expectedDomain": "it-act",
+    "expectedSources": ["act-1961", "act-2025", "comparison"],
+    "expectedSectionRefs": ["80C"],
+    "notes": "Core IT Act deduction query — section 80C is well-known, should appear in both acts and comparison guide"
+  },
+  {
+    "id": "IT-02",
+    "query": "What is the standard deduction for salaried employees?",
+    "expectedDomain": "it-act",
+    "expectedSources": ["act-1961", "act-2025", "comparison"],
+    "expectedSectionRefs": ["16"],
+    "notes": "Ambiguous — IT Act s.16 standard deduction vs CGST s.16 ITC. Expected: IT Act sources should dominate for this wording"
+  },
+  {
+    "id": "IT-03",
+    "query": "What are the tax slabs under the new regime?",
+    "expectedDomain": "it-act",
+    "expectedSources": ["act-2025", "comparison"],
+    "expectedSectionRefs": [],
+    "notes": "Cross-domain stress — 'tax' keyword appears across all domains, should still return IT Act sources"
+  },
+  {
+    "id": "IT-04",
+    "query": "How is house property income calculated under section 24?",
+    "expectedDomain": "it-act",
+    "expectedSources": ["act-1961", "act-2025"],
+    "expectedSectionRefs": ["24"],
+    "notes": "Section 24 deductions from house property income — should retrieve IT Act chunks for section 24"
+  },
+  {
+    "id": "IT-05",
+    "query": "What is the TDS rate on salary?",
+    "expectedDomain": "it-act",
+    "expectedSources": ["act-1961", "act-2025", "comparison"],
+    "expectedSectionRefs": ["192"],
+    "notes": "TDS on salary under section 192 — should retrieve both acts and comparison guide"
+  },
+  {
+    "id": "IT-06",
+    "query": "What is the penalty for late filing of income tax return?",
+    "expectedDomain": "it-act",
+    "expectedSources": ["act-1961", "act-2025", "comparison"],
+    "expectedSectionRefs": ["234F"],
+    "notes": "Fee/penalty under section 234F for late ITR filing — well-defined provision in both acts"
+  },
+  {
+    "id": "IT-07",
+    "query": "What is Section 87A rebate for income tax?",
+    "expectedDomain": "it-act",
+    "expectedSources": ["act-1961", "act-2025", "comparison"],
+    "expectedSectionRefs": ["87A"],
+    "notes": "Rebate under section 87A — present in both acts, likely in comparison guide too"
+  },
+  {
+    "id": "GST-01",
+    "query": "What is input tax credit under GST?",
+    "expectedDomain": "gst",
+    "expectedSources": ["cgst-2017", "comparison"],
+    "expectedSectionRefs": ["16", "17"],
+    "notes": "Ambiguous partner to IT-02 — same section number but GST context. Section 16 of CGST Act = ITC eligibility"
+  },
+  {
+    "id": "GST-02",
+    "query": "What are the place of supply rules for services under IGST?",
+    "expectedDomain": "gst",
+    "expectedSources": ["igst-2017"],
+    "expectedSectionRefs": ["12", "13"],
+    "notes": "IGST-specific query — place of supply for services is defined in IGST Act sections 12 and 13"
+  },
+  {
+    "id": "GST-03",
+    "query": "What is the GST registration threshold?",
+    "expectedDomain": "gst",
+    "expectedSources": ["cgst-2017", "comparison"],
+    "expectedSectionRefs": ["22", "24"],
+    "notes": "Cross-domain — registration threshold exists in both GST and IT Act contexts. Should return CGST Act sources for this GST-framed query"
+  },
+  {
+    "id": "GST-04",
+    "query": "What is the time of supply for goods under GST?",
+    "expectedDomain": "gst",
+    "expectedSources": ["cgst-2017"],
+    "expectedSectionRefs": ["12"],
+    "notes": "Time of supply for goods under CGST Act section 12 — straightforward GST retrieval test"
+  },
+  {
+    "id": "REF-01",
+    "query": "What is the CII for FY 2025-26?",
+    "expectedDomain": "reference",
+    "expectedSources": ["reference"],
+    "expectedSectionRefs": [],
+    "expectedValues": ["376"],
+    "notes": "Cost Inflation Index for FY 2025-26 — exact numeric value (376) must appear in returned text"
+  },
+  {
+    "id": "REF-02",
+    "query": "When is the advance tax due date for Q3?",
+    "expectedDomain": "reference",
+    "expectedSources": ["reference"],
+    "expectedSectionRefs": [],
+    "expectedValues": ["15 December"],
+    "notes": "Q3 advance tax due date — exact date string must appear in reference data retrieval"
+  },
+  {
+    "id": "REF-03",
+    "query": "Which ITR form should a salaried person with LTCG up to 1.25 lakh use?",
+    "expectedDomain": "reference",
+    "expectedSources": ["reference"],
+    "expectedSectionRefs": [],
+    "expectedValues": ["ITR-1"],
+    "notes": "ITR form selection guidance — reference data should recommend ITR-1 for eligible salaried persons with LTCG up to 1.25L"
+  },
+  {
+    "id": "REF-04",
+    "query": "What is the GST return filing due date?",
+    "expectedDomain": "reference",
+    "expectedSources": ["reference", "comparison"],
+    "expectedSectionRefs": [],
+    "expectedValues": [],
+    "notes": "GST filing due dates — reference data should have this; comparison guide may also mention it"
+  }
+]
