@@ -73,10 +73,10 @@ Requirements for RAG Data Completeness & Quality milestone. Each maps to roadmap
 
 ### Reference Data
 
-- [ ] **REF-01**: CII table (FY 2001-02 to 2025-26, base year 2001-02) available as structured data for exact lookup
-- [ ] **REF-02**: Due dates calendar (advance tax, TDS, ITR, GST returns) available as structured data
-- [ ] **REF-03**: ITR form selection matrix (which form for which assessee type/income) available as structured data
-- [ ] **REF-04**: Reference data queries return exact answers (not keyword-matched Act text about the same year/date)
+- [x] **REF-01**: CII table (FY 2001-02 to 2025-26, base year 2001-02) available as structured data for exact lookup
+- [x] **REF-02**: Due dates calendar (advance tax, TDS, ITR, GST returns) available as structured data
+- [x] **REF-03**: ITR form selection matrix (which form for which assessee type/income) available as structured data
+- [x] **REF-04**: Reference data queries return exact answers (not keyword-matched Act text about the same year/date)
 
 ### Scoring & Retrieval Quality
 
@@ -225,10 +225,10 @@ Deferred to future release. Tracked but not in current roadmap.
 | GST-02 | Phase 8 | Pending |
 | GST-03 | Phase 8 | Pending |
 | GST-04 | Phase 8 | Pending |
-| REF-01 | Phase 9 | Pending |
-| REF-02 | Phase 9 | Pending |
-| REF-03 | Phase 9 | Pending |
-| REF-04 | Phase 9 | Pending |
+| REF-01 | Phase 9 | Complete |
+| REF-02 | Phase 9 | Complete |
+| REF-03 | Phase 9 | Complete |
+| REF-04 | Phase 9 | Complete |
 | SCOR-01 | Phase 10 | Pending |
 | SCOR-02 | Phase 10 | Pending |
 | SCOR-03 | Phase 10 | Pending |

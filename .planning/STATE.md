@@ -54,6 +54,7 @@ Phase 11: [ ] Phase 12: [ ] Phase 13: [ ] Phase 14: [ ] Phase 15: [ ]
 | Phase 06-iframe-plugin-mode-hardening P02 | 8 | 2 tasks | 4 files |
 | Phase 07-rag-infrastructure-fixes P01 | 1 | 2 tasks | 1 files |
 | Phase 07-rag-infrastructure-fixes P02 | 4 | 2 tasks | 1 files |
+| Phase 09-reference-data P01 | 7 | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -146,6 +147,8 @@ Recent decisions affecting current work:
 - [Phase 08-01]: No boost for GST sources — scoring adjustments deferred to Phase 10
 - [Phase 08-02]: CGST produces 428 chunks (far exceeding 150 threshold), IGST produces 65 chunks (exceeding 20 threshold)
 - [Phase 08-02]: GST queries return Comparison Guide as top result due to 1.5x boost — expected, scoring review is Phase 10 concern (SCOR-03)
+- [Phase 09-01]: Reference data boost: 1.3 added to SOURCE_CONFIGS entry -- CII section scored lower than calendar for 'cii' query; boost + 'CII FY XXXX-XX = YYY' row format fixes retrieval; defer fine-tuning to Phase 10 SCOR-02/03
+- [Phase 09-01]: reference-data.txt sections use 'CII FY XXXX-XX = YYY' row format -- 25 'cii' token occurrences in CII section ensures accurate retrieval for CII-specific queries via keyword scoring
 
 ### Pending Todos
 
@@ -158,5 +161,5 @@ None active for v1.1.
 ## Session Continuity
 
 Last session: 2026-04-09
-Stopped at: Phase 9 context gathered — ready for planning
-Resume file: .planning/phases/09-reference-data/09-CONTEXT.md
+Stopped at: Completed 09-01-PLAN.md (reference data — CII table, due dates, ITR form matrix)
+Resume file: .planning/phases/09-reference-data/09-01-SUMMARY.md

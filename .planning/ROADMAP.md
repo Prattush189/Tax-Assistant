@@ -134,7 +134,7 @@ Plans:
 
 - [x] **Phase 7: RAG Infrastructure Fixes** - Fix schedule-aware chunking and hardcoded retrieval bucket limits that silently break all new data sources (completed 2026-04-08)
 - [ ] **Phase 8: GST Act Data** - Add CGST Act 2017 and IGST Act 2017 full text as indexed RAG sources for deep GST query support
-- [ ] **Phase 9: Reference Data** - Add CII table, due dates calendar, and ITR form selection matrix as structured lookup data sources
+- [x] **Phase 9: Reference Data** - Add CII table, due dates calendar, and ITR form selection matrix as structured lookup data sources (completed 2026-04-09)
 - [ ] **Phase 10: Scoring & Integration Validation** - Tune retrieval scoring, validate 15-query golden set, confirm no regression against existing IT Act queries
 
 ## Phase Details
@@ -280,7 +280,7 @@ Phases execute in numeric order: 7 → 8 → 9 → 10
 | 6. Iframe Plugin Mode Hardening | v1.0 | 2/2 | Complete | 2026-04-06 |
 | 7. RAG Infrastructure Fixes | 2/2 | Complete    | 2026-04-08 | - |
 | 8. GST Act Data | v1.1 | 0/TBD | Not started | - |
-| 9. Reference Data | v1.1 | 0/1 | Not started | - |
+| 9. Reference Data | 1/1 | Complete   | 2026-04-09 | - |
 | 10. Scoring & Integration Validation | v1.1 | 0/TBD | Not started | - |
 | 11. Design System & Auth Pages | v1.2 | 0/TBD | Not started | - |
 | 12. Sidebar & Navigation | v1.2 | 0/TBD | Not started | - |
