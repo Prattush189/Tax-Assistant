@@ -179,7 +179,10 @@ Plans:
   2. Asking "When is the advance tax due date for Q3?" returns the specific calendar date, not a general description of advance tax rules
   3. Asking "Which ITR form should a salaried person with LTCG up to 1.25L use?" returns ITR-1 for AY 2026-27 with the correct eligibility reason
   4. Reference data answers are distinguishable in source labels from IT Act and GST Act answers
-**Plans**: TBD
+**Plans**: 1 plan
+
+Plans:
+- [ ] 09-01-PLAN.md — Reference data file (CII, due dates, ITR matrix) + SOURCE_CONFIGS wiring + retrieval validation
 
 ### Phase 10: Scoring & Integration Validation
 **Goal**: All six source types compete fairly in retrieval, existing IT Act query quality is unchanged, and the full data corpus fits within acceptable token budget at topK=5
@@ -277,7 +280,7 @@ Phases execute in numeric order: 7 → 8 → 9 → 10
 | 6. Iframe Plugin Mode Hardening | v1.0 | 2/2 | Complete | 2026-04-06 |
 | 7. RAG Infrastructure Fixes | 2/2 | Complete    | 2026-04-08 | - |
 | 8. GST Act Data | v1.1 | 0/TBD | Not started | - |
-| 9. Reference Data | v1.1 | 0/TBD | Not started | - |
+| 9. Reference Data | v1.1 | 0/1 | Not started | - |
 | 10. Scoring & Integration Validation | v1.1 | 0/TBD | Not started | - |
 | 11. Design System & Auth Pages | v1.2 | 0/TBD | Not started | - |
 | 12. Sidebar & Navigation | v1.2 | 0/TBD | Not started | - |
