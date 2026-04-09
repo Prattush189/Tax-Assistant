@@ -21,7 +21,7 @@ interface ChatViewProps {
 }
 
 export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewProps) {
-  const { messages, input, setInput, isLoading, messagesEndRef, scrollAreaRef, send, activeDocument, attachDocument, detachDocument, continueResponse } = chatManager;
+  const { messages, input, setInput, isLoading, messagesEndRef, scrollAreaRef, lastUserMsgRef, send, activeDocument, attachDocument, detachDocument, continueResponse } = chatManager;
   const fileUpload = useFileUpload();
   const [isDragOver, setIsDragOver] = useState(false);
 
@@ -109,16 +109,22 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
         ) : (
           <div className="max-w-4xl mx-auto space-y-6">
             <AnimatePresence initial={false}>
-              {messages.filter(msg => msg.role === 'user' || msg.content !== '').map((msg, idx) => (
-                <motion.div
-                  key={`${idx}-${msg.content.slice(0, 20)}`}
-                  initial={{ opacity: 0, y: 12 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.3, ease: 'easeOut' }}
-                >
-                  <MessageBubble message={msg} onContinue={continueResponse} />
-                </motion.div>
-              ))}
+              {messages.filter(msg => msg.role === 'user' || msg.content !== '').map((msg, idx, filtered) => {
+                // Find the last user message to attach the scroll ref
+                const isLastUser = msg.role === 'user' &&
+                  filtered.slice(idx + 1).every(m => m.role !== 'user');
+                return (
+                  <motion.div
+                    key={`${idx}-${msg.content.slice(0, 20)}`}
+                    ref={isLastUser ? lastUserMsgRef : undefined}
+                    initial={{ opacity: 0, y: 12 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.3, ease: 'easeOut' }}
+                  >
+                    <MessageBubble message={msg} onContinue={continueResponse} />
+                  </motion.div>
+                );
+              })}
             </AnimatePresence>
 
             {isLoading && messages.length > 0 && messages[messages.length - 1].content === '' && (

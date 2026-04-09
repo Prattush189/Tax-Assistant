@@ -20,26 +20,14 @@ export function useChatManager() {
   const [activeDocument, setActiveDocument] = useState<DocumentContext | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
-  const userScrolledUpRef = useRef(false);
+  const lastUserMsgRef = useRef<HTMLDivElement>(null);
+  const shouldScrollRef = useRef(false);
 
-  // Track if user has scrolled up away from bottom
+  // When user sends a message, scroll so their message is at the TOP of the chat area
   useEffect(() => {
-    const container = scrollAreaRef.current;
-    if (!container) return;
-
-    const handleScroll = () => {
-      const { scrollTop, scrollHeight, clientHeight } = container;
-      userScrolledUpRef.current = scrollHeight - scrollTop - clientHeight > 150;
-    };
-
-    container.addEventListener('scroll', handleScroll, { passive: true });
-    return () => container.removeEventListener('scroll', handleScroll);
-  }, []);
-
-  // Auto-scroll only if user is near bottom
-  useEffect(() => {
-    if (!userScrolledUpRef.current) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (shouldScrollRef.current && lastUserMsgRef.current) {
+      lastUserMsgRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      shouldScrollRef.current = false;
     }
   }, [messages]);
 
@@ -121,6 +109,7 @@ export function useChatManager() {
 
     const messageText = input.trim();
     // Add user message + empty model message for streaming
+    shouldScrollRef.current = true; // scroll to bottom once for the new message
     setMessages(prev => [...prev, userMessage, {
       role: 'model',
       content: '',
@@ -132,17 +121,53 @@ export function useChatManager() {
     let wasTruncated = false;
     let receivedRefs: SectionReference[] | undefined;
 
+    // Line-buffered streaming: accumulate text and only reveal complete lines
+    let buffer = '';       // unrevealed text waiting for a newline
+    let revealed = '';     // text already shown to the user
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const flushBuffer = () => {
+      if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+      // Find the last newline in the buffer
+      const lastNl = buffer.lastIndexOf('\n');
+      if (lastNl === -1) return; // no complete line yet
+      // Reveal everything up to and including the last newline
+      revealed += buffer.slice(0, lastNl + 1);
+      buffer = buffer.slice(lastNl + 1);
+      const snapshot = revealed;
+      setMessages(prev => {
+        const updated = [...prev];
+        updated[updated.length - 1] = { ...updated[updated.length - 1], content: snapshot };
+        return updated;
+      });
+    };
+
+    const flushAll = () => {
+      if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+      revealed += buffer;
+      buffer = '';
+      const snapshot = revealed;
+      setMessages(prev => {
+        const updated = [...prev];
+        updated[updated.length - 1] = { ...updated[updated.length - 1], content: snapshot };
+        return updated;
+      });
+    };
+
     try {
       await sendChatMessage(
         chatId,
         messageText,
         (text) => {
-          setMessages(prev => {
-            const updated = [...prev];
-            const last = updated[updated.length - 1];
-            updated[updated.length - 1] = { ...last, content: last.content + text };
-            return updated;
-          });
+          buffer += text;
+          // Flush complete lines immediately
+          if (buffer.includes('\n')) {
+            flushBuffer();
+          } else {
+            // If no newline for a while, flush anyway (e.g., long inline text)
+            if (flushTimer) clearTimeout(flushTimer);
+            flushTimer = setTimeout(flushBuffer, 300);
+          }
         },
         (errorMsg) => {
           setMessages(prev => {
@@ -157,6 +182,9 @@ export function useChatManager() {
           if (references?.length) receivedRefs = references;
         },
       );
+
+      // Flush any remaining buffered text
+      flushAll();
 
       // Mark truncated and/or attach references
       if (wasTruncated || receivedRefs) {
@@ -201,17 +229,49 @@ export function useChatManager() {
 
     let contTruncated = false;
 
+    // Line-buffered streaming for continue
+    let cBuffer = '';
+    let cRevealed = '';
+    let cFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const cFlush = () => {
+      if (cFlushTimer) { clearTimeout(cFlushTimer); cFlushTimer = null; }
+      const lastNl = cBuffer.lastIndexOf('\n');
+      if (lastNl === -1) return;
+      cRevealed += cBuffer.slice(0, lastNl + 1);
+      cBuffer = cBuffer.slice(lastNl + 1);
+      const snapshot = cRevealed;
+      setMessages(prev => {
+        const updated = [...prev];
+        updated[updated.length - 1] = { ...updated[updated.length - 1], content: snapshot };
+        return updated;
+      });
+    };
+
+    const cFlushAll = () => {
+      if (cFlushTimer) { clearTimeout(cFlushTimer); cFlushTimer = null; }
+      cRevealed += cBuffer;
+      cBuffer = '';
+      const snapshot = cRevealed;
+      setMessages(prev => {
+        const updated = [...prev];
+        updated[updated.length - 1] = { ...updated[updated.length - 1], content: snapshot };
+        return updated;
+      });
+    };
+
     try {
       await sendChatMessage(
         chatId,
         'Continue from where you left off. Do not repeat what you already said.',
         (text) => {
-          setMessages(prev => {
-            const updated = [...prev];
-            const last = updated[updated.length - 1];
-            updated[updated.length - 1] = { ...last, content: last.content + text };
-            return updated;
-          });
+          cBuffer += text;
+          if (cBuffer.includes('\n')) {
+            cFlush();
+          } else {
+            if (cFlushTimer) clearTimeout(cFlushTimer);
+            cFlushTimer = setTimeout(cFlush, 300);
+          }
         },
         (errorMsg) => {
           setMessages(prev => {
@@ -225,6 +285,8 @@ export function useChatManager() {
           if (stopReason === 'max_tokens') contTruncated = true;
         },
       );
+
+      cFlushAll();
 
       if (contTruncated) {
         setMessages(prev => {
@@ -257,6 +319,7 @@ export function useChatManager() {
     isLoading,
     messagesEndRef,
     scrollAreaRef,
+    lastUserMsgRef,
     send,
     clearChat,
     createNewChat,

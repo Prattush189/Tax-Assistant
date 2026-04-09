@@ -71,8 +71,6 @@
   }
 }
 
-/* Reveal animation is handled inline via StreamingWrapper component */
-
 /* Custom radio buttons */
 input[type="radio"] {
   appearance: none;

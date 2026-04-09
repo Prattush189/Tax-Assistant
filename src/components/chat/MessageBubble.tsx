@@ -26,35 +26,35 @@ function renderContent(content: string, role: 'user' | 'model') {
   });
 }
 
-/** Blur-reveal wrapper: fading gradient overlay at the bottom during streaming */
+/** Fade-edge wrapper: soft gradient at bottom while streaming, fades away when done */
 function StreamingWrapper({ children, isStreaming }: { children: React.ReactNode; isStreaming: boolean }) {
-  const [fadingOut, setFadingOut] = useState(false);
-  const wasStreamingRef = useRef(false);
+  const [visible, setVisible] = useState(isStreaming);
+  const isDark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
 
   useEffect(() => {
-    if (wasStreamingRef.current && !isStreaming) {
-      // Streaming just ended — trigger fade-out
-      setFadingOut(true);
-      const timer = setTimeout(() => setFadingOut(false), 500);
-      return () => clearTimeout(timer);
+    if (isStreaming) {
+      setVisible(true);
+    } else {
+      const t = setTimeout(() => setVisible(false), 600);
+      return () => clearTimeout(t);
     }
-    wasStreamingRef.current = isStreaming;
   }, [isStreaming]);
+
+  // Match the message bubble background
+  const bgColor = isDark ? 'rgba(31,41,55,0.95)' : 'rgba(255,255,255,0.95)';
 
   return (
     <div className="relative">
       {children}
-      {(isStreaming || fadingOut) && (
+      {visible && (
         <div
-          className="absolute bottom-0 left-0 right-0 pointer-events-none transition-opacity duration-500"
+          className="absolute bottom-0 left-0 right-0 h-10 pointer-events-none rounded-b-2xl"
           style={{
-            height: '4em',
-            background: 'inherit',
-            opacity: fadingOut ? 0 : 1,
+            background: `linear-gradient(to top, ${bgColor}, transparent)`,
+            opacity: isStreaming ? 1 : 0,
+            transition: 'opacity 0.5s ease-out',
           }}
-        >
-          <div className="w-full h-full bg-gradient-to-t from-white dark:from-gray-800 to-transparent" style={{ filter: 'blur(1px)' }} />
-        </div>
+        />
       )}
     </div>
   );
