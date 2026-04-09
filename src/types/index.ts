@@ -3,6 +3,8 @@ export interface SectionReference {
   section: string;
   label: string;
   text: string;
+  pdfFile?: string;
+  pdfFiles?: { label: string; file: string }[];
 }
 
 export interface Message {

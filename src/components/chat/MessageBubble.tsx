@@ -5,7 +5,7 @@ import { User, FileText, Copy, Check, Flag, ChevronRight, BookOpen } from 'lucid
 import { Message, SectionReference } from '../../types';
 import { cn } from '../../lib/utils';
 import { ChartRenderer } from './ChartRenderer';
-import { SectionModal } from './SectionModal';
+import { PdfReferenceModal } from './PdfReferenceModal';
 import toast from 'react-hot-toast';
 
 function renderContent(content: string, role: 'user' | 'model') {
@@ -144,7 +144,7 @@ export function MessageBubble({ message, onContinue }: MessageBubbleProps) {
 
       {/* Section modal */}
       {activeRef && (
-        <SectionModal reference={activeRef} onClose={() => setActiveRef(null)} />
+        <PdfReferenceModal reference={activeRef} onClose={() => setActiveRef(null)} />
       )}
     </div>
   );

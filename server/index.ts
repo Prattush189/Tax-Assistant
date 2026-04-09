@@ -12,6 +12,7 @@ import chatsRouter from './routes/chats.js';
 import authRouter from './routes/auth.js';
 import adminRouter from './routes/admin.js';
 import noticesRouter from './routes/notices.js';
+import pdfRouter from './routes/pdf.js';
 import { authMiddleware, adminMiddleware } from './middleware/auth.js';
 import { authLimiter, chatLimiter, uploadLimiter } from './middleware/rateLimiter.js';
 import helmet from 'helmet';
@@ -73,6 +74,7 @@ app.use('/api', chatRouter);
 app.use('/api', uploadRouter);
 app.use('/api/chats', chatsRouter);
 app.use('/api/notices', noticesRouter);
+app.use('/api/pdfs', pdfRouter);
 
 // Admin — requires auth + admin role
 app.use('/api/admin', authMiddleware, adminMiddleware, adminRouter);

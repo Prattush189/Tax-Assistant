@@ -14,24 +14,28 @@ Use exact values below for lookup queries. Data verified from CBDT notifications
 ======================================================================
 1. COST INFLATION INDEX (CII) TABLE
 ======================================================================
+CII (Cost Inflation Index) lookup table for capital gains indexation calculation.
 Source: CBDT Notification No. 70/2025, dated 01 July 2025
-Base Year: FY 2001-02 = 100
+Base Year for CII: FY 2001-02 = CII 100
 
-Formula: Indexed Cost = Original Cost x (CII of Sale Year / CII of Purchase Year)
+CII Formula: Indexed Cost = Original Cost x (CII of Sale Year / CII of Purchase Year)
+Example: Asset bought in FY 2010-11 (CII 167), sold in FY 2025-26 (CII 376)
+         Indexed Cost = Original Cost x (376 / 167) = Original Cost x 2.251
 
-When indexation applies:
-- Long-term capital assets held more than 24 months qualify for indexation
+When CII indexation applies:
+- Long-term capital assets held more than 24 months qualify for CII indexation
 - For immovable property: held more than 24 months (36 months if acquired before certain dates)
-- Indexation reduces capital gains by accounting for inflation over the holding period
+- CII indexation reduces capital gains by accounting for inflation over the holding period
 
 BUDGET 2024 NOTE (Effective 23 July 2024):
 For immovable property acquired BEFORE 23 July 2024 and sold AFTER that date:
-- Option A: Pay 20% LTCG tax WITH indexation benefit (using CII table below)
-- Option B: Pay 12.5% LTCG tax WITHOUT indexation benefit (flat rate)
+- Option A: Pay 20% LTCG tax WITH CII indexation benefit (using CII table below)
+- Option B: Pay 12.5% LTCG tax WITHOUT CII indexation benefit (flat rate)
 Choose whichever option results in lower tax. Both options are valid.
 This applies ONLY to property acquired before 23-07-2024 and sold after that date.
 
 Complete CII Table (FY 2001-02 to FY 2025-26):
+CII values verified from CBDT official notification:
 
 FY 2001-02 | 100
 FY 2002-03 | 105
