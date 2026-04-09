@@ -152,11 +152,15 @@ Recent decisions affecting current work:
 - [Phase 10-01]: Token budget healthy at baseline: avg=1449 max=1500 tokens vs 3000 target -- length normalization NOT needed; revisit only if scoring changes push avg above 2500
 - [Phase 10-01]: SCOR-01 confirmed: topK=5 returns exactly 5 chunks; SCOR-02 confirmed: all refs have human-readable labels at baseline
 - [Phase 10-01]: REF-01 CII=376 is primary Plan 02 fix target: reference source returned correctly but CII section with value not making top-5
+- [Phase 10-02]: 17 secondary GST sources disabled (SGST, amendments, UTGST, Finance Acts) -- reduces active sources from 23 to 6; entries kept in array for future re-enable
+- [Phase 10-02]: Reference boost raised 1.3 → 1.5 -- fixed CII=376 ranking in single pass; length normalization NOT needed
+- [Phase 10-02]: Comparison Guide boost kept at 1.5 -- does not crowd other sources after secondary sources removed; no reduction needed
+- [Phase 10-02]: All four SCOR requirements confirmed: SCOR-01 topK=5, SCOR-02 human-readable labels, SCOR-03 no secondary-source crowding, SCOR-04 IT Act sources in IT queries
 
 ### Pending Todos
 
-- Phase 10 Plan 01 complete: golden-queries.json + validate-golden.ts baseline established
-- REF-01 CII=376 not in top-5: primary fix target for Phase 10 Plan 02 scoring tuning
+- Phase 10 Plans 01 and 02 complete: RAG scoring tuned and validated (35/35 golden + 13/13 reference)
+- Phase 10 all SCOR requirements (SCOR-01 through SCOR-04) confirmed
 
 ### Blockers/Concerns
 
@@ -165,5 +169,5 @@ None active for v1.1.
 ## Session Continuity
 
 Last session: 2026-04-09
-Stopped at: Completed 10-01-PLAN.md — golden-queries.json + validate-golden.ts baseline diagnostic done
-Resume file: .planning/phases/10-scoring-integration-validation/10-01-SUMMARY.md
+Stopped at: Completed 10-02-PLAN.md — scoring tuned, all 35 golden queries + 13 reference checks pass
+Resume file: .planning/phases/10-scoring-integration-validation/10-02-SUMMARY.md
