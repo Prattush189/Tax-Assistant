@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/TextLayer.css';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
-import { X, ChevronLeft, ChevronRight, Loader2, Search } from 'lucide-react';
+import { X, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { SectionReference } from '../../types';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -41,10 +41,10 @@ async function findPageForText(
   pdfDoc: pdfjs.PDFDocumentProxy,
   searchText: string,
 ): Promise<number> {
-  // Use first ~120 chars as search needle
-  const needle = normalize(searchText).slice(0, 120);
+  const needle = normalize(searchText).slice(0, 150);
   if (!needle) return 1;
 
+  const needleWords = needle.split(' ').filter(w => w.length > 3);
   let bestPage = 1;
   let bestScore = 0;
 
@@ -55,11 +55,10 @@ async function findPageForText(
       content.items.map((item: any) => item.str).join(' '),
     );
 
-    // Try substring match
+    // Exact substring match — best case
     if (pageText.includes(needle)) return i;
 
-    // Fallback: count overlapping words
-    const needleWords = needle.split(' ').filter(w => w.length > 3);
+    // Word overlap scoring
     const hits = needleWords.filter(w => pageText.includes(w)).length;
     const score = hits / Math.max(needleWords.length, 1);
     if (score > bestScore) {
@@ -73,20 +72,41 @@ async function findPageForText(
 
 // Highlight matching text spans on the rendered text layer
 function highlightTextLayer(container: HTMLElement, searchText: string) {
-  const needle = normalize(searchText).slice(0, 120);
+  const needle = normalize(searchText).slice(0, 150);
   if (!needle) return;
 
   const needleWords = needle.split(' ').filter(w => w.length > 3);
-  const spans = container.querySelectorAll<HTMLSpanElement>('.react-pdf__Page__textContent span');
+  if (needleWords.length === 0) return;
 
-  spans.forEach(span => {
-    const text = normalize(span.textContent || '');
+  const spans = container.querySelectorAll<HTMLSpanElement>(
+    '.react-pdf__Page__textContent span',
+  );
+
+  // Build full page text from spans to find matching range
+  const spanTexts = Array.from(spans).map(s => normalize(s.textContent || ''));
+
+  spans.forEach((span, idx) => {
+    const text = spanTexts[idx];
+    if (!text) return;
+
     const matchCount = needleWords.filter(w => text.includes(w)).length;
-    if (matchCount >= 2 || (needleWords.length <= 2 && matchCount >= 1)) {
-      span.style.backgroundColor = 'rgba(251, 191, 36, 0.4)';
-      span.style.borderRadius = '2px';
+    const threshold = needleWords.length <= 3 ? 1 : 2;
+
+    if (matchCount >= threshold) {
+      span.style.backgroundColor = 'rgba(251, 191, 36, 0.45)';
+      span.style.borderBottom = '2px solid rgba(245, 158, 11, 0.8)';
+      span.style.borderRadius = '1px';
+      span.style.transition = 'background-color 0.3s';
     }
   });
+
+  // Scroll to first highlighted span
+  const firstHighlighted = container.querySelector<HTMLSpanElement>(
+    '.react-pdf__Page__textContent span[style*="background-color"]',
+  );
+  if (firstHighlighted) {
+    firstHighlighted.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
 }
 
 // ── Single PDF Viewer ──
@@ -102,13 +122,12 @@ function SinglePdfViewer({
 }) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [numPages, setNumPages] = useState(0);
-  const [currentPage, setCurrentPage] = useState(1);
+  const [currentPage, setCurrentPage] = useState<number | null>(null); // null = not found yet
   const [loading, setLoading] = useState(true);
-  const [searching, setSearching] = useState(false);
+  const [searching, setSearching] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pageWidth, setPageWidth] = useState(600);
   const containerRef = useRef<HTMLDivElement>(null);
-  const pdfDocRef = useRef<pdfjs.PDFDocumentProxy | null>(null);
 
   // Responsive width
   useEffect(() => {
@@ -151,7 +170,6 @@ function SinglePdfViewer({
 
   const onDocumentLoadSuccess = useCallback(
     async (pdf: pdfjs.PDFDocumentProxy) => {
-      pdfDocRef.current = pdf;
       setNumPages(pdf.numPages);
       setSearching(true);
       const page = await findPageForText(pdf, searchText);
@@ -177,6 +195,9 @@ function SinglePdfViewer({
     );
   }
 
+  // Show loading state until page is found
+  const isReady = !loading && blobUrl && currentPage !== null && !searching;
+
   return (
     <div ref={containerRef} className="flex flex-col h-full min-w-0">
       {label && (
@@ -185,60 +206,63 @@ function SinglePdfViewer({
         </div>
       )}
 
-      {/* Page nav */}
-      <div className="flex items-center justify-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700 shrink-0">
-        <button
-          onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-          disabled={currentPage <= 1}
-          className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-30 transition-colors"
-        >
-          <ChevronLeft className="w-4 h-4" />
-        </button>
-        <span className="text-xs text-gray-600 dark:text-gray-400 min-w-[80px] text-center">
-          {searching ? (
-            <span className="flex items-center gap-1 justify-center">
-              <Search className="w-3 h-3 animate-pulse" /> Finding...
-            </span>
-          ) : (
-            `Page ${currentPage} / ${numPages}`
-          )}
-        </span>
-        <button
-          onClick={() => setCurrentPage(p => Math.min(numPages, p + 1))}
-          disabled={currentPage >= numPages}
-          className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-30 transition-colors"
-        >
-          <ChevronRight className="w-4 h-4" />
-        </button>
-      </div>
-
-      {/* PDF */}
-      <div className="flex-1 overflow-auto bg-gray-200 dark:bg-gray-900 flex justify-center">
-        {(loading || !blobUrl) ? (
-          <div className="flex items-center justify-center h-64">
-            <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
-          </div>
-        ) : (
-          <Document
-            file={blobUrl}
-            onLoadSuccess={onDocumentLoadSuccess}
-            loading={
-              <div className="flex items-center justify-center h-64">
-                <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
-              </div>
-            }
+      {/* Page nav — only show when ready */}
+      {isReady && (
+        <div className="flex items-center justify-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700 shrink-0">
+          <button
+            onClick={() => setCurrentPage(p => Math.max(1, (p ?? 1) - 1))}
+            disabled={(currentPage ?? 1) <= 1}
+            className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-30 transition-colors"
           >
-            <Page
-              pageNumber={currentPage}
-              width={pageWidth}
-              onRenderSuccess={onPageRenderSuccess}
-              loading={
-                <div className="flex items-center justify-center h-64">
-                  <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
-                </div>
-              }
-            />
-          </Document>
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          <span className="text-xs text-gray-600 dark:text-gray-400 min-w-[80px] text-center">
+            Page {currentPage} / {numPages}
+          </span>
+          <button
+            onClick={() => setCurrentPage(p => Math.min(numPages, (p ?? 1) + 1))}
+            disabled={(currentPage ?? 1) >= numPages}
+            className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-30 transition-colors"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* PDF content */}
+      <div className="flex-1 overflow-auto bg-gray-200 dark:bg-gray-900 flex justify-center">
+        {/* Loading overlay — shown until page is found */}
+        {!isReady && (
+          <div className="flex flex-col items-center justify-center h-64 gap-3">
+            <Loader2 className="w-8 h-8 animate-spin text-emerald-500" />
+            <span className="text-sm text-gray-500 dark:text-gray-400">
+              {loading ? 'Loading PDF...' : 'Finding referenced section...'}
+            </span>
+          </div>
+        )}
+
+        {/* Document always rendered (hidden until ready) so onLoadSuccess fires */}
+        {blobUrl && (
+          <div className={isReady ? '' : 'hidden'}>
+            <Document
+              file={blobUrl}
+              onLoadSuccess={onDocumentLoadSuccess}
+              loading={null}
+            >
+              {currentPage !== null && (
+                <Page
+                  pageNumber={currentPage}
+                  width={pageWidth}
+                  onRenderSuccess={onPageRenderSuccess}
+                  loading={
+                    <div className="flex items-center justify-center h-64">
+                      <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+                    </div>
+                  }
+                />
+              )}
+            </Document>
+          </div>
         )}
       </div>
     </div>

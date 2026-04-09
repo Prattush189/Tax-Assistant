@@ -30,6 +30,11 @@ const ALLOWED_PDFS = new Set([
   'GST Acts/madhya-pradesh-sgst.pdf',
   'GST Acts/punjab-sgst.pdf',
   'GST Acts/jammu-and-kashmir-sgst.pdf',
+  // GST 2025 Changes
+  'GST Acts/2025/GST rates2025.pdf',
+  'GST Acts/2025/266209.pdf',
+  'GST Acts/2025/doc202594628401.pdf',
+  'GST Acts/2025/press_release_press_information_bureau_0.pdf',
   // Finance Acts
   'GST Acts/finance_act_2019.pdf',
   'GST Acts/finance_act_2020.pdf',

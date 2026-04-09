@@ -41,6 +41,7 @@ const SOURCE_CONFIGS: SourceConfig[] = [
   { id: 'cgst-2017', filePath: 'cgst-act.txt', label: 'CGST Act 2017', splitter: 'act', pdfFile: 'GST Acts/annexure-3_cgst-act_2017.pdf' },
   { id: 'igst-2017', filePath: 'igst-act.txt', label: 'IGST Act 2017', splitter: 'act', pdfFile: 'GST Acts/annexure-5-igst-act_2017.pdf' },
   { id: 'reference', filePath: 'reference-data.txt', label: 'Tax Reference Guide', splitter: 'reference', boost: 1.5 },
+  { id: 'gst-changes-2025', filePath: 'GST Acts/gst_changes_2025.txt', label: 'GST Changes 2025', splitter: 'comparison', boost: 1.3, pdfFile: 'GST Acts/2025/GST rates2025.pdf' },
 
   // GST Amendments (disabled — secondary sources; re-enable in future versions if needed)
   { id: 'cgst-amend-2018', filePath: 'GST Acts/cgst_amendment_2018_raw.txt', label: 'CGST Amendment 2018', splitter: 'act', disabled: true, pdfFile: 'GST Acts/annexure-3_cgst-amendment-act_2018.pdf' },
