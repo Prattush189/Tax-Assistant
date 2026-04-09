@@ -5,7 +5,7 @@ export const grok = new OpenAI({
   baseURL: 'https://api.x.ai/v1',
 });
 
-export const GROK_MODEL = 'grok-4.1-fast';
+export const GROK_MODEL = 'grok-4-1-fast-reasoning';
 
 // Pricing per token (Grok 4.1 Fast)
 export const INPUT_COST_PER_TOKEN = 0.20 / 1_000_000;
