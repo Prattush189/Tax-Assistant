@@ -29,6 +29,8 @@ const SOURCE_CONFIGS: SourceConfig[] = [
   { id: 'comparison', filePath: 'comparison.txt', label: 'Comparison Guide', splitter: 'comparison', boost: 1.5 },
   { id: 'act-2025', filePath: 'act-2025.txt', label: 'IT Act 2025', splitter: 'act' },
   { id: 'act-1961', filePath: 'act-1961.txt', label: 'IT Act 1961', splitter: 'act' },
+  { id: 'cgst-2017', filePath: 'cgst-act.txt', label: 'CGST Act 2017', splitter: 'act' },
+  { id: 'igst-2017', filePath: 'igst-act.txt', label: 'IGST Act 2017', splitter: 'act' },
 ];
 
 const sourceConfigMap = new Map<string, SourceConfig>(
@@ -522,20 +524,48 @@ function broadenSectionNumbers(query: string): string[] {
   return broadened;
 }
 
-export function retrieveContext(query: string, topK = DEFAULT_TOP_K): string | null {
+export interface SectionReference {
+  source: string;
+  section: string;
+  label: string;
+  text: string;
+}
+
+export interface RetrievalResult {
+  context: string;
+  references: SectionReference[];
+}
+
+function doRetrieve(query: string, topK: number): Chunk[] {
   let chunks = retrieve(query, topK);
 
   // If poor results, try broadening section numbers (15CG → 15C → 15)
   if (chunks.length === 0) {
     const broader = broadenSectionNumbers(query);
     for (const broadSection of broader) {
-      // Replace the original section number in query with broader version
       const broadQuery = query + ` section ${broadSection}`;
       chunks = retrieve(broadQuery, topK);
       if (chunks.length > 0) break;
     }
   }
+  return chunks;
+}
 
+export function retrieveContext(query: string, topK = DEFAULT_TOP_K): string | null {
+  const chunks = doRetrieve(query, topK);
+  if (chunks.length === 0) return null;
+
+  return chunks
+    .map(c => {
+      const cfg = sourceConfigMap.get(c.source);
+      const label = cfg?.label ?? c.source;
+      return `[${label} \u2014 ${c.section}]\n${c.text}`;
+    })
+    .join('\n\n---\n\n');
+}
+
+export function retrieveContextWithRefs(query: string, topK = DEFAULT_TOP_K): RetrievalResult | null {
+  const chunks = doRetrieve(query, topK);
   if (chunks.length === 0) return null;
 
   const context = chunks
@@ -546,5 +576,15 @@ export function retrieveContext(query: string, topK = DEFAULT_TOP_K): string | n
     })
     .join('\n\n---\n\n');
 
-  return context;
+  const references: SectionReference[] = chunks.map(c => {
+    const cfg = sourceConfigMap.get(c.source);
+    return {
+      source: c.source,
+      section: c.section,
+      label: cfg?.label ?? c.source,
+      text: c.text,
+    };
+  });
+
+  return { context, references };
 }

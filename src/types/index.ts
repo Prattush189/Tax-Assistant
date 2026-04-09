@@ -1,3 +1,10 @@
+export interface SectionReference {
+  source: string;
+  section: string;
+  label: string;
+  text: string;
+}
+
 export interface Message {
   role: 'user' | 'model';
   content: string;
@@ -6,7 +13,8 @@ export interface Message {
     filename: string;
     mimeType: string;
   };
-  truncated?: boolean; // true if response was cut off (max_tokens reached)
+  truncated?: boolean;
+  references?: SectionReference[];
 }
 
 export interface UploadResponse {

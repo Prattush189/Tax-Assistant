@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { User, FileText, Copy, Check, Flag, ChevronRight } from 'lucide-react';
-import { Message } from '../../types';
+import { User, FileText, Copy, Check, Flag, ChevronRight, BookOpen } from 'lucide-react';
+import { Message, SectionReference } from '../../types';
 import { cn } from '../../lib/utils';
 import { ChartRenderer } from './ChartRenderer';
+import { SectionModal } from './SectionModal';
 import toast from 'react-hot-toast';
 
 function renderContent(content: string, role: 'user' | 'model') {
@@ -30,8 +31,9 @@ interface MessageBubbleProps {
 }
 
 export function MessageBubble({ message, onContinue }: MessageBubbleProps) {
-  const { role, content, timestamp, attachment, truncated } = message;
+  const { role, content, timestamp, attachment, truncated, references } = message;
   const [copied, setCopied] = useState(false);
+  const [activeRef, setActiveRef] = useState<SectionReference | null>(null);
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(content);
@@ -119,7 +121,31 @@ export function MessageBubble({ message, onContinue }: MessageBubbleProps) {
             </button>
           </div>
         )}
+
+        {/* Section references */}
+        {role === 'model' && references && references.length > 0 && (
+          <div className="mt-3 ml-1">
+            <p className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-1.5">References</p>
+            <div className="flex flex-wrap gap-1.5">
+              {references.map((ref, i) => (
+                <button
+                  key={`${ref.source}-${ref.section}-${i}`}
+                  onClick={() => setActiveRef(ref)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/15 border border-emerald-200/60 dark:border-emerald-800/30 rounded-lg hover:bg-emerald-100 dark:hover:bg-emerald-900/25 transition-all"
+                >
+                  <BookOpen className="w-3 h-3" />
+                  {ref.label} — {ref.section.split(' [')[0]}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Section modal */}
+      {activeRef && (
+        <SectionModal reference={activeRef} onClose={() => setActiveRef(null)} />
+      )}
     </div>
   );
 }

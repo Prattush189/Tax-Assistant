@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Message, DocumentContext } from '../types';
+import { Message, DocumentContext, SectionReference } from '../types';
 import {
   fetchChats,
   createChat as apiCreateChat,
@@ -111,13 +111,13 @@ export function useChatManager() {
     setIsLoading(true);
 
     let wasTruncated = false;
+    let receivedRefs: SectionReference[] | undefined;
 
     try {
       await sendChatMessage(
         chatId,
         messageText,
         (text) => {
-          // Stream: append each chunk to the last (model) message
           setMessages(prev => {
             const updated = [...prev];
             const last = updated[updated.length - 1];
@@ -126,7 +126,6 @@ export function useChatManager() {
           });
         },
         (errorMsg) => {
-          // Error: replace model message content with error
           setMessages(prev => {
             const updated = [...prev];
             updated[updated.length - 1] = { ...updated[updated.length - 1], content: errorMsg };
@@ -134,16 +133,20 @@ export function useChatManager() {
           });
         },
         activeDocument ? { filename: activeDocument.filename, mimeType: activeDocument.mimeType, extractedData: activeDocument.extractedData } : undefined,
-        (stopReason) => {
+        (stopReason, references) => {
           if (stopReason === 'max_tokens') wasTruncated = true;
+          if (references?.length) receivedRefs = references;
         },
       );
 
-      // Mark truncated if needed
-      if (wasTruncated) {
+      // Mark truncated and/or attach references
+      if (wasTruncated || receivedRefs) {
         setMessages(prev => {
           const updated = [...prev];
-          updated[updated.length - 1] = { ...updated[updated.length - 1], truncated: true };
+          const last = { ...updated[updated.length - 1] };
+          if (wasTruncated) last.truncated = true;
+          if (receivedRefs) last.references = receivedRefs;
+          updated[updated.length - 1] = last;
           return updated;
         });
       }

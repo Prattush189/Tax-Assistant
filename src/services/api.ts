@@ -1,4 +1,4 @@
-import { Message, UploadResponse } from '../types';
+import { Message, UploadResponse, SectionReference } from '../types';
 
 const TOKEN_KEY = 'tax_access_token';
 
@@ -26,7 +26,7 @@ export async function sendChatMessage(
   onChunk: (text: string) => void,
   onError: (msg: string) => void,
   fileContext?: { filename: string; mimeType: string; extractedData?: unknown },
-  onDone?: (stopReason: string | null) => void,
+  onDone?: (stopReason: string | null, references?: SectionReference[]) => void,
 ): Promise<void> {
   const body: Record<string, unknown> = {
     message,
@@ -80,7 +80,7 @@ export async function sendChatMessage(
       try {
         const parsed = JSON.parse(payload);
         if (parsed.done) {
-          onDone?.(parsed.stop_reason ?? null);
+          onDone?.(parsed.stop_reason ?? null, parsed.references ?? undefined);
           return;
         }
         if (parsed.error) {

@@ -5,7 +5,7 @@ import { chatRepo } from '../db/repositories/chatRepo.js';
 import { messageRepo } from '../db/repositories/messageRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
-import { retrieveContext } from '../rag/index.js';
+import { retrieveContextWithRefs, SectionReference } from '../rag/index.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
@@ -175,9 +175,11 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
   }
 
   // RAG: retrieve relevant Act sections
-  const ragContext = retrieveContext(userContent);
-  if (ragContext) {
-    userContent = `[Relevant sections from the Income Tax Acts]:\n\n${ragContext}\n\n---\n\n${userContent}`;
+  let ragReferences: SectionReference[] = [];
+  const ragResult = retrieveContextWithRefs(userContent);
+  if (ragResult) {
+    userContent = `[Relevant sections from the Income Tax Acts]:\n\n${ragResult.context}\n\n---\n\n${userContent}`;
+    ragReferences = ragResult.references;
   }
 
   // SSE headers
@@ -248,7 +250,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
       const cost = (inputTok * INPUT_COST_PER_TOKEN) + (outputTok * OUTPUT_COST_PER_TOKEN);
       usageRepo.log(clientIp, req.user.id, inputTok, outputTok, cost, false);
 
-      res.write(`data: ${JSON.stringify({ done: true, stop_reason: stopReason })}\n\n`);
+      res.write(`data: ${JSON.stringify({ done: true, stop_reason: stopReason, references: ragReferences })}\n\n`);
       success = true;
       break; // Success — exit retry loop
     } catch (err) {
