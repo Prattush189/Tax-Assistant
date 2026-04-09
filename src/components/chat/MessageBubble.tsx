@@ -26,31 +26,36 @@ function renderContent(content: string, role: 'user' | 'model') {
   });
 }
 
-/** Blur-reveal wrapper: content appears top-to-bottom with blur-to-sharp transition */
+/** Blur-reveal wrapper: fading gradient overlay at the bottom during streaming */
 function StreamingWrapper({ children, isStreaming }: { children: React.ReactNode; isStreaming: boolean }) {
-  const wrapperRef = useRef<HTMLDivElement>(null);
-  const prevHeightRef = useRef(0);
+  const [fadingOut, setFadingOut] = useState(false);
+  const wasStreamingRef = useRef(false);
 
   useEffect(() => {
-    if (!isStreaming || !wrapperRef.current) return;
-    const el = wrapperRef.current;
-    const newHeight = el.scrollHeight;
-    // Only animate when height actually increases (new content)
-    if (newHeight > prevHeightRef.current) {
-      prevHeightRef.current = newHeight;
+    if (wasStreamingRef.current && !isStreaming) {
+      // Streaming just ended — trigger fade-out
+      setFadingOut(true);
+      const timer = setTimeout(() => setFadingOut(false), 500);
+      return () => clearTimeout(timer);
     }
-  });
-
-  if (!isStreaming) {
-    return <div className="streaming-done">{children}</div>;
-  }
+    wasStreamingRef.current = isStreaming;
+  }, [isStreaming]);
 
   return (
-    <div
-      ref={wrapperRef}
-      className="streaming-reveal"
-    >
+    <div className="relative">
       {children}
+      {(isStreaming || fadingOut) && (
+        <div
+          className="absolute bottom-0 left-0 right-0 pointer-events-none transition-opacity duration-500"
+          style={{
+            height: '4em',
+            background: 'inherit',
+            opacity: fadingOut ? 0 : 1,
+          }}
+        >
+          <div className="w-full h-full bg-gradient-to-t from-white dark:from-gray-800 to-transparent" style={{ filter: 'blur(1px)' }} />
+        </div>
+      )}
     </div>
   );
 }

@@ -71,48 +71,7 @@
   }
 }
 
-/* Blur-reveal streaming effect — uses overlay gradient on ::after */
-.streaming-reveal {
-  position: relative;
-}
-.streaming-reveal::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 4em;
-  background: linear-gradient(to bottom, transparent, #fff);
-  pointer-events: none;
-  filter: blur(2px);
-  transition: opacity 0.3s ease;
-}
-.dark .streaming-reveal::after {
-  background: linear-gradient(to bottom, transparent, rgb(31, 41, 55));
-}
-
-.streaming-done {
-  position: relative;
-}
-.streaming-done::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 4em;
-  background: linear-gradient(to bottom, transparent, #fff);
-  pointer-events: none;
-  animation: revealFadeOut 0.5s ease-out forwards;
-}
-.dark .streaming-done::after {
-  background: linear-gradient(to bottom, transparent, rgb(31, 41, 55));
-}
-
-@keyframes revealFadeOut {
-  from { opacity: 1; height: 4em; }
-  to { opacity: 0; height: 0; }
-}
+/* Reveal animation is handled inline via StreamingWrapper component */
 
 /* Custom radio buttons */
 input[type="radio"] {

@@ -21,7 +21,7 @@ interface ChatViewProps {
 }
 
 export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewProps) {
-  const { messages, input, setInput, isLoading, messagesEndRef, send, activeDocument, attachDocument, detachDocument, continueResponse } = chatManager;
+  const { messages, input, setInput, isLoading, messagesEndRef, scrollAreaRef, send, activeDocument, attachDocument, detachDocument, continueResponse } = chatManager;
   const fileUpload = useFileUpload();
   const [isDragOver, setIsDragOver] = useState(false);
 
@@ -72,7 +72,7 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
       )}
 
       {/* Chat Area */}
-      <div className="flex-1 overflow-y-auto p-4 lg:p-8 space-y-6 scroll-smooth">
+      <div ref={scrollAreaRef} className="flex-1 overflow-y-auto p-4 lg:p-8 space-y-6 scroll-smooth">
         {messages.length === 0 && !isLoading ? (
           <div className="h-full flex flex-col items-center justify-center text-center max-w-2xl mx-auto space-y-8 py-12">
             <div className="w-20 h-20 rounded-2xl bg-emerald-50 dark:bg-emerald-900/20 flex items-center justify-center">
