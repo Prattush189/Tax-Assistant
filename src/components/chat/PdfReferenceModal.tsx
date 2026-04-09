@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/TextLayer.css';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
-import { X, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
+import { X, ChevronLeft, ChevronRight, Loader2, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 import { SectionReference } from '../../types';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -122,18 +122,25 @@ function SinglePdfViewer({
 }) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [numPages, setNumPages] = useState(0);
-  const [currentPage, setCurrentPage] = useState<number | null>(null); // null = not found yet
+  const [currentPage, setCurrentPage] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [searching, setSearching] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [pageWidth, setPageWidth] = useState(600);
+  const [containerWidth, setContainerWidth] = useState(600);
+  const [zoom, setZoom] = useState(0.75); // default 75% of container width
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Responsive width
+  const pageWidth = Math.round(containerWidth * zoom);
+
+  const zoomIn = () => setZoom(z => Math.min(z + 0.15, 2.0));
+  const zoomOut = () => setZoom(z => Math.max(z - 0.15, 0.3));
+  const zoomReset = () => setZoom(0.75);
+
+  // Responsive container width
   useEffect(() => {
     function updateWidth() {
       if (containerRef.current) {
-        setPageWidth(containerRef.current.clientWidth - 16);
+        setContainerWidth(containerRef.current.clientWidth - 16);
       }
     }
     updateWidth();
@@ -206,26 +213,56 @@ function SinglePdfViewer({
         </div>
       )}
 
-      {/* Page nav — only show when ready */}
+      {/* Toolbar — page nav + zoom controls */}
       {isReady && (
-        <div className="flex items-center justify-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700 shrink-0">
-          <button
-            onClick={() => setCurrentPage(p => Math.max(1, (p ?? 1) - 1))}
-            disabled={(currentPage ?? 1) <= 1}
-            className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-30 transition-colors"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-          <span className="text-xs text-gray-600 dark:text-gray-400 min-w-[80px] text-center">
-            Page {currentPage} / {numPages}
-          </span>
-          <button
-            onClick={() => setCurrentPage(p => Math.min(numPages, (p ?? 1) + 1))}
-            disabled={(currentPage ?? 1) >= numPages}
-            className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-30 transition-colors"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
+        <div className="flex items-center justify-between px-3 py-1.5 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700 shrink-0">
+          {/* Page nav */}
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setCurrentPage(p => Math.max(1, (p ?? 1) - 1))}
+              disabled={(currentPage ?? 1) <= 1}
+              className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-30 transition-colors"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <span className="text-xs text-gray-600 dark:text-gray-400 min-w-[70px] text-center">
+              {currentPage} / {numPages}
+            </span>
+            <button
+              onClick={() => setCurrentPage(p => Math.min(numPages, (p ?? 1) + 1))}
+              disabled={(currentPage ?? 1) >= numPages}
+              className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-30 transition-colors"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Zoom controls */}
+          <div className="flex items-center gap-1">
+            <button
+              onClick={zoomOut}
+              disabled={zoom <= 0.3}
+              className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-30 transition-colors"
+              title="Zoom out"
+            >
+              <ZoomOut className="w-4 h-4" />
+            </button>
+            <button
+              onClick={zoomReset}
+              className="px-1.5 py-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors text-xs text-gray-600 dark:text-gray-400 min-w-[40px] text-center"
+              title="Reset zoom"
+            >
+              {Math.round(zoom * 100)}%
+            </button>
+            <button
+              onClick={zoomIn}
+              disabled={zoom >= 2.0}
+              className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-30 transition-colors"
+              title="Zoom in"
+            >
+              <ZoomIn className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       )}
 

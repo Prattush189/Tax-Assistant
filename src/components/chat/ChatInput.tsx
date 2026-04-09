@@ -62,9 +62,9 @@ export function ChatInput({
   return (
     <div className="shrink-0 p-4 lg:p-6 bg-white dark:bg-[#111827] border-t border-gray-200 dark:border-gray-800">
       <div className="max-w-4xl mx-auto">
-        {/* Attachment badges */}
+        {/* Attachment badges — aligned with textarea via same left padding as the button+gap */}
         {hasAttachments && (
-          <div className="mx-12 mb-0 px-3 py-2 border border-b-0 rounded-t-xl border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/40">
+          <div className="ml-[48px] mb-0 px-3 py-2 border border-b-0 rounded-t-xl border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/40">
             <div className="flex flex-wrap gap-1.5">
               {activeDocuments.map((doc, i) => (
                 <div
