@@ -13,6 +13,8 @@ interface SourceConfig {
   label: string;
   splitter: 'act' | 'comparison' | 'reference';
   boost?: number;
+  pdfFile?: string;
+  pdfFiles?: { label: string; file: string }[];
 }
 
 interface Chunk {
@@ -26,11 +28,18 @@ interface Chunk {
 // ── Source registry ──
 
 const SOURCE_CONFIGS: SourceConfig[] = [
-  { id: 'comparison', filePath: 'comparison.txt', label: 'Comparison Guide', splitter: 'comparison', boost: 1.5 },
-  { id: 'act-2025', filePath: 'act-2025.txt', label: 'IT Act 2025', splitter: 'act' },
-  { id: 'act-1961', filePath: 'act-1961.txt', label: 'IT Act 1961', splitter: 'act' },
-  { id: 'cgst-2017', filePath: 'cgst-act.txt', label: 'CGST Act 2017', splitter: 'act' },
-  { id: 'igst-2017', filePath: 'igst-act.txt', label: 'IGST Act 2017', splitter: 'act' },
+  {
+    id: 'comparison', filePath: 'comparison.txt', label: 'Comparison Guide', splitter: 'comparison', boost: 1.5,
+    pdfFiles: [
+      { label: 'IT Act 2025', file: 'Income Tax Acts/Income_Tax_Act_2025_as_amended_by_FA_Act_2026.pdf' },
+      { label: 'IT Act 1961', file: 'Income Tax Acts/Income_Tax_Act_1961_as_amended_by_FA_Act_2026.pdf' },
+    ],
+  },
+  { id: 'act-2025', filePath: 'act-2025.txt', label: 'IT Act 2025', splitter: 'act', pdfFile: 'Income Tax Acts/Income_Tax_Act_2025_as_amended_by_FA_Act_2026.pdf' },
+  { id: 'act-1961', filePath: 'act-1961.txt', label: 'IT Act 1961', splitter: 'act', pdfFile: 'Income Tax Acts/Income_Tax_Act_1961_as_amended_by_FA_Act_2026.pdf' },
+  { id: 'cgst-2017', filePath: 'cgst-act.txt', label: 'CGST Act 2017', splitter: 'act', pdfFile: 'GST Acts/annexure-3_cgst-act_2017.pdf' },
+  { id: 'igst-2017', filePath: 'igst-act.txt', label: 'IGST Act 2017', splitter: 'act', pdfFile: 'GST Acts/annexure-5-igst-act_2017.pdf' },
+  { id: 'reference', filePath: 'reference-data.txt', label: 'Tax Reference Guide', splitter: 'reference' },
 ];
 
 const sourceConfigMap = new Map<string, SourceConfig>(
@@ -310,6 +319,9 @@ function buildChunks(filePath: string, config: SourceConfig): Chunk[] {
     rawSections = splitComparisonSections(text);
   } else if (config.splitter === 'act') {
     rawSections = splitActWithChaptersAndSchedules(text);
+  } else if (config.splitter === 'reference') {
+    // Reference data uses same ====== delimiter format as comparison
+    rawSections = splitComparisonSections(text);
   } else {
     throw new Error(`Splitter '${config.splitter}' is not implemented yet`);
   }
@@ -529,6 +541,8 @@ export interface SectionReference {
   section: string;
   label: string;
   text: string;
+  pdfFile?: string;
+  pdfFiles?: { label: string; file: string }[];
 }
 
 export interface RetrievalResult {
@@ -578,12 +592,15 @@ export function retrieveContextWithRefs(query: string, topK = DEFAULT_TOP_K): Re
 
   const references: SectionReference[] = chunks.map(c => {
     const cfg = sourceConfigMap.get(c.source);
-    return {
+    const ref: SectionReference = {
       source: c.source,
       section: c.section,
       label: cfg?.label ?? c.source,
       text: c.text,
     };
+    if (cfg?.pdfFile) ref.pdfFile = cfg.pdfFile;
+    if (cfg?.pdfFiles) ref.pdfFiles = cfg.pdfFiles;
+    return ref;
   });
 
   return { context, references };

@@ -1,0 +1,378 @@
+TAX REFERENCE GUIDE -- INDIA FY 2025-26
+=======================================
+This guide provides structured lookup data for Indian tax compliance covering:
+- Cost Inflation Index (CII) table (FY 2001-02 through FY 2025-26)
+- Due dates calendar: Income Tax, TDS, GST returns, and corporate compliance
+- Chronological calendar (month-by-month, April 2025 to March 2027)
+- ITR form selection matrix (all 7 forms, AY 2026-27 and AY 2025-26 rules)
+
+AY / Tax Year mapping: FY 2025-26 = Tax Year 2025-26 = AY 2026-27 (last AY under 1961 Act).
+FY 2024-25 = Tax Year 2024-25 = AY 2025-26.
+
+Use exact values below for lookup queries. Data verified from CBDT notifications and official IT department sources.
+
+======================================================================
+1. COST INFLATION INDEX (CII) TABLE
+======================================================================
+Source: CBDT Notification No. 70/2025, dated 01 July 2025
+Base Year: FY 2001-02 = 100
+
+Formula: Indexed Cost = Original Cost x (CII of Sale Year / CII of Purchase Year)
+
+When indexation applies:
+- Long-term capital assets held more than 24 months qualify for indexation
+- For immovable property: held more than 24 months (36 months if acquired before certain dates)
+- Indexation reduces capital gains by accounting for inflation over the holding period
+
+BUDGET 2024 NOTE (Effective 23 July 2024):
+For immovable property acquired BEFORE 23 July 2024 and sold AFTER that date:
+- Option A: Pay 20% LTCG tax WITH indexation benefit (using CII table below)
+- Option B: Pay 12.5% LTCG tax WITHOUT indexation benefit (flat rate)
+Choose whichever option results in lower tax. Both options are valid.
+This applies ONLY to property acquired before 23-07-2024 and sold after that date.
+
+Complete CII Table (FY 2001-02 to FY 2025-26):
+
+FY 2001-02 | 100
+FY 2002-03 | 105
+FY 2003-04 | 109
+FY 2004-05 | 113
+FY 2005-06 | 117
+FY 2006-07 | 122
+FY 2007-08 | 129
+FY 2008-09 | 137
+FY 2009-10 | 148
+FY 2010-11 | 167
+FY 2011-12 | 184
+FY 2012-13 | 200
+FY 2013-14 | 220
+FY 2014-15 | 240
+FY 2015-16 | 254
+FY 2016-17 | 264
+FY 2017-18 | 272
+FY 2018-19 | 280
+FY 2019-20 | 289
+FY 2020-21 | 301
+FY 2021-22 | 317
+FY 2022-23 | 331
+FY 2023-24 | 348
+FY 2024-25 | 363
+FY 2025-26 | 376
+
+FY 2026-27: NOT YET NOTIFIED by CBDT (as of April 2026). Do not estimate.
+
+Total: 25 years of data, base year FY 2001-02 = 100.
+
+======================================================================
+2. DUE DATES -- INCOME TAX
+======================================================================
+AY/Tax Year mapping: FY 2025-26 = Tax Year 2025-26 = AY 2026-27
+
+ADVANCE TAX (Sections 207-211, Income Tax Act):
+Advance tax is payable by individuals and companies with total tax liability of Rs 10,000 or more.
+Senior citizens (60+ years) with NO business income are EXEMPT from advance tax.
+
+Quarterly advance tax schedule for FY 2025-26:
+Q1: Due 15 June 2025      | Pay at least 15% of annual tax liability by this date
+Q2: Due 15 September 2025 | Cumulative 45% of annual tax liability by this date
+Q3: Due 15 December 2025  | Cumulative 75% of annual tax liability by this date
+Q4: Due 15 March 2026     | Cumulative 100% of annual tax liability by this date
+
+ITR FILING DEADLINES (AY 2026-27 / FY 2025-26):
+Non-audit individuals and HUF (ITR-1, ITR-2):             31 July 2026
+Non-audit business (ITR-3, ITR-4):                        31 August 2026
+Audit cases (businesses requiring tax audit):              31 October 2026
+Transfer Pricing (TP) cases:                               30 November 2026
+Belated return (with late fee up to Rs 5,000):             31 December 2026
+Revised return (to correct errors in original return):     31 March 2027
+
+TDS RETURN DEADLINES (Forms 24Q and 26Q, FY 2025-26):
+Q1 (April-June 2025):      31 July 2025
+Q2 (July-September 2025):  31 October 2025
+Q3 (October-December 2025): 31 January 2026
+Q4 (January-March 2026):   31 May 2026
+
+======================================================================
+3. DUE DATES -- GST RETURNS
+======================================================================
+Turnover threshold: Businesses with aggregate turnover ABOVE Rs 5 Crore must file monthly.
+Businesses with aggregate turnover UP TO Rs 5 Crore may opt for QRMP (Quarterly Return Monthly Payment) scheme.
+
+GSTR-1 (Outward Supply Statement):
+Monthly filers (turnover > Rs 5 Cr): 11th of the following month
+  Example: April 2025 GSTR-1 is due by 11 May 2025
+QRMP/Quarterly filers (turnover <= Rs 5 Cr): 13th of the month after the quarter end
+  Example: Q1 (Apr-Jun 2025) GSTR-1 is due by 13 July 2025
+
+GSTR-3B (Monthly Summary Return):
+Monthly filers (turnover > Rs 5 Cr): 20th of the following month
+  Example: April 2025 GSTR-3B is due by 20 May 2025
+QRMP filers (turnover <= Rs 5 Cr): 22nd or 24th of the month after quarter end (state-dependent)
+  - Category I states (22nd): Chhattisgarh, Madhya Pradesh, Gujarat, Maharashtra, Karnataka,
+    Goa, Kerala, Tamil Nadu, Telangana, Andhra Pradesh, Odisha, Puducherry and other category I states
+  - Category II states (24th): Himachal Pradesh, Punjab, Uttarakhand, Haryana, Rajasthan,
+    UP, Bihar, Sikkim, Arunachal Pradesh, Nagaland, Manipur, Mizoram, Tripura, Meghalaya,
+    Assam, West Bengal, Jharkhand, Delhi, J&K, Ladakh, Chandigarh, Dadra & Nagar Haveli,
+    Daman & Diu, Lakshadweep and Andaman & Nicobar Islands
+
+GSTR-9 (Annual Return):
+All GST-registered businesses: 31 December 2026 (for FY 2025-26)
+Optional for businesses with turnover up to Rs 2 Crore.
+
+======================================================================
+4. DUE DATES -- CORPORATE COMPLIANCE (TAX)
+======================================================================
+Note: This section covers income tax and GST compliance for companies only.
+ROC/MCA filings (e.g., AOC-4, MGT-7, DIR-3 KYC) are out of scope.
+
+CORPORATE ITR FILING (ITR-6):
+Audit cases (most companies require audit under Section 44AB): 31 October 2026
+Transfer Pricing cases: 30 November 2026
+
+ADVANCE TAX FOR COMPANIES (FY 2025-26):
+Companies have the same quarterly schedule as individuals (no senior citizen exemption applies):
+Q1: Due 15 June 2025      | Minimum 15% of estimated annual tax
+Q2: Due 15 September 2025 | Cumulative minimum 45%
+Q3: Due 15 December 2025  | Cumulative minimum 75%
+Q4: Due 15 March 2026     | Cumulative 100% (full payment by Q4)
+
+TAX AUDIT REPORT (Section 44AB):
+Form 3CA + 3CD (for companies/businesses with tax audit): 30 September 2026
+Form 3CB + 3CD (professionals required to audit under 44ADA): 30 September 2026
+Note: Tax audit report must be filed BEFORE filing ITR; audit deadline is 30 Sep, ITR deadline is 31 Oct.
+
+CORPORATE GST COMPLIANCE:
+Companies registered under GST follow the same GSTR-1, GSTR-3B, and GSTR-9 deadlines as in Section 3 above.
+Monthly vs quarterly filing depends on company's aggregate turnover (same Rs 5 Cr threshold applies).
+
+======================================================================
+5. DUE DATES -- CHRONOLOGICAL CALENDAR (FY 2025-26 FULL CYCLE)
+======================================================================
+This calendar covers April 2025 through March 2027, the complete filing cycle for FY 2025-26.
+
+APRIL 2025:
+- 15 April 2025: TDS challan (for TDS deducted in March 2025, Q4 FY 2024-25)
+- 30 April 2025: Form 26QB (TDS on property purchase for transactions in March 2025)
+
+MAY 2025:
+- 11 May 2025: GSTR-1 for April 2025 (monthly filers)
+- 13 May 2025: GSTR-1 IFF for April 2025 (QRMP filers, optional upload)
+- 20 May 2025: GSTR-3B for April 2025 (monthly filers)
+- 31 May 2026: TDS Return Q4 FY 2024-25 (Forms 24Q/26Q)
+
+JUNE 2025:
+- 11 June 2025: GSTR-1 for May 2025 (monthly filers)
+- 15 June 2025: Advance Tax Q1 deadline (FY 2025-26) -- at least 15% of annual tax
+- 20 June 2025: GSTR-3B for May 2025 (monthly filers)
+
+JULY 2025:
+- 11 July 2025: GSTR-1 for June 2025 (monthly filers)
+- 13 July 2025: GSTR-1 for Q1 Apr-Jun 2025 (QRMP/quarterly filers)
+- 20 July 2025: GSTR-3B for June 2025 (monthly filers)
+- 22/24 July 2025: GSTR-3B for Q1 Apr-Jun 2025 (QRMP filers, date depends on state)
+- 31 July 2025: TDS Return Q1 FY 2025-26 (Forms 24Q/26Q for Apr-Jun 2025)
+- 31 July 2026: ITR filing deadline for non-audit individuals and HUF (AY 2026-27) [NOTE: 2026 not 2025]
+
+AUGUST 2025:
+- 11 August 2025: GSTR-1 for July 2025 (monthly filers)
+- 20 August 2025: GSTR-3B for July 2025 (monthly filers)
+- 31 August 2026: ITR filing deadline for non-audit businesses ITR-3/ITR-4 (AY 2026-27) [NOTE: 2026 not 2025]
+
+SEPTEMBER 2025:
+- 11 September 2025: GSTR-1 for August 2025 (monthly filers)
+- 15 September 2025: Advance Tax Q2 deadline (FY 2025-26) -- cumulative 45%
+- 20 September 2025: GSTR-3B for August 2025 (monthly filers)
+- 30 September 2026: Tax audit report deadline (Form 3CA/3CB + 3CD) [NOTE: 2026 not 2025]
+
+OCTOBER 2025:
+- 11 October 2025: GSTR-1 for September 2025 (monthly filers)
+- 13 October 2025: GSTR-1 for Q2 Jul-Sep 2025 (QRMP/quarterly filers)
+- 20 October 2025: GSTR-3B for September 2025 (monthly filers)
+- 22/24 October 2025: GSTR-3B for Q2 Jul-Sep 2025 (QRMP filers)
+- 31 October 2025: TDS Return Q2 FY 2025-26 (Forms 24Q/26Q for Jul-Sep 2025)
+- 31 October 2026: ITR filing deadline for audit cases (AY 2026-27) [NOTE: 2026 not 2025]
+
+NOVEMBER 2025:
+- 11 November 2025: GSTR-1 for October 2025 (monthly filers)
+- 20 November 2025: GSTR-3B for October 2025 (monthly filers)
+- 30 November 2026: ITR filing deadline for Transfer Pricing cases (AY 2026-27) [NOTE: 2026 not 2025]
+
+DECEMBER 2025:
+- 11 December 2025: GSTR-1 for November 2025 (monthly filers)
+- 13 December 2025: GSTR-1 for Q3 Oct-Dec 2025 QRMP -- wait, Q3 ends Dec, so Q3 GSTR-1 is due 13 January 2026
+- 15 December 2025: Advance Tax Q3 deadline (FY 2025-26) -- cumulative 75%
+- 20 December 2025: GSTR-3B for November 2025 (monthly filers)
+- 31 December 2026: GSTR-9 annual return for FY 2025-26 [NOTE: 2026 not 2025]
+- 31 December 2026: Belated ITR deadline for AY 2026-27 (with late fee) [NOTE: 2026]
+
+JANUARY 2026:
+- 11 January 2026: GSTR-1 for December 2025 (monthly filers)
+- 13 January 2026: GSTR-1 for Q3 Oct-Dec 2025 (QRMP/quarterly filers)
+- 20 January 2026: GSTR-3B for December 2025 (monthly filers)
+- 22/24 January 2026: GSTR-3B for Q3 Oct-Dec 2025 (QRMP filers)
+- 31 January 2026: TDS Return Q3 FY 2025-26 (Forms 24Q/26Q for Oct-Dec 2025)
+
+FEBRUARY 2026:
+- 11 February 2026: GSTR-1 for January 2026 (monthly filers)
+- 20 February 2026: GSTR-3B for January 2026 (monthly filers)
+
+MARCH 2026:
+- 11 March 2026: GSTR-1 for February 2026 (monthly filers)
+- 15 March 2026: Advance Tax Q4 deadline (FY 2025-26) -- cumulative 100% (final payment)
+- 20 March 2026: GSTR-3B for February 2026 (monthly filers)
+- 31 March 2026: Revised return deadline for AY 2025-26 (FY 2024-25) belated filers
+- 31 March 2026: Deadline for various tax payment/investment declarations
+
+APRIL 2026:
+- 11 April 2026: GSTR-1 for March 2026 (monthly filers)
+- 13 April 2026: GSTR-1 for Q4 Jan-Mar 2026 (QRMP/quarterly filers)
+- 20 April 2026: GSTR-3B for March 2026 (monthly filers)
+- 22/24 April 2026: GSTR-3B for Q4 Jan-Mar 2026 (QRMP filers)
+
+MAY 2026:
+- 31 May 2026: TDS Return Q4 FY 2025-26 (Forms 24Q/26Q for Jan-Mar 2026)
+
+JULY 2026:
+- 31 July 2026: ITR filing deadline for non-audit individuals and HUF (AY 2026-27 / FY 2025-26)
+
+AUGUST 2026:
+- 31 August 2026: ITR filing deadline for non-audit business ITR-3/ITR-4 (AY 2026-27)
+
+SEPTEMBER 2026:
+- 30 September 2026: Tax audit report (Form 3CA/3CB + 3CD) for AY 2026-27
+
+OCTOBER 2026:
+- 31 October 2026: ITR filing deadline for audit cases (AY 2026-27)
+
+NOVEMBER 2026:
+- 30 November 2026: ITR filing deadline for Transfer Pricing cases (AY 2026-27)
+
+DECEMBER 2026:
+- 31 December 2026: Belated ITR for AY 2026-27 (late fee applies, max Rs 5,000)
+- 31 December 2026: GSTR-9 annual return for FY 2025-26
+
+MARCH 2027:
+- 31 March 2027: Revised ITR deadline for AY 2026-27 (last chance to correct original return)
+
+======================================================================
+6. ITR FORM SELECTION MATRIX
+======================================================================
+Which ITR form to use depends on your assessee type, income sources, and the assessment year.
+
+AY 2026-27 (for FY 2025-26 income -- current year returns):
+
+ITR-1 (SAHAJ) -- Resident Individuals Only
+Who can file: Resident individuals (not HUF, not non-resident)
+Eligibility conditions (ALL must be met):
+- Total income does not exceed Rs 50 lakh
+- Income from salary/pension, AND/OR up to one house property, AND/OR other sources (interest, etc.)
+- LTCG under Section 112A up to Rs 1.25 lakh is NOW ALLOWED (NEW for AY 2026-27) -- only if no carried-forward losses
+  Note: This is a change from AY 2025-26 where ITR-1 did NOT allow any LTCG
+- Agriculture income does not exceed Rs 5,000
+- Not a director in a company
+- Has not held unlisted equity shares at any time during the year
+- No foreign assets or foreign income
+- No brought-forward losses (except where 112A LTCG <= 1.25L with no c/f losses condition)
+Cannot file ITR-1 if: Business/professional income, income > Rs 50L, LTCG > Rs 1.25L, multiple house properties, NRI status, foreign income/assets, company director
+
+ITR-2 -- Individuals and HUF
+Who can file: Individuals and Hindu Undivided Families (HUF)
+Eligibility: No business or professional income
+Suitable for:
+- Capital gains (LTCG exceeding Rs 1.25 lakh under 112A, or any STCG)
+- Total income exceeding Rs 50 lakh
+- More than one house property
+- Non-resident individuals (NRI) and Resident But Not Ordinarily Resident (RNOR)
+- Foreign assets or foreign income
+- Director in a company
+- Unlisted equity shares held
+Cannot file ITR-2 if: Has business or professional income (use ITR-3)
+
+ITR-3 -- Individuals and HUF with Business/Professional Income
+Who can file: Individuals and HUF who are partners in a firm OR carry on business/profession
+Eligibility:
+- Proprietors running any business or profession
+- Partners in a partnership firm receiving salary, interest, or share of profit
+- Includes all income types (salary, house property, capital gains, other sources)
+Note: This is the most comprehensive form -- if in doubt between ITR-2 and ITR-3, ITR-3 applies when any business activity exists.
+
+ITR-4 (SUGAM) -- Presumptive Income
+Who can file: Individual, HUF, or Partnership Firm (NOT LLP) opting for presumptive taxation
+Eligibility conditions (ALL must be met):
+- Presumptive income under Section 44AD (business), 44ADA (professionals), or 44AE (transport)
+- Total income does not exceed Rs 50 lakh
+- Up to 2 house properties NOW ALLOWED (NEW for AY 2026-27)
+  Note: In AY 2025-26, ITR-4 was limited to 1 house property
+- No income from capital gains (LTCG/STCG)
+- No foreign assets or income
+Cannot file ITR-4 if: LLP (LLPs must use ITR-5), income > Rs 50L, capital gains exist, more than 2 house properties
+
+ITR-5 -- Partnership Firms, LLPs, AOPs, BOIs
+Who must file: Partnership firms, Limited Liability Partnerships (LLP), Association of Persons (AOP), Body of Individuals (BOI), artificial juridical person
+Not for: Individuals, HUFs, companies, or trusts
+Note: LLPs cannot use ITR-4 (Sugam) -- they must use ITR-5
+
+ITR-6 -- Companies
+Who must file: All companies EXCEPT those claiming exemption under Section 11 (charitable/religious trusts claiming exemption)
+Includes: Private limited companies, public limited companies, One Person Companies (OPC)
+Filing deadline: 31 October 2026 for audit cases; 30 November 2026 for Transfer Pricing cases
+Cannot file ITR-6: Companies claiming exemption u/s 11 (they use ITR-7)
+
+ITR-7 -- Trusts, Political Parties, Research Institutions
+Who must file:
+- Charitable and religious trusts (filing u/s 139(4A))
+- Political parties (filing u/s 139(4B))
+- Scientific research associations, news agencies, universities (filing u/s 139(4C))
+- Universities, colleges, research institutions (filing u/s 139(4D))
+
+---
+
+AY 2025-26 RULES (for FY 2024-25 income -- for belated/revised filers):
+Note: Belated return for AY 2025-26 was due 31 December 2025; revised return due 31 March 2026.
+Taxpayers still filing under AY 2025-26 must use OLDER eligibility rules:
+
+ITR-1 (AY 2025-26): LTCG under Section 112A was NOT allowed -- any LTCG required ITR-2
+ITR-4 (AY 2025-26): Limited to 1 house property only (the 2 house property allowance is only for AY 2026-27 onwards)
+ITR-2 (AY 2025-26): Required for any LTCG including amounts below Rs 1.25 lakh
+All other forms (ITR-3, ITR-5, ITR-6, ITR-7): Same eligibility rules applied in AY 2025-26 as in AY 2026-27
+
+QUICK REFERENCE -- Common Scenarios (AY 2026-27):
+Salaried employee, no capital gains, income < Rs 50L: ITR-1
+Salaried employee with LTCG <= Rs 1.25L (112A), no c/f losses: ITR-1 (NEW eligibility for AY 2026-27)
+Salaried employee with LTCG > Rs 1.25L or any STCG: ITR-2
+Self-employed professional (doctor, consultant) with small income, opting 44ADA: ITR-4
+Self-employed professional NOT opting presumptive taxation: ITR-3
+Small business owner opting 44AD with income < Rs 50L, up to 2 houses: ITR-4
+Partnership firm (not LLP): ITR-5
+LLP: ITR-5
+Private limited company: ITR-6
+Charitable trust: ITR-7
+
+======================================================================
+7. QUICK LOOKUP -- KEY VALUES (FY 2025-26 / AY 2026-27)
+======================================================================
+CII for FY 2025-26 = 376
+CII for FY 2024-25 = 363
+CII for FY 2023-24 = 348
+CII Base Year = FY 2001-02 = 100
+
+Advance Tax Q1 deadline = 15 June 2025
+Advance Tax Q2 deadline = 15 September 2025
+Advance Tax Q3 deadline = 15 December 2025
+Advance Tax Q4 deadline = 15 March 2026
+
+ITR non-audit individual deadline = 31 July 2026
+ITR audit case deadline = 31 October 2026
+Tax audit report deadline = 30 September 2026
+Belated ITR deadline = 31 December 2026
+Revised ITR deadline = 31 March 2027
+
+GSTR-1 monthly filers deadline = 11th of following month
+GSTR-3B monthly filers deadline = 20th of following month
+GSTR-9 annual return deadline = 31 December 2026
+
+ITR-1 income limit = Rs 50 lakh
+ITR-1 LTCG 112A limit (AY 2026-27) = Rs 1.25 lakh (NEW)
+ITR-4 income limit = Rs 50 lakh
+ITR-4 house properties (AY 2026-27) = up to 2 (NEW, was 1 in AY 2025-26)
+Senior citizen advance tax exemption = 60+ with NO business income are exempt
