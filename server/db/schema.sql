@@ -17,8 +17,9 @@ CREATE TABLE IF NOT EXISTS users (
   plugin_role TEXT,            -- 'consultant' | 'staff' | 'client'
   plugin_consultant_id TEXT    -- parent-app consultant id that owns this user
 );
-CREATE INDEX IF NOT EXISTS idx_users_external_id ON users(external_id);
-CREATE INDEX IF NOT EXISTS idx_users_plugin_consultant_id ON users(plugin_consultant_id);
+-- NOTE: indexes for external_id / plugin_consultant_id are created in
+-- server/db/index.ts migrations AFTER the ALTER TABLE ADD COLUMN runs, so
+-- existing databases upgrade correctly. Do not add them here.
 
 CREATE TABLE IF NOT EXISTS chats (
   id TEXT PRIMARY KEY,
