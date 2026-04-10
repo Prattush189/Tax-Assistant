@@ -2,8 +2,18 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
 import { grok, GROK_MODEL } from '../lib/grok.js';
+import { userRepo } from '../db/repositories/userRepo.js';
+import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
+import { AuthRequest } from '../types.js';
 
 const router = Router();
+
+// Monthly attachment upload limits per plan
+const MONTHLY_ATTACHMENT_LIMITS: Record<string, number> = {
+  free: 10,
+  pro: 100,
+  enterprise: 500,
+};
 
 const EXTRACTION_PROMPT = `Extract from this Indian tax document. Return ONLY a JSON object:
 {"documentType":"Form 16|salary slip|investment proof|other","financialYear":"...","employerName":"...","employeeName":"...","pan":"...","grossSalary":null,"standardDeduction":null,"taxableSalary":null,"tdsDeducted":null,"deductions80C":null,"deductions80D":null,"otherDeductions":null,"summary":"one sentence"}
@@ -36,9 +46,28 @@ router.post(
       next();
     });
   },
-  async (req: Request, res: Response) => {
+  async (req: AuthRequest, res: Response) => {
+    if (!req.user) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
     if (!req.file) {
       res.status(400).json({ error: 'No file provided.' });
+      return;
+    }
+
+    // Enforce monthly attachment upload cap
+    const user = userRepo.findById(req.user.id);
+    const plan = user?.plan ?? 'free';
+    const monthlyLimit = MONTHLY_ATTACHMENT_LIMITS[plan] ?? 10;
+    const usedThisMonth = featureUsageRepo.countThisMonth(req.user.id, 'attachment_upload');
+
+    if (usedThisMonth >= monthlyLimit) {
+      res.status(429).json({
+        error: `You've reached your monthly attachment upload limit (${monthlyLimit}). Upgrade your plan for more, or wait until the 1st.`,
+        upgrade: plan !== 'enterprise',
+      });
       return;
     }
 
@@ -68,6 +97,9 @@ router.post(
         .replace(/\n?```$/m, '')
         .trim();
       extractedData = JSON.parse(raw);
+
+      // Log successful upload toward monthly cap
+      featureUsageRepo.log(req.user.id, 'attachment_upload');
     } catch (err) {
       console.error('[upload] Extraction error:', err);
       extractedData = { summary: 'Document uploaded but summary could not be generated.' };
@@ -80,6 +112,7 @@ router.post(
       sizeBytes: size,
       fileUri: null,
       extractedData,
+      usage: { used: usedThisMonth + 1, limit: monthlyLimit },
     });
   }
 );

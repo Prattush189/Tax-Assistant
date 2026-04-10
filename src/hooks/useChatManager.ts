@@ -227,6 +227,12 @@ export function useChatManager() {
         });
       }
 
+      // Clear attachments after send — the document context is now in the chat history,
+      // so we don't need to re-attach it to every subsequent message (prevents cost bloat)
+      if (!isStale()) {
+        setActiveDocuments([]);
+      }
+
       await loadChatList();
     } finally {
       if (!isStale()) setIsLoading(false);
