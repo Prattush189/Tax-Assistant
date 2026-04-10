@@ -44,6 +44,16 @@ const stmts = {
   linkGoogle: db.prepare(
     "UPDATE users SET google_id = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
   ),
+  updateEmail: db.prepare(
+    "UPDATE users SET email = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
+  ),
+  updatePassword: db.prepare(
+    "UPDATE users SET password = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
+  ),
+  updateName: db.prepare(
+    "UPDATE users SET name = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
+  ),
+  deleteById: db.prepare('DELETE FROM users WHERE id = ?'),
 };
 
 export const userRepo = {
@@ -89,5 +99,21 @@ export const userRepo = {
 
   linkGoogle(userId: string, googleId: string): void {
     stmts.linkGoogle.run(googleId, userId);
+  },
+
+  updateEmail(id: string, email: string): void {
+    stmts.updateEmail.run(email.toLowerCase(), id);
+  },
+
+  updatePassword(id: string, hashedPassword: string): void {
+    stmts.updatePassword.run(hashedPassword, id);
+  },
+
+  updateName(id: string, name: string): void {
+    stmts.updateName.run(name, id);
+  },
+
+  deleteById(id: string): void {
+    stmts.deleteById.run(id);
   },
 };

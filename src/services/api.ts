@@ -292,6 +292,36 @@ export async function fetchUserUsage(): Promise<UserUsageResponse> {
   return authFetch('/api/usage');
 }
 
+// ── Account Settings API ────────────────────────────────────────────────
+
+export async function updateAccountName(name: string) {
+  return authFetch('/api/auth/name', {
+    method: 'PATCH',
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function updateAccountEmail(newEmail: string, currentPassword: string) {
+  return authFetch('/api/auth/email', {
+    method: 'PATCH',
+    body: JSON.stringify({ newEmail, currentPassword }),
+  });
+}
+
+export async function updateAccountPassword(currentPassword: string, newPassword: string) {
+  return authFetch('/api/auth/password', {
+    method: 'PATCH',
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+}
+
+export async function deleteAccount(currentPassword: string | null, confirmation: string) {
+  return authFetch('/api/auth/account', {
+    method: 'DELETE',
+    body: JSON.stringify({ currentPassword, confirmation }),
+  });
+}
+
 // ── Notice Drafter API ───────────────────────────────────────────────────
 
 export interface NoticeItem {

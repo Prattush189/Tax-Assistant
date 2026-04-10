@@ -1,7 +1,7 @@
-import { Menu, Moon, Sun, LogOut, MessageCircle, Calculator, LayoutDashboard, CreditCard, FileText, Shield } from 'lucide-react';
+import { Menu, Moon, Sun, LogOut, MessageCircle, Calculator, LayoutDashboard, CreditCard, FileText, Shield, Settings } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
-type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices';
+type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings';
 
 interface HeaderProps {
   isPluginMode: boolean;
@@ -100,9 +100,28 @@ export function Header({
         </button>
         {user && !isPluginMode && (
           <div className="hidden sm:flex items-center gap-1">
-            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white text-[11px] font-bold">
+            <button
+              onClick={() => onViewChange?.('settings')}
+              className={cn(
+                "w-7 h-7 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white text-[11px] font-bold hover:opacity-90 transition-opacity",
+                activeView === 'settings' && 'ring-2 ring-emerald-400 ring-offset-1 ring-offset-white dark:ring-offset-gray-900'
+              )}
+              title="Account settings"
+            >
               {getInitials(user.name)}
-            </div>
+            </button>
+            <button
+              onClick={() => onViewChange?.('settings')}
+              className={cn(
+                "p-1.5 rounded-lg transition-colors",
+                activeView === 'settings'
+                  ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400'
+                  : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-400'
+              )}
+              title="Settings"
+            >
+              <Settings className="w-3.5 h-3.5" />
+            </button>
             <button
               onClick={onLogout}
               className="p-1.5 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"

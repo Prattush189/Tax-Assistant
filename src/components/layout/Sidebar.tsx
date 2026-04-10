@@ -3,7 +3,7 @@ import { cn } from '../../lib/utils';
 import { ChatItem } from '../../services/api';
 import { useState } from 'react';
 
-type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices';
+type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings';
 
 interface SidebarProps {
   isOpen: boolean;
