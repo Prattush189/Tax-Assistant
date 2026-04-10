@@ -10,7 +10,8 @@ coverage/
 # PM2 logs
 logs/
 
-# SQLite database
-data/
+# SQLite database (only the root-level data directory)
+/data/
 !server/data/
 !server/data/*.txt
+!src/data/
