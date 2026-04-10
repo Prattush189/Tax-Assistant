@@ -15,6 +15,7 @@ import noticesRouter from './routes/notices.js';
 import pdfRouter from './routes/pdf.js';
 import suggestionsRouter from './routes/suggestions.js';
 import profilesRouter from './routes/profiles.js';
+import usageRouter from './routes/usage.js';
 import { authMiddleware, adminMiddleware } from './middleware/auth.js';
 import { authLimiter, chatLimiter, uploadLimiter } from './middleware/rateLimiter.js';
 import helmet from 'helmet';
@@ -79,6 +80,7 @@ app.use('/api/notices', noticesRouter);
 app.use('/api/pdfs', pdfRouter);
 app.use('/api/suggestions', suggestionsRouter);
 app.use('/api/profiles', profilesRouter);
+app.use('/api/usage', usageRouter);
 
 // Admin — requires auth + admin role
 app.use('/api/admin', authMiddleware, adminMiddleware, adminRouter);
@@ -86,8 +88,31 @@ app.use('/api/admin', authMiddleware, adminMiddleware, adminRouter);
 // 5. Production static serving
 if (process.env.NODE_ENV === 'production') {
   const distPath = path.join(__dirname, '..', 'dist');
-  app.use(express.static(distPath));
+
+  // Hashed assets (JS, CSS, images in /assets/) get long cache — filename changes on each build
+  app.use('/assets', express.static(path.join(distPath, 'assets'), {
+    maxAge: '1y',
+    immutable: true,
+  }));
+
+  // Other static files (logo, favicon, etc.) — short cache
+  app.use(express.static(distPath, {
+    maxAge: '1h',
+    setHeaders: (res, filePath) => {
+      // index.html must NEVER be cached — it contains the hashed filenames
+      if (filePath.endsWith('index.html')) {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+      }
+    },
+  }));
+
+  // SPA fallback — always serve fresh index.html
   app.get('*', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     res.sendFile(path.join(distPath, 'index.html'));
   });
 }

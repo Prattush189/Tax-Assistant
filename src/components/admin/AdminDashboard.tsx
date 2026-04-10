@@ -28,6 +28,7 @@ interface AdminUser {
   chat_count: number;
   message_count: number;
   ips: string;
+  last_api_call: string | null;
 }
 
 interface TrendPoint {
@@ -55,6 +56,26 @@ const SUSPEND_OPTIONS = [
   { label: '7 days', hours: 168 },
   { label: '30 days', hours: 720 },
 ];
+
+/** Format ISO timestamp to relative time (e.g., "5m ago", "2h ago", "3d ago") */
+function relativeTime(ts: string | null): string {
+  if (!ts) return '—';
+  // DB stores IST with no tz — parse as UTC offset +05:30
+  const then = new Date(ts + '+05:30').getTime();
+  const now = Date.now();
+  const diff = Math.max(0, now - then);
+  const sec = Math.floor(diff / 1000);
+  if (sec < 60) return 'just now';
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 30) return `${day}d ago`;
+  const mon = Math.floor(day / 30);
+  if (mon < 12) return `${mon}mo ago`;
+  return `${Math.floor(mon / 12)}y ago`;
+}
 
 export function AdminDashboard() {
   const [stats, setStats] = useState<Stats | null>(null);
@@ -203,8 +224,23 @@ export function AdminDashboard() {
 
         {/* Users Table */}
         <div className="bg-white/70 dark:bg-gray-900/70 backdrop-blur-sm border border-gray-200/50 dark:border-gray-800/50 rounded-2xl overflow-hidden">
-          <div className="px-4 py-3 border-b border-gray-200/50 dark:border-gray-800/50">
-            <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Users ({users.length})</h2>
+          <div className="px-4 py-3 border-b border-gray-200/50 dark:border-gray-800/50 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+              Users ({users.length}) <span className="text-xs font-normal text-gray-400 ml-1">sorted by latest activity</span>
+            </h2>
+            <button
+              onClick={loadData}
+              disabled={loading}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/15 border border-emerald-200 dark:border-emerald-800/30 rounded-lg hover:bg-emerald-100 dark:hover:bg-emerald-900/25 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Reload users"
+            >
+              {loading ? (
+                <LoadingAnimation size="xs" />
+              ) : (
+                <RefreshCw className="w-3.5 h-3.5" />
+              )}
+              Reload
+            </button>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -217,6 +253,7 @@ export function AdminDashboard() {
                   <th className="text-left px-4 py-3 font-medium text-gray-500">IPs</th>
                   <th className="text-left px-4 py-3 font-medium text-gray-500">Chats</th>
                   <th className="text-left px-4 py-3 font-medium text-gray-500">Msgs</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-500">Last Call</th>
                   <th className="text-left px-4 py-3 font-medium text-gray-500">Status</th>
                   <th className="text-left px-4 py-3 font-medium text-gray-500">Actions</th>
                 </tr>
@@ -253,6 +290,9 @@ export function AdminDashboard() {
                     </td>
                     <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{u.chat_count}</td>
                     <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{u.message_count}</td>
+                    <td className="px-4 py-3 text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap" title={u.last_api_call ?? 'Never'}>
+                      {relativeTime(u.last_api_call)}
+                    </td>
                     <td className="px-4 py-3">
                       {u.suspended_until ? (
                         <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400">Suspended</span>

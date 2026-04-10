@@ -18,20 +18,15 @@ const sizeMap: Record<Size, string> = {
 
 /**
  * Looped animated logo for all loading states.
- * Uses /loading.mp4 from the public folder.
+ * Uses /loading.gif from the public folder.
  */
 export function LoadingAnimation({ size = 'md', className }: LoadingAnimationProps) {
   return (
-    <video
-      className={cn('object-contain pointer-events-none', sizeMap[size], className)}
-      autoPlay
-      loop
-      muted
-      playsInline
-      disablePictureInPicture
-      aria-label="Loading"
-    >
-      <source src="/loading.mp4" type="video/mp4" />
-    </video>
+    <img
+      src="/loading.gif"
+      alt="Loading"
+      className={cn('object-contain pointer-events-none select-none', sizeMap[size], className)}
+      draggable={false}
+    />
   );
 }

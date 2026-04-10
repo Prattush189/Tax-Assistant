@@ -70,48 +70,7 @@ export function ChatInput({
   return (
     <div className="shrink-0 p-4 lg:p-6 bg-white dark:bg-[#151210] border-t border-gray-200 dark:border-gray-800">
       <div className="max-w-4xl mx-auto">
-        {/* Attachment badges — aligned with textarea via same left padding as the button+gap */}
-        {hasAttachments && (
-          <div className="ml-[48px] mb-0 px-3 py-2 border border-b-0 rounded-t-xl border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/40">
-            <div className="flex flex-wrap gap-1.5">
-              {activeDocuments.map((doc, i) => (
-                <div
-                  key={`${doc.filename}-${i}`}
-                  className="flex items-center gap-1.5 px-2 py-1 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/40 rounded-lg text-xs text-emerald-700 dark:text-emerald-400"
-                >
-                  <FileText className="w-3 h-3 shrink-0" />
-                  <span className="truncate max-w-[120px]">{doc.filename}</span>
-                  <button
-                    onClick={() => onDetachDocument?.(i)}
-                    className="p-0.5 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 rounded transition-colors"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-              ))}
-              {isUploading && (
-                <div className="flex items-center gap-1.5 px-2 py-1 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/40 rounded-lg text-xs text-emerald-700 dark:text-emerald-400">
-                  <LoadingAnimation size="xs" />
-                  <span>{uploadPhase === 'uploading' ? 'Uploading...' : 'Analyzing...'}</span>
-                </div>
-              )}
-              {referencedProfile && (
-                <div className="flex items-center gap-1.5 px-2 py-1 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800/40 rounded-lg text-xs text-blue-700 dark:text-blue-400">
-                  <BarChart3 className="w-3 h-3 shrink-0" />
-                  <span className="truncate max-w-[150px]">Profile: {referencedProfile.name}</span>
-                  <button
-                    onClick={() => onClearReference?.()}
-                    className="p-0.5 hover:bg-blue-100 dark:hover:bg-blue-900/30 rounded transition-colors"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        <div className="relative flex items-center gap-2">
+        <div className="relative flex items-end gap-2">
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={isUploading || !canAttachMore}
@@ -134,7 +93,7 @@ export function ChatInput({
             className="hidden"
           />
 
-          <div className="relative">
+          <div className="relative shrink-0">
             <button
               onClick={() => {
                 if (!isPro) {
@@ -148,7 +107,7 @@ export function ChatInput({
                 "p-2.5 rounded-xl transition-all shrink-0",
                 !isPro
                   ? "text-gray-300 dark:text-gray-600 cursor-not-allowed"
-                  : "text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/15"
+                  : "text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/15"
               )}
               title={isPro ? 'Reference tax profile' : 'Upgrade to Pro to reference profiles'}
             >
@@ -186,6 +145,46 @@ export function ChatInput({
           </div>
 
           <div className="flex-1 relative">
+            {/* Attachment badges — aligned perfectly with textarea width */}
+            {hasAttachments && (
+              <div className="px-3 py-2 border border-b-0 rounded-t-2xl border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60">
+                <div className="flex flex-wrap gap-1.5">
+                  {activeDocuments.map((doc, i) => (
+                    <div
+                      key={`${doc.filename}-${i}`}
+                      className="flex items-center gap-1.5 px-2 py-1 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/40 rounded-lg text-xs text-emerald-700 dark:text-emerald-400"
+                    >
+                      <FileText className="w-3 h-3 shrink-0" />
+                      <span className="truncate max-w-[120px]">{doc.filename}</span>
+                      <button
+                        onClick={() => onDetachDocument?.(i)}
+                        className="p-0.5 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 rounded transition-colors"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                  {isUploading && (
+                    <div className="flex items-center gap-1.5 px-2 py-1 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/40 rounded-lg text-xs text-emerald-700 dark:text-emerald-400">
+                      <LoadingAnimation size="xs" />
+                      <span>{uploadPhase === 'uploading' ? 'Uploading...' : 'Analyzing...'}</span>
+                    </div>
+                  )}
+                  {referencedProfile && (
+                    <div className="flex items-center gap-1.5 px-2 py-1 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/40 rounded-lg text-xs text-emerald-700 dark:text-emerald-400">
+                      <BarChart3 className="w-3 h-3 shrink-0" />
+                      <span className="truncate max-w-[150px]">Profile: {referencedProfile.name}</span>
+                      <button
+                        onClick={() => onClearReference?.()}
+                        className="p-0.5 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 rounded transition-colors"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
             <textarea
               value={input}
               onChange={(e) => onInputChange(e.target.value)}

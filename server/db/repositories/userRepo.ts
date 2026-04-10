@@ -21,8 +21,10 @@ const stmts = {
   findAll: db.prepare(`
     SELECT u.*,
       (SELECT COUNT(*) FROM chats WHERE user_id = u.id) AS chat_count,
-      (SELECT COUNT(*) FROM messages m JOIN chats c ON m.chat_id = c.id WHERE c.user_id = u.id) AS message_count
-    FROM users u ORDER BY u.created_at DESC
+      (SELECT COUNT(*) FROM messages m JOIN chats c ON m.chat_id = c.id WHERE c.user_id = u.id) AS message_count,
+      (SELECT MAX(created_at) FROM api_usage WHERE user_id = u.id) AS last_api_call
+    FROM users u
+    ORDER BY last_api_call IS NULL, last_api_call DESC, u.created_at DESC
   `),
   create: db.prepare(
     'INSERT INTO users (id, email, password, name) VALUES (?, ?, ?, ?)'
@@ -53,8 +55,8 @@ export const userRepo = {
     return stmts.findById.get(id) as UserRow | undefined;
   },
 
-  findAll(): (UserRow & { chat_count: number; message_count: number })[] {
-    return stmts.findAll.all() as (UserRow & { chat_count: number; message_count: number })[];
+  findAll(): (UserRow & { chat_count: number; message_count: number; last_api_call: string | null })[] {
+    return stmts.findAll.all() as (UserRow & { chat_count: number; message_count: number; last_api_call: string | null })[];
   },
 
   create(email: string, hashedPassword: string, name: string): UserRow {

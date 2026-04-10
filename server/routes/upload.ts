@@ -1,7 +1,7 @@
 // server/routes/upload.ts
 import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
-import { grok, GROK_MODEL } from '../lib/grok.js';
+import { gemini, GEMINI_MODEL } from '../lib/grok.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { AuthRequest } from '../types.js';
@@ -15,9 +15,32 @@ const MONTHLY_ATTACHMENT_LIMITS: Record<string, number> = {
   enterprise: 500,
 };
 
-const EXTRACTION_PROMPT = `Extract from this Indian tax document. Return ONLY a JSON object:
-{"documentType":"Form 16|salary slip|investment proof|other","financialYear":"...","employerName":"...","employeeName":"...","pan":"...","grossSalary":null,"standardDeduction":null,"taxableSalary":null,"tdsDeducted":null,"deductions80C":null,"deductions80D":null,"otherDeductions":null,"summary":"one sentence"}
-Use null for missing fields.`;
+const EXTRACTION_PROMPT = `Analyze this document and return ONLY a JSON object. Handle ANY document type (tax forms, reports, invoices, notices, articles, etc.).
+
+Return this exact shape:
+{
+  "documentType": "Form 16 | salary slip | investment proof | tax notice | financial report | invoice | article | other",
+  "financialYear": "e.g. 2024-25 or null",
+  "employerName": "or null",
+  "employeeName": "or null",
+  "pan": "or null",
+  "grossSalary": null,
+  "standardDeduction": null,
+  "taxableSalary": null,
+  "tdsDeducted": null,
+  "deductions80C": null,
+  "deductions80D": null,
+  "otherDeductions": null,
+  "summary": "2-4 sentence comprehensive summary describing what the document contains, key topics, figures, and main points. Be specific — mention actual content, not just the document type.",
+  "keyPoints": ["array of 3-8 specific facts, figures, or notable points from the document"],
+  "fullText": "detailed extraction of the most important text content (up to 1500 chars) — tables, figures, key sections. This is what the chat assistant will see."
+}
+
+Rules:
+- For tax forms (Form 16, salary slip, etc.): fill structured fields (grossSalary, TDS, etc.) with actual values
+- For other documents: set tax-specific fields to null but make summary/keyPoints/fullText rich and detailed
+- NEVER leave summary as just "Document uploaded" — always describe actual content
+- Return raw JSON, no markdown code fences`;
 
 const ALLOWED_MIME_TYPES = [
   'application/pdf',
@@ -57,11 +80,17 @@ router.post(
       return;
     }
 
-    // Enforce monthly attachment upload cap
+    // Enforce monthly attachment upload cap (resilient — won't crash on DB issues)
     const user = userRepo.findById(req.user.id);
     const plan = user?.plan ?? 'free';
     const monthlyLimit = MONTHLY_ATTACHMENT_LIMITS[plan] ?? 10;
-    const usedThisMonth = featureUsageRepo.countThisMonth(req.user.id, 'attachment_upload');
+    let usedThisMonth = 0;
+    try {
+      usedThisMonth = featureUsageRepo.countThisMonth(req.user.id, 'attachment_upload');
+    } catch (err) {
+      console.error('[upload] Failed to check attachment usage:', err);
+      // Fail open — allow upload if we can't check usage
+    }
 
     if (usedThisMonth >= monthlyLimit) {
       res.status(429).json({
@@ -77,12 +106,13 @@ router.post(
     let extractedData: Record<string, unknown>;
 
     try {
+      // Gemini 2.5 Flash handles both PDFs and images natively via OpenAI-compat mode
       const base64Data = req.file.buffer.toString('base64');
       const dataUrl = `data:${mimetype};base64,${base64Data}`;
 
-      const response = await grok.chat.completions.create({
-        model: GROK_MODEL,
-        max_tokens: 512,
+      const response = await gemini.chat.completions.create({
+        model: GEMINI_MODEL,
+        max_tokens: 2048,
         messages: [{
           role: 'user',
           content: [
@@ -98,11 +128,18 @@ router.post(
         .trim();
       extractedData = JSON.parse(raw);
 
-      // Log successful upload toward monthly cap
-      featureUsageRepo.log(req.user.id, 'attachment_upload');
+      // Log successful upload toward monthly cap (non-fatal)
+      try {
+        featureUsageRepo.log(req.user.id, 'attachment_upload');
+      } catch (logErr) {
+        console.error('[upload] Failed to log attachment usage:', logErr);
+      }
     } catch (err) {
       console.error('[upload] Extraction error:', err);
-      extractedData = { summary: 'Document uploaded but summary could not be generated.' };
+      extractedData = {
+        documentType: 'unknown',
+        summary: `The user uploaded "${originalname}" but content could not be extracted. Ask the user what the document contains if more context is needed.`,
+      };
     }
 
     res.status(200).json({

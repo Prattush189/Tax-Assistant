@@ -268,6 +268,30 @@ export async function adminFetchPlans() {
   return authFetch('/api/admin/stats/plans');
 }
 
+// ── Usage API ────────────────────────────────────────────────────────────
+
+export interface UsageMetric {
+  used: number;
+  limit: number;
+  period: 'day' | 'month' | 'total';
+  label: string;
+}
+
+export interface UserUsageResponse {
+  plan: 'free' | 'pro' | 'enterprise';
+  usage: {
+    messages: UsageMetric;
+    attachments: UsageMetric;
+    suggestions: UsageMetric;
+    notices: UsageMetric;
+    profiles: UsageMetric;
+  };
+}
+
+export async function fetchUserUsage(): Promise<UserUsageResponse> {
+  return authFetch('/api/usage');
+}
+
 // ── Notice Drafter API ───────────────────────────────────────────────────
 
 export interface NoticeItem {

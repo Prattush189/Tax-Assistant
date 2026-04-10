@@ -46,6 +46,8 @@ export interface DocumentSummary {
   deductions80D: number | null;
   otherDeductions: number | null;
   summary: string;
+  keyPoints?: string[];
+  fullText?: string;
 }
 
 export interface DocumentContext {

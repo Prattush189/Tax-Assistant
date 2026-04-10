@@ -292,12 +292,41 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
 
   let userContent = message.trim();
   if (fileContexts.length > 0) {
-    const contextStr = fileContexts
-      .filter(fc => fc.extractedData)
-      .map(fc => `[Attached: ${fc.filename}]\n${JSON.stringify(fc.extractedData)}`)
-      .join('\n\n');
-    if (contextStr) {
-      userContent = `${contextStr}\n\n${userContent}`;
+    const contextBlocks: string[] = [];
+    for (const fc of fileContexts) {
+      const data: any = fc.extractedData ?? {};
+      if (!data || typeof data !== 'object') continue;
+
+      const parts: string[] = [`[Attached Document: ${fc.filename}]`];
+      if (data.documentType) parts.push(`Type: ${data.documentType}`);
+      if (data.summary) parts.push(`Summary: ${data.summary}`);
+
+      // Tax-specific structured fields (only if present)
+      const taxFields: string[] = [];
+      if (data.financialYear) taxFields.push(`FY: ${data.financialYear}`);
+      if (data.employerName) taxFields.push(`Employer: ${data.employerName}`);
+      if (data.employeeName) taxFields.push(`Employee: ${data.employeeName}`);
+      if (data.pan) taxFields.push(`PAN: ${data.pan}`);
+      if (data.grossSalary) taxFields.push(`Gross Salary: ₹${data.grossSalary}`);
+      if (data.tdsDeducted) taxFields.push(`TDS: ₹${data.tdsDeducted}`);
+      if (data.deductions80C) taxFields.push(`80C: ₹${data.deductions80C}`);
+      if (data.deductions80D) taxFields.push(`80D: ₹${data.deductions80D}`);
+      if (taxFields.length > 0) parts.push(`Tax Data: ${taxFields.join(' | ')}`);
+
+      // Key points
+      if (Array.isArray(data.keyPoints) && data.keyPoints.length > 0) {
+        parts.push('Key Points:\n' + data.keyPoints.map((p: string) => `  • ${p}`).join('\n'));
+      }
+
+      // Full text excerpt
+      if (data.fullText) {
+        parts.push(`Content Extract:\n${data.fullText}`);
+      }
+
+      contextBlocks.push(parts.join('\n'));
+    }
+    if (contextBlocks.length > 0) {
+      userContent = `${contextBlocks.join('\n\n---\n\n')}\n\n---\n\nUser question about the attached document(s): ${userContent}`;
     }
   }
 
