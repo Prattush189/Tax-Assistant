@@ -3,35 +3,77 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useTheme } from './hooks/useTheme';
-import { usePluginMode } from './hooks/usePluginMode';
+import { usePluginMode, usePluginParentMessage } from './hooks/usePluginMode';
 import { useChatManager } from './hooks/useChatManager';
+import { useNoticeDrafter } from './hooks/useNoticeDrafter';
 import { useAuth } from './contexts/AuthContext';
 import { AuthGuard } from './components/auth/AuthGuard';
+import { PluginAuthBridge } from './components/auth/PluginAuthBridge';
 import { Sidebar } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
 import { ChatView } from './components/chat/ChatView';
-import { CalculatorView } from './components/calculator/CalculatorView';
+import { CalculatorView, CalculatorTab } from './components/calculator/CalculatorView';
 import { DashboardView } from './components/dashboard/DashboardView';
 import { AdminDashboard } from './components/admin/AdminDashboard';
 import { PlanPage } from './components/plan/PlanPage';
 import { SettingsPage } from './components/settings/SettingsPage';
 import { NoticeDrafterPage } from './components/notices/NoticeDrafterPage';
 import { TaxCalculatorProvider } from './contexts/TaxCalculatorContext';
+import type { ParentToIframeMessage } from './lib/pluginProtocol';
 import { cn } from './lib/utils';
 
 type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings';
+
+/**
+ * Dispatches SET_VIEW / SET_CALCULATOR_TAB / LOGOUT into local state.
+ * SET_THEME and PLUGIN_SSO are handled elsewhere.
+ */
+function PluginMessageDispatcher({
+  setActiveView,
+  setCalculatorTab,
+}: {
+  setActiveView: (view: ActiveView) => void;
+  setCalculatorTab: (tab: CalculatorTab) => void;
+}) {
+  const { logout } = useAuth();
+
+  const handleParentMessage = useCallback(
+    (msg: ParentToIframeMessage) => {
+      switch (msg.type) {
+        case 'SET_VIEW':
+          setActiveView(msg.view);
+          break;
+        case 'SET_CALCULATOR_TAB':
+          setCalculatorTab(msg.tab);
+          setActiveView('calculator');
+          break;
+        case 'LOGOUT':
+          logout();
+          break;
+        default:
+          break;
+      }
+    },
+    [setActiveView, setCalculatorTab, logout],
+  );
+
+  usePluginParentMessage(handleParentMessage);
+  return null;
+}
 
 function AppContent() {
   const { isDarkMode, toggleTheme, setIsDarkMode } = useTheme();
   const { isPluginMode } = usePluginMode(setIsDarkMode);
   const [activeView, setActiveView] = useState<ActiveView>('chat');
+  const [calculatorTab, setCalculatorTab] = useState<CalculatorTab>('income');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const { user, logout } = useAuth();
 
   const chatManager = useChatManager();
+  const noticeDrafter = useNoticeDrafter();
 
   return (
     <div className={cn(
@@ -52,10 +94,23 @@ function AppContent() {
             setIsSidebarOpen(false);
           }}
           onDeleteChat={chatManager.deleteChatById}
+          noticeList={noticeDrafter.notices}
+          currentNoticeId={noticeDrafter.currentNoticeId}
+          onNewNotice={noticeDrafter.clearDraft}
+          onSwitchNotice={noticeDrafter.loadNotice}
+          onDeleteNotice={noticeDrafter.removeNotice}
           user={user}
           onLogout={logout}
           activeView={activeView}
           onViewChange={setActiveView}
+          calculatorTab={calculatorTab}
+          onCalculatorTabChange={setCalculatorTab}
+        />
+      )}
+      {isPluginMode && (
+        <PluginMessageDispatcher
+          setActiveView={setActiveView}
+          setCalculatorTab={setCalculatorTab}
         />
       )}
       <TaxCalculatorProvider>
@@ -80,11 +135,11 @@ function AppContent() {
               className="flex-1 flex flex-col min-h-0"
             >
               {activeView === 'chat' && <ChatView isPluginMode={isPluginMode} chatManager={chatManager} />}
-              {activeView === 'calculator' && <CalculatorView />}
+              {activeView === 'calculator' && <CalculatorView activeTab={calculatorTab} />}
               {activeView === 'dashboard' && <DashboardView />}
               {activeView === 'admin' && user?.role === 'admin' && <AdminDashboard />}
               {activeView === 'plan' && <PlanPage />}
-              {activeView === 'notices' && <NoticeDrafterPage />}
+              {activeView === 'notices' && <NoticeDrafterPage drafter={noticeDrafter} />}
               {activeView === 'settings' && <SettingsPage />}
             </motion.div>
           </AnimatePresence>
@@ -105,7 +160,11 @@ export default function App() {
   const { isPluginMode } = usePluginMode(setIsDarkMode);
 
   if (isPluginMode) {
-    return <AppContent />;
+    return (
+      <PluginAuthBridge>
+        <AppContent />
+      </PluginAuthBridge>
+    );
   }
 
   return (

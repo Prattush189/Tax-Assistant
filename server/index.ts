@@ -49,10 +49,17 @@ app.use(
 );
 
 // 2. CORS
-const allowedOrigins =
-  process.env.NODE_ENV === 'production'
+const pluginAllowedOrigins = (process.env.PLUGIN_ALLOWED_ORIGINS ?? 'https://ai.smartbizin.com')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+
+const allowedOrigins = Array.from(new Set([
+  ...(process.env.NODE_ENV === 'production'
     ? ['https://ai.smartbizin.com', 'https://smartbizin.com']
-    : ['http://localhost:3000', 'http://localhost:5173'];
+    : ['http://localhost:3000', 'http://localhost:5173']),
+  ...pluginAllowedOrigins,
+]));
 
 app.use(
   cors({

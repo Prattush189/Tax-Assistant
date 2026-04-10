@@ -1,5 +1,6 @@
-import { Menu, Moon, Sun, LogOut, MessageCircle, Calculator, LayoutDashboard, CreditCard, FileText, Shield, Settings } from 'lucide-react';
+import { Menu, Moon, Sun, LogOut, MessageCircle, Calculator, LayoutDashboard, CreditCard, FileText, Shield, Settings, X, Minus } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { postToParent } from '../../lib/pluginProtocol';
 
 type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings';
 
@@ -98,6 +99,24 @@ export function Header({
         >
           {isDarkMode ? <Sun className="w-4 h-4 text-gray-400" /> : <Moon className="w-4 h-4 text-gray-500" />}
         </button>
+        {isPluginMode && (
+          <div className="flex items-center gap-0.5">
+            <button
+              onClick={() => postToParent({ type: 'MINIMIZE_PLUGIN' })}
+              className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
+              title="Minimize"
+            >
+              <Minus className="w-3.5 h-3.5 text-gray-500" />
+            </button>
+            <button
+              onClick={() => postToParent({ type: 'CLOSE_PLUGIN' })}
+              className="p-1.5 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+              title="Close"
+            >
+              <X className="w-3.5 h-3.5 text-red-500" />
+            </button>
+          </div>
+        )}
         {user && !isPluginMode && (
           <div className="hidden sm:flex items-center gap-1">
             <button

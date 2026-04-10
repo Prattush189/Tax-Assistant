@@ -1,8 +1,9 @@
-import { useState } from 'react';
-import { Upload, FileText, Send } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { Upload, FileText, Send, Image as ImageIcon, X } from 'lucide-react';
 import { useFileUpload } from '../../hooks/useFileUpload';
 import { NoticeGenerateInput } from '../../services/api';
 import { LoadingAnimation } from '../ui/LoadingAnimation';
+import { LetterheadConfig } from '../../hooks/useNoticeDrafter';
 
 const NOTICE_TYPES = [
   { value: 'income-tax', label: 'Income Tax' },
@@ -45,9 +46,22 @@ interface NoticeFormProps {
   onGenerate: (input: NoticeGenerateInput) => void;
   isGenerating: boolean;
   usage: { used: number; limit: number };
+  letterhead: LetterheadConfig;
+  onLetterheadChange: (config: LetterheadConfig) => void;
 }
 
-export function NoticeForm({ onGenerate, isGenerating, usage }: NoticeFormProps) {
+const MAX_IMAGE_SIZE_BYTES = 500 * 1024; // 500KB cap to keep localStorage sane
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLetterheadChange }: NoticeFormProps) {
   const [noticeType, setNoticeType] = useState('income-tax');
   const [subType, setSubType] = useState('');
   const [senderName, setSenderName] = useState('');
@@ -63,8 +77,43 @@ export function NoticeForm({ onGenerate, isGenerating, usage }: NoticeFormProps)
   const [assessmentYear, setAssessmentYear] = useState('');
   const [keyPoints, setKeyPoints] = useState('');
   const [extractedText, setExtractedText] = useState('');
+  const headerImgRef = useRef<HTMLInputElement>(null);
+  const watermarkImgRef = useRef<HTMLInputElement>(null);
 
   const fileUpload = useFileUpload();
+
+  const updateHeader = (patch: Partial<LetterheadConfig['header']>) => {
+    onLetterheadChange({ ...letterhead, header: { ...letterhead.header, ...patch } });
+  };
+  const updateWatermark = (patch: Partial<LetterheadConfig['watermark']>) => {
+    onLetterheadChange({ ...letterhead, watermark: { ...letterhead.watermark, ...patch } });
+  };
+
+  const handleHeaderImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > MAX_IMAGE_SIZE_BYTES) {
+      alert('Image too large. Please use an image under 500KB.');
+      e.target.value = '';
+      return;
+    }
+    const dataUrl = await readFileAsDataUrl(file);
+    updateHeader({ imageDataUrl: dataUrl });
+    e.target.value = '';
+  };
+
+  const handleWatermarkImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > MAX_IMAGE_SIZE_BYTES) {
+      alert('Image too large. Please use an image under 500KB.');
+      e.target.value = '';
+      return;
+    }
+    const dataUrl = await readFileAsDataUrl(file);
+    updateWatermark({ imageDataUrl: dataUrl });
+    e.target.value = '';
+  };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -157,7 +206,7 @@ export function NoticeForm({ onGenerate, isGenerating, usage }: NoticeFormProps)
       </div>
 
       {/* Sender details */}
-      <details className="group" open>
+      <details className="group">
         <summary className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer select-none">
           Sender Details
         </summary>
@@ -207,7 +256,7 @@ export function NoticeForm({ onGenerate, isGenerating, usage }: NoticeFormProps)
       </details>
 
       {/* Notice reference */}
-      <details className="group" open>
+      <details className="group">
         <summary className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer select-none">
           Notice Reference
         </summary>
@@ -227,6 +276,179 @@ export function NoticeForm({ onGenerate, isGenerating, usage }: NoticeFormProps)
           <div>
             <label className={labelClass}>AY / Period</label>
             <input value={assessmentYear} onChange={e => setAssessmentYear(e.target.value)} placeholder="2024-25" className={inputClass} />
+          </div>
+        </div>
+      </details>
+
+      {/* Letterhead & Watermark */}
+      <details className="group">
+        <summary className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer select-none">
+          Letterhead &amp; Watermark
+        </summary>
+        <div className="mt-3 space-y-4">
+          {/* Header */}
+          <div className="p-3 bg-white/60 dark:bg-gray-800/40 border border-gray-200 dark:border-gray-700 rounded-lg space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-gray-700 dark:text-gray-300">Header / Letterhead</span>
+              <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={letterhead.header.enabled}
+                  onChange={e => updateHeader({ enabled: e.target.checked })}
+                  className="w-3.5 h-3.5 accent-[#059669]"
+                />
+                <span className="text-[11px] text-gray-500">Enabled</span>
+              </label>
+            </div>
+            {letterhead.header.enabled && (
+              <>
+                <div className="grid grid-cols-2 gap-2">
+                  <select
+                    value={letterhead.header.type}
+                    onChange={e => updateHeader({ type: e.target.value as 'text' | 'image' })}
+                    className={inputClass}
+                  >
+                    <option value="text">Plain Text</option>
+                    <option value="image">Logo / Image</option>
+                  </select>
+                  <select
+                    value={letterhead.header.align}
+                    onChange={e => updateHeader({ align: e.target.value as 'left' | 'center' | 'right' })}
+                    className={inputClass}
+                  >
+                    <option value="left">Align Left</option>
+                    <option value="center">Align Center</option>
+                    <option value="right">Align Right</option>
+                  </select>
+                </div>
+                {letterhead.header.type === 'text' ? (
+                  <textarea
+                    value={letterhead.header.text}
+                    onChange={e => updateHeader({ text: e.target.value })}
+                    placeholder="Your firm name&#10;Address, phone, email"
+                    rows={2}
+                    className={`${inputClass} resize-none`}
+                  />
+                ) : (
+                  <div className="space-y-2">
+                    {letterhead.header.imageDataUrl ? (
+                      <div className="relative inline-block">
+                        <img
+                          src={letterhead.header.imageDataUrl}
+                          alt="Header logo"
+                          className="max-h-16 max-w-full object-contain rounded border border-gray-200 dark:border-gray-700"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => updateHeader({ imageDataUrl: '' })}
+                          className="absolute -top-1.5 -right-1.5 p-0.5 bg-red-500 text-white rounded-full hover:bg-red-600"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => headerImgRef.current?.click()}
+                        className="w-full flex items-center justify-center gap-2 px-3 py-2 border-2 border-dashed border-gray-200 dark:border-gray-700 rounded-lg hover:border-[#059669] transition-colors"
+                      >
+                        <ImageIcon className="w-4 h-4 text-gray-400" />
+                        <span className="text-xs text-gray-500">Upload logo (max 500KB)</span>
+                      </button>
+                    )}
+                    <input
+                      ref={headerImgRef}
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                      onChange={handleHeaderImage}
+                      className="hidden"
+                    />
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* Watermark */}
+          <div className="p-3 bg-white/60 dark:bg-gray-800/40 border border-gray-200 dark:border-gray-700 rounded-lg space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-gray-700 dark:text-gray-300">Watermark</span>
+              <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={letterhead.watermark.enabled}
+                  onChange={e => updateWatermark({ enabled: e.target.checked })}
+                  className="w-3.5 h-3.5 accent-[#059669]"
+                />
+                <span className="text-[11px] text-gray-500">Enabled</span>
+              </label>
+            </div>
+            {letterhead.watermark.enabled && (
+              <>
+                <select
+                  value={letterhead.watermark.type}
+                  onChange={e => updateWatermark({ type: e.target.value as 'text' | 'image' })}
+                  className={inputClass}
+                >
+                  <option value="text">Plain Text</option>
+                  <option value="image">Logo / Image</option>
+                </select>
+                {letterhead.watermark.type === 'text' ? (
+                  <input
+                    value={letterhead.watermark.text}
+                    onChange={e => updateWatermark({ text: e.target.value })}
+                    placeholder="DRAFT / CONFIDENTIAL"
+                    className={inputClass}
+                  />
+                ) : (
+                  <div className="space-y-2">
+                    {letterhead.watermark.imageDataUrl ? (
+                      <div className="relative inline-block">
+                        <img
+                          src={letterhead.watermark.imageDataUrl}
+                          alt="Watermark"
+                          className="max-h-16 max-w-full object-contain rounded border border-gray-200 dark:border-gray-700 opacity-60"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => updateWatermark({ imageDataUrl: '' })}
+                          className="absolute -top-1.5 -right-1.5 p-0.5 bg-red-500 text-white rounded-full hover:bg-red-600"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => watermarkImgRef.current?.click()}
+                        className="w-full flex items-center justify-center gap-2 px-3 py-2 border-2 border-dashed border-gray-200 dark:border-gray-700 rounded-lg hover:border-[#059669] transition-colors"
+                      >
+                        <ImageIcon className="w-4 h-4 text-gray-400" />
+                        <span className="text-xs text-gray-500">Upload watermark (max 500KB)</span>
+                      </button>
+                    )}
+                    <input
+                      ref={watermarkImgRef}
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                      onChange={handleWatermarkImage}
+                      className="hidden"
+                    />
+                  </div>
+                )}
+                <div>
+                  <label className="block text-[11px] text-gray-500 mb-1">Opacity: {letterhead.watermark.opacity}%</label>
+                  <input
+                    type="range"
+                    min="5"
+                    max="50"
+                    value={letterhead.watermark.opacity}
+                    onChange={e => updateWatermark({ opacity: Number(e.target.value) })}
+                    className="w-full accent-[#059669]"
+                  />
+                </div>
+              </>
+            )}
           </div>
         </div>
       </details>

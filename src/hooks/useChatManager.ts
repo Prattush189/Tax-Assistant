@@ -6,9 +6,14 @@ import {
   fetchChatMessages,
   deleteChat as apiDeleteChat,
   sendChatMessage,
+  fetchUserUsage,
   ChatItem,
 } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
+import { postToParent } from '../lib/pluginProtocol';
+
+const isPluginMode = typeof window !== 'undefined'
+  && new URLSearchParams(window.location.search).get('plugin') === 'true';
 
 export function useChatManager() {
   const { isAuthenticated } = useAuth();
@@ -234,6 +239,22 @@ export function useChatManager() {
       }
 
       await loadChatList();
+
+      // Plugin mode: report updated usage to the host
+      if (isPluginMode && !isStale()) {
+        try {
+          const usage = await fetchUserUsage();
+          postToParent({
+            type: 'USAGE_UPDATE',
+            plan: usage.plan,
+            feature: 'messages',
+            used: usage.usage.messages.used,
+            limit: usage.usage.messages.limit,
+          });
+        } catch {
+          // non-fatal — telemetry only
+        }
+      }
     } finally {
       if (!isStale()) setIsLoading(false);
     }

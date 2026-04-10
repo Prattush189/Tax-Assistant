@@ -38,6 +38,23 @@ if (!colNames.includes('suspended_until')) {
 if (!colNames.includes('google_id')) {
   db.exec("ALTER TABLE users ADD COLUMN google_id TEXT");
 }
+if (!colNames.includes('external_id')) {
+  db.exec("ALTER TABLE users ADD COLUMN external_id TEXT");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_users_external_id ON users(external_id)");
+}
+if (!colNames.includes('plugin_plan')) {
+  db.exec("ALTER TABLE users ADD COLUMN plugin_plan TEXT");
+}
+if (!colNames.includes('plugin_limits')) {
+  db.exec("ALTER TABLE users ADD COLUMN plugin_limits TEXT");
+}
+if (!colNames.includes('plugin_role')) {
+  db.exec("ALTER TABLE users ADD COLUMN plugin_role TEXT");
+}
+if (!colNames.includes('plugin_consultant_id')) {
+  db.exec("ALTER TABLE users ADD COLUMN plugin_consultant_id TEXT");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_users_plugin_consultant_id ON users(plugin_consultant_id)");
+}
 
 // Seed admin account
 const ADMIN_EMAIL = 'prattyush.jain@gmail.com';

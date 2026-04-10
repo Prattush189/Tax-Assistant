@@ -10,6 +10,11 @@ export interface UserRow {
   plan: 'free' | 'pro' | 'enterprise';
   suspended_until: string | null;
   google_id: string | null;
+  external_id: string | null;
+  plugin_plan: string | null;         // e.g. 'enterprise-shared' (not constrained by CHECK)
+  plugin_limits: string | null;       // JSON — see server/lib/planLimits.ts
+  plugin_role: string | null;         // 'consultant' | 'staff' | 'client'
+  plugin_consultant_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -18,10 +23,11 @@ const stmts = {
   findByEmail: db.prepare('SELECT * FROM users WHERE email = ?'),
   findById: db.prepare('SELECT * FROM users WHERE id = ?'),
   findByGoogleId: db.prepare('SELECT * FROM users WHERE google_id = ?'),
+  findByExternalId: db.prepare('SELECT * FROM users WHERE external_id = ?'),
   findAll: db.prepare(`
     SELECT u.*,
       (SELECT COUNT(*) FROM chats WHERE user_id = u.id) AS chat_count,
-      (SELECT COUNT(*) FROM messages m JOIN chats c ON m.chat_id = c.id WHERE c.user_id = u.id) AS message_count,
+      (SELECT COUNT(*) FROM api_usage WHERE user_id = u.id) AS message_count,
       (SELECT MAX(created_at) FROM api_usage WHERE user_id = u.id) AS last_api_call
     FROM users u
     ORDER BY last_api_call IS NULL, last_api_call DESC, u.created_at DESC
@@ -43,6 +49,15 @@ const stmts = {
   ),
   linkGoogle: db.prepare(
     "UPDATE users SET google_id = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
+  ),
+  createFromExternal: db.prepare(
+    "INSERT INTO users (id, email, password, name, external_id) VALUES (?, ?, '', ?, ?)"
+  ),
+  linkExternalId: db.prepare(
+    "UPDATE users SET external_id = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
+  ),
+  updatePluginOverrides: db.prepare(
+    "UPDATE users SET plugin_plan = ?, plugin_limits = ?, plugin_role = ?, plugin_consultant_id = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
   ),
   updateEmail: db.prepare(
     "UPDATE users SET email = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
@@ -99,6 +114,34 @@ export const userRepo = {
 
   linkGoogle(userId: string, googleId: string): void {
     stmts.linkGoogle.run(googleId, userId);
+  },
+
+  findByExternalId(externalId: string): UserRow | undefined {
+    return stmts.findByExternalId.get(externalId) as UserRow | undefined;
+  },
+
+  createFromExternal(email: string, name: string, externalId: string): UserRow {
+    const id = crypto.randomBytes(16).toString('hex');
+    stmts.createFromExternal.run(id, email.toLowerCase(), name, externalId);
+    return this.findById(id)!;
+  },
+
+  linkExternalId(userId: string, externalId: string): void {
+    stmts.linkExternalId.run(externalId, userId);
+  },
+
+  /**
+   * Persist parent-app plugin overrides (plan, limits, role, consultant_id).
+   * Pass null for any field you want to clear.
+   */
+  updatePluginOverrides(
+    userId: string,
+    pluginPlan: string | null,
+    pluginLimitsJson: string | null,
+    pluginRole: string | null,
+    pluginConsultantId: string | null,
+  ): void {
+    stmts.updatePluginOverrides.run(pluginPlan, pluginLimitsJson, pluginRole, pluginConsultantId, userId);
   },
 
   updateEmail(id: string, email: string): void {

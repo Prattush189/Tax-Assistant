@@ -5,6 +5,7 @@ import { chatRepo } from '../db/repositories/chatRepo.js';
 import { messageRepo } from '../db/repositories/messageRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
+import { getUserLimits, getEffectivePlan } from '../lib/planLimits.js';
 import { retrieveContextWithRefs, SectionReference } from '../rag/index.js';
 import { AuthRequest } from '../types.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
@@ -102,17 +103,6 @@ async function* streamWithWebSearch(
 }
 
 // ── Plan-based message limits ──
-interface PlanConfig {
-  limit: number;
-  period: 'day' | 'month';
-}
-
-const PLAN_LIMITS: Record<string, PlanConfig> = {
-  free: { limit: 10, period: 'day' },
-  pro: { limit: 1000, period: 'month' },
-  enterprise: { limit: 10000, period: 'month' },
-};
-
 function getMessageCount(userId: string, period: 'day' | 'month'): number {
   const now = new Date(Date.now() + 5.5 * 60 * 60 * 1000); // IST
   let since: string;
@@ -235,7 +225,14 @@ HANDLING ATTACHED DOCUMENTS:
 const MAX_HISTORY_MESSAGES = 10;
 
 // Attachment limits per plan
-const ATTACHMENT_LIMITS: Record<string, number> = { free: 1, pro: 3, enterprise: 5 };
+// Plan-based attachment-per-message ceiling. Uses the standalone plan defaults;
+// plugin overrides don't apply here (attachments PER MESSAGE, not monthly quota).
+const ATTACHMENTS_PER_MESSAGE: Record<string, number> = {
+  free: 1,
+  pro: 3,
+  enterprise: 5,
+  'enterprise-shared': 5,
+};
 
 router.post('/chat', async (req: AuthRequest, res: Response) => {
   const { chatId, message, fileContext, fileContexts: rawFileContexts, profileContext } = req.body;
@@ -262,23 +259,27 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
 
   const clientIp = req.ip ?? req.socket.remoteAddress ?? 'unknown';
 
-  // Check plan-based message limit
+  // Check per-user message limit (resolves plugin_limits > plugin_plan > plan)
   const user = userRepo.findById(req.user.id);
-  const plan = user?.plan ?? 'free';
-  const planConfig = PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
-  const used = getMessageCount(req.user.id, planConfig.period);
+  if (!user) {
+    res.status(404).json({ error: 'User not found' });
+    return;
+  }
+  const effectivePlan = getEffectivePlan(user);
+  const limits = getUserLimits(user);
+  const used = getMessageCount(req.user.id, limits.messages.period);
 
-  if (used >= planConfig.limit) {
-    const periodLabel = planConfig.period === 'day' ? 'daily' : 'monthly';
+  if (used >= limits.messages.limit) {
+    const periodLabel = limits.messages.period === 'day' ? 'daily' : 'monthly';
     res.status(429).json({
-      error: `You've reached your ${periodLabel} message limit (${planConfig.limit} messages). Upgrade your plan for more.`,
+      error: `You've reached your ${periodLabel} message limit (${limits.messages.limit} messages). Upgrade your plan for more.`,
       upgrade: true,
     });
     return;
   }
 
-  // Check attachment limit
-  const attachLimit = ATTACHMENT_LIMITS[plan] ?? 1;
+  // Check per-message attachment ceiling (separate from monthly attachment quota)
+  const attachLimit = ATTACHMENTS_PER_MESSAGE[effectivePlan] ?? 1;
   if (fileContexts.length > attachLimit) {
     res.status(400).json({ error: `Your plan allows ${attachLimit} attachment(s) per message. Upgrade for more.`, upgrade: true });
     return;

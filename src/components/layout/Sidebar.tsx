@@ -1,7 +1,10 @@
-import { X, Plus, Moon, Sun, LogOut, Trash2, MessageSquare, MessageCircle, Calculator, LayoutDashboard, Shield, CreditCard, FileText } from 'lucide-react';
+import { X, Plus, Moon, Sun, LogOut, Trash2, MessageSquare, MessageCircle, Calculator, LayoutDashboard, Shield, CreditCard, FileText, Settings, AlertTriangle, Lock } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { ChatItem } from '../../services/api';
+import { ChatItem, NoticeItem } from '../../services/api';
 import { useState } from 'react';
+import { usePreferences } from '../../hooks/usePreferences';
+import { useAuth } from '../../contexts/AuthContext';
+import { CalculatorTab, CALCULATOR_TABS } from '../calculator/CalculatorView';
 
 type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings';
 
@@ -15,11 +18,20 @@ interface SidebarProps {
   onNewChat: () => void;
   onSwitchChat: (chatId: string) => void;
   onDeleteChat: (chatId: string) => void;
+  noticeList: NoticeItem[];
+  currentNoticeId: string | null;
+  onNewNotice: () => void;
+  onSwitchNotice: (noticeId: string) => void;
+  onDeleteNotice: (noticeId: string) => void;
   user: { id: string; email: string; name: string; role: string; plan?: string } | null;
   onLogout: () => void;
   activeView: ActiveView;
   onViewChange: (view: ActiveView) => void;
+  calculatorTab: CalculatorTab;
+  onCalculatorTabChange: (tab: CalculatorTab) => void;
 }
+
+const PLAN_RANK: Record<string, number> = { free: 0, pro: 1, enterprise: 2 };
 
 const baseNavItems: { id: ActiveView; label: string; icon: typeof MessageCircle }[] = [
   { id: 'chat', label: 'Chat', icon: MessageCircle },
@@ -64,17 +76,54 @@ function planBadgeClass(plan?: string): string {
 export function Sidebar({
   isOpen, onClose, isDarkMode, onToggleTheme,
   chatList, currentChatId, onNewChat, onSwitchChat, onDeleteChat,
+  noticeList, currentNoticeId, onNewNotice, onSwitchNotice, onDeleteNotice,
   user, onLogout, activeView, onViewChange,
+  calculatorTab, onCalculatorTabChange,
 }: SidebarProps) {
+  const { user: authUser } = useAuth();
+  const userRank = PLAN_RANK[authUser?.plan ?? user?.plan ?? 'free'] ?? 0;
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [pendingDeleteChat, setPendingDeleteChat] = useState<{ id: string; title: string } | null>(null);
+  const [pendingDeleteNotice, setPendingDeleteNotice] = useState<{ id: string; title: string } | null>(null);
+  const { prefs } = usePreferences();
 
   const handleDelete = async (e: React.MouseEvent, chatId: string) => {
     e.stopPropagation();
+    if (prefs.confirmBeforeDeletingChats) {
+      const chat = chatList.find(c => c.id === chatId);
+      setPendingDeleteChat({ id: chatId, title: chat?.title || 'this chat' });
+      return;
+    }
+    await performDelete(chatId);
+  };
+
+  const performDelete = async (chatId: string) => {
     setDeletingId(chatId);
     try {
       await onDeleteChat(chatId);
     } finally {
       setDeletingId(null);
+      setPendingDeleteChat(null);
+    }
+  };
+
+  const handleDeleteNotice = (e: React.MouseEvent, noticeId: string) => {
+    e.stopPropagation();
+    if (prefs.confirmBeforeDeletingChats) {
+      const notice = noticeList.find(n => n.id === noticeId);
+      setPendingDeleteNotice({ id: noticeId, title: notice?.title || 'this draft' });
+      return;
+    }
+    performDeleteNotice(noticeId);
+  };
+
+  const performDeleteNotice = async (noticeId: string) => {
+    setDeletingId(noticeId);
+    try {
+      await onDeleteNotice(noticeId);
+    } finally {
+      setDeletingId(null);
+      setPendingDeleteNotice(null);
     }
   };
 
@@ -138,9 +187,20 @@ export function Sidebar({
             New Chat
           </button>
         )}
+
+        {/* New Notice Button */}
+        {activeView === 'notices' && (
+          <button
+            onClick={() => { onNewNotice(); onClose(); }}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-xl shadow-md shadow-emerald-600/15 transition-all text-sm"
+          >
+            <Plus className="w-4 h-4" />
+            New Notice
+          </button>
+        )}
       </div>
 
-      {/* Chat History */}
+      {/* History */}
       <div className="flex-1 overflow-y-auto p-2">
         {activeView === 'chat' ? (
           <>
@@ -183,9 +243,86 @@ export function Sidebar({
               </div>
             )}
           </>
+        ) : activeView === 'notices' ? (
+          <>
+            <h2 className="text-[11px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider px-2 py-2">Saved Drafts</h2>
+            {noticeList.length === 0 ? (
+              <p className="text-sm text-gray-400 dark:text-gray-500 px-3 py-4 text-center">No drafts yet. Generate one!</p>
+            ) : (
+              <div className="space-y-0.5">
+                {noticeList.map((notice) => {
+                  const isActive = currentNoticeId === notice.id;
+                  return (
+                    <button
+                      key={notice.id}
+                      onClick={() => { onSwitchNotice(notice.id); onClose(); }}
+                      className={cn(
+                        "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left transition-all group relative",
+                        isActive
+                          ? "bg-emerald-50 dark:bg-emerald-900/15 text-emerald-700 dark:text-emerald-300"
+                          : "text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/60"
+                      )}
+                    >
+                      <FileText className={cn(
+                        "w-4 h-4 shrink-0",
+                        isActive ? "text-emerald-500" : "text-gray-300 dark:text-gray-600"
+                      )} />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{notice.title || 'Untitled'}</p>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] font-medium uppercase text-emerald-600/70 dark:text-emerald-400/70">
+                            {notice.notice_type}
+                          </span>
+                          <span className="text-[11px] text-gray-400 dark:text-gray-500">·</span>
+                          <p className="text-[11px] text-gray-400 dark:text-gray-500">{timeAgo(notice.updated_at)}</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={(e) => handleDeleteNotice(e, notice.id)}
+                        disabled={deletingId === notice.id}
+                        className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all shrink-0"
+                      >
+                        <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                      </button>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        ) : activeView === 'calculator' ? (
+          <>
+            <h2 className="text-[11px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider px-2 py-2">Calculators</h2>
+            <div className="space-y-0.5">
+              {CALCULATOR_TABS.map((tab) => {
+                const isActive = calculatorTab === tab.id;
+                const isLocked = tab.pro && userRank < 1;
+                const Icon = tab.icon;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => { onCalculatorTabChange(tab.id); onClose(); }}
+                    className={cn(
+                      "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left transition-all",
+                      isActive
+                        ? "bg-emerald-50 dark:bg-emerald-900/15 text-emerald-700 dark:text-emerald-300"
+                        : "text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/60"
+                    )}
+                  >
+                    <Icon className={cn(
+                      "w-4 h-4 shrink-0",
+                      isActive ? "text-emerald-500" : "text-gray-300 dark:text-gray-600"
+                    )} />
+                    <span className="flex-1 text-sm font-medium truncate">{tab.label}</span>
+                    {isLocked && <Lock className="w-3 h-3 text-gray-400 shrink-0" />}
+                  </button>
+                );
+              })}
+            </div>
+          </>
         ) : (
           <div className="px-3 py-8 text-center text-gray-400 dark:text-gray-500">
-            <p className="text-sm">Switch to Chat to see history</p>
+            <p className="text-sm">Switch to Chat or Notices to see history</p>
           </div>
         )}
       </div>
@@ -198,6 +335,18 @@ export function Sidebar({
         >
           {isDarkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
           {isDarkMode ? 'Light Mode' : 'Dark Mode'}
+        </button>
+        <button
+          onClick={() => onViewChange('settings')}
+          className={cn(
+            "w-full flex items-center gap-2.5 px-3 py-2 text-sm rounded-xl transition-colors",
+            activeView === 'settings'
+              ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400'
+              : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/60'
+          )}
+        >
+          <Settings className="w-4 h-4" />
+          Settings
         </button>
 
         {user && (
@@ -221,6 +370,86 @@ export function Sidebar({
           </div>
         )}
       </div>
+
+      {/* Delete notice confirmation dialog */}
+      {pendingDeleteNotice && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={() => setPendingDeleteNotice(null)}
+        >
+          <div
+            className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-6 max-w-sm w-full border border-gray-200 dark:border-gray-700"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-red-100 dark:bg-red-900/30 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-red-600 dark:text-red-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Delete draft?</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400 break-words">
+                  "{pendingDeleteNotice.title}" will be permanently deleted.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setPendingDeleteNotice(null)}
+                className="px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => performDeleteNotice(pendingDeleteNotice.id)}
+                disabled={deletingId === pendingDeleteNotice.id}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50"
+              >
+                {deletingId === pendingDeleteNotice.id ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete chat confirmation dialog */}
+      {pendingDeleteChat && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={() => setPendingDeleteChat(null)}
+        >
+          <div
+            className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-6 max-w-sm w-full border border-gray-200 dark:border-gray-700"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-red-100 dark:bg-red-900/30 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-red-600 dark:text-red-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Delete chat?</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400 break-words">
+                  "{pendingDeleteChat.title}" and all its messages will be permanently deleted.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setPendingDeleteChat(null)}
+                className="px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => performDelete(pendingDeleteChat.id)}
+                disabled={deletingId === pendingDeleteChat.id}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50"
+              >
+                {deletingId === pendingDeleteChat.id ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </aside>
   );
 }

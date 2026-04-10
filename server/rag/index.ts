@@ -136,6 +136,56 @@ function classifyQuery(query: string): ClassificationResult {
 
 const DEFAULT_TOP_K = 3;
 
+// ── Abbreviation expansion ──
+//
+// Content in the official Acts almost always spells things out ("house rent
+// allowance", "Central Goods and Services Tax"), but users type abbreviations.
+// For rare-token matching and coverage scoring, a chunk "contains" the token
+// if it contains the original OR any expansion listed here.
+const TOKEN_EXPANSIONS: Record<string, string[]> = {
+  // Abbreviations → full forms
+  hra: ['house rent allowance'],
+  cgst: ['central goods and services tax'],
+  igst: ['integrated goods and services tax'],
+  sgst: ['state goods and services tax'],
+  utgst: ['union territory goods and services tax'],
+  gst: ['goods and services tax'],
+  tds: ['tax deducted at source'],
+  tcs: ['tax collected at source'],
+  ltcg: ['long-term capital gain', 'long term capital gain'],
+  stcg: ['short-term capital gain', 'short term capital gain'],
+  sac: ['service accounting code'],
+  hsn: ['harmonized system', 'harmonised system'],
+  oidar: ['online information and database access'],
+  itc: ['input tax credit'],
+  nps: ['national pension'],
+  ppf: ['public provident fund'],
+  epf: ['employees provident fund', "employees' provident fund"],
+  cii: ['cost inflation index'],
+  ay: ['assessment year'],
+  fy: ['financial year'],
+  itr: ['income tax return'],
+  sez: ['special economic zone'],
+  // Common user-facing words → Act wording
+  calculation: ['computation'],
+  calculate: ['compute'],
+  rate: ['percent', 'per cent'],
+  limit: ['ceiling', 'maximum'],
+  deduction: ['allowance'],
+};
+
+/** True if chunk contains the token OR any of its expansions. */
+function chunkContainsToken(chunk: Chunk, token: string): boolean {
+  if (chunk.lowerText.includes(token)) return true;
+  const expansions = TOKEN_EXPANSIONS[token];
+  if (expansions) {
+    for (const exp of expansions) {
+      if (chunk.lowerText.includes(exp)) return true;
+    }
+  }
+  return false;
+}
+
 // ── Stopwords to skip during scoring ──
 
 const STOPWORDS = new Set([
@@ -435,12 +485,48 @@ function buildChunks(filePath: string, config: SourceConfig): Chunk[] {
 // ── Inverted index for fast lookup ──
 
 const invertedIndex = new Map<string, Set<number>>(); // token → chunk IDs
+let totalChunkCount = 0;
+
+/**
+ * Document frequency of a token = number of chunks it appears in.
+ * For abbreviations we expand through TOKEN_EXPANSIONS and take the union
+ * of chunks containing the abbreviation OR any expanded phrase (intersection
+ * of word indexes).
+ */
+function getDocFrequency(token: string): number {
+  const base = invertedIndex.get(token)?.size ?? 0;
+  const expansions = TOKEN_EXPANSIONS[token];
+  if (!expansions || expansions.length === 0) return base;
+
+  const union = new Set<number>();
+  // Seed with direct matches
+  const directIds = invertedIndex.get(token);
+  if (directIds) directIds.forEach(id => union.add(id));
+
+  // For each multi-word expansion, intersect the individual word indexes
+  for (const phrase of expansions) {
+    const words = phrase.toLowerCase().split(/\s+/).filter(w => w.length > 0);
+    if (words.length === 0) continue;
+    let intersection: Set<number> | null = null;
+    for (const w of words) {
+      const ids = invertedIndex.get(w);
+      if (!ids) { intersection = null; break; }
+      if (intersection === null) intersection = new Set(ids);
+      else intersection = new Set([...intersection].filter(id => ids.has(id)));
+    }
+    if (intersection) intersection.forEach(id => union.add(id));
+  }
+  return union.size;
+}
 
 function buildIndex(chunks: Chunk[]): void {
   invertedIndex.clear();
+  totalChunkCount = chunks.length;
   for (const chunk of chunks) {
     const words = chunk.lowerText.split(/\s+/).filter(w => w.length > 2);
-    for (const word of words) {
+    // De-dup per chunk so df counts chunks, not occurrences
+    const uniqWords = new Set(words);
+    for (const word of uniqWords) {
       if (!invertedIndex.has(word)) invertedIndex.set(word, new Set());
       invertedIndex.get(word)!.add(chunk.id);
     }
@@ -463,15 +549,35 @@ function tokenize(query: string): string[] {
     .filter(t => t.length > 2 && !STOPWORDS.has(t));
 }
 
-function scoreChunk(chunk: Chunk, tokens: string[], sectionNumbers: string[]): number {
+interface ChunkScoreDetail {
+  score: number;          // raw keyword score (post-boost)
+  matchedTokens: number;  // count of distinct query tokens that appear in the chunk
+}
+
+function scoreChunk(chunk: Chunk, tokens: string[], sectionNumbers: string[]): ChunkScoreDetail {
   let score = 0;
+  let matchedTokens = 0;
 
   for (const token of tokens) {
+    let hits = 0;
     let idx = 0;
     while ((idx = chunk.lowerText.indexOf(token, idx)) !== -1) {
-      score++;
+      hits++;
       idx += token.length;
     }
+    // Also count expansion phrases ("house rent allowance" for "hra")
+    const expansions = TOKEN_EXPANSIONS[token];
+    if (expansions) {
+      for (const phrase of expansions) {
+        let eidx = 0;
+        while ((eidx = chunk.lowerText.indexOf(phrase, eidx)) !== -1) {
+          hits++;
+          eidx += phrase.length;
+        }
+      }
+    }
+    if (hits > 0) matchedTokens++;
+    score += hits;
   }
 
   const sectionLower = chunk.section.toLowerCase();
@@ -497,7 +603,7 @@ function scoreChunk(chunk: Chunk, tokens: string[], sectionNumbers: string[]): n
     score = Math.ceil(score * cfg.boost);
   }
 
-  return score;
+  return { score, matchedTokens };
 }
 
 // ── Scored chunk type ──
@@ -505,7 +611,29 @@ function scoreChunk(chunk: Chunk, tokens: string[], sectionNumbers: string[]): n
 interface ScoredChunk {
   chunk: Chunk;
   score: number;
+  matchedTokens: number;
 }
+
+// ── Quality thresholds ──
+// A token appearing in fewer than 1% of all chunks is considered "rare" /
+// discriminating — e.g. "software" for a query like "GST rate for software
+// services". Retrieved chunks MUST contain at least one rare query token
+// (or an expanded form).
+//
+// Raising this ratio makes more tokens rare → stricter filter → fewer results.
+// Lowering it lets generic tokens through → weaker filter. 1% is tuned so that
+// only truly distinctive terms (8-100 chunk occurrences in a ~7k corpus) are
+// treated as "must match".
+const RARE_TOKEN_DF_RATIO = 0.01;
+
+// Chunks must match at least this fraction of distinct query content tokens
+// to be considered relevant. For short queries, this protects against
+// citations that only hit one generic word like "gst" or "services".
+const MIN_TOKEN_COVERAGE = 0.6;
+
+// Lower bound on the scaled keyword score (after source boost). Tuned so
+// that a single stopword-filtered hit does not qualify.
+const MIN_SCORE = 3;
 
 // ── Retrieve top chunks using inverted index ──
 
@@ -515,11 +643,43 @@ function retrieve(query: string, topK = DEFAULT_TOP_K, sourceFilter?: Set<string
 
   const sectionNumbers = query.match(/\b\d+[A-Z]*\b/g) || [];
 
-  // Use inverted index to get candidate chunks (instead of scanning all)
+  // ── Identify rare / discriminating query tokens ──
+  // A token is "rare" if it appears in less than RARE_TOKEN_DF_RATIO of the
+  // corpus AND the query contains at least one common token (so we don't
+  // require a rare match for queries that are entirely common words).
+  const rareTokens: string[] = [];
+  if (totalChunkCount > 0) {
+    const threshold = Math.max(1, Math.floor(totalChunkCount * RARE_TOKEN_DF_RATIO));
+    for (const t of tokens) {
+      const df = getDocFrequency(t);
+      if (df > 0 && df < threshold) rareTokens.push(t);
+    }
+  }
+
+  // ── Build candidate set ──
+  // Seed with chunks that contain ANY query token (or expanded phrase, or
+  // any section number).
   const candidateIds = new Set<number>();
   for (const token of tokens) {
     const ids = invertedIndex.get(token);
     if (ids) ids.forEach(id => candidateIds.add(id));
+
+    // Also include chunks matched via expansion phrases (intersection of word ids)
+    const expansions = TOKEN_EXPANSIONS[token];
+    if (expansions) {
+      for (const phrase of expansions) {
+        const words = phrase.toLowerCase().split(/\s+/).filter(w => w.length > 0);
+        if (words.length === 0) continue;
+        let intersection: Set<number> | null = null;
+        for (const w of words) {
+          const ids2 = invertedIndex.get(w);
+          if (!ids2) { intersection = null; break; }
+          if (intersection === null) intersection = new Set(ids2);
+          else intersection = new Set([...intersection].filter(id => ids2.has(id)));
+        }
+        if (intersection) intersection.forEach(id => candidateIds.add(id));
+      }
+    }
   }
   for (const sec of sectionNumbers) {
     const ids = invertedIndex.get(sec.toLowerCase());
@@ -528,19 +688,49 @@ function retrieve(query: string, topK = DEFAULT_TOP_K, sourceFilter?: Set<string
 
   if (candidateIds.size === 0) return [];
 
-  // Look up chunks from the stable chunkMap, apply source filter
-  const candidates = [...candidateIds]
+  let candidates = [...candidateIds]
     .map(id => chunkMap.get(id))
     .filter((c): c is Chunk => c !== undefined && (!sourceFilter || sourceFilter.has(c.source)));
 
-  const scored = candidates
-    .map(chunk => ({ chunk, score: scoreChunk(chunk, tokens, sectionNumbers) }))
-    .filter(s => s.score > 0)
+  // ── Rare-token gate ──
+  // If the query has rare tokens, a chunk MUST contain every one of them
+  // (or an expanded form). This is the main defense against "wrong but
+  // token-rich" chunks (e.g. a GST rate table matching `gst`+`rate`+`services`
+  // while missing the discriminating term `software`).
+  if (rareTokens.length > 0) {
+    candidates = candidates.filter(c =>
+      rareTokens.every(t => chunkContainsToken(c, t)),
+    );
+    if (candidates.length === 0) return [];
+  }
+
+  // ── Score + coverage filter ──
+  const minMatched = Math.max(1, Math.ceil(tokens.length * MIN_TOKEN_COVERAGE));
+
+  const scored: ScoredChunk[] = candidates
+    .map(chunk => {
+      const { score, matchedTokens } = scoreChunk(chunk, tokens, sectionNumbers);
+      return { chunk, score, matchedTokens };
+    })
+    .filter(s => {
+      // Explicit section-number lookup bypasses coverage (e.g. "section 80C")
+      const hasSectionMatch = sectionNumbers.length > 0 && s.score >= 50;
+      if (hasSectionMatch) return s.score >= MIN_SCORE;
+
+      // 100% coverage of a short query is acceptable even with a low raw score,
+      // otherwise require both MIN_SCORE and MIN_TOKEN_COVERAGE
+      const fullCoverage = s.matchedTokens === tokens.length;
+      if (fullCoverage && s.score >= 1) return true;
+      return s.score >= MIN_SCORE && s.matchedTokens >= minMatched;
+    })
     .sort((a, b) => b.score - a.score);
 
-  if (scored.length === 0 || scored[0].score < 2) return [];
+  if (scored.length === 0) return [];
 
-  // Dynamic bucket balancing — works with any number of active sources
+  // ── Quality-aware bucket balancing ──
+  // Still try to diversify across sources, but only fill a bucket if a
+  // genuinely-qualifying chunk exists for that source. No more forcing an
+  // irrelevant chunk in just to have "one from each source".
   const buckets = new Map<string, ScoredChunk[]>();
   for (const cfg of SOURCE_CONFIGS) {
     if (!cfg.disabled && (!sourceFilter || sourceFilter.has(cfg.id))) {
@@ -548,7 +738,8 @@ function retrieve(query: string, topK = DEFAULT_TOP_K, sourceFilter?: Set<string
     }
   }
 
-  // First pass — guarantee one slot per source (if available)
+  // First pass — at most one slot per source, drawn from the already-filtered
+  // scored list (so every entry here has passed the rare/coverage gate)
   let guaranteedCount = 0;
   for (const s of scored) {
     const bucket = buckets.get(s.chunk.source);
@@ -559,7 +750,6 @@ function retrieve(query: string, topK = DEFAULT_TOP_K, sourceFilter?: Set<string
     }
   }
 
-  // Collect guaranteed entries
   const combined: ScoredChunk[] = [];
   for (const bucket of buckets.values()) {
     combined.push(...bucket);

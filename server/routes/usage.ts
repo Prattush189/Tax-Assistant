@@ -5,20 +5,9 @@ import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { noticeRepo } from '../db/repositories/noticeRepo.js';
 import { profileRepo } from '../db/repositories/profileRepo.js';
 import { AuthRequest } from '../types.js';
+import { getUserLimits, getEffectivePlan } from '../lib/planLimits.js';
 
 const router = Router();
-
-// Plan limits — mirror the enforcement in other routes
-const MESSAGE_LIMITS: Record<string, { limit: number; period: 'day' | 'month' }> = {
-  free: { limit: 10, period: 'day' },
-  pro: { limit: 1000, period: 'month' },
-  enterprise: { limit: 10000, period: 'month' },
-};
-
-const ATTACHMENT_LIMITS: Record<string, number> = { free: 10, pro: 100, enterprise: 500 };
-const SUGGESTION_LIMITS: Record<string, number> = { free: 50, pro: 200, enterprise: 1000 };
-const NOTICE_LIMITS: Record<string, number> = { free: 3, pro: 30, enterprise: 100 };
-const PROFILE_LIMITS: Record<string, number> = { free: 1, pro: 10, enterprise: 50 };
 
 /** IST-adjusted start of current day / month */
 function periodStartIST(period: 'day' | 'month'): string {
@@ -41,13 +30,18 @@ router.get('/', (req: AuthRequest, res: Response) => {
   }
 
   const user = userRepo.findById(req.user.id);
-  const plan = user?.plan ?? 'free';
+  if (!user) {
+    res.status(404).json({ error: 'User not found' });
+    return;
+  }
+
+  const plan = getEffectivePlan(user);
+  const limits = getUserLimits(user);
 
   // Messages
-  const messagesConfig = MESSAGE_LIMITS[plan] ?? MESSAGE_LIMITS.free;
   let messagesUsed = 0;
   try {
-    messagesUsed = usageRepo.countByUser(req.user.id, periodStartIST(messagesConfig.period));
+    messagesUsed = usageRepo.countByUser(req.user.id, periodStartIST(limits.messages.period));
   } catch (err) {
     console.error('[usage] messages count failed', err);
   }
@@ -86,34 +80,36 @@ router.get('/', (req: AuthRequest, res: Response) => {
 
   res.json({
     plan,
+    pluginRole: user.plugin_role ?? undefined,
+    consultantId: user.plugin_consultant_id ?? undefined,
     usage: {
       messages: {
         used: messagesUsed,
-        limit: messagesConfig.limit,
-        period: messagesConfig.period,
-        label: messagesConfig.period === 'day' ? 'Messages Today' : 'Messages This Month',
+        limit: limits.messages.limit,
+        period: limits.messages.period,
+        label: limits.messages.period === 'day' ? 'Messages Today' : 'Messages This Month',
       },
       attachments: {
         used: attachmentsUsed,
-        limit: ATTACHMENT_LIMITS[plan] ?? 10,
+        limit: limits.attachments,
         period: 'month',
         label: 'Attachments This Month',
       },
       suggestions: {
         used: suggestionsUsed,
-        limit: SUGGESTION_LIMITS[plan] ?? 50,
+        limit: limits.suggestions,
         period: 'month',
         label: 'AI Suggestions This Month',
       },
       notices: {
         used: noticesUsed,
-        limit: NOTICE_LIMITS[plan] ?? 3,
+        limit: limits.notices,
         period: 'month',
         label: 'Notice Drafts This Month',
       },
       profiles: {
         used: profilesUsed,
-        limit: PROFILE_LIMITS[plan] ?? 1,
+        limit: limits.profiles,
         period: 'total',
         label: 'Saved Tax Profiles',
       },

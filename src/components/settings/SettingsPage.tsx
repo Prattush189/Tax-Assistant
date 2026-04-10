@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { User, Mail, Lock, Trash2, AlertTriangle, Check } from 'lucide-react';
+import { User, Mail, Lock, Trash2, AlertTriangle, Check, Sliders } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import {
   updateAccountName,
@@ -7,6 +7,7 @@ import {
   updateAccountPassword,
   deleteAccount,
 } from '../../services/api';
+import { usePreferences } from '../../hooks/usePreferences';
 import { cn } from '../../lib/utils';
 import toast from 'react-hot-toast';
 
@@ -53,8 +54,31 @@ const inputClass = "w-full px-4 py-2.5 bg-gray-50 dark:bg-gray-800/60 border bor
 const buttonPrimary = "px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-sm rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
 const buttonDanger = "px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-medium text-sm rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
 
+/** Toggle switch — reusable */
+function Toggle({ enabled, onChange }: { enabled: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button
+      onClick={() => onChange(!enabled)}
+      className={cn(
+        'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
+        enabled ? 'bg-emerald-600' : 'bg-gray-300 dark:bg-gray-600'
+      )}
+      aria-checked={enabled}
+      role="switch"
+    >
+      <span
+        className={cn(
+          'inline-block h-4 w-4 transform rounded-full bg-white transition-transform',
+          enabled ? 'translate-x-6' : 'translate-x-1'
+        )}
+      />
+    </button>
+  );
+}
+
 export function SettingsPage() {
   const { user, logout, refreshUser } = useAuth();
+  const { prefs, updatePreference } = usePreferences();
 
   // Name
   const [name, setName] = useState(user?.name ?? '');
@@ -185,6 +209,28 @@ export function SettingsPage() {
               >
                 {savingName ? 'Saving...' : 'Save'}
               </button>
+            </div>
+          </Section>
+
+          {/* Preferences */}
+          <Section
+            title="Preferences"
+            description="Customize how the app behaves"
+            icon={Sliders}
+          >
+            <div className="space-y-4">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-800 dark:text-gray-200">Confirm before deleting chats</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                    Show a confirmation dialog when deleting a chat from the sidebar
+                  </p>
+                </div>
+                <Toggle
+                  enabled={prefs.confirmBeforeDeletingChats}
+                  onChange={(v) => updatePreference('confirmBeforeDeletingChats', v)}
+                />
+              </div>
             </div>
           </Section>
 

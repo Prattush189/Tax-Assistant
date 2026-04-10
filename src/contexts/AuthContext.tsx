@@ -14,6 +14,7 @@ interface AuthContextType {
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
   loginWithGoogle: (idToken: string) => Promise<void>;
+  loginWithSso: (accessToken: string, refreshToken: string, user: User) => void;
   signup: (name: string, email: string, password: string) => Promise<void>;
   logout: () => void;
   getAuthHeader: () => Record<string, string>;
@@ -113,6 +114,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(data.user);
   };
 
+  /** Plugin SSO — tokens already issued by POST /api/auth/plugin-sso, just persist + set user */
+  const loginWithSso = useCallback((accessToken: string, refreshToken: string, ssoUser: User) => {
+    localStorage.setItem(TOKEN_KEY, accessToken);
+    localStorage.setItem(REFRESH_KEY, refreshToken);
+    setUser(ssoUser);
+  }, []);
+
   const signup = async (name: string, email: string, password: string) => {
     const data = await apiFetch('/api/auth/signup', {
       method: 'POST',
@@ -144,6 +152,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isLoading,
         login,
         loginWithGoogle,
+        loginWithSso,
         signup,
         logout,
         getAuthHeader,
