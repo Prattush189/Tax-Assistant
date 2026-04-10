@@ -96,3 +96,11 @@ CREATE TABLE IF NOT EXISTS tax_profiles (
   updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
 );
 CREATE INDEX IF NOT EXISTS idx_tax_profiles_user_id ON tax_profiles(user_id);
+
+CREATE TABLE IF NOT EXISTS feature_usage (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  feature TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+);
+CREATE INDEX IF NOT EXISTS idx_feature_usage_user_feature ON feature_usage(user_id, feature, created_at);

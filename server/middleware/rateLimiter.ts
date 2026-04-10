@@ -31,3 +31,4 @@ export const uploadLimiter = rateLimit({
   validate: { xForwardedForHeader: false, ip: false },
   message: { error: 'Too many uploads. Please wait a moment.' },
 });
+

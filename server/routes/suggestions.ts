@@ -1,9 +1,17 @@
 import { Router, Response } from 'express';
 import { grok, GROK_MODEL } from '../lib/grok.js';
 import { userRepo } from '../db/repositories/userRepo.js';
+import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
+
+// Monthly AI suggestion limits per plan
+const MONTHLY_LIMITS: Record<string, number> = {
+  free: 50,
+  pro: 200,
+  enterprise: 1000,
+};
 
 const SUGGESTION_PROMPT = `You are an expert Indian tax advisor. Given the user's income and deduction details, provide exactly 5 personalized tax-saving suggestions.
 
@@ -24,11 +32,18 @@ router.post('/optimize', async (req: AuthRequest, res: Response) => {
     return;
   }
 
-  // Plan gate: Pro+ only
+  // Get plan and monthly limit
   const user = userRepo.findById(req.user.id);
   const plan = user?.plan ?? 'free';
-  if (plan === 'free') {
-    res.status(403).json({ error: 'AI suggestions require a Pro or Enterprise plan.', upgrade: true });
+  const monthlyLimit = MONTHLY_LIMITS[plan] ?? 50;
+
+  // Enforce monthly cap
+  const usedThisMonth = featureUsageRepo.countThisMonth(req.user.id, 'ai_suggestions');
+  if (usedThisMonth >= monthlyLimit) {
+    res.status(429).json({
+      error: `You've reached your monthly AI suggestions limit (${monthlyLimit}). Upgrade your plan for more, or wait until the 1st.`,
+      upgrade: plan !== 'enterprise',
+    });
     return;
   }
 
@@ -63,7 +78,13 @@ Suggest 5 personalized tax-saving strategies.`;
     const cleaned = raw.replace(/^```json\n?/m, '').replace(/\n?```$/m, '').trim();
     const suggestions = JSON.parse(cleaned);
 
-    res.json({ suggestions });
+    // Log successful usage toward monthly cap
+    featureUsageRepo.log(req.user.id, 'ai_suggestions');
+
+    res.json({
+      suggestions,
+      usage: { used: usedThisMonth + 1, limit: monthlyLimit },
+    });
   } catch (err) {
     console.error('[suggestions] Error:', err);
     res.status(500).json({ error: 'Failed to generate suggestions. Please try again.' });

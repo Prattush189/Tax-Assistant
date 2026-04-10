@@ -22,7 +22,7 @@ const TABS: { id: Tab; label: string; icon: typeof Calculator; pro?: boolean }[]
   { id: 'tds', label: 'TDS', icon: FileText },
   { id: 'advanceTax', label: 'Advance Tax', icon: Briefcase },
   { id: 'salary', label: 'Salary Optimizer', icon: Briefcase, pro: true },
-  { id: 'investment', label: 'Investment Planner', icon: Lightbulb, pro: true },
+  { id: 'investment', label: 'Investment Planner', icon: Lightbulb },
 ];
 
 const PLAN_RANK: Record<string, number> = { free: 0, pro: 1, enterprise: 2 };
@@ -92,11 +92,7 @@ export function CalculatorView() {
                 <SalaryOptimizerTab />
               </ProLock>
             )}
-            {activeTab === 'investment' && (
-              <ProLock requiredPlan="pro" featureName="Investment Planner">
-                <InvestmentPlannerTab />
-              </ProLock>
-            )}
+            {activeTab === 'investment' && <InvestmentPlannerTab />}
           </motion.div>
         </AnimatePresence>
       </div>

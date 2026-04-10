@@ -6,12 +6,17 @@ const plans = [
   {
     id: 'free' as const,
     name: 'Free',
-    description: 'Get started with basic tax assistance',
+    description: 'Get started with essential tax tools',
     icon: Sparkles,
     features: [
-      '10 messages per day',
-      'Basic tax calculations',
-      'Document analysis',
+      '10 chat messages per day',
+      '1 attachment per message',
+      'All tax calculators (Income Tax, Capital Gains, GST, TDS, Advance Tax)',
+      'Investment Planner with 50 AI suggestions/month',
+      'Income Tax Acts 1961 & 2025 references',
+      'Clickable PDF references for all Acts',
+      'Document analysis (PDF/image)',
+      '1 saved tax profile',
       'Chat history',
     ],
     gradient: 'from-gray-500 to-gray-600',
@@ -21,32 +26,43 @@ const plans = [
   {
     id: 'pro' as const,
     name: 'Pro',
-    description: 'For professionals who need more',
+    description: 'For professionals who need advanced tools',
     icon: Crown,
     features: [
-      '1,000 messages per month',
-      'Priority responses',
-      'Advanced document analysis',
-      'Full chat history',
-      'Email support',
+      '1,000 chat messages per month',
+      '3 attachments per message',
+      'Live web search for latest tax updates',
+      'Salary Structure Optimizer',
+      '200 AI tax suggestions/month',
+      'PDF export of tax computations',
+      'Reference tax profiles in chat',
+      '10 saved tax profiles',
+      'Notice drafting (30/month)',
+      'Priority responses & email support',
     ],
-    gradient: 'from-[#059669] to-[#047857]',
-    shadow: 'shadow-[#059669]/20',
-    ring: 'ring-[#059669] dark:ring-[#047857]',
+    gradient: 'from-[#0D9668] to-[#0A7B55]',
+    shadow: 'shadow-[#0D9668]/20',
+    ring: 'ring-[#0D9668] dark:ring-[#0A7B55]',
     popular: true,
   },
   {
     id: 'enterprise' as const,
     name: 'Enterprise',
-    description: 'For teams and businesses',
+    description: 'For CA firms and large businesses',
     icon: Building2,
     features: [
-      '10,000 messages per month',
+      '10,000 chat messages per month',
+      '5 attachments per message',
+      'Everything in Pro, plus:',
+      '1,000 AI tax suggestions/month',
+      '50 saved tax profiles',
+      '100 notice drafts per month',
       'Fastest response times',
       'Dedicated support',
       'Plugin/API access',
-      'Multi-user teams',
+      'Multi-user team accounts',
       'Custom integrations',
+      'SLA guarantees',
     ],
     gradient: 'from-indigo-500 to-purple-600',
     shadow: 'shadow-indigo-500/20',
@@ -82,12 +98,12 @@ export function PlanPage() {
                   isCurrent
                     ? `${plan.ring} ring-2`
                     : "border-gray-200 dark:border-gray-800 hover:border-gray-300 dark:hover:border-gray-700",
-                  plan.popular && !isCurrent && "border-[#059669]/50 dark:border-[#047857]/50"
+                  plan.popular && !isCurrent && "border-[#0D9668]/50 dark:border-[#0A7B55]/50"
                 )}
               >
                 {/* Badge */}
                 {plan.popular && (
-                  <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 bg-gradient-to-r from-[#059669] to-[#047857] text-white text-xs font-bold rounded-full">
+                  <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 bg-gradient-to-r from-[#0D9668] to-[#0A7B55] text-white text-xs font-bold rounded-full">
                     MOST POPULAR
                   </div>
                 )}
@@ -119,7 +135,7 @@ export function PlanPage() {
 
                 {/* Button */}
                 {isCurrent ? (
-                  <div className="w-full py-3 text-center text-sm font-semibold text-[#047857] dark:text-[#059669] bg-[#059669]/10 dark:bg-[#047857]/10 rounded-xl">
+                  <div className="w-full py-3 text-center text-sm font-semibold text-[#0A7B55] dark:text-[#0D9668] bg-[#0D9668]/10 dark:bg-[#0A7B55]/10 rounded-xl">
                     Current Plan
                   </div>
                 ) : (
@@ -160,7 +176,7 @@ export function PlanPage() {
             </div>
           </div>
           <p className="text-xs text-gray-400 dark:text-gray-500 mt-4">
-            To upgrade your plan, <a href="https://assist.smartbizin.com/get-demo" target="_blank" rel="noopener noreferrer" className="text-[#059669] hover:underline">contact us</a>. Plan changes are managed by the administrator.
+            To upgrade your plan, <a href="https://assist.smartbizin.com/get-demo" target="_blank" rel="noopener noreferrer" className="text-[#0D9668] hover:underline">contact us</a>. Plan changes are managed by the administrator.
           </p>
         </div>
       </div>
