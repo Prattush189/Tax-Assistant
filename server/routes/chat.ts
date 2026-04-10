@@ -14,28 +14,54 @@ const router = Router();
 
 const MAX_TOKENS = 8192;
 
-// ── Selective web search — triggers on time references, specific dates, years, and recent info ──
+// ── Selective web search ──────────────────────────────────────────────────
+// When any of these patterns match the user's query, Grok is given the web
+// search tool so it can fetch live CBDT/CBIC notifications, Budget updates,
+// and case-law mentions. The local RAG reference is still injected into the
+// same request as supporting context — so web search is the primary source
+// for time-sensitive / comparative queries, and RAG acts as a fallback.
 const WEB_SEARCH_PATTERNS = [
-  // Recent/latest info
-  /\b(latest|recent|new|updated?|current)\s+(change|circular|notification|amendment|rule|budget|reform)/i,
+  // Recent / latest info
+  /\b(latest|recent|updated?|current|upcoming)\s+(change|circular|notification|amendment|rule|budget|reform|rate|threshold)/i,
   /\blatest\b/i,
   /\b(news|update|announcement)\b/i,
+
   // Specific time references
   /\b(today|yesterday|this\s+week|this\s+month|right\s+now|currently)\b/i,
+
   // Specific years (2024+)
   /\b20(2[4-9]|[3-9]\d)\b/,
-  // Specific months/dates
+
+  // Specific months / dates
   /\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+20\d{2}\b/i,
   /\b\d{1,2}[\/-]\d{1,2}[\/-]20\d{2}\b/,
+
   // FY / AY references
   /\b(fy|ay)\s*20\d{2}/i,
-  // Government/regulatory
-  /\b(budget\s+20\d{2}|union\s+budget)\b/i,
+
+  // Government / regulatory
+  /\b(budget\s+20\d{2}|union\s+budget|finance\s+(act|bill))\b/i,
   /\b(circular|notification|press\s+release|CBDT|CBIC|gazette)\b/i,
-  /\b(announced?|introduced)\s+in\s+20\d{2}/i,
-  // Comparison across years
-  /\bvs\b.*\b20\d{2}/i,
-  /\b20\d{2}\s*[-–vs]+\s*\d{2,4}\b/i,
+  /\b(announced?|introduced|notified|amended)\s+in\s+20\d{2}/i,
+
+  // Old-vs-new / comparison / renumbering queries (common when users ask
+  // about the IT Act 2025 vs 1961 transition or GST rate changes)
+  /\bold\b[\s\S]{0,30}\bnew\b/i,
+  /\bnew\b[\s\S]{0,30}\bold\b/i,
+  /\b(old|new)\s+(act|section|regime|rule|law|provision|code)\b/i,
+  /\b(compare|comparison|versus|difference|differences|differ|replaced?)\b/i,
+  /\b\d{2,4}\s*(?:vs|versus|→|->)\s*\d{2,4}\b/i,
+  /\bvs\b/i,
+
+  // IT Act version references
+  /\b(it|income\s+tax)\s+act\s+(1961|2025|2026)\b/i,
+  /\bact\s+(1961|2025|2026)\b/i,
+  /\brenumbering\b/i,
+  /\brenumbered\b/i,
+
+  // "Is this still applicable" / "has this changed" — signals the user wants
+  // a freshness check, not a generic lookup
+  /\b(still\s+(applicable|valid|in\s+force)|has\s+this\s+changed|any\s+changes)\b/i,
 ];
 
 function shouldEnableWebSearch(query: string): boolean {
@@ -181,9 +207,14 @@ Use ONLY these slabs for new regime calculations. This is the default regime und
   Cess: 4% Health & Education Cess on total tax
   Surcharge: 10% (₹50L-₹1Cr), 15% (₹1Cr-₹2Cr), 25% (₹2Cr-₹5Cr)
 
-USING REFERENCE CONTEXT:
-- Official Act text may be included in the message for reference verification. Use it silently to verify section numbers and rates.
-- If the reference contradicts your knowledge, prefer the reference (it reflects the latest Act amendments).
+USING REFERENCE CONTEXT (SOURCE PRECEDENCE):
+- You may have three information sources available on any query: (1) web search results, (2) an injected "Official Act text" reference block, (3) your own training data.
+- **Precedence rule — ALWAYS in this order:**
+  1. **Web search results** (when available) — authoritative for time-sensitive facts: Budget announcements, CBDT/CBIC circulars, latest notifications, current rates, new Act provisions, amendments, old-vs-new comparisons, anything involving a specific year. Web results reflect TODAY's state.
+  2. **Injected reference text** — authoritative for section-number mapping, threshold tables, and structural Act content. Use it as a fallback when web search was not performed, or as corroborating evidence when it agrees with web results.
+  3. **Your own training knowledge** — use ONLY when neither web search nor the reference contains the answer. Say so explicitly if you are relying on it for a fact you are not fully confident in.
+- If web search results CONTRADICT the injected reference text, trust the web results (they are more recent). Never cite the reference to override a live web fact.
+- If you mention an "old" vs "new" Act comparison, a "latest" rule, a specific Budget year, or any "renumbering" question and web search was available, your answer must be built primarily from web results — the reference is supporting context only.
 - CRITICAL: NEVER acknowledge, thank, mention, or reference the Act texts provided in the message. The user does NOT see them — they are injected by the system. Treat them as invisible background knowledge. Phrases like "Thank you for sharing the reference", "the reference texts align with", "based on the Act text provided" are STRICTLY FORBIDDEN. Just answer the question directly as if you knew the information yourself.
 
 BANNED PHRASES — NEVER use these in any response:

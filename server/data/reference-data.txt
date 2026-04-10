@@ -383,3 +383,249 @@ ITR-1 LTCG 112A limit (AY 2026-27) = Rs 1.25 lakh (NEW)
 ITR-4 income limit = Rs 50 lakh
 ITR-4 house properties (AY 2026-27) = up to 2 (NEW, was 1 in AY 2025-26)
 Senior citizen advance tax exemption = 60+ with NO business income are exempt
+
+======================================================================
+8. TDS SECTIONS -- OLD ACT (1961) vs NEW ACT (2025) MAPPING
+======================================================================
+CRITICAL: The new Income Tax Act 2025 (in force from FY 2026-27) renumbers and
+consolidates TDS provisions. The 194A-194T numbering from the Income Tax Act 1961
+is being replaced by unified sections 392 (salary), 393 (non-salary deductions),
+and 394 (TCS). This section provides the complete mapping and cross-reference
+between the old and new TDS sections. Each old section now maps to a specific
+"Table Serial Number" under the new parent section. The mapping below is a
+COMPREHENSIVE renumbering, not a cosmetic change.
+
+Source: Income Tax Act 2025 TDS Section Code master (CBDT ITBA publication).
+This is the authoritative old-to-new mapping for 194A, 194B, 194C, 194D, 194H,
+194I, 194J, 194N, 194R, 194S, 194T, 192, 193, 195, 196, 206C and related
+provisions under the new Act sections 392, 393, and 394.
+
+Salary TDS:
+- Old 192 (Salary)                      --> New 392
+- Old 192A (EPF premature withdrawal)   --> New 392(7)
+
+Non-salary TDS to residents (consolidated under Section 393):
+
+Table 1 -- Commission and brokerage:
+- Old 194D (Insurance commission)        --> New 393(1) Sl. 1(i)
+- Old 194H (Commission or brokerage)     --> New 393(1) Sl. 1(ii)
+
+Table 2 -- Rent:
+- Old 194I(a) (Plant/Machinery/Equipment) --> New 393(1) Sl. 2(ii).D(a)
+- Old 194I(b) (Land/Building/Furniture)   --> New 393(1) Sl. 2(ii).D(b)
+
+Table 3 -- Compensation on acquisition:
+- Old 194LA (Compulsory acquisition)      --> New 393(1) Sl. 3(iii)
+
+Table 4 -- Business trust and fund income:
+- Old 194K (MF unit income)               --> New 393(1) Sl. 4(i)
+- Old 194LBA(1) (Business trust interest/dividend to resident) --> New 393(1) Sl. 4(ii)
+- Old 194LBB (Investment fund income)     --> New 393(1) Sl. 4(iii)
+- Old 194LBC (Securitisation trust income) --> New 393(1) Sl. 4(iv)
+
+Table 5 -- Interest:
+- Old 193 (Interest on securities)                     --> New 393(1) Sl. 5(i)
+- Old 194A (Interest other than on securities)         --> New 393(1) Sl. 5(iii)
+
+Table 6 -- Contractor and Professional fees:
+- Old 194C (Contractor -- Individual/HUF)              --> New 393(1) Sl. 6(i).D(a)
+- Old 194C (Contractor -- other than Individual/HUF)   --> New 393(1) Sl. 6(i).D(b)
+- Old 194J(a) (FTS / Call centre / Royalty-film -- 2%) --> New 393(1) Sl. 6(iii).D(a)
+- Old 194J(b) (Professional fees / Royalty -- 10%)     --> New 393(1) Sl. 6(iii).D(b)
+
+Table 7 -- Dividend:
+- Old 194 (Dividend)                      --> New 393(1) Sl. 7
+
+Table 8 -- Specified payments:
+- Old 194Q (Purchase of goods)            --> New 393(1) Sl. 8(ii)
+- Old 194P (Senior citizen 75+)           --> New 393(1) Sl. 8(iii)
+- Old 194R (Benefits or perquisites)      --> New 393(1) Sl. 8(iv)
+- Old 194O (E-commerce operator)          --> New 393(1) Sl. 8(v)
+- Old 194S (Transfer of VDA / crypto)     --> New 393(1) Sl. 8(vi)
+- Old 194DA (Life insurance payout)       --> New 393(1) Sl. 8(i)
+
+Section 393(3) -- Winnings and cash withdrawal (special triggers):
+- Old 194B (Lottery/crossword winnings)   --> New 393(3) Sl. 1
+- Old 194BA (Online gaming winnings)      --> New 393(3) Sl. 2
+- Old 194BB (Horse race winnings)         --> New 393(3) Sl. 3
+- Old 194G (Lottery ticket commission)    --> New 393(3) Sl. 4
+- Old 194N (Cash withdrawal -- co-op)     --> New 393(3) Sl. 5.D(a)
+- Old 194N (Cash withdrawal -- others)    --> New 393(3) Sl. 5.D(b)
+- Old 194EE (NSS withdrawal)              --> New 393(3) Sl. 6
+- Old 194T (Partner remuneration)         --> New 393(3) Sl. 7
+
+TCS under Section 394 (formerly 206C):
+- Old 206C(1) Sale of alcoholic liquor    --> New 394(1) Sl. 1
+- Old 206C(1) Sale of tendu leaves        --> New 394(1) Sl. 2
+- Old 206C(1) Sale of timber / forest produce --> New 394(1) Sl. 3
+- Old 206C(1) Sale of scrap               --> New 394(1) Sl. 4
+- Old 206C(1) Sale of minerals            --> New 394(1) Sl. 5
+- Old 206C(1F) Sale of motor vehicle > 10L --> New 394(1) Sl. 6(a)
+- Old 206C(1F) Luxury goods > 10L          --> New 394(1) Sl. 6(b)
+- Old 206C(1G) LRS remittance              --> New 394(1) Sl. 7
+- Old 206C(1G) Overseas tour package       --> New 394(1) Sl. 8
+- Old 206C(1C) Toll plaza/parking/mine lease --> New 394(1) Sl. 9
+
+IMPORTANT: For FY 2023-24, FY 2024-25, and FY 2025-26 returns, the OLD section
+numbers (194A, 194B, 194C, etc.) still apply. The NEW 392/393/394 numbering
+becomes effective from FY 2026-27 (AY 2027-28) onwards. Both old and new section
+labels should be referenced for continuity.
+
+======================================================================
+9. TDS RATES AND THRESHOLDS BY SECTION (FY 2025-26 onwards)
+======================================================================
+Source: Income Tax Act 1961 as amended by Finance Act 2025.
+All rates are basic TDS rates. Surcharge and cess are not included.
+Without-PAN rate is 20% (except 194-O / 194Q where it is 5%).
+
+SALARY TDS:
+- Section 192 (Salary): As per applicable slab rates; no fixed rate or threshold. Deduction based on estimated annual income and chosen regime (old/new).
+- Section 192A (Premature EPF withdrawal): Rate 10%; threshold Rs 50,000.
+
+NON-SALARY TDS (resident deductees):
+
+- Section 193 (Interest on securities): Rate 10%; threshold Rs 10,000.
+
+- Section 194 (Dividend): Rate 10%; threshold Rs 10,000 per year -- BUT threshold applies ONLY when the payee is an Individual or HUF. For companies/firms/others there is NO threshold and TDS is deducted on any amount. (Budget 2025 increased threshold from Rs 5,000 to Rs 10,000 w.e.f. 1 April 2025.)
+
+- Section 194A (Interest other than on securities): Rate 10%; threshold Rs 50,000 for non-senior, Rs 1,00,000 for senior citizens. (Budget 2025 increased from Rs 40,000 / Rs 50,000 respectively, w.e.f. 1 April 2025.)
+
+- Section 194B (Lottery, crossword, card game, gambling winnings): Rate 30%; threshold Rs 10,000 per transaction.
+
+- Section 194BA (Online gaming winnings): Rate 30%; no threshold. Applies to net winnings at year-end or withdrawal.
+
+- Section 194BB (Horse race winnings): Rate 30%; threshold Rs 10,000.
+
+- Section 194C (Contractor payments): Rate 1% for Individual/HUF payee, 2% for company/firm/other. DUAL THRESHOLD: TDS is triggered if a single bill is Rs 30,000 or more, OR if aggregate payments to the same contractor in the FY cross Rs 1,00,000. Transporter exemption available (valid declaration + PAN, <=10 goods carriages).
+
+- Section 194D (Insurance commission): Rate 2%; threshold Rs 20,000. (Budget 2025 reduced rate from 5% to 2% and increased threshold from Rs 15,000 to Rs 20,000, w.e.f. 1 April 2025.)
+
+- Section 194DA (Life insurance policy payout, non-exempt portion): Rate 2%; threshold Rs 1,00,000. (Budget 2024-25 reduced rate from 5% to 2%.)
+
+- Section 194EE (NSS deposit withdrawal): Rate 10%; threshold Rs 2,500.
+
+- Section 194F (Repurchase of MF units by UTI): Rate 20%; no threshold.
+
+- Section 194G (Lottery ticket commission): Rate 2%; threshold Rs 20,000. (Budget 2025 reduced rate from 5% to 2%.)
+
+- Section 194H (Commission or brokerage): Rate 2%; threshold Rs 20,000. (Budget 2025 reduced rate from 5% to 2% and raised threshold from Rs 15,000 to Rs 20,000.)
+
+- Section 194I(a) (Rent -- Plant, Machinery, Equipment): Rate 2%; threshold Rs 6,00,000 per year (Rs 50,000 per month). (Budget 2025 increased from Rs 2,40,000 per year.)
+
+- Section 194I(b) (Rent -- Land, Building, Furniture): Rate 10%; threshold Rs 6,00,000 per year (Rs 50,000 per month).
+
+- Section 194IA (Transfer of immovable property): Rate 1%; applies when sale consideration is Rs 50 lakh or more. Paid via Form 26QB.
+
+- Section 194IB (Rent by individual/HUF not under audit): Rate 2%; applies when rent exceeds Rs 50,000 per month. (Budget 2025 reduced rate from 5% to 2%.)
+
+- Section 194IC (Payment under Joint Development Agreement): Rate 10%; no threshold.
+
+- Section 194J(a) (Fees for Technical Services / Call centre / Royalty for film): Rate 2%; threshold Rs 50,000. (Budget 2025 increased threshold from Rs 30,000.)
+
+- Section 194J(b) (Professional fees / Royalty other than film): Rate 10%; threshold Rs 50,000.
+
+- Section 194K (Income from Mutual Fund units): Rate 10%; threshold Rs 10,000. (Budget 2025 increased from Rs 5,000.)
+
+- Section 194LA (Compensation on compulsory acquisition): Rate 10%; threshold Rs 5,00,000.
+
+- Section 194LBA(1) (Business trust interest/dividend to resident unit holder): Rate 10%; no threshold.
+
+- Section 194LBB (Investment fund income to resident unit holder): Rate 10%; no threshold.
+
+- Section 194LBC (Securitisation trust income to resident): Rate 10%; no threshold. (Budget 2025 reduced from 25%.)
+
+- Section 194M (Contract/professional/commission by individual not under audit): Rate 2%; threshold Rs 50,00,000 aggregate per FY. (Budget 2025 reduced rate from 5% to 2%.)
+
+- Section 194N (Cash withdrawal from bank/post office): Rate 2% on amount exceeding threshold. Threshold is Rs 1 crore per FY for most recipients, Rs 3 crore for co-operative societies. Non-filers have a lower threshold of Rs 20 lakh (5% rate above Rs 1 crore).
+
+- Section 194O (E-commerce operator paying participant): Rate 0.1%; threshold Rs 5,00,000 (for individual/HUF participants). Without PAN, rate is 5%. (Budget 2024-25 reduced rate from 1% to 0.1%.)
+
+- Section 194P (TDS on senior citizen 75+ pension + interest): Slab rate; no fixed rate. Applies only if declaration submitted to specified bank.
+
+- Section 194Q (Purchase of goods): Rate 0.1% on amount exceeding Rs 50 lakh in a FY from the same seller. Applies only if buyer's turnover in preceding FY exceeds Rs 10 crore. Without PAN, rate is 5%.
+
+- Section 194R (Benefits or perquisites from business/profession): Rate 10%; threshold Rs 20,000 aggregate per FY.
+
+- Section 194S (Transfer of Virtual Digital Asset -- crypto/NFT): Rate 1%; threshold Rs 10,000 (Rs 50,000 for specified persons).
+
+- Section 194T (Partner remuneration/interest from firm): Rate 10%; threshold Rs 20,000 aggregate per FY. NEW SECTION introduced by Budget 2024 (effective 1 April 2025).
+
+NON-RESIDENT TDS (Form 27Q):
+- Section 194E (Sportsmen/sports association): Rate 20%.
+- Section 194LB (Infrastructure debt fund interest): Rate 5%.
+- Section 194LBA(2) (Business trust interest/dividend to NR): Rate 5%.
+- Section 194LBA(3) (Business trust rental income to NR): Rate 30%.
+- Section 194LBB (Investment fund income to NR): Rate 30% (DTAA benefits may apply).
+- Section 194LBC (Securitisation trust income to NR): Rate 30%.
+- Section 194LC (External Commercial Borrowing interest): Rate 5%.
+- Section 194LD (Govt / rupee bond interest): Rate 5%.
+- Section 195 (Other interest to NR): Rate 20% (or per DTAA).
+- Section 195 (LTCG to NR): Rate 12.5% (Budget 2024 reduced from 20%).
+- Section 195 (Other income to NR): Rate 30%.
+- Section 196A (MF unit income to NR): Rate 20%.
+- Section 196B (Offshore fund income): Rate 10%.
+- Section 196C (FCCB/GDR income): Rate 10%.
+- Section 196D (FII securities income): Rate 20%.
+
+TCS (Form 27EQ -- Section 206C):
+- 206C(1) Alcoholic liquor: Rate 1%.
+- 206C(1) Tendu leaves: Rate 5%.
+- 206C(1) Timber (forest lease or other): Rate 2.5%.
+- 206C(1) Other forest produce: Rate 2.5%.
+- 206C(1) Scrap: Rate 1%.
+- 206C(1) Minerals (coal/lignite/iron ore): Rate 1%.
+- 206C(1C) Lease of toll plaza / parking / mine: Rate 2%.
+- 206C(1F) Motor vehicle > Rs 10 lakh: Rate 1%.
+- 206C(1F) Luxury goods > Rs 10 lakh (watch, art, yacht, handbag etc.): Rate 1% (effective 22 April 2025).
+- 206C(1G) LRS remittance for education/medical (> Rs 10L): Rate 5%.
+- 206C(1G) LRS remittance for other purposes (> Rs 10L): Rate 20%.
+- 206C(1G) Overseas tour package: 5% up to Rs 10L, 20% above.
+- 206C(1H) Sale of goods > Rs 50 lakh: Rate 0.1%. OMITTED w.e.f. 1 April 2025 (replaced by 194Q).
+
+======================================================================
+10. TDS BUDGET 2025 KEY CHANGES (effective 1 April 2025, FY 2025-26)
+======================================================================
+The Finance Act 2025 rationalised TDS thresholds and rates across multiple
+sections. These changes took effect on 1 April 2025 and apply from FY 2025-26
+onwards. Returns for FY 2024-25 and earlier use the OLD values.
+
+Rate reductions (5% -> 2%):
+- 194D (Insurance commission)
+- 194G (Lottery ticket commission)
+- 194H (Commission or brokerage)
+- 194IB (Rent by individual/HUF not under audit)
+- 194M (Contract/professional by individual not under audit)
+- 194LBC (Securitisation trust) -- reduced from 25% to 10%
+
+Threshold increases:
+- 194A (Interest non-securities): Rs 40,000 -> Rs 50,000 (non-senior)
+- 194A (Interest non-securities, senior): Rs 50,000 -> Rs 1,00,000
+- 194 (Dividend): Rs 5,000 -> Rs 10,000 (individuals only)
+- 194D (Insurance commission): Rs 15,000 -> Rs 20,000
+- 194G (Lottery commission): Rs 15,000 -> Rs 20,000
+- 194H (Commission/brokerage): Rs 15,000 -> Rs 20,000
+- 194I (Rent): Rs 2,40,000 -> Rs 6,00,000 per year (Rs 50,000 per month)
+- 194J (Professional/technical fees): Rs 30,000 -> Rs 50,000
+- 194K (MF units): Rs 5,000 -> Rs 10,000
+- 194LA (Compensation on acquisition): Rs 2,50,000 -> Rs 5,00,000
+
+New section introduced:
+- 194T (Partner remuneration/interest): 10% rate, Rs 20,000 threshold; applies
+  to salary, remuneration, commission, bonus or interest paid by a firm to a
+  partner (including credit to capital account).
+
+Section removed/restructured:
+- 194F (Repurchase of MF units by UTI): Omitted from 1 April 2025.
+- 206C(1H) (Sale of goods > Rs 50 lakh by seller): Omitted from 1 April 2025;
+  Section 194Q (buyer deducts) continues to apply.
+- 206C(1G) (LRS for education from loan): Omitted from 1 April 2025 when funded
+  via an approved education loan.
+
+Threshold rationalisation for TCS (Budget 2025):
+- 206C(1G) LRS monetary threshold raised from Rs 7 lakh to Rs 10 lakh across
+  all categories of remittances.
+
+Compliance calendar remains unchanged:
+- TDS deposit: 7th of following month (April for March: 30 April).
+- TDS quarterly returns: 31 July (Q1), 31 October (Q2), 31 January (Q3), 31 May (Q4).
+- Forms: 24Q (salary), 26Q (non-salary resident), 27Q (non-resident), 27EQ (TCS).

@@ -37,31 +37,93 @@ function normalize(s: string): string {
   return s.replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
-// Search for chunk text in a PDF document, return best matching page number (1-based)
+/**
+ * Extract section-like identifiers from arbitrary reference text.
+ * Matches:
+ *   • 80C, 80CCD, 80CCD(1B), 115BAC, 194A, 194J(a), 143(1), 393(1)
+ *   • Plain 100-499 three-digit numbers (Act section range)
+ * Rejects:
+ *   • Years (2020-2030)
+ *   • Standalone 2-digit numbers (too noisy)
+ *   • Large figures (500+) which are usually amounts, not sections
+ */
+function extractSectionNumbers(text: string): string[] {
+  const found = new Set<string>();
+  const regex = /\b(\d{1,3}[A-Z]{0,3}(?:\(\d+[A-Za-z]?\))?)\b/g;
+  let m: RegExpExecArray | null;
+  while ((m = regex.exec(text)) !== null) {
+    const token = m[1].toUpperCase();
+    // Skip years
+    if (/^20[0-9]\d$/.test(token)) continue;
+    if (/^19[6-9]\d$/.test(token)) continue;
+    const hasLetter = /[A-Z]/.test(token);
+    const hasBracket = /\(/.test(token);
+    // Pure-number tokens must be 100-499 (typical Act section range)
+    if (!hasLetter && !hasBracket) {
+      const n = parseInt(token, 10);
+      if (!Number.isFinite(n) || n < 100 || n > 499) continue;
+    }
+    found.add(token);
+  }
+  return Array.from(found);
+}
+
+/**
+ * Find the best PDF page for a reference.
+ *
+ * Strategy (in order of priority):
+ *   1. If the reference text contains explicit section numbers (80C, 194J,
+ *      393, etc.), score each page by how many of those appear — with a
+ *      strong bonus for "section-header" style matches ("80C." or
+ *      "80C " at a word boundary). This nails Act PDFs which are organized
+ *      by section.
+ *   2. Fall back to literal substring match of the first 150 chars.
+ *   3. Last resort: word-overlap scoring (original behaviour).
+ */
 async function findPageForText(
   pdfDoc: pdfjs.PDFDocumentProxy,
   searchText: string,
 ): Promise<number> {
+  const sectionTokens = extractSectionNumbers(searchText);
   const needle = normalize(searchText).slice(0, 150);
-  if (!needle) return 1;
-
   const needleWords = needle.split(' ').filter(w => w.length > 3);
+
+  if (sectionTokens.length === 0 && !needle) return 1;
+
   let bestPage = 1;
   let bestScore = 0;
 
   for (let i = 1; i <= pdfDoc.numPages; i++) {
     const page = await pdfDoc.getPage(i);
     const content = await page.getTextContent();
-    const pageText = normalize(
-      content.items.map((item: any) => item.str).join(' '),
-    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rawPageText = content.items.map((item: any) => item.str ?? '').join(' ');
+    // Normalized for word-overlap comparison
+    const pageText = normalize(rawPageText);
+    // De-spaced version so "80 C" and "143 ( 1 )" fragments match "80C" / "143(1)"
+    const despaced = rawPageText.replace(/\s+/g, '').toUpperCase();
 
-    // Exact substring match — best case
-    if (pageText.includes(needle)) return i;
+    let score = 0;
 
-    // Word overlap scoring
-    const hits = needleWords.filter(w => pageText.includes(w)).length;
-    const score = hits / Math.max(needleWords.length, 1);
+    // ── Section-number match ── strongest signal
+    for (const tok of sectionTokens) {
+      // (a) Exact de-spaced appearance
+      if (despaced.includes(tok)) score += 2;
+      // (b) Section-header style: "80c." or "80c " at a word boundary
+      const escaped = tok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const headerRegex = new RegExp(`\\b${escaped}\\.?\\s`, 'i');
+      if (headerRegex.test(rawPageText)) score += 10;
+    }
+
+    // ── Literal substring fallback ──
+    if (score === 0 && needle && pageText.includes(needle)) return i;
+
+    // ── Word-overlap fallback (weighted lower than section matches) ──
+    if (needleWords.length > 0) {
+      const hits = needleWords.filter(w => pageText.includes(w)).length;
+      score += hits; // +1 per word (much weaker than +10 per section header)
+    }
+
     if (score > bestScore) {
       bestScore = score;
       bestPage = i;
@@ -73,40 +135,59 @@ async function findPageForText(
 
 // Highlight matching text spans on the rendered text layer
 function highlightTextLayer(container: HTMLElement, searchText: string) {
+  const sectionTokens = extractSectionNumbers(searchText);
   const needle = normalize(searchText).slice(0, 150);
-  if (!needle) return;
-
   const needleWords = needle.split(' ').filter(w => w.length > 3);
-  if (needleWords.length === 0) return;
+
+  if (sectionTokens.length === 0 && needleWords.length === 0) return;
 
   const spans = container.querySelectorAll<HTMLSpanElement>(
     '.react-pdf__Page__textContent span',
   );
 
-  // Build full page text from spans to find matching range
-  const spanTexts = Array.from(spans).map(s => normalize(s.textContent || ''));
+  // Precompute uppercase de-spaced text for section match
+  const spanRaw = Array.from(spans).map(s => s.textContent || '');
+  const spanNormalized = spanRaw.map(t => normalize(t));
+  const spanDespaced = spanRaw.map(t => t.replace(/\s+/g, '').toUpperCase());
+
+  let firstSectionHit: HTMLSpanElement | null = null;
 
   spans.forEach((span, idx) => {
-    const text = spanTexts[idx];
-    if (!text) return;
+    const norm = spanNormalized[idx];
+    const des = spanDespaced[idx];
+    if (!norm) return;
 
-    const matchCount = needleWords.filter(w => text.includes(w)).length;
-    const threshold = needleWords.length <= 3 ? 1 : 2;
-
-    if (matchCount >= threshold) {
-      span.style.backgroundColor = 'rgba(251, 191, 36, 0.45)';
-      span.style.borderBottom = '2px solid rgba(245, 158, 11, 0.8)';
+    // Section-number hit → highlight + record for scroll
+    const sectionMatched = sectionTokens.some(tok => des.includes(tok));
+    if (sectionMatched) {
+      span.style.backgroundColor = 'rgba(16, 185, 129, 0.45)';
+      span.style.borderBottom = '2px solid rgba(5, 150, 105, 0.85)';
       span.style.borderRadius = '1px';
       span.style.transition = 'background-color 0.3s';
+      if (!firstSectionHit) firstSectionHit = span;
+      return;
+    }
+
+    // Word-overlap fallback highlight (lighter amber)
+    if (needleWords.length > 0) {
+      const matchCount = needleWords.filter(w => norm.includes(w)).length;
+      const threshold = needleWords.length <= 3 ? 1 : 2;
+      if (matchCount >= threshold) {
+        span.style.backgroundColor = 'rgba(251, 191, 36, 0.35)';
+        span.style.borderBottom = '2px solid rgba(245, 158, 11, 0.7)';
+        span.style.borderRadius = '1px';
+        span.style.transition = 'background-color 0.3s';
+      }
     }
   });
 
-  // Scroll to first highlighted span
-  const firstHighlighted = container.querySelector<HTMLSpanElement>(
+  // Prefer scrolling to the first section-number hit, otherwise to the first
+  // amber highlight
+  const target = firstSectionHit ?? container.querySelector<HTMLSpanElement>(
     '.react-pdf__Page__textContent span[style*="background-color"]',
   );
-  if (firstHighlighted) {
-    firstHighlighted.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  if (target) {
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 }
 

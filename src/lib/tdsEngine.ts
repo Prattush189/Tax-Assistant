@@ -171,8 +171,8 @@ const RESIDENT_SECTIONS: TdsSection[] = [
     description: 'Interest other than on securities',
     rate: 0.10,
     rateWithoutPAN: 0.20,
-    threshold: 10000,
-    thresholdNote: '₹50,000 for senior citizens',
+    threshold: 50000,
+    thresholdNote: '₹1,00,000 for senior citizens (Budget 2025 update)',
     fyOverrides: {
       '2023-24': { threshold: 40000 },
       '2024-25': { threshold: 40000 },
@@ -540,6 +540,10 @@ const RESIDENT_SECTIONS: TdsSection[] = [
     rate: 0.10,
     rateWithoutPAN: 0.20,
     threshold: 20000,
+    fyOverrides: {
+      '2023-24': { threshold: 20000 },
+      '2024-25': { threshold: 20000 },
+    },
   },
   {
     id: 'r-194S',
