@@ -2,8 +2,9 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/TextLayer.css';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
-import { X, ChevronLeft, ChevronRight, Loader2, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
+import { X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 import { SectionReference } from '../../types';
+import { LoadingAnimation } from '../ui/LoadingAnimation';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -271,7 +272,7 @@ function SinglePdfViewer({
         {/* Loading overlay — shown until page is found */}
         {!isReady && (
           <div className="flex flex-col items-center justify-center h-64 gap-3">
-            <Loader2 className="w-8 h-8 animate-spin text-emerald-500" />
+            <LoadingAnimation size="md" />
             <span className="text-sm text-gray-500 dark:text-gray-400">
               {loading ? 'Loading PDF...' : 'Finding referenced section...'}
             </span>
@@ -293,7 +294,7 @@ function SinglePdfViewer({
                   onRenderSuccess={onPageRenderSuccess}
                   loading={
                     <div className="flex items-center justify-center h-64">
-                      <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+                      <LoadingAnimation size="sm" />
                     </div>
                   }
                 />

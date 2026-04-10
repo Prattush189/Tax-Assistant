@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useGoogleLogin } from '@react-oauth/google';
 import { useAuth } from '../../contexts/AuthContext';
+import { LoadingAnimation } from '../ui/LoadingAnimation';
 
 interface GoogleSignInButtonProps {
   onError?: (msg: string) => void;
@@ -34,7 +35,7 @@ export function GoogleSignInButton({ onError }: GoogleSignInButtonProps) {
       className="w-full flex items-center justify-center gap-3 py-3 px-4 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
     >
       {isLoading ? (
-        <div className="w-5 h-5 border-2 border-gray-300 border-t-emerald-500 rounded-full animate-spin" />
+        <LoadingAnimation size="sm" />
       ) : (
         <>
           <svg className="w-5 h-5" viewBox="0 0 24 24">

@@ -3,6 +3,7 @@ import { motion } from 'motion/react';
 import { useAuth } from '../../contexts/AuthContext';
 import { LogIn, Eye, EyeOff, Shield, Zap, BarChart3 } from 'lucide-react';
 import { GoogleSignInButton } from './GoogleSignInButton';
+import { LoadingAnimation } from '../ui/LoadingAnimation';
 
 interface LoginPageProps {
   onSwitchToSignup: () => void;
@@ -154,7 +155,7 @@ export function LoginPage({ onSwitchToSignup }: LoginPageProps) {
               className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl shadow-lg shadow-emerald-600/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {isSubmitting ? (
-                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                <LoadingAnimation size="sm" />
               ) : (
                 <>
                   <LogIn className="w-5 h-5" />

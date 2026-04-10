@@ -2,8 +2,9 @@ import { useState, useMemo, useEffect } from 'react';
 import { generateInvestmentSuggestions, type InvestmentSuggestion } from '../../lib/investmentPlanner';
 import { useTaxCalculator } from '../../contexts/TaxCalculatorContext';
 import { useAuth } from '../../contexts/AuthContext';
-import { TrendingUp, Loader2, Sparkles } from 'lucide-react';
+import { TrendingUp, Sparkles } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { LoadingAnimation } from '../ui/LoadingAnimation';
 
 function formatINR(n: number): string {
   return '₹' + n.toLocaleString('en-IN');
@@ -144,7 +145,7 @@ export function InvestmentPlannerTab() {
                 : "bg-emerald-600 text-white hover:bg-emerald-700"
             )}
           >
-            {aiLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Get AI Tips'}
+            {aiLoading ? <LoadingAnimation size="xs" /> : 'Get AI Tips'}
           </button>
         </div>
 

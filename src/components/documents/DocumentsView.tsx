@@ -3,6 +3,7 @@ import { Upload, FileText } from 'lucide-react';
 import { uploadFile } from '../../services/api';
 import { DocumentContext } from '../../types';
 import { DocumentCard } from './DocumentCard';
+import { LoadingAnimation } from '../ui/LoadingAnimation';
 import { cn } from '../../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -124,9 +125,8 @@ export function DocumentsView({ activeDocument, onDocumentAttach, onDocumentDeta
                     animate={{ opacity: 1 }}
                     className="space-y-4"
                   >
-                    <div className="relative w-16 h-16 mx-auto">
-                      <div className="absolute inset-0 border-4 border-orange-200 dark:border-orange-900 rounded-full"></div>
-                      <div className="absolute inset-0 border-4 border-orange-500 rounded-full border-t-transparent animate-spin"></div>
+                    <div className="flex justify-center">
+                      <LoadingAnimation size="lg" />
                     </div>
                     <div>
                       <p className="text-base font-semibold text-orange-700 dark:text-orange-300">

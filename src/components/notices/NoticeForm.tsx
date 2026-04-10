@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { Upload, FileText, Loader2, Send } from 'lucide-react';
+import { Upload, FileText, Send } from 'lucide-react';
 import { useFileUpload } from '../../hooks/useFileUpload';
 import { NoticeGenerateInput } from '../../services/api';
+import { LoadingAnimation } from '../ui/LoadingAnimation';
 
 const NOTICE_TYPES = [
   { value: 'income-tax', label: 'Income Tax' },
@@ -142,7 +143,7 @@ export function NoticeForm({ onGenerate, isGenerating, usage }: NoticeFormProps)
         <label className={labelClass}>Upload Notice (optional)</label>
         <label className="flex items-center gap-2 px-3 py-2.5 border-2 border-dashed border-gray-200 dark:border-gray-700 rounded-lg cursor-pointer hover:border-[#059669] transition-colors">
           {fileUpload.uploadPhase === 'uploading' || fileUpload.uploadPhase === 'analyzing' ? (
-            <Loader2 className="w-4 h-4 text-[#059669] animate-spin" />
+            <LoadingAnimation size="xs" />
           ) : extractedText ? (
             <FileText className="w-4 h-4 text-green-500" />
           ) : (
@@ -251,7 +252,7 @@ export function NoticeForm({ onGenerate, isGenerating, usage }: NoticeFormProps)
       >
         {isGenerating ? (
           <>
-            <Loader2 className="w-4 h-4 animate-spin" />
+            <LoadingAnimation size="xs" />
             Generating...
           </>
         ) : (

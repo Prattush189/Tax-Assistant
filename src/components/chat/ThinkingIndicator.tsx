@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { LoadingAnimation } from '../ui/LoadingAnimation';
 
 const PHRASES = [
   'Looking up relevant sections',
@@ -59,8 +60,8 @@ export function ThinkingIndicator() {
 
   return (
     <div className="flex items-center gap-3 py-3 px-1">
-      <div className="w-8 h-8 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center shrink-0">
-        <img src="/logoAI.png" alt="" className="w-5 h-5 object-contain" />
+      <div className="shrink-0">
+        <LoadingAnimation size="md" />
       </div>
       <div className="flex items-center gap-1.5">
         <span className="text-sm text-gray-500 dark:text-gray-400">{displayText}</span>

@@ -1,8 +1,9 @@
 import { useState, useRef, useCallback } from 'react';
-import { Send, Paperclip, FileText, X, Loader2, BookUser, Lock, BarChart3 } from 'lucide-react';
+import { Send, Paperclip, FileText, X, BookUser, Lock, BarChart3 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { UploadPhase } from '../../hooks/useFileUpload';
 import { DocumentContext } from '../../types';
+import { LoadingAnimation } from '../ui/LoadingAnimation';
 import toast from 'react-hot-toast';
 
 interface ChatInputProps {
@@ -90,7 +91,7 @@ export function ChatInput({
               ))}
               {isUploading && (
                 <div className="flex items-center gap-1.5 px-2 py-1 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/40 rounded-lg text-xs text-emerald-700 dark:text-emerald-400">
-                  <Loader2 className="w-3 h-3 animate-spin" />
+                  <LoadingAnimation size="xs" />
                   <span>{uploadPhase === 'uploading' ? 'Uploading...' : 'Analyzing...'}</span>
                 </div>
               )}
