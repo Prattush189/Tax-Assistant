@@ -6,11 +6,15 @@ import {
   TDS_SECTIONS,
   TDS_FY_OPTIONS,
   TDS_CATEGORY_OPTIONS,
+  DEDUCTION_TYPE_LABELS,
   resolveTdsRates,
   getTdsSectionsForCategory,
+  getAllowedDeductionTypes,
   type TdsFY,
   type TdsCategory,
   type TdsSection,
+  type DeductionType,
+  type PayeeStatus,
 } from '../../lib/tdsEngine';
 
 /**
@@ -40,6 +44,10 @@ export function TdsTab() {
   );
   const [amount, setAmount] = useState('');
   const [hasPAN, setHasPAN] = useState(true);
+  const [deductionType, setDeductionType] = useState<DeductionType>('prescribed');
+  const [aggregatePaid, setAggregatePaid] = useState('');
+  const [lowerRatePct, setLowerRatePct] = useState('');
+  const [payeeStatus, setPayeeStatus] = useState<PayeeStatus>('individual');
 
   // Combobox state
   const [comboOpen, setComboOpen] = useState(false);
@@ -47,7 +55,6 @@ export function TdsTab() {
   const comboRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // When category changes, reset the selected section to the first one in that category
   const sectionsInCategory = useMemo(
     () => getTdsSectionsForCategory(category),
     [category],
@@ -72,14 +79,12 @@ export function TdsTab() {
     }
   }, [comboOpen]);
 
-  // Auto-focus the search input when opening
   useEffect(() => {
     if (comboOpen) {
       setTimeout(() => searchInputRef.current?.focus(), 10);
     }
   }, [comboOpen]);
 
-  // Filtered options based on query
   const filteredSections = useMemo(() => {
     const q = comboQuery.trim().toLowerCase();
     if (!q) return sectionsInCategory;
@@ -92,28 +97,51 @@ export function TdsTab() {
   const selectedSection = sectionsInCategory.find(s => s.id === sectionId) ?? sectionsInCategory[0];
   const showNewFirst = isNewActActive(fy);
 
-  // Calculation
-  const { result, error } = useMemo(() => {
-    const num = Number(amount) || 0;
-    if (num <= 0) return { result: null, error: null };
-    try {
-      const res = calculateTDS({ sectionId: selectedSection.id, fy, amount: num, hasPAN });
-      return { result: res, error: null };
-    } catch (e) {
-      return { result: null, error: e instanceof Error ? e.message : 'Calculation error' };
+  // Allowed deduction types for the current section
+  const allowedDeductionTypes = useMemo(
+    () => getAllowedDeductionTypes(selectedSection),
+    [selectedSection],
+  );
+
+  // If current deductionType becomes unavailable after switching sections, reset it
+  useEffect(() => {
+    if (!allowedDeductionTypes.includes(deductionType)) {
+      setDeductionType('prescribed');
     }
-  }, [amount, selectedSection.id, fy, hasPAN]);
+  }, [allowedDeductionTypes, deductionType]);
 
   const resolvedRates = useMemo(
     () => resolveTdsRates(selectedSection, fy),
     [selectedSection, fy],
   );
 
+  const hasPerEntryThreshold = (resolvedRates.perEntryThreshold ?? 0) > 0;
+
+  // Calculation
+  const { result, error } = useMemo(() => {
+    const num = Number(amount) || 0;
+    if (num <= 0) return { result: null, error: null };
+    try {
+      const res = calculateTDS({
+        sectionId: selectedSection.id,
+        fy,
+        amount: num,
+        hasPAN,
+        deductionType,
+        aggregatePaid: Number(aggregatePaid) || 0,
+        lowerRate: deductionType === 'lower' ? (Number(lowerRatePct) || 0) / 100 : undefined,
+        payeeStatus,
+      });
+      return { result: res, error: null };
+    } catch (e) {
+      return { result: null, error: e instanceof Error ? e.message : 'Calculation error' };
+    }
+  }, [amount, selectedSection.id, fy, hasPAN, deductionType, aggregatePaid, lowerRatePct, payeeStatus]);
+
   return (
     <div className="max-w-2xl">
       {/* FY + Type row */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
-        {/* Financial Year */}
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
             Financial Year
@@ -132,7 +160,6 @@ export function TdsTab() {
           </div>
         </div>
 
-        {/* Type (Resident / Non-Resident / TCS) */}
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
             Type
@@ -190,7 +217,6 @@ export function TdsTab() {
 
           {comboOpen && (
             <div className="absolute z-20 mt-1 w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-xl overflow-hidden">
-              {/* Search input */}
               <div className="p-2 border-b border-gray-100 dark:border-gray-700">
                 <div className="relative">
                   <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -204,7 +230,6 @@ export function TdsTab() {
                   />
                 </div>
               </div>
-              {/* Option list */}
               <div className="max-h-72 overflow-y-auto py-1">
                 {filteredSections.length === 0 ? (
                   <div className="px-3 py-6 text-center text-xs text-gray-400">
@@ -257,22 +282,121 @@ export function TdsTab() {
         </div>
       </div>
 
-      {/* Amount input */}
-      <div className="mb-5">
-        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-          Payment Amount
-        </label>
-        <div className="relative">
-          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-gray-500 text-sm">₹</span>
-          <input
-            type="number"
-            min="0"
-            value={amount}
-            onChange={e => setAmount(e.target.value)}
-            placeholder="0"
-            className="w-full pl-7 pr-3 py-2 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-          />
+      {/* Deduction Type selector — only if section has more than one option */}
+      {allowedDeductionTypes.length > 1 && (
+        <div className="mb-5">
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            Deduction Type
+          </label>
+          <div className="flex flex-wrap gap-2">
+            {allowedDeductionTypes.map(dt => (
+              <button
+                key={dt}
+                onClick={() => setDeductionType(dt)}
+                className={cn(
+                  'px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors',
+                  deductionType === dt
+                    ? 'bg-emerald-500 border-emerald-500 text-white'
+                    : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:border-emerald-400',
+                )}
+              >
+                {DEDUCTION_TYPE_LABELS[dt]}
+              </button>
+            ))}
+          </div>
         </div>
+      )}
+
+      {/* Lower rate input — only when 'lower' selected */}
+      {deductionType === 'lower' && (
+        <div className="mb-5">
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            Lower Rate (from 197 certificate)
+          </label>
+          <div className="relative max-w-[160px]">
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={lowerRatePct}
+              onChange={e => setLowerRatePct(e.target.value)}
+              placeholder="0.00"
+              className="w-full pr-8 pl-3 py-2 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">%</span>
+          </div>
+        </div>
+      )}
+
+      {/* Payee status — only for 194 dividend */}
+      {selectedSection.payeeStatusAffectsThreshold && (
+        <div className="mb-5">
+          <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Payee Status</p>
+          <div className="flex gap-4">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="payee-status"
+                checked={payeeStatus === 'individual'}
+                onChange={() => setPayeeStatus('individual')}
+                className="accent-emerald-600"
+              />
+              <span className="text-sm text-gray-700 dark:text-gray-300">Individual / HUF</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="payee-status"
+                checked={payeeStatus === 'other'}
+                onChange={() => setPayeeStatus('other')}
+                className="accent-emerald-600"
+              />
+              <span className="text-sm text-gray-700 dark:text-gray-300">Company / Firm / Other</span>
+            </label>
+          </div>
+          <p className="mt-1 text-[11px] text-gray-400">
+            Threshold of {formatINR(resolvedRates.threshold)} only applies to individuals.
+          </p>
+        </div>
+      )}
+
+      {/* Amount inputs */}
+      <div className={cn('grid gap-4 mb-5', hasPerEntryThreshold ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1')}>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            {hasPerEntryThreshold ? 'Current payment' : 'Payment amount'}
+          </label>
+          <div className="relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-gray-500 text-sm">₹</span>
+            <input
+              type="number"
+              min="0"
+              value={amount}
+              onChange={e => setAmount(e.target.value)}
+              placeholder="0"
+              className="w-full pl-7 pr-3 py-2 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+          </div>
+        </div>
+
+        {hasPerEntryThreshold && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Aggregate paid in FY <span className="text-gray-400">(excluding this)</span>
+            </label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-gray-500 text-sm">₹</span>
+              <input
+                type="number"
+                min="0"
+                value={aggregatePaid}
+                onChange={e => setAggregatePaid(e.target.value)}
+                placeholder="0"
+                className="w-full pl-7 pr-3 py-2 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* PAN toggle */}
@@ -302,9 +426,9 @@ export function TdsTab() {
         </div>
       </div>
 
-      {/* Rate preview (always visible even before amount is entered) */}
+      {/* Rate preview */}
       <div className="mb-4 px-4 py-3 rounded-lg bg-gray-50 dark:bg-gray-800/50 border border-gray-100 dark:border-gray-700">
-        <div className="grid grid-cols-3 gap-3 text-xs">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
           <div>
             <p className="text-gray-500 dark:text-gray-400">Rate (with PAN)</p>
             <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
@@ -317,12 +441,29 @@ export function TdsTab() {
               {(resolvedRates.rateWithoutPAN * 100).toFixed(2)}%
             </p>
           </div>
-          <div>
-            <p className="text-gray-500 dark:text-gray-400">Threshold</p>
-            <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-              {resolvedRates.threshold > 0 ? formatINR(resolvedRates.threshold) : 'None'}
-            </p>
-          </div>
+          {hasPerEntryThreshold ? (
+            <>
+              <div>
+                <p className="text-gray-500 dark:text-gray-400">Per-entry</p>
+                <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+                  {formatINR(resolvedRates.perEntryThreshold ?? 0)}
+                </p>
+              </div>
+              <div>
+                <p className="text-gray-500 dark:text-gray-400">Aggregate</p>
+                <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+                  {formatINR(resolvedRates.threshold)}
+                </p>
+              </div>
+            </>
+          ) : (
+            <div className="col-span-2">
+              <p className="text-gray-500 dark:text-gray-400">Threshold</p>
+              <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+                {resolvedRates.threshold > 0 ? formatINR(resolvedRates.threshold) : 'None'}
+              </p>
+            </div>
+          )}
         </div>
         {selectedSection.thresholdNote && (
           <p className="mt-2 text-[11px] text-gray-400 dark:text-gray-500 italic">
@@ -331,21 +472,31 @@ export function TdsTab() {
         )}
       </div>
 
-      {/* Error display */}
       {error && (
         <div className="mb-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3 text-sm text-red-700 dark:text-red-300">
           {error}
         </div>
       )}
 
-      {/* Result card */}
       {result && (
         <div className="border border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-800 p-5 mb-4">
-          <div className="mb-4">
-            <span className="inline-block px-2 py-0.5 rounded text-xs font-semibold bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300">
-              {sectionLabel(result.section, result.fy)}
-            </span>
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{result.section.description}</p>
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div>
+              <span className="inline-block px-2 py-0.5 rounded text-xs font-semibold bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300">
+                {sectionLabel(result.section, result.fy)}
+              </span>
+              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{result.section.description}</p>
+            </div>
+            {result.triggeredBy === 'perEntry' && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 whitespace-nowrap">
+                Per-entry trigger
+              </span>
+            )}
+            {result.triggeredBy === 'aggregate' && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 whitespace-nowrap">
+                Aggregate trigger
+              </span>
+            )}
           </div>
 
           <div className="space-y-2 text-sm">
@@ -353,6 +504,12 @@ export function TdsTab() {
               <span className="text-gray-500 dark:text-gray-400">Payment amount</span>
               <span className="font-medium text-gray-700 dark:text-gray-300">{formatINR(result.amount)}</span>
             </div>
+            {(result.aggregateTotal ?? 0) > result.amount && (
+              <div className="flex justify-between">
+                <span className="text-gray-500 dark:text-gray-400">Aggregate (incl. prior)</span>
+                <span className="font-medium text-gray-700 dark:text-gray-300">{formatINR(result.aggregateTotal!)}</span>
+              </div>
+            )}
             <div className="flex justify-between">
               <span className="text-gray-500 dark:text-gray-400">TDS rate ({result.fy})</span>
               <span className="font-medium text-gray-700 dark:text-gray-300">{(result.tdsRate * 100).toFixed(2)}%</span>
@@ -372,17 +529,28 @@ export function TdsTab() {
             </div>
           </div>
 
-          {result.belowThreshold && (
+          {result.skipReason === 'notDeducted' && (
+            <div className="mt-3 bg-gray-50 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-700 rounded-lg p-3 text-xs text-gray-600 dark:text-gray-400">
+              Marked as <strong>Not Deducted</strong> — no TDS will be withheld (e.g. Form 15G/15H declaration).
+            </div>
+          )}
+          {result.skipReason === 'transporter' && (
+            <div className="mt-3 bg-gray-50 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-700 rounded-lg p-3 text-xs text-gray-600 dark:text-gray-400">
+              Marked as <strong>Transporter</strong> — no TDS if the transporter operates ≤ 10 goods carriages and has furnished a valid declaration with PAN.
+            </div>
+          )}
+          {result.skipReason === 'belowThreshold' && (
             <div className="mt-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3 text-xs text-yellow-700 dark:text-yellow-300">
-              Amount is below the threshold of {formatINR(result.effectiveThreshold)} for {result.section.oldSection}. No {result.section.category === 'tcs' ? 'TCS' : 'TDS'} applicable.
+              Below threshold — aggregate ({formatINR(result.aggregateTotal ?? result.amount)}) has not crossed {formatINR(result.effectiveThreshold)}
+              {result.effectivePerEntryThreshold ? ` and no single bill reached ${formatINR(result.effectivePerEntryThreshold)}` : ''}.
+              No {result.section.category === 'tcs' ? 'TCS' : 'TDS'} applicable.
             </div>
           )}
         </div>
       )}
 
-      {/* Info note */}
       <p className="text-xs text-gray-400 dark:text-gray-500">
-        Rates shown are basic TDS/TCS rates — surcharge and cess (where applicable) are not included. Section 192 (Salary) TDS is slab-based; the rate here is indicative. Without PAN, TDS is deducted at 20% (5% for 194-O / 194Q, and 206CC higher rates for TCS). DTAA benefits may reduce rates for non-residents.
+        Rates are basic TDS/TCS — surcharge and cess (where applicable) are not included. Section 192 (Salary) is slab-based; the rate shown is indicative. Without PAN, TDS is deducted at 20% (5% for 194-O / 194Q). DTAA benefits may reduce rates for non-residents. Lower-rate certificates under section 197 override the prescribed rate.
       </p>
     </div>
   );

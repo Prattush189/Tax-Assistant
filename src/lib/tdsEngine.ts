@@ -23,6 +23,18 @@
 export type TdsCategory = 'resident' | 'nonResident' | 'tcs';
 export type TdsFY = '2023-24' | '2024-25' | '2025-26' | '2026-27';
 
+/**
+ * How the deductor is treating this payment.
+ *   • prescribed   → standard Act rate
+ *   • lower        → lower rate certificate u/s 197 (user supplies the rate)
+ *   • notDeducted  → payment is exempt (e.g. Form 15G/15H) — TDS = 0
+ *   • transporter  → 194C-only — valid declaration from transporter operating ≤ 10 goods carriages; TDS = 0
+ */
+export type DeductionType = 'prescribed' | 'lower' | 'notDeducted' | 'transporter';
+
+/** Relevant for 194 (dividend) — threshold only applies when payee is an individual */
+export type PayeeStatus = 'individual' | 'other';
+
 export const TDS_FY_OPTIONS: { value: TdsFY; label: string }[] = [
   { value: '2026-27', label: 'FY 2026-27 (AY 2027-28) — New IT Act 2025' },
   { value: '2025-26', label: 'FY 2025-26 (AY 2026-27)' },
@@ -36,10 +48,48 @@ export const TDS_CATEGORY_OPTIONS: { value: TdsCategory; label: string; form: st
   { value: 'tcs', label: 'TCS', form: '27EQ' },
 ];
 
+export const DEDUCTION_TYPE_LABELS: Record<DeductionType, string> = {
+  prescribed: 'Prescribed',
+  lower: 'Lower Rate (u/s 197)',
+  notDeducted: 'Not Deducted (Exempt)',
+  transporter: 'Transporter (194C)',
+};
+
+const DEFAULT_ALLOWED_DEDUCTION_TYPES: DeductionType[] = ['prescribed', 'lower', 'notDeducted'];
+
+/**
+ * Paycodes from the legacy FrmTdsEntry master where "Not Deducted" is NOT an allowed
+ * deduction type (only Prescribed / Lower). Encoded here by our internal section id.
+ */
+const NO_NIL_DEDUCTION_IDS = new Set<string>([
+  'r-193',        // paycode 5
+  'r-194J-prof',  // paycode 8
+  'r-194C-ind',   // paycode 2
+  'r-194C-other', // paycode 3/4
+  'r-194H',       // paycode 10
+  'nr-195-int',   // paycode 11
+  'nr-195-ltcg',  // paycode 12
+  'nr-195-other', // paycode 13
+  'r-194B',       // paycode 14
+  'r-194BA',      // paycode 91-ish
+  'r-194EE',      // paycode 22
+  'r-194G',       // paycode 23
+  'r-194I-a',     // paycode 79
+  'r-194I-b',     // paycode 80
+  'nr-194LC',     // paycode 51
+  'r-194DA',      // paycode 52
+  'r-194LBA-a',   // paycode 53
+  'nr-194LB',     // paycode 50
+  'r-194LA',      // paycode 40
+  'r-194LBC',     // paycode 54
+  'tcs-206C-tendu', // paycode 38
+]);
+
 interface FyOverride {
   rate?: number;
   rateWithoutPAN?: number;
   threshold?: number;
+  perEntryThreshold?: number;
 }
 
 export interface TdsSection {
@@ -50,9 +100,15 @@ export interface TdsSection {
   description: string;
   rate: number;                // default rate with PAN (decimal)
   rateWithoutPAN: number;      // default rate without PAN (usually 0.20)
-  threshold: number;           // default threshold in INR (0 = none)
+  threshold: number;           // default aggregate threshold in INR (0 = none)
+  /** Per-entry threshold — TDS triggers if single payment ≥ this OR aggregate ≥ `threshold` */
+  perEntryThreshold?: number;
   thresholdNote?: string;      // e.g., "per transaction", "aggregate"
   fyOverrides?: Partial<Record<TdsFY, FyOverride>>;
+  /** Allowed deduction types. Defaults to ['prescribed','lower','notDeducted']. */
+  allowedDeductionTypes?: DeductionType[];
+  /** When true, the aggregate threshold only applies if the payee is an individual (e.g. 194 dividend). */
+  payeeStatusAffectsThreshold?: boolean;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -100,6 +156,8 @@ const RESIDENT_SECTIONS: TdsSection[] = [
     rate: 0.10,
     rateWithoutPAN: 0.20,
     threshold: 10000,
+    thresholdNote: 'Threshold applies only when payee is an Individual/HUF',
+    payeeStatusAffectsThreshold: true,
     fyOverrides: {
       '2023-24': { threshold: 5000 },
       '2024-25': { threshold: 5000 },
@@ -158,8 +216,10 @@ const RESIDENT_SECTIONS: TdsSection[] = [
     description: 'Contractor — individual / HUF',
     rate: 0.01,
     rateWithoutPAN: 0.20,
-    threshold: 30000,
-    thresholdNote: '₹1,00,000 aggregate in FY',
+    threshold: 100000,        // aggregate across FY
+    perEntryThreshold: 30000, // OR any single bill ≥ 30K
+    thresholdNote: '₹30,000 single bill OR ₹1,00,000 aggregate in FY',
+    allowedDeductionTypes: ['prescribed', 'lower', 'transporter'],
   },
   {
     id: 'r-194C-other',
@@ -169,8 +229,10 @@ const RESIDENT_SECTIONS: TdsSection[] = [
     description: 'Contractor — company / firm / other',
     rate: 0.02,
     rateWithoutPAN: 0.20,
-    threshold: 30000,
-    thresholdNote: '₹1,00,000 aggregate in FY',
+    threshold: 100000,
+    perEntryThreshold: 30000,
+    thresholdNote: '₹30,000 single bill OR ₹1,00,000 aggregate in FY',
+    allowedDeductionTypes: ['prescribed', 'lower', 'transporter'],
   },
   {
     id: 'r-194D',
@@ -414,15 +476,26 @@ const RESIDENT_SECTIONS: TdsSection[] = [
     },
   },
   {
-    id: 'r-194N',
+    id: 'r-194N-coop',
     category: 'resident',
     oldSection: '194N',
-    newSection: '393(3) Sl. 5',
-    description: 'Cash withdrawal from bank / post office',
+    newSection: '393(3) Sl. 5.D(a)',
+    description: 'Cash withdrawal — recipient is a co-operative society',
+    rate: 0.02,
+    rateWithoutPAN: 0.20,
+    threshold: 30000000,
+    thresholdNote: '> ₹3 crore per FY',
+  },
+  {
+    id: 'r-194N-other',
+    category: 'resident',
+    oldSection: '194N',
+    newSection: '393(3) Sl. 5.D(b)',
+    description: 'Cash withdrawal — recipient other than co-operative',
     rate: 0.02,
     rateWithoutPAN: 0.20,
     threshold: 10000000,
-    thresholdNote: '> ₹1 crore (₹3 crore for co-op societies)',
+    thresholdNote: '> ₹1 crore per FY',
   },
   {
     id: 'r-194O',
@@ -839,6 +912,7 @@ export interface ResolvedTdsRates {
   rate: number;
   rateWithoutPAN: number;
   threshold: number;
+  perEntryThreshold?: number;
 }
 
 /** Resolve effective rate + threshold for a section in a given FY. */
@@ -848,7 +922,15 @@ export function resolveTdsRates(section: TdsSection, fy: TdsFY): ResolvedTdsRate
     rate: override?.rate ?? section.rate,
     rateWithoutPAN: override?.rateWithoutPAN ?? section.rateWithoutPAN,
     threshold: override?.threshold ?? section.threshold,
+    perEntryThreshold: override?.perEntryThreshold ?? section.perEntryThreshold,
   };
+}
+
+/** Allowed deduction types for a section — falls back to default list. */
+export function getAllowedDeductionTypes(section: TdsSection): DeductionType[] {
+  if (section.allowedDeductionTypes) return section.allowedDeductionTypes;
+  if (NO_NIL_DEDUCTION_IDS.has(section.id)) return ['prescribed', 'lower'];
+  return DEFAULT_ALLOWED_DEDUCTION_TYPES;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -858,9 +940,18 @@ export function resolveTdsRates(section: TdsSection, fy: TdsFY): ResolvedTdsRate
 export interface TdsInput {
   sectionId: string;
   fy: TdsFY;
-  amount: number;
+  amount: number;                  // current payment
   hasPAN: boolean;
+  deductionType?: DeductionType;   // defaults to 'prescribed'
+  /** Prior payments to the same deductee in the same FY (for 194C aggregate trigger). */
+  aggregatePaid?: number;
+  /** Custom lower rate (decimal) when deductionType='lower', e.g. 0.02 = 2% */
+  lowerRate?: number;
+  /** Relevant for 194 dividend — threshold only applies to individuals */
+  payeeStatus?: PayeeStatus;
 }
+
+export type TdsSkipReason = 'belowThreshold' | 'notDeducted' | 'transporter';
 
 export interface TdsResult {
   section: TdsSection;
@@ -870,11 +961,21 @@ export interface TdsResult {
   tdsAmount: number;
   netPayment: number;
   belowThreshold: boolean;
-  effectiveThreshold: number;
+  effectiveThreshold: number;       // aggregate threshold that applied
+  effectivePerEntryThreshold?: number;
+  skipReason?: TdsSkipReason;
+  triggeredBy?: 'perEntry' | 'aggregate' | 'none';
+  aggregateTotal?: number;          // amount + aggregatePaid, if provided
 }
 
 export function calculateTDS(input: TdsInput): TdsResult {
-  const { sectionId, fy, amount, hasPAN } = input;
+  const {
+    sectionId, fy, amount, hasPAN,
+    deductionType = 'prescribed',
+    aggregatePaid = 0,
+    lowerRate,
+    payeeStatus = 'individual',
+  } = input;
 
   const section = TDS_SECTIONS.find(s => s.id === sectionId);
   if (!section) {
@@ -882,33 +983,105 @@ export function calculateTDS(input: TdsInput): TdsResult {
   }
 
   const resolved = resolveTdsRates(section, fy);
+  const baseResult = {
+    section,
+    fy,
+    amount,
+    effectiveThreshold: resolved.threshold,
+    effectivePerEntryThreshold: resolved.perEntryThreshold,
+  };
 
-  // Below threshold → no deduction
-  if (resolved.threshold > 0 && amount < resolved.threshold) {
+  // ── 1. Explicit non-deduction paths ──
+  if (deductionType === 'notDeducted') {
     return {
-      section,
-      fy,
-      amount,
+      ...baseResult,
+      tdsRate: 0,
+      tdsAmount: 0,
+      netPayment: amount,
+      belowThreshold: false,
+      skipReason: 'notDeducted',
+      triggeredBy: 'none',
+    };
+  }
+
+  if (deductionType === 'transporter') {
+    return {
+      ...baseResult,
+      tdsRate: 0,
+      tdsAmount: 0,
+      netPayment: amount,
+      belowThreshold: false,
+      skipReason: 'transporter',
+      triggeredBy: 'none',
+    };
+  }
+
+  // ── 2. Threshold resolution ──
+  // For 194 dividend: threshold only applies if payee is an Individual/HUF.
+  const effectiveAggThreshold = section.payeeStatusAffectsThreshold && payeeStatus === 'other'
+    ? 0
+    : resolved.threshold;
+
+  const aggregateTotal = amount + Math.max(0, aggregatePaid);
+
+  // Determine whether TDS is triggered.
+  // Rule:
+  //   • perEntry set  → trigger if amount ≥ perEntry OR aggregateTotal ≥ aggThreshold
+  //   • perEntry unset → trigger if aggregateTotal ≥ aggThreshold
+  let triggered = false;
+  let triggeredBy: 'perEntry' | 'aggregate' | 'none' = 'none';
+
+  if (resolved.perEntryThreshold !== undefined && resolved.perEntryThreshold > 0) {
+    if (amount >= resolved.perEntryThreshold) {
+      triggered = true;
+      triggeredBy = 'perEntry';
+    } else if (effectiveAggThreshold > 0 && aggregateTotal >= effectiveAggThreshold) {
+      triggered = true;
+      triggeredBy = 'aggregate';
+    } else if (effectiveAggThreshold === 0) {
+      // No aggregate cap either → any payment below per-entry is safe
+      triggered = false;
+    }
+  } else {
+    if (effectiveAggThreshold === 0 || aggregateTotal >= effectiveAggThreshold) {
+      triggered = true;
+      triggeredBy = effectiveAggThreshold === 0 ? 'none' : 'aggregate';
+    }
+  }
+
+  if (!triggered) {
+    return {
+      ...baseResult,
       tdsRate: 0,
       tdsAmount: 0,
       netPayment: amount,
       belowThreshold: true,
-      effectiveThreshold: resolved.threshold,
+      skipReason: 'belowThreshold',
+      triggeredBy: 'none',
+      aggregateTotal,
     };
   }
 
-  const tdsRate = hasPAN ? resolved.rate : resolved.rateWithoutPAN;
+  // ── 3. Rate selection ──
+  let tdsRate: number;
+  if (deductionType === 'lower') {
+    // Lower-rate certificate u/s 197 — user supplies the rate
+    tdsRate = lowerRate !== undefined && lowerRate >= 0 ? lowerRate : resolved.rate;
+  } else {
+    // Prescribed
+    tdsRate = hasPAN ? resolved.rate : resolved.rateWithoutPAN;
+  }
+
   const tdsAmount = amount * tdsRate;
   const netPayment = amount - tdsAmount;
 
   return {
-    section,
-    fy,
-    amount,
+    ...baseResult,
     tdsRate,
     tdsAmount,
     netPayment,
     belowThreshold: false,
-    effectiveThreshold: resolved.threshold,
+    triggeredBy,
+    aggregateTotal,
   };
 }
