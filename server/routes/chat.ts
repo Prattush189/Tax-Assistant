@@ -13,16 +13,28 @@ const router = Router();
 
 const MAX_TOKENS = 8192;
 
-// ── Selective web search — only for queries about recent/latest info ──
+// ── Selective web search — triggers on time references, specific dates, years, and recent info ──
 const WEB_SEARCH_PATTERNS = [
+  // Recent/latest info
   /\b(latest|recent|new|updated?|current)\s+(change|circular|notification|amendment|rule|budget|reform)/i,
-  /\b(budget\s+20\d{2}|union\s+budget)\b/i,
-  /\b(circular|notification|press\s+release|CBDT|CBIC)\b/i,
-  /\b(announced?|introduced)\s+in\s+20\d{2}/i,
-  /\bchanges?\s+in\s+20(2[5-9]|[3-9]\d)\b/i,
-  /\b(today|yesterday|this\s+week|this\s+month|right\s+now)\b/i,
   /\blatest\b/i,
   /\b(news|update|announcement)\b/i,
+  // Specific time references
+  /\b(today|yesterday|this\s+week|this\s+month|right\s+now|currently)\b/i,
+  // Specific years (2024+)
+  /\b20(2[4-9]|[3-9]\d)\b/,
+  // Specific months/dates
+  /\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+20\d{2}\b/i,
+  /\b\d{1,2}[\/-]\d{1,2}[\/-]20\d{2}\b/,
+  // FY / AY references
+  /\b(fy|ay)\s*20\d{2}/i,
+  // Government/regulatory
+  /\b(budget\s+20\d{2}|union\s+budget)\b/i,
+  /\b(circular|notification|press\s+release|CBDT|CBIC|gazette)\b/i,
+  /\b(announced?|introduced)\s+in\s+20\d{2}/i,
+  // Comparison across years
+  /\bvs\b.*\b20\d{2}/i,
+  /\b20\d{2}\s*[-–vs]+\s*\d{2,4}\b/i,
 ];
 
 function shouldEnableWebSearch(query: string): boolean {
@@ -207,7 +219,7 @@ const MAX_HISTORY_MESSAGES = 10;
 const ATTACHMENT_LIMITS: Record<string, number> = { free: 1, pro: 3, enterprise: 5 };
 
 router.post('/chat', async (req: AuthRequest, res: Response) => {
-  const { chatId, message, fileContext, fileContexts: rawFileContexts } = req.body;
+  const { chatId, message, fileContext, fileContexts: rawFileContexts, profileContext } = req.body;
   // Normalize: support both single fileContext and array fileContexts
   const fileContexts: { filename: string; mimeType: string; extractedData?: unknown }[] =
     rawFileContexts ?? (fileContext ? [fileContext] : []);
@@ -287,6 +299,11 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
     if (contextStr) {
       userContent = `${contextStr}\n\n${userContent}`;
     }
+  }
+
+  // Profile context injection
+  if (profileContext?.data) {
+    userContent = `[Tax Profile: ${profileContext.name}]\nIncome: ₹${profileContext.data.gross_salary}, Other: ₹${profileContext.data.other_income}, FY: ${profileContext.data.fy}, Age: ${profileContext.data.age_category}\nDeductions: ${profileContext.data.deductions_data}\nHRA: ${profileContext.data.hra_data}\n\n${userContent}`;
   }
 
   // RAG: retrieve relevant Act sections (lightweight — 2-3 chunks for reference)

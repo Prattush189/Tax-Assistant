@@ -37,7 +37,7 @@ export function LoginPage({ onSwitchToSignup }: LoginPageProps) {
   };
 
   return (
-    <div className="min-h-screen flex dark:bg-[#0A0F14] bg-gray-50">
+    <div className="min-h-screen flex dark:bg-[#0E0C0A] bg-gray-50">
       {/* Left panel — branding (hidden on mobile) */}
       <div className="hidden lg:flex lg:w-[45%] relative overflow-hidden bg-gradient-to-br from-emerald-700 via-emerald-600 to-teal-700">
         <div className="absolute -top-24 -left-24 w-96 h-96 bg-white/5 rounded-full" />

@@ -1,15 +1,61 @@
+import { useMemo } from 'react';
 import { useTaxCalculator } from '../../contexts/TaxCalculatorContext';
 import { TaxWaterfallChart } from './TaxWaterfallChart';
 import { TaxSummaryCards } from './TaxSummaryCards';
 import { RegimeComparison } from '../calculator/RegimeComparison';
+import { ProfileSelector } from '../calculator/ProfileSelector';
 import { motion } from 'motion/react';
 import { LayoutDashboard } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
+import { calculateIncomeTax } from '../../lib/taxEngine';
+import { getTaxRules, SUPPORTED_FY } from '../../data/taxRules';
+import { formatINR } from '../../lib/utils';
 
 export function DashboardView() {
-  const { grossSalary, oldResult, newResult, fy } = useTaxCalculator();
+  const { grossSalary, otherIncome, oldResult, newResult, fy, ageCategory, deductions } = useTaxCalculator();
 
   const betterResult = newResult.totalTax <= oldResult.totalTax ? newResult : oldResult;
   const betterLabel = newResult.totalTax <= oldResult.totalTax ? 'New Regime' : 'Old Regime';
+
+  // -- Slab breakdown bar chart data (from the better regime) --
+  const slabBarData = useMemo(() => {
+    return betterResult.slabBreakdown
+      .filter((s) => s.tax > 0)
+      .map((s) => ({ name: s.slab, tax: s.tax }));
+  }, [betterResult]);
+
+  // -- Deduction impact pie chart data (old regime only) --
+  const DEDUCTION_COLORS = ['#10b981', '#6366f1', '#f97316', '#f43f5e', '#8b5cf6'];
+  const deductionPieData = useMemo(() => {
+    if (oldResult.totalDeductions <= 0) return [];
+    const entries: { name: string; value: number }[] = [];
+    const d = deductions;
+    if (Number(d.section80C) > 0) entries.push({ name: '80C', value: Number(d.section80C) });
+    if (Number(d.section80D_self) > 0) entries.push({ name: '80D (Self)', value: Number(d.section80D_self) });
+    if (Number(d.section80D_parents) > 0) entries.push({ name: '80D (Parents)', value: Number(d.section80D_parents) });
+    if (Number(d.section80CCD1B) > 0) entries.push({ name: '80CCD(1B)', value: Number(d.section80CCD1B) });
+    if (oldResult.hraExemption > 0) entries.push({ name: 'HRA', value: oldResult.hraExemption });
+    return entries;
+  }, [deductions, oldResult]);
+
+  // -- Year-over-Year comparison data --
+  const yoyData = useMemo(() => {
+    const gross = Number(grossSalary) || 0;
+    const other = Number(otherIncome) || 0;
+    if (gross === 0) return [];
+    return SUPPORTED_FY.map((fyItem) => {
+      const rules = getTaxRules(fyItem);
+      const oldRes = calculateIncomeTax(
+        { grossSalary: gross, otherIncome: other, fy: fyItem, regime: 'old', ageCategory },
+        rules,
+      );
+      const newRes = calculateIncomeTax(
+        { grossSalary: gross, otherIncome: other, fy: fyItem, regime: 'new', ageCategory },
+        rules,
+      );
+      return { fy: `FY ${fyItem}`, oldTax: oldRes.totalTax, newTax: newRes.totalTax };
+    });
+  }, [grossSalary, otherIncome, ageCategory]);
 
   if (!grossSalary || Number(grossSalary) === 0) {
     return (
@@ -53,6 +99,9 @@ export function DashboardView() {
       className="flex-1 overflow-y-auto p-4 md:p-6 scroll-smooth"
     >
       <div className="max-w-4xl mx-auto space-y-6">
+        {/* Profile Selector */}
+        <ProfileSelector />
+
         <motion.div variants={itemVariants} className="bg-white/50 dark:bg-gray-900/50 backdrop-blur-md p-4 rounded-2xl border border-gray-200/60 dark:border-gray-800/60 shadow-sm">
           <h2 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 dark:from-blue-400 dark:to-indigo-400 bg-clip-text text-transparent">Tax Dashboard</h2>
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-1 font-medium">
@@ -67,6 +116,78 @@ export function DashboardView() {
         <motion.div variants={itemVariants} className="overflow-x-auto rounded-xl p-1">
           <TaxWaterfallChart result={betterResult} />
         </motion.div>
+
+        {/* Slab-wise Tax Breakdown Bar Chart */}
+        {slabBarData.length > 0 && (
+          <motion.div variants={itemVariants} className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+            <h3 className="text-base font-semibold text-gray-800 dark:text-gray-200 mb-4 flex items-center gap-2">
+              <span className="w-1.5 h-6 bg-emerald-500 rounded-full"></span>
+              Slab-wise Tax Breakdown
+            </h3>
+            <ResponsiveContainer width="100%" height={slabBarData.length * 56 + 40}>
+              <BarChart data={slabBarData} layout="vertical" margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                <XAxis type="number" tickFormatter={(v: number) => formatINR(v)} tick={{ fontSize: 12 }} />
+                <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 11 }} />
+                <Tooltip formatter={(value: number) => [formatINR(value), 'Tax']} />
+                <Bar dataKey="tax" fill="#10b981" radius={[0, 4, 4, 0]} barSize={28} />
+              </BarChart>
+            </ResponsiveContainer>
+          </motion.div>
+        )}
+
+        {/* Deduction Impact Pie Chart (old regime only) */}
+        {deductionPieData.length > 0 && (
+          <motion.div variants={itemVariants} className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+            <h3 className="text-base font-semibold text-gray-800 dark:text-gray-200 mb-4 flex items-center gap-2">
+              <span className="w-1.5 h-6 bg-indigo-500 rounded-full"></span>
+              Deduction Impact (Old Regime)
+            </h3>
+            <ResponsiveContainer width="100%" height={300}>
+              <PieChart>
+                <Pie
+                  data={deductionPieData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={60}
+                  outerRadius={110}
+                  paddingAngle={3}
+                  dataKey="value"
+                  nameKey="name"
+                  label={(props: { name?: string | number; percent?: number }) => `${props.name ?? ''} ${((props.percent ?? 0) * 100).toFixed(0)}%`}
+                >
+                  {deductionPieData.map((_entry, index) => (
+                    <Cell key={`cell-${index}`} fill={DEDUCTION_COLORS[index % DEDUCTION_COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(value: number) => [formatINR(value), 'Amount']} />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
+          </motion.div>
+        )}
+
+        {/* Year-over-Year Comparison */}
+        {yoyData.length > 1 && (
+          <motion.div variants={itemVariants} className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+            <h3 className="text-base font-semibold text-gray-800 dark:text-gray-200 mb-4 flex items-center gap-2">
+              <span className="w-1.5 h-6 bg-orange-500 rounded-full"></span>
+              Year-over-Year Tax Comparison
+            </h3>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">Same income across supported financial years</p>
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={yoyData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                <XAxis dataKey="fy" tick={{ fontSize: 12 }} />
+                <YAxis tickFormatter={(v: number) => formatINR(v)} tick={{ fontSize: 12 }} />
+                <Tooltip formatter={(value: number) => formatINR(value)} />
+                <Legend />
+                <Bar dataKey="oldTax" name="Old Regime" fill="#6366f1" radius={[4, 4, 0, 0]} barSize={32} />
+                <Bar dataKey="newTax" name="New Regime" fill="#10b981" radius={[4, 4, 0, 0]} barSize={32} />
+              </BarChart>
+            </ResponsiveContainer>
+          </motion.div>
+        )}
 
         {/* VIZ-04: RegimeComparison already implements full slab-by-slab table — reuse, do not rebuild */}
         <motion.div variants={itemVariants} className="bg-white/30 dark:bg-gray-900/30 backdrop-blur-sm p-4 rounded-2xl border border-gray-200/50 dark:border-gray-800/50">

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Users, Activity, DollarSign, Shield, CheckCircle, RefreshCw, ShieldOff } from 'lucide-react';
-import { adminFetchStats, adminFetchUsers, adminSuspendUser, adminUnsuspendUser, adminChangePlan } from '../../services/api';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
+import { adminFetchStats, adminFetchUsers, adminSuspendUser, adminUnsuspendUser, adminChangePlan, adminFetchTrend, adminFetchPlans } from '../../services/api';
 import toast from 'react-hot-toast';
 
 interface Stats {
@@ -28,6 +29,24 @@ interface AdminUser {
   ips: string;
 }
 
+interface TrendPoint {
+  day: string;
+  requests: number;
+  cost: number;
+  users: number;
+}
+
+interface PlanCount {
+  plan: string;
+  count: number;
+}
+
+const PLAN_COLORS: Record<string, string> = {
+  free: '#94a3b8',
+  pro: '#10b981',
+  enterprise: '#6366f1',
+};
+
 const SUSPEND_OPTIONS = [
   { label: '1 hour', hours: 1 },
   { label: '6 hours', hours: 6 },
@@ -41,16 +60,22 @@ export function AdminDashboard() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [period, setPeriod] = useState('month');
   const [loading, setLoading] = useState(true);
+  const [trend, setTrend] = useState<TrendPoint[]>([]);
+  const [plans, setPlans] = useState<PlanCount[]>([]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [s, u] = await Promise.all([
+      const [s, u, t, p] = await Promise.all([
         adminFetchStats(period),
         adminFetchUsers(),
+        adminFetchTrend(),
+        adminFetchPlans(),
       ]);
       setStats(s);
       setUsers(u);
+      setTrend(t.trend ?? []);
+      setPlans(p.plans ?? []);
     } catch (err) {
       toast.error('Failed to load admin data');
       console.error(err);
@@ -129,6 +154,51 @@ export function AdminDashboard() {
             </>
           )}
         </div>
+
+        {/* Cost Trend Line Chart */}
+        {trend.length > 0 && (
+          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+            <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">Usage Trend (Last 30 Days)</h2>
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={trend}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                <XAxis dataKey="day" tick={{ fontSize: 11 }} stroke="#9ca3af" />
+                <YAxis yAxisId="cost" tick={{ fontSize: 11 }} stroke="#f97316" />
+                <YAxis yAxisId="requests" orientation="right" tick={{ fontSize: 11 }} stroke="#6366f1" />
+                <Tooltip />
+                <Line yAxisId="cost" type="monotone" dataKey="cost" stroke="#f97316" name="Cost ($)" dot={false} strokeWidth={2} />
+                <Line yAxisId="requests" type="monotone" dataKey="requests" stroke="#6366f1" name="Requests" dot={false} strokeWidth={2} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+
+        {/* Plan Distribution Pie Chart */}
+        {plans.length > 0 && (
+          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+            <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">Plan Distribution</h2>
+            <ResponsiveContainer width="100%" height={300}>
+              <PieChart>
+                <Pie
+                  data={plans}
+                  dataKey="count"
+                  nameKey="plan"
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={60}
+                  outerRadius={100}
+                  label={(props: { name?: string | number; value?: number }) => `${props.name}: ${props.value}`}
+                >
+                  {plans.map((entry) => (
+                    <Cell key={entry.plan} fill={PLAN_COLORS[entry.plan] ?? '#94a3b8'} />
+                  ))}
+                </Pie>
+                <Tooltip />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        )}
 
         {/* Users Table */}
         <div className="bg-white/70 dark:bg-gray-900/70 backdrop-blur-sm border border-gray-200/50 dark:border-gray-800/50 rounded-2xl overflow-hidden">

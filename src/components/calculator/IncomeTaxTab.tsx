@@ -3,7 +3,9 @@ import type { AgeCategory } from '../../types';
 import { RegimeComparison } from './RegimeComparison';
 import { useTaxCalculator } from '../../contexts/TaxCalculatorContext';
 
-type FY = '2025-26' | '2024-25';
+import { SUPPORTED_FY } from '../../data/taxRules';
+
+type FY = typeof SUPPORTED_FY[number];
 
 const AGE_OPTIONS: { value: AgeCategory; label: string }[] = [
   { value: 'below60', label: 'Below 60' },
@@ -65,14 +67,14 @@ export function IncomeTaxTab() {
         <div>
           <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Financial Year</p>
           <div className="flex gap-3">
-            {(['2025-26', '2024-25'] as FY[]).map((f) => (
+            {SUPPORTED_FY.map((f) => (
               <label key={f} className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="radio"
                   name="fy"
                   value={f}
                   checked={fy === f}
-                  onChange={() => setFy(f)}
+                  onChange={() => setFy(f as any)}
                   className="accent-blue-600"
                 />
                 <span className="text-sm text-gray-700 dark:text-gray-300">FY {f}</span>
@@ -148,6 +150,36 @@ export function IncomeTaxTab() {
               value={deductions.section80CCD1B}
               onChange={(v) => setDeductions((d) => ({ ...d, section80CCD1B: v }))}
               hint="Max ₹50K additional NPS"
+            />
+            <NumberInput
+              label="Section 24(b) — Home Loan Interest"
+              value={deductions.section24b}
+              onChange={(v) => setDeductions((d) => ({ ...d, section24b: v }))}
+              hint="Max ₹2L for self-occupied"
+            />
+            <NumberInput
+              label="Section 80E — Education Loan Interest"
+              value={deductions.section80E}
+              onChange={(v) => setDeductions((d) => ({ ...d, section80E: v }))}
+              hint="No upper limit"
+            />
+            <NumberInput
+              label="Section 80G — Donations"
+              value={deductions.section80G}
+              onChange={(v) => setDeductions((d) => ({ ...d, section80G: v }))}
+              hint="50% or 100% deduction"
+            />
+            <NumberInput
+              label="Section 80TTA — Savings Interest"
+              value={deductions.section80TTA}
+              onChange={(v) => setDeductions((d) => ({ ...d, section80TTA: v }))}
+              hint="Max ₹10K (₹50K for seniors)"
+            />
+            <NumberInput
+              label="Section 80EEB — EV Loan Interest"
+              value={deductions.section80EEB}
+              onChange={(v) => setDeductions((d) => ({ ...d, section80EEB: v }))}
+              hint="Max ₹1.5L"
             />
             <label className="flex items-center gap-2 cursor-pointer col-span-full">
               <input

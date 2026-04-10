@@ -1,9 +1,10 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Upload, MessageCircle, Calculator, FileText, HelpCircle } from 'lucide-react';
 import { useChatManager } from '../../hooks/useChatManager';
 import { useFileUpload } from '../../hooks/useFileUpload';
 import { useAuth } from '../../contexts/AuthContext';
+import { fetchProfiles, TaxProfileData } from '../../services/api';
 import { MessageBubble } from './MessageBubble';
 import { ChatInput } from './ChatInput';
 import { ThinkingIndicator } from './ThinkingIndicator';
@@ -24,11 +25,33 @@ interface ChatViewProps {
 const ATTACHMENT_LIMITS: Record<string, number> = { free: 1, pro: 3, enterprise: 5 };
 
 export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewProps) {
-  const { messages, input, setInput, isLoading, messagesEndRef, scrollAreaRef, lastUserMsgRef, send, activeDocuments, attachDocument, detachDocument, continueResponse } = chatManager;
+  const { messages, input, setInput, isLoading, messagesEndRef, scrollAreaRef, lastUserMsgRef, send, activeDocuments, attachDocument, detachDocument, continueResponse, referencedProfile, setReferencedProfile } = chatManager;
   const { user } = useAuth();
   const fileUpload = useFileUpload();
   const [isDragOver, setIsDragOver] = useState(false);
+  const [profiles, setProfiles] = useState<{ id: string; name: string; data: Record<string, unknown> }[]>([]);
   const attachmentLimit = ATTACHMENT_LIMITS[user?.plan ?? 'free'] ?? 1;
+  const isPro = user?.plan === 'pro' || user?.plan === 'enterprise';
+
+  useEffect(() => {
+    if (!isPro) return;
+    fetchProfiles()
+      .then(res => {
+        setProfiles(res.profiles.map((p: TaxProfileData) => ({
+          id: p.id,
+          name: p.name,
+          data: {
+            fy: p.fy,
+            gross_salary: p.gross_salary,
+            other_income: p.other_income,
+            age_category: p.age_category,
+            deductions_data: p.deductions_data,
+            hra_data: p.hra_data,
+          },
+        })));
+      })
+      .catch(() => { /* ignore */ });
+  }, [isPro]);
 
   const handleFileSelect = useCallback(async (file: File) => {
     const doc = await fileUpload.handleFile(file);
@@ -158,6 +181,11 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
         onDetachDocument={handleDetach}
         uploadPhase={fileUpload.uploadPhase}
         attachmentLimit={attachmentLimit}
+        profiles={profiles}
+        referencedProfile={referencedProfile}
+        onReferenceProfile={setReferencedProfile}
+        onClearReference={() => setReferencedProfile(null)}
+        isPro={isPro}
       />
     </div>
   );

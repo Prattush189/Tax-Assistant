@@ -18,6 +18,7 @@ export function useChatManager() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [activeDocuments, setActiveDocuments] = useState<DocumentContext[]>([]);
+  const [referencedProfile, setReferencedProfile] = useState<{ id: string; name: string; data: Record<string, unknown> } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const lastUserMsgRef = useRef<HTMLDivElement>(null);
@@ -124,6 +125,7 @@ export function useChatManager() {
       attachments: activeDocuments.length > 0
         ? activeDocuments.map(d => ({ filename: d.filename, mimeType: d.mimeType }))
         : undefined,
+      profileRef: referencedProfile?.name,
     };
 
     const messageText = input.trim();
@@ -205,7 +207,10 @@ export function useChatManager() {
           if (stopReason === 'max_tokens') wasTruncated = true;
           if (references?.length) receivedRefs = references;
         },
+        referencedProfile ? { name: referencedProfile.name, data: referencedProfile.data } : undefined,
       );
+
+      setReferencedProfile(null);
 
       // Flush any remaining buffered text
       flushAll();
@@ -226,7 +231,7 @@ export function useChatManager() {
     } finally {
       if (!isStale()) setIsLoading(false);
     }
-  }, [isLoading, input, currentChatId, activeDocuments, createNewChat, loadChatList]);
+  }, [isLoading, input, currentChatId, activeDocuments, referencedProfile, createNewChat, loadChatList]);
 
   const continueResponse = useCallback(async () => {
     if (isLoading) return;
@@ -359,5 +364,7 @@ export function useChatManager() {
     attachDocument,
     detachDocument,
     continueResponse,
+    referencedProfile,
+    setReferencedProfile,
   };
 }

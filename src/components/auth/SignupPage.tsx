@@ -50,7 +50,7 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
   const inputClass = "w-full px-4 py-3 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 text-gray-900 dark:text-white transition-all placeholder:text-gray-400";
 
   return (
-    <div className="min-h-screen flex dark:bg-[#0A0F14] bg-gray-50">
+    <div className="min-h-screen flex dark:bg-[#0E0C0A] bg-gray-50">
       {/* Left panel — branding */}
       <div className="hidden lg:flex lg:w-[45%] relative overflow-hidden bg-gradient-to-br from-emerald-700 via-emerald-600 to-teal-700">
         <div className="absolute -top-24 -left-24 w-96 h-96 bg-white/5 rounded-full" />

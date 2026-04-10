@@ -1,13 +1,63 @@
 import { useState, useRef, useEffect } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { User, FileText, Copy, Check, Flag, ChevronRight, BookOpen } from 'lucide-react';
+import { User, FileText, Copy, Check, Flag, ChevronRight, BookOpen, BarChart3 } from 'lucide-react';
 import { Message, SectionReference } from '../../types';
 import { cn } from '../../lib/utils';
 import { ChartRenderer } from './ChartRenderer';
 import { PdfReferenceModal } from './PdfReferenceModal';
 import { SectionModal } from './SectionModal';
 import toast from 'react-hot-toast';
+
+// Custom link component — shows confirmation dialog before opening external links
+function ExternalLink({ href, children }: { href?: string; children?: React.ReactNode }) {
+  const [showDialog, setShowDialog] = useState(false);
+
+  const handleClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (href) setShowDialog(true);
+  };
+
+  return (
+    <>
+      <a
+        href={href}
+        onClick={handleClick}
+        className="text-emerald-600 dark:text-emerald-400 underline cursor-pointer"
+      >
+        {children}
+      </a>
+      {showDialog && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={() => setShowDialog(false)}>
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl p-5 max-w-md w-full border border-gray-200 dark:border-gray-700" onClick={e => e.stopPropagation()}>
+            <p className="text-sm font-medium text-gray-900 dark:text-white mb-2">Open external link?</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400 break-all mb-4 p-2 bg-gray-50 dark:bg-gray-900 rounded-lg">{href}</p>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setShowDialog(false)}
+                className="px-4 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => { window.open(href, '_blank', 'noopener,noreferrer'); setShowDialog(false); }}
+                className="px-4 py-2 text-sm rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
+              >
+                Open
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+const markdownComponents = {
+  a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
+    <ExternalLink href={href}>{children}</ExternalLink>
+  ),
+};
 
 function renderContent(content: string, role: 'user' | 'model') {
   const parts = content.split(/```json-chart([\s\S]*?)```/);
@@ -20,7 +70,7 @@ function renderContent(content: string, role: 'user' | 'model') {
         "markdown-body prose max-w-none prose-sm sm:prose-base overflow-x-auto",
         role === 'user' ? 'prose-invert' : 'prose-gray dark:prose-invert'
       )}>
-        <Markdown remarkPlugins={[remarkGfm]}>{part}</Markdown>
+        <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{part}</Markdown>
       </div>
     );
   });
@@ -113,6 +163,17 @@ export function MessageBubble({ message, onContinue, isLastModel, isLoading }: M
               <span className="truncate max-w-[200px]">{att.filename}</span>
             </div>
           ))}
+          {message.profileRef && (
+            <div className={cn(
+              "flex items-center gap-1.5 mb-1 px-2 py-1 rounded-lg text-xs w-fit",
+              role === 'user'
+                ? "bg-white/15 text-white/90"
+                : "bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400"
+            )}>
+              <BarChart3 className="w-3 h-3" />
+              <span>Profile: {message.profileRef}</span>
+            </div>
+          )}
           <StreamingWrapper isStreaming={isStreaming}>
             {renderContent(content, role)}
           </StreamingWrapper>

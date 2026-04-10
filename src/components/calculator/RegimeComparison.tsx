@@ -1,5 +1,7 @@
-import { cn } from '../../lib/utils';
-import { formatINR } from '../../lib/utils';
+import { cn, formatINR } from '../../lib/utils';
+import { Download } from 'lucide-react';
+import { exportTaxComputationPDF } from '../../lib/pdfExport';
+import { useAuth } from '../../contexts/AuthContext';
 import type { IncomeTaxResult } from '../../lib/taxEngine';
 
 interface RegimeComparisonProps {
@@ -93,6 +95,12 @@ function RegimeCard({ label, result, isWinner, showOldOnlyFields }: RegimeCardPr
             <span className="text-green-600 dark:text-green-400">- {formatINR(result.marginalRelief)}</span>
           </div>
         )}
+        {result.surcharge > 0 && (
+          <div className="flex justify-between">
+            <span className="text-gray-500 dark:text-gray-400">Surcharge ({(result.surchargeRate * 100).toFixed(0)}%)</span>
+            <span className="text-red-600 dark:text-red-400">{formatINR(result.surcharge)}</span>
+          </div>
+        )}
         <div className="flex justify-between">
           <span className="text-gray-500 dark:text-gray-400">Cess (4%)</span>
           <span className="text-gray-700 dark:text-gray-300">{formatINR(result.cess)}</span>
@@ -111,9 +119,11 @@ function RegimeCard({ label, result, isWinner, showOldOnlyFields }: RegimeCardPr
 }
 
 export function RegimeComparison({ oldResult, newResult, fy }: RegimeComparisonProps) {
+  const { user } = useAuth();
   const savings = Math.abs(newResult.totalTax - oldResult.totalTax);
   const betterRegime: 'new' | 'old' =
     newResult.totalTax <= oldResult.totalTax ? 'new' : 'old';
+  const isPro = (user?.plan ?? 'free') !== 'free';
 
   return (
     <div className="mt-6">
@@ -143,6 +153,24 @@ export function RegimeComparison({ oldResult, newResult, fy }: RegimeComparisonP
           isWinner={betterRegime === 'new'}
           showOldOnlyFields={false}
         />
+      </div>
+
+      {/* PDF Export */}
+      <div className="mt-4 flex justify-center">
+        {isPro ? (
+          <button
+            onClick={() => exportTaxComputationPDF(oldResult, newResult, fy, user?.name)}
+            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/15 border border-emerald-200 dark:border-emerald-800/30 rounded-lg hover:bg-emerald-100 dark:hover:bg-emerald-900/25 transition-all"
+          >
+            <Download className="w-4 h-4" />
+            Download Tax Computation PDF
+          </button>
+        ) : (
+          <div className="flex items-center gap-2 px-4 py-2 text-sm text-gray-400 dark:text-gray-500 bg-gray-50 dark:bg-gray-800/40 border border-gray-200 dark:border-gray-700 rounded-lg cursor-not-allowed">
+            <Download className="w-4 h-4" />
+            PDF Export (Pro plan)
+          </div>
+        )}
       </div>
     </div>
   );

@@ -94,4 +94,24 @@ router.post('/users/:id/unsuspend', (req: AuthRequest, res: Response) => {
   res.json({ success: true });
 });
 
+// GET /api/admin/stats/trend — daily cost/usage for last 30 days
+router.get('/stats/trend', (_req: AuthRequest, res: Response) => {
+  const rows = db.prepare(`
+    SELECT date(created_at) as day, COUNT(*) as requests, SUM(cost) as cost, COUNT(DISTINCT user_id) as users
+    FROM api_usage
+    WHERE created_at >= date('now', '-30 days')
+    GROUP BY day
+    ORDER BY day
+  `).all() as { day: string; requests: number; cost: number; users: number }[];
+
+  res.json({ trend: rows });
+});
+
+// GET /api/admin/stats/plans — user count by plan
+router.get('/stats/plans', (_req: AuthRequest, res: Response) => {
+  const rows = db.prepare('SELECT plan, COUNT(*) as count FROM users GROUP BY plan').all() as { plan: string; count: number }[];
+
+  res.json({ plans: rows });
+});
+
 export default router;

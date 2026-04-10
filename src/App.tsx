@@ -34,7 +34,7 @@ function AppContent() {
 
   return (
     <div className={cn(
-      "flex h-screen bg-gray-50 dark:bg-[#0A0F14] font-sans text-gray-900 dark:text-gray-100 overflow-hidden transition-colors duration-300",
+      "flex h-screen bg-gray-50 dark:bg-[#0E0C0A] font-sans text-gray-900 dark:text-gray-100 overflow-hidden transition-colors duration-300",
       isPluginMode && "rounded-2xl border border-gray-200 dark:border-gray-800"
     )}>
       {!isPluginMode && (

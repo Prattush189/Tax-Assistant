@@ -43,7 +43,7 @@ export function Header({
 
   return (
     <header className={cn(
-      "h-14 shrink-0 bg-white dark:bg-[#111827] border-b border-gray-200 dark:border-gray-800 flex items-center px-4 sticky top-0 z-10 gap-4",
+      "h-14 shrink-0 bg-white dark:bg-[#151210] border-b border-gray-200 dark:border-gray-800 flex items-center px-4 sticky top-0 z-10 gap-4",
       isPluginMode && "h-12"
     )}>
       {/* Left — menu (mobile) + logo */}

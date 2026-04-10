@@ -80,3 +80,19 @@ CREATE TABLE IF NOT EXISTS notices (
   updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
 );
 CREATE INDEX IF NOT EXISTS idx_notices_user_id ON notices(user_id);
+
+CREATE TABLE IF NOT EXISTS tax_profiles (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT,
+  fy TEXT NOT NULL,
+  gross_salary TEXT NOT NULL DEFAULT '',
+  other_income TEXT NOT NULL DEFAULT '',
+  age_category TEXT NOT NULL DEFAULT 'below60' CHECK(age_category IN ('below60', 'senior60to80', 'superSenior80plus')),
+  deductions_data TEXT NOT NULL DEFAULT '{}',
+  hra_data TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+);
+CREATE INDEX IF NOT EXISTS idx_tax_profiles_user_id ON tax_profiles(user_id);

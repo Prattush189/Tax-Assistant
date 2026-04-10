@@ -13,7 +13,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-[#0A0F14]">
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-[#0E0C0A]">
         <div className="flex flex-col items-center gap-4">
           <div className="w-12 h-12 border-4 border-emerald-600/30 border-t-emerald-600 rounded-full animate-spin" />
           <p className="text-gray-500 dark:text-gray-400 text-sm">Loading...</p>

@@ -21,6 +21,12 @@ export interface IncomeTaxInput {
     section80CCD1B?: number;
     isSelfSenior?: boolean;
     isParentsSenior?: boolean;
+    // Extended deductions
+    section80E?: number;      // Education loan interest
+    section80G?: number;      // Donations
+    section80TTA?: number;    // Savings interest
+    section24b?: number;      // Home loan interest
+    section80EEB?: number;    // EV loan interest
   };
   hra?: HRAInput;            // Only for old regime salaried
 }
@@ -42,9 +48,11 @@ export interface IncomeTaxResult {
   rebate87A: number;
   marginalRelief: number;
   taxAfterRebate: number;
+  surcharge: number;
+  surchargeRate: number;      // e.g., 0.10 for 10%
   cess: number;
   totalTax: number;
-  effectiveRate: number;     // totalTax / grossIncome as a percentage
+  effectiveRate: number;      // totalTax / grossIncome as a percentage
 }
 
 // ── Core helpers ──────────────────────────────────────────────────────────────
@@ -132,6 +140,48 @@ export function applyMarginalRelief(
   return { effectiveTax, rebate87A: 0, marginalRelief };
 }
 
+/**
+ * Compute surcharge on tax based on taxable income.
+ * Includes marginal relief to prevent cliff at thresholds.
+ */
+export function computeSurcharge(
+  taxAfterRebate: number,
+  taxableIncome: number,
+  regime: TaxRegime,
+): { surcharge: number; surchargeRate: number } {
+  if (taxAfterRebate <= 0) return { surcharge: 0, surchargeRate: 0 };
+
+  // Surcharge slabs
+  const surchargeSlabs = [
+    { threshold: 5000000,  rate: 0.10 },  // ₹50L–₹1Cr
+    { threshold: 10000000, rate: 0.15 },  // ₹1Cr–₹2Cr
+    { threshold: 20000000, rate: 0.25 },  // ₹2Cr–₹5Cr
+    { threshold: 50000000, rate: regime === 'new' ? 0.25 : 0.37 }, // Above ₹5Cr (25% cap for new regime)
+  ];
+
+  let surchargeRate = 0;
+  for (const slab of surchargeSlabs) {
+    if (taxableIncome > slab.threshold) {
+      surchargeRate = slab.rate;
+    }
+  }
+
+  if (surchargeRate === 0) return { surcharge: 0, surchargeRate: 0 };
+
+  let surcharge = taxAfterRebate * surchargeRate;
+
+  // Marginal relief: surcharge cannot exceed income above the threshold
+  const applicableThreshold = surchargeSlabs.find(s => taxableIncome <= s.threshold * 2 && taxableIncome > s.threshold)?.threshold;
+  if (applicableThreshold) {
+    const excessIncome = taxableIncome - applicableThreshold;
+    if (surcharge > excessIncome) {
+      surcharge = excessIncome;
+    }
+  }
+
+  return { surcharge: Math.round(surcharge), surchargeRate };
+}
+
 // ── Main calculation ──────────────────────────────────────────────────────────
 
 /**
@@ -178,7 +228,18 @@ export function calculateIncomeTax(
     );
     const sec80CCD1B = Math.min(deductions.section80CCD1B ?? 0, limits.section80CCD1B);
 
-    totalOtherDeductions = sec80C + sec80D_self + sec80D_parents + sec80CCD1B;
+    // Extended deductions
+    const sec80E = Math.min(deductions.section80E ?? 0, limits.section80E ?? Infinity);
+    const sec80G = Math.min(deductions.section80G ?? 0, limits.section80G ?? Infinity);
+    const sec80TTA = Math.min(
+      deductions.section80TTA ?? 0,
+      isSelfSenior ? (limits.section80TTA_senior ?? 50000) : (limits.section80TTA ?? 10000),
+    );
+    const sec24b = Math.min(deductions.section24b ?? 0, limits.section24b ?? 200000);
+    const sec80EEB = Math.min(deductions.section80EEB ?? 0, limits.section80EEB ?? 150000);
+
+    totalOtherDeductions = sec80C + sec80D_self + sec80D_parents + sec80CCD1B
+      + sec80E + sec80G + sec80TTA + sec24b + sec80EEB;
   }
 
   const totalDeductions = standardDeduction + hraExemption + totalOtherDeductions;
@@ -213,9 +274,13 @@ export function calculateIncomeTax(
     taxAfterRebate = slabTax - rebate87A;
   }
 
-  // ── Cess ──────────────────────────────────────────────────────────────────
-  const cess = taxAfterRebate * rules.cess;
-  const totalTax = taxAfterRebate + cess;
+  // ── Surcharge ─────────────────────────────────────────────────────────────
+  const { surcharge, surchargeRate } = computeSurcharge(taxAfterRebate, taxableIncome, regime);
+  const taxPlusSurcharge = taxAfterRebate + surcharge;
+
+  // ── Cess (on tax + surcharge) ────────────────────────────────────────────
+  const cess = taxPlusSurcharge * rules.cess;
+  const totalTax = taxPlusSurcharge + cess;
   const effectiveRate = grossIncome > 0 ? (totalTax / grossIncome) * 100 : 0;
 
   return {
@@ -229,6 +294,8 @@ export function calculateIncomeTax(
     rebate87A,
     marginalRelief,
     taxAfterRebate,
+    surcharge,
+    surchargeRate,
     cess,
     totalTax,
     effectiveRate,

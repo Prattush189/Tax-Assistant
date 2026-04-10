@@ -1,5 +1,5 @@
-import { useRef, useCallback } from 'react';
-import { Send, Paperclip, FileText, X, Loader2 } from 'lucide-react';
+import { useState, useRef, useCallback } from 'react';
+import { Send, Paperclip, FileText, X, Loader2, BookUser, Lock, BarChart3 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { UploadPhase } from '../../hooks/useFileUpload';
 import { DocumentContext } from '../../types';
@@ -15,13 +15,20 @@ interface ChatInputProps {
   onDetachDocument?: (index: number) => void;
   uploadPhase?: UploadPhase;
   attachmentLimit: number;
+  profiles?: { id: string; name: string; data: Record<string, unknown> }[];
+  referencedProfile?: { id: string; name: string } | null;
+  onReferenceProfile?: (profile: { id: string; name: string; data: Record<string, unknown> }) => void;
+  onClearReference?: () => void;
+  isPro?: boolean;
 }
 
 export function ChatInput({
   input, isLoading, onInputChange, onSend,
   activeDocuments, onFileSelect, onDetachDocument, uploadPhase, attachmentLimit,
+  profiles, referencedProfile, onReferenceProfile, onClearReference, isPro,
 }: ChatInputProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [showProfileDropdown, setShowProfileDropdown] = useState(false);
 
   const canAttachMore = activeDocuments.length < attachmentLimit;
 
@@ -57,10 +64,10 @@ export function ChatInput({
   }, [handleFiles]);
 
   const isUploading = uploadPhase === 'uploading' || uploadPhase === 'analyzing';
-  const hasAttachments = activeDocuments.length > 0 || isUploading;
+  const hasAttachments = activeDocuments.length > 0 || isUploading || !!referencedProfile;
 
   return (
-    <div className="shrink-0 p-4 lg:p-6 bg-white dark:bg-[#111827] border-t border-gray-200 dark:border-gray-800">
+    <div className="shrink-0 p-4 lg:p-6 bg-white dark:bg-[#151210] border-t border-gray-200 dark:border-gray-800">
       <div className="max-w-4xl mx-auto">
         {/* Attachment badges — aligned with textarea via same left padding as the button+gap */}
         {hasAttachments && (
@@ -85,6 +92,18 @@ export function ChatInput({
                 <div className="flex items-center gap-1.5 px-2 py-1 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/40 rounded-lg text-xs text-emerald-700 dark:text-emerald-400">
                   <Loader2 className="w-3 h-3 animate-spin" />
                   <span>{uploadPhase === 'uploading' ? 'Uploading...' : 'Analyzing...'}</span>
+                </div>
+              )}
+              {referencedProfile && (
+                <div className="flex items-center gap-1.5 px-2 py-1 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800/40 rounded-lg text-xs text-blue-700 dark:text-blue-400">
+                  <BarChart3 className="w-3 h-3 shrink-0" />
+                  <span className="truncate max-w-[150px]">Profile: {referencedProfile.name}</span>
+                  <button
+                    onClick={() => onClearReference?.()}
+                    className="p-0.5 hover:bg-blue-100 dark:hover:bg-blue-900/30 rounded transition-colors"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
                 </div>
               )}
             </div>
@@ -113,6 +132,57 @@ export function ChatInput({
             multiple
             className="hidden"
           />
+
+          <div className="relative">
+            <button
+              onClick={() => {
+                if (!isPro) {
+                  toast.error('Upgrade to Pro to reference tax profiles in chat.');
+                  return;
+                }
+                setShowProfileDropdown(prev => !prev);
+              }}
+              disabled={!isPro && false}
+              className={cn(
+                "p-2.5 rounded-xl transition-all shrink-0",
+                !isPro
+                  ? "text-gray-300 dark:text-gray-600 cursor-not-allowed"
+                  : "text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/15"
+              )}
+              title={isPro ? 'Reference tax profile' : 'Upgrade to Pro to reference profiles'}
+            >
+              {isPro ? (
+                <BookUser className="w-5 h-5" />
+              ) : (
+                <span className="relative">
+                  <BookUser className="w-5 h-5" />
+                  <Lock className="w-2.5 h-2.5 absolute -bottom-0.5 -right-0.5" />
+                </span>
+              )}
+            </button>
+            {showProfileDropdown && isPro && profiles && profiles.length > 0 && (
+              <div className="absolute bottom-full mb-2 left-0 w-56 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg z-30 py-1 max-h-48 overflow-y-auto">
+                {profiles.map(p => (
+                  <button
+                    key={p.id}
+                    onClick={() => {
+                      onReferenceProfile?.(p);
+                      setShowProfileDropdown(false);
+                    }}
+                    className="w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-2"
+                  >
+                    <BarChart3 className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                    <span className="truncate">{p.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {showProfileDropdown && isPro && (!profiles || profiles.length === 0) && (
+              <div className="absolute bottom-full mb-2 left-0 w-56 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg z-30 p-3">
+                <p className="text-xs text-gray-500 dark:text-gray-400">No profiles found. Create one in the Tax Calculator.</p>
+              </div>
+            )}
+          </div>
 
           <div className="flex-1 relative">
             <textarea

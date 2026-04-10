@@ -27,6 +27,7 @@ export async function sendChatMessage(
   onError: (msg: string) => void,
   fileContexts?: { filename: string; mimeType: string; extractedData?: unknown }[],
   onDone?: (stopReason: string | null, references?: SectionReference[]) => void,
+  profileContext?: { name: string; data: Record<string, unknown> },
 ): Promise<void> {
   const body: Record<string, unknown> = {
     message,
@@ -37,6 +38,7 @@ export async function sendChatMessage(
       : fileContexts && fileContexts.length > 1
         ? { fileContexts }
         : { fileContext: null }),
+    ...(profileContext ? { profileContext } : {}),
   };
 
   const doStreamFetch = () => fetch('/api/chat', {
@@ -258,6 +260,14 @@ export async function adminChangePlan(userId: string, plan: 'free' | 'pro' | 'en
   });
 }
 
+export async function adminFetchTrend() {
+  return authFetch('/api/admin/stats/trend');
+}
+
+export async function adminFetchPlans() {
+  return authFetch('/api/admin/stats/plans');
+}
+
 // ── Notice Drafter API ───────────────────────────────────────────────────
 
 export interface NoticeItem {
@@ -363,4 +373,37 @@ export async function updateNotice(id: string, content: string, title?: string) 
 
 export async function deleteNotice(id: string) {
   return authFetch(`/api/notices/${id}`, { method: 'DELETE' });
+}
+
+// ── Tax Profile API ─────────────────────────────────────────────────────
+
+export interface TaxProfileData {
+  id: string;
+  user_id: string;
+  name: string;
+  description: string | null;
+  fy: string;
+  gross_salary: string;
+  other_income: string;
+  age_category: string;
+  deductions_data: string;
+  hra_data: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function fetchProfiles(): Promise<{ profiles: TaxProfileData[]; limit: number; used: number }> {
+  return authFetch('/api/profiles');
+}
+
+export async function createProfile(data: Record<string, unknown>): Promise<TaxProfileData> {
+  return authFetch('/api/profiles', { method: 'POST', body: JSON.stringify(data) });
+}
+
+export async function updateProfile(id: string, data: Record<string, unknown>): Promise<void> {
+  await authFetch(`/api/profiles/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
+}
+
+export async function deleteProfile(id: string): Promise<void> {
+  await authFetch(`/api/profiles/${id}`, { method: 'DELETE' });
 }

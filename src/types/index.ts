@@ -21,6 +21,7 @@ export interface Message {
   }[];
   truncated?: boolean;
   references?: SectionReference[];
+  profileRef?: string;  // profile name referenced in this message
 }
 
 export interface UploadResponse {
@@ -72,6 +73,13 @@ export interface DeductionLimits {
   section80D_parents: number;
   section80D_parents_senior: number;
   section80CCD1B: number;
+  // Extended deductions
+  section80E?: number;          // Education loan interest (Infinity = no limit)
+  section80G?: number;          // Donations
+  section80TTA?: number;        // Savings interest (₹10K)
+  section80TTA_senior?: number; // 80TTB for seniors (₹50K)
+  section24b?: number;          // Home loan interest (₹2L)
+  section80EEB?: number;        // EV loan interest (₹1.5L)
 }
 
 export interface OldRegimeSlabs {
