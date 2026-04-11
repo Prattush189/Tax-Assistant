@@ -56,6 +56,92 @@ if (!colNames.includes('plugin_consultant_id')) {
   db.exec("CREATE INDEX IF NOT EXISTS idx_users_plugin_consultant_id ON users(plugin_consultant_id)");
 }
 
+// Phone login + email verification + team invitations (v2 team features).
+// NOTE: `phone` is nullable and unique via partial index (below) — it is only
+// set for plugin clients who log in via phone. Existing email-only users
+// are grandfathered to email_verified = 1 on first migration so the rollout
+// doesn't lock anyone out.
+let justAddedEmailVerified = false;
+if (!colNames.includes('phone')) {
+  db.exec("ALTER TABLE users ADD COLUMN phone TEXT");
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users(phone) WHERE phone IS NOT NULL");
+}
+if (!colNames.includes('email_verified')) {
+  db.exec("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0");
+  justAddedEmailVerified = true;
+}
+if (!colNames.includes('inviter_id')) {
+  db.exec("ALTER TABLE users ADD COLUMN inviter_id TEXT");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_users_inviter_id ON users(inviter_id)");
+}
+// Grandfather all pre-existing users as verified exactly once, the first
+// time the email_verified column appears. New signups go through the OTP
+// flow regardless.
+if (justAddedEmailVerified) {
+  db.exec("UPDATE users SET email_verified = 1 WHERE email_verified = 0");
+}
+
+// billing_user_id column on every usage-counted table. Logged alongside
+// user_id so we preserve the audit trail (user_id = actor) while the
+// billing/pool owner is identified separately.
+function ensureBillingCol(table: string): boolean {
+  const cs = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (cs.some(c => c.name === 'billing_user_id')) return false;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN billing_user_id TEXT`);
+  db.exec(`UPDATE ${table} SET billing_user_id = user_id WHERE billing_user_id IS NULL`);
+  return true;
+}
+for (const t of ['api_usage', 'feature_usage', 'notices', 'tax_profiles', 'profiles', 'itr_drafts']) {
+  ensureBillingCol(t);
+}
+db.exec("CREATE INDEX IF NOT EXISTS idx_api_usage_billing ON api_usage(billing_user_id, created_at)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_feature_usage_billing ON feature_usage(billing_user_id, feature, created_at)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_notices_billing ON notices(billing_user_id)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_tax_profiles_billing ON tax_profiles(billing_user_id)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_profiles_billing ON profiles(billing_user_id)");
+
+// Invitations + email verification code tables are created via schema.sql;
+// indexes live here for idempotency.
+db.exec("CREATE INDEX IF NOT EXISTS idx_invitations_inviter ON invitations(inviter_user_id)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_invitations_status ON invitations(status)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_email_codes_user_purpose ON email_verification_codes(user_id, purpose, consumed_at)");
+
+// Drop the legacy CHECK(purpose IN ('signup','resend')) constraint on the
+// email_verification_codes table so we can add 'reset' without rebuilding.
+// Existing codes are ephemeral (10-min TTL); deleting them is safe.
+{
+  const row = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='email_verification_codes'")
+    .get() as { sql?: string } | undefined;
+  if (row?.sql && /CHECK\s*\(\s*purpose/i.test(row.sql)) {
+    db.exec('DROP TABLE email_verification_codes');
+    db.exec(`
+      CREATE TABLE email_verification_codes (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        code_hash TEXT NOT NULL,
+        purpose TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        expires_at TEXT NOT NULL,
+        consumed_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+      );
+    `);
+    db.exec("CREATE INDEX IF NOT EXISTS idx_email_codes_user_purpose ON email_verification_codes(user_id, purpose, consumed_at)");
+    console.log('[DB] Rebuilt email_verification_codes without legacy purpose CHECK');
+  }
+}
+
+// Indexes for itr_drafts — table is created in schema.sql, indexes live here so
+// they're idempotent across existing DBs (matches the rule: schema.sql stays
+// side-effect free for new column additions).
+db.exec("CREATE INDEX IF NOT EXISTS idx_itr_drafts_user_id ON itr_drafts(user_id)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_itr_drafts_updated_at ON itr_drafts(updated_at DESC)");
+
+// Indexes for generic profiles table (identity, address, banks, per-AY data)
+db.exec("CREATE INDEX IF NOT EXISTS idx_profiles_user_id ON profiles(user_id)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_profiles_updated_at ON profiles(updated_at DESC)");
+
 // Seed admin account
 const ADMIN_EMAIL = 'prattyush.jain@gmail.com';
 const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(ADMIN_EMAIL);

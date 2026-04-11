@@ -1,7 +1,11 @@
+import { useState } from 'react';
 import { cn } from '../../lib/utils';
 import type { AgeCategory } from '../../types';
 import { RegimeComparison } from './RegimeComparison';
 import { useTaxCalculator } from '../../contexts/TaxCalculatorContext';
+import { LoadFromProfile } from '../profile/shared/LoadFromProfile';
+import { profileToCalculator } from '../profile/lib/prefillAdapters';
+import { PROFILE_AYS, ProfileAy } from '../profile/lib/profileModel';
 
 import { SUPPORTED_FY } from '../../data/taxRules';
 
@@ -60,8 +64,47 @@ export function IncomeTaxTab() {
     oldResult, newResult,
   } = useTaxCalculator();
 
+  const [prefillAy, setPrefillAy] = useState<ProfileAy>('2025-26');
+
   return (
     <div className="max-w-3xl">
+      {/* Profile prefill */}
+      <div className="flex items-center justify-end gap-2 mb-4">
+        <label className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">AY</label>
+        <select
+          value={prefillAy}
+          onChange={(e) => setPrefillAy(e.target.value as ProfileAy)}
+          className="px-2 py-1 text-xs bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none"
+        >
+          {PROFILE_AYS.map((ay) => (
+            <option key={ay} value={ay}>{ay}</option>
+          ))}
+        </select>
+        <LoadFromProfile
+          onPick={(profile) => {
+            const p = profileToCalculator(profile, prefillAy);
+            if (p.grossSalary !== undefined) setGrossSalary(p.grossSalary);
+            if (p.otherIncome !== undefined) setOtherIncome(p.otherIncome);
+            if (p.deductions) {
+              setDeductions((prev) => ({
+                ...prev,
+                section80C: p.deductions?.section80C ?? prev.section80C,
+                section80D_self: p.deductions?.section80D_self ?? prev.section80D_self,
+                section80D_parents: p.deductions?.section80D_parents ?? prev.section80D_parents,
+                section80CCD1B: p.deductions?.section80CCD1B ?? prev.section80CCD1B,
+                section80E: p.deductions?.section80E ?? prev.section80E,
+                section80G: p.deductions?.section80G ?? prev.section80G,
+                section80TTA: p.deductions?.section80TTA ?? prev.section80TTA,
+                section24b: p.deductions?.section24b ?? prev.section24b,
+                section80EEB: p.deductions?.section80EEB ?? prev.section80EEB,
+              }));
+              setShowDeductions(true);
+            }
+          }}
+          label="Load from profile"
+          compact
+        />
+      </div>
       {/* FY + Age selectors */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
         <div>

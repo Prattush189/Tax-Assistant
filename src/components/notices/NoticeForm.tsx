@@ -4,6 +4,8 @@ import { useFileUpload } from '../../hooks/useFileUpload';
 import { NoticeGenerateInput } from '../../services/api';
 import { LoadingAnimation } from '../ui/LoadingAnimation';
 import { LetterheadConfig } from '../../hooks/useNoticeDrafter';
+import { LoadFromProfile } from '../profile/shared/LoadFromProfile';
+import { profileToNoticeForm } from '../profile/lib/prefillAdapters';
 
 const NOTICE_TYPES = [
   { value: 'income-tax', label: 'Income Tax' },
@@ -203,6 +205,24 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
           </span>
           <input type="file" accept=".pdf,image/jpeg,image/png,image/webp" onChange={handleFileUpload} className="hidden" />
         </label>
+      </div>
+
+      {/* Profile prefill */}
+      <div className="flex justify-end">
+        <LoadFromProfile
+          onPick={(profile) => {
+            const prefill = profileToNoticeForm(profile);
+            if (prefill.senderName !== undefined) setSenderName(prefill.senderName ?? '');
+            if (prefill.senderAddress !== undefined) setSenderAddress(prefill.senderAddress ?? '');
+            if (prefill.senderPan !== undefined) setSenderPan(prefill.senderPan ?? '');
+            if (prefill.senderGstin !== undefined) setSenderGstin(prefill.senderGstin ?? '');
+            if (prefill.recipientOfficer !== undefined) setRecipientOfficer(prefill.recipientOfficer ?? '');
+            if (prefill.recipientOffice !== undefined) setRecipientOffice(prefill.recipientOffice ?? '');
+            if (prefill.recipientAddress !== undefined) setRecipientAddress(prefill.recipientAddress ?? '');
+          }}
+          label="Load from profile"
+          compact
+        />
       </div>
 
       {/* Sender details */}

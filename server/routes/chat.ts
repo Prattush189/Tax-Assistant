@@ -6,6 +6,7 @@ import { messageRepo } from '../db/repositories/messageRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { getUserLimits, getEffectivePlan } from '../lib/planLimits.js';
+import { getBillingUserId, getBillingUser } from '../lib/billing.js';
 import { retrieveContextWithRefs, SectionReference } from '../rag/index.js';
 import { AuthRequest } from '../types.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
@@ -129,7 +130,9 @@ async function* streamWithWebSearch(
 }
 
 // ── Plan-based message limits ──
-function getMessageCount(userId: string, period: 'day' | 'month'): number {
+// Counts messages against the BILLING user (inviter for shared-pool members,
+// self for standalone users). Pairs with usageRepo.logWithBilling below.
+function getMessageCount(billingUserId: string, period: 'day' | 'month'): number {
   const now = new Date(Date.now() + 5.5 * 60 * 60 * 1000); // IST
   let since: string;
   if (period === 'day') {
@@ -140,7 +143,7 @@ function getMessageCount(userId: string, period: 'day' | 'month'): number {
     const start = new Date(now.getFullYear(), now.getMonth(), 1);
     since = start.toISOString().replace('Z', '');
   }
-  return usageRepo.countByUser(userId, since);
+  return usageRepo.countByBillingUser(billingUserId, since);
 }
 
 const SYSTEM_INSTRUCTION = `You are "Smart AI" — an expert on Indian Income Tax, GST, and financial planning. You give thorough, professional, well-structured answers.
@@ -296,9 +299,12 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
     res.status(404).json({ error: 'User not found' });
     return;
   }
-  const effectivePlan = getEffectivePlan(user);
-  const limits = getUserLimits(user);
-  const used = getMessageCount(req.user.id, limits.messages.period);
+  // Limits are resolved from the POOL owner (inviter for invited users).
+  const billingUser = getBillingUser(user);
+  const billingUserId = billingUser.id;
+  const effectivePlan = getEffectivePlan(billingUser);
+  const limits = getUserLimits(billingUser);
+  const used = getMessageCount(billingUserId, limits.messages.period);
 
   if (used >= limits.messages.limit) {
     const periodLabel = limits.messages.period === 'day' ? 'daily' : 'monthly';
@@ -477,9 +483,10 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
       }
       chatRepo.touchTimestamp(chatId);
 
-      // Log usage (include web search cost if used)
+      // Log usage with both actor (user_id) and billing owner (billing_user_id).
+      // Actor preserves the audit trail; billing powers shared-pool counters.
       const cost = (inputTok * INPUT_COST_PER_TOKEN) + (outputTok * OUTPUT_COST_PER_TOKEN) + (useWebSearch ? WEB_SEARCH_COST : 0);
-      usageRepo.log(clientIp, req.user.id, inputTok, outputTok, cost, false);
+      usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, inputTok, outputTok, cost, false);
 
       res.write(`data: ${JSON.stringify({ done: true, stop_reason: stopReason, references: ragReferences })}\n\n`);
       success = true;

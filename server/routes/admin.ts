@@ -67,7 +67,14 @@ router.post('/users/:id/plan', (req: AuthRequest, res: Response) => {
   }
   const user = userRepo.findById(id);
   if (!user) { res.status(404).json({ error: 'User not found' }); return; }
+  const wasEnterprise = user.plan === 'enterprise';
   userRepo.updatePlan(id, plan);
+  // If an enterprise account is being downgraded, detach any team members so
+  // their future usage routes to themselves rather than an ex-inviter pool.
+  // Historical usage rows keep their old billing_user_id for audit.
+  if (wasEnterprise && plan !== 'enterprise') {
+    userRepo.detachAllInvitees(id);
+  }
   res.json({ success: true });
 });
 

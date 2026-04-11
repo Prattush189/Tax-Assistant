@@ -2,15 +2,20 @@ import { useState, ReactNode } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { LoginPage } from './LoginPage';
 import { SignupPage } from './SignupPage';
+import { VerifyEmailPage } from './VerifyEmailPage';
+import { ForgotPasswordPage } from './ForgotPasswordPage';
 import { LoadingAnimation } from '../ui/LoadingAnimation';
 
 interface AuthGuardProps {
   children: ReactNode;
 }
 
+type AuthView = 'login' | 'signup' | 'verify' | 'forgot';
+
 export function AuthGuard({ children }: AuthGuardProps) {
   const { isAuthenticated, isLoading } = useAuth();
-  const [authView, setAuthView] = useState<'login' | 'signup'>('login');
+  const [authView, setAuthView] = useState<AuthView>('login');
+  const [pendingEmail, setPendingEmail] = useState('');
 
   if (isLoading) {
     return (
@@ -24,10 +29,52 @@ export function AuthGuard({ children }: AuthGuardProps) {
   }
 
   if (!isAuthenticated) {
-    if (authView === 'login') {
-      return <LoginPage onSwitchToSignup={() => setAuthView('signup')} />;
+    if (authView === 'verify') {
+      return (
+        <VerifyEmailPage
+          email={pendingEmail}
+          onBack={() => setAuthView('login')}
+          onVerified={() => {
+            /* AuthContext state update triggers re-render into the app */
+          }}
+        />
+      );
     }
-    return <SignupPage onSwitchToLogin={() => setAuthView('login')} />;
+    if (authView === 'forgot') {
+      return (
+        <ForgotPasswordPage
+          initialEmail={pendingEmail}
+          onBack={() => setAuthView('login')}
+          onDone={() => {
+            /* AuthContext state update triggers re-render into the app */
+          }}
+        />
+      );
+    }
+    if (authView === 'login') {
+      return (
+        <LoginPage
+          onSwitchToSignup={() => setAuthView('signup')}
+          onNeedsVerification={(email) => {
+            setPendingEmail(email);
+            setAuthView('verify');
+          }}
+          onForgotPassword={(email) => {
+            setPendingEmail(email);
+            setAuthView('forgot');
+          }}
+        />
+      );
+    }
+    return (
+      <SignupPage
+        onSwitchToLogin={() => setAuthView('login')}
+        onNeedsVerification={(email) => {
+          setPendingEmail(email);
+          setAuthView('verify');
+        }}
+      />
+    );
   }
 
   return <>{children}</>;

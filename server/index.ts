@@ -15,7 +15,10 @@ import noticesRouter from './routes/notices.js';
 import pdfRouter from './routes/pdf.js';
 import suggestionsRouter from './routes/suggestions.js';
 import profilesRouter from './routes/profiles.js';
+import genericProfilesRouter from './routes/genericProfiles.js';
 import usageRouter from './routes/usage.js';
+import itrRouter from './routes/itr.js';
+import invitationsRouter, { publicInvitationRouter } from './routes/invitations.js';
 import { authMiddleware, adminMiddleware } from './middleware/auth.js';
 import { authLimiter, chatLimiter, uploadLimiter } from './middleware/rateLimiter.js';
 import helmet from 'helmet';
@@ -28,7 +31,11 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 app.set('trust proxy', 1); // Trust first proxy (Apache)
-const PORT = process.env.PORT ?? 4001;
+// In dev we always bind 4001 (Vite proxies /api → :4001). In production we
+// honor the PORT env var from PM2. Claude Preview sets PORT when launching
+// the dev server, which would otherwise collide with Vite on :3000.
+const PORT =
+  process.env.NODE_ENV === 'production' ? (process.env.PORT ?? 4001) : 4001;
 
 // 1. Security headers
 app.use(
@@ -76,7 +83,11 @@ app.use(express.json({ limit: '1mb' }));
 // Auth routes — public, with brute-force protection
 app.use('/api/auth', authLimiter, authRouter);
 
-// All API routes require auth
+// Invitation accept route is PUBLIC — anyone with a valid token can consume
+// it without being logged in. Mount BEFORE the global authMiddleware gate.
+app.use('/api/invitations', publicInvitationRouter);
+
+// All remaining API routes require auth
 app.use('/api', authMiddleware);
 app.use('/api/chat', chatLimiter);
 app.use('/api/upload', uploadLimiter);
@@ -87,7 +98,10 @@ app.use('/api/notices', noticesRouter);
 app.use('/api/pdfs', pdfRouter);
 app.use('/api/suggestions', suggestionsRouter);
 app.use('/api/profiles', profilesRouter);
+app.use('/api/generic-profiles', genericProfilesRouter);
 app.use('/api/usage', usageRouter);
+app.use('/api/itr', itrRouter);
+app.use('/api/invitations', invitationsRouter);
 
 // Admin — requires auth + admin role
 app.use('/api/admin', authMiddleware, adminMiddleware, adminRouter);

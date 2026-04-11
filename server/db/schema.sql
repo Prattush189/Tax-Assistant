@@ -112,3 +112,65 @@ CREATE TABLE IF NOT EXISTS feature_usage (
   created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
 );
 CREATE INDEX IF NOT EXISTS idx_feature_usage_user_feature ON feature_usage(user_id, feature, created_at);
+
+-- Email verification codes for password-based signups AND password resets.
+-- code_hash is bcrypt; purpose is validated in application code (see
+-- verificationRepo.ts) — no SQLite CHECK so the enum can be widened without
+-- destructive table rebuilds.
+CREATE TABLE IF NOT EXISTS email_verification_codes (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  code_hash TEXT NOT NULL,
+  purpose TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  expires_at TEXT NOT NULL,
+  consumed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+);
+
+-- Team invitations for enterprise-plan users. inviter_user_id is the pool owner.
+-- invite_token_hash is sha256 of a randomBytes(32) opaque token; the plaintext
+-- token is only returned once on POST /api/invitations.
+CREATE TABLE IF NOT EXISTS invitations (
+  id TEXT PRIMARY KEY,
+  inviter_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  email TEXT,
+  phone TEXT,
+  invite_token_hash TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'accepted', 'revoked', 'expired')),
+  accepted_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  expires_at TEXT NOT NULL,
+  accepted_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+);
+
+-- Generic profiles (identity + address + banks + notice defaults + per-AY data).
+-- Separate from tax_profiles which stores calculator snapshots. Indexes live in db/index.ts.
+CREATE TABLE IF NOT EXISTS profiles (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  identity_data TEXT NOT NULL DEFAULT '{}',
+  address_data TEXT NOT NULL DEFAULT '{}',
+  banks_data TEXT NOT NULL DEFAULT '[]',
+  notice_defaults TEXT NOT NULL DEFAULT '{}',
+  per_ay_data TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+);
+
+-- ITR drafts (admin-only feature; wizard drafts for ITR-1 / ITR-4).
+-- Indexes are created in server/db/index.ts migration block, NOT here.
+CREATE TABLE IF NOT EXISTS itr_drafts (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  form_type TEXT NOT NULL CHECK(form_type IN ('ITR1', 'ITR4')),
+  assessment_year TEXT NOT NULL,
+  name TEXT NOT NULL,
+  ui_payload TEXT NOT NULL DEFAULT '{}',
+  last_validated_at TEXT,
+  last_validation_errors TEXT,
+  exported_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+);

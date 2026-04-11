@@ -29,8 +29,14 @@ const stmts = {
   countByUser: db.prepare(
     'SELECT COUNT(*) AS count FROM api_usage WHERE user_id = ? AND created_at >= ?'
   ),
+  countByBillingUser: db.prepare(
+    'SELECT COUNT(*) AS count FROM api_usage WHERE billing_user_id = ? AND created_at >= ?'
+  ),
   log: db.prepare(
     'INSERT INTO api_usage (ip, user_id, input_tokens, output_tokens, cost, is_plugin) VALUES (?, ?, ?, ?, ?, ?)'
+  ),
+  logWithBilling: db.prepare(
+    'INSERT INTO api_usage (ip, user_id, billing_user_id, input_tokens, output_tokens, cost, is_plugin) VALUES (?, ?, ?, ?, ?, ?, ?)'
   ),
   getByIp: db.prepare(`
     SELECT
@@ -80,8 +86,27 @@ export const usageRepo = {
     return row.count;
   },
 
+  /** Count usage against a billing (pool) user. Used by shared-plan limit checks. */
+  countByBillingUser(billingUserId: string, since: string): number {
+    const row = stmts.countByBillingUser.get(billingUserId, since) as { count: number };
+    return row.count;
+  },
+
   log(ip: string, userId: string | null, inputTokens: number, outputTokens: number, cost: number, isPlugin: boolean): void {
     stmts.log.run(ip, userId, inputTokens, outputTokens, cost, isPlugin ? 1 : 0);
+  },
+
+  /** Log usage with both actor (user_id) and billing (billing_user_id) ids. */
+  logWithBilling(
+    ip: string,
+    userId: string,
+    billingUserId: string,
+    inputTokens: number,
+    outputTokens: number,
+    cost: number,
+    isPlugin: boolean,
+  ): void {
+    stmts.logWithBilling.run(ip, userId, billingUserId, inputTokens, outputTokens, cost, isPlugin ? 1 : 0);
   },
 
   getByIp(period: string = 'month'): UsageByIp[] {

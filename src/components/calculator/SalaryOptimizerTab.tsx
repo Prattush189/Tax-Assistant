@@ -1,17 +1,21 @@
-import { useState, useMemo } from 'react';
+import { useMemo } from 'react';
 import { optimizeSalary } from '../../lib/salaryOptimizer';
 import { SUPPORTED_FY } from '../../data/taxRules';
 import { cn } from '../../lib/utils';
+import { useTaxCalculator } from '../../contexts/TaxCalculatorContext';
 
 function formatINR(n: number): string {
   return '₹' + n.toLocaleString('en-IN');
 }
 
 export function SalaryOptimizerTab() {
-  const [fy, setFy] = useState<string>(SUPPORTED_FY[0]);
-  const [ctc, setCtc] = useState('');
-  const [monthlyRent, setMonthlyRent] = useState('');
-  const [isMetro, setIsMetro] = useState(true);
+  // Lifted state — persists across tab switches
+  const { salaryOptTabState, setSalaryOptTabState } = useTaxCalculator();
+  const { fy, ctc, monthlyRent, isMetro } = salaryOptTabState;
+  const setFy = (v: string) => setSalaryOptTabState((s) => ({ ...s, fy: v }));
+  const setCtc = (v: string) => setSalaryOptTabState((s) => ({ ...s, ctc: v }));
+  const setMonthlyRent = (v: string) => setSalaryOptTabState((s) => ({ ...s, monthlyRent: v }));
+  const setIsMetro = (v: boolean) => setSalaryOptTabState((s) => ({ ...s, isMetro: v }));
 
   const result = useMemo(() => {
     const c = parseFloat(ctc) || 0;

@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { profileRepo } from '../db/repositories/profileRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
+import { getBillingUser } from '../lib/billing.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
@@ -9,12 +10,19 @@ const router = Router();
 const PROFILE_LIMITS: Record<string, number> = { free: 1, pro: 10, enterprise: 50 };
 
 // GET /api/profiles — list user's profiles
+// Data isolation: profile list filters by user_id. Usage counter reports
+// the shared-pool count so invitees see the same ceiling as the inviter.
 router.get('/', (req: AuthRequest, res: Response) => {
   if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
   const profiles = profileRepo.findByUserId(req.user.id);
-  const user = userRepo.findById(req.user.id);
-  const limit = PROFILE_LIMITS[user?.plan ?? 'free'] ?? 1;
-  res.json({ profiles, limit, used: profiles.length });
+  const actor = userRepo.findById(req.user.id);
+  const billingUser = actor ? getBillingUser(actor) : undefined;
+  const plan = billingUser?.plan ?? actor?.plan ?? 'free';
+  const limit = PROFILE_LIMITS[plan] ?? 1;
+  const used = billingUser
+    ? profileRepo.countByBillingUser(billingUser.id)
+    : profiles.length;
+  res.json({ profiles, limit, used });
 });
 
 // GET /api/profiles/:id — get single profile
@@ -39,11 +47,13 @@ router.post('/', (req: AuthRequest, res: Response) => {
     return;
   }
 
-  // Check plan limit
-  const user = userRepo.findById(req.user.id);
-  const plan = user?.plan ?? 'free';
+  // Check plan limit against the billing (pool) user
+  const actor = userRepo.findById(req.user.id);
+  const billingUser = actor ? getBillingUser(actor) : undefined;
+  const billingUserId = billingUser?.id ?? req.user.id;
+  const plan = billingUser?.plan ?? actor?.plan ?? 'free';
   const limit = PROFILE_LIMITS[plan] ?? 1;
-  const count = profileRepo.countByUser(req.user.id);
+  const count = profileRepo.countByBillingUser(billingUserId);
 
   if (count >= limit) {
     res.status(429).json({
@@ -53,14 +63,20 @@ router.post('/', (req: AuthRequest, res: Response) => {
     return;
   }
 
-  const profile = profileRepo.create(req.user.id, name.trim(), description || null, {
-    fy: fy ?? '2026-27',
-    gross_salary: gross_salary ?? '',
-    other_income: other_income ?? '',
-    age_category: age_category ?? 'below60',
-    deductions_data: typeof deductions_data === 'string' ? deductions_data : JSON.stringify(deductions_data ?? {}),
-    hra_data: typeof hra_data === 'string' ? hra_data : JSON.stringify(hra_data ?? {}),
-  });
+  const profile = profileRepo.create(
+    req.user.id,
+    name.trim(),
+    description || null,
+    {
+      fy: fy ?? '2026-27',
+      gross_salary: gross_salary ?? '',
+      other_income: other_income ?? '',
+      age_category: age_category ?? 'below60',
+      deductions_data: typeof deductions_data === 'string' ? deductions_data : JSON.stringify(deductions_data ?? {}),
+      hra_data: typeof hra_data === 'string' ? hra_data : JSON.stringify(hra_data ?? {}),
+    },
+    billingUserId,
+  );
 
   res.status(201).json(profile);
 });

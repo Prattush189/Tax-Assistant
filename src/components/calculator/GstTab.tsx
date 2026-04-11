@@ -1,17 +1,23 @@
-import { useState, useMemo } from 'react';
+import { useMemo } from 'react';
 import { cn } from '../../lib/utils';
 import { formatINR } from '../../lib/utils';
 import { calculateGST } from '../../lib/gstEngine';
 import type { GstTransactionType } from '../../types';
+import { useTaxCalculator } from '../../contexts/TaxCalculatorContext';
 
 const STANDARD_RATES = [0, 5, 18, 40];
 const SPECIAL_RATES = [3, 0.25];
 
 export function GstTab() {
-  const [amount, setAmount] = useState('');
-  const [rate, setRate] = useState(18);
-  const [transactionType, setTransactionType] = useState<GstTransactionType>('intraState');
-  const [amountIncludesGST, setAmountIncludesGST] = useState(false);
+  // Lifted state — persists across tab switches
+  const { gstTabState, setGstTabState } = useTaxCalculator();
+  const { amount, rate, transactionType, amountIncludesGST } = gstTabState;
+  const setAmount = (v: string) => setGstTabState((s) => ({ ...s, amount: v }));
+  const setRate = (v: number) => setGstTabState((s) => ({ ...s, rate: v }));
+  const setTransactionType = (v: GstTransactionType) =>
+    setGstTabState((s) => ({ ...s, transactionType: v }));
+  const setAmountIncludesGST = (v: boolean) =>
+    setGstTabState((s) => ({ ...s, amountIncludesGST: v }));
 
   const { result, error } = useMemo(() => {
     const num = Number(amount) || 0;

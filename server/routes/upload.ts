@@ -4,6 +4,7 @@ import multer, { MulterError } from 'multer';
 import { gemini, GEMINI_MODEL, GEMINI_FALLBACK_MODEL } from '../lib/grok.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
+import { getBillingUser } from '../lib/billing.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
@@ -187,13 +188,16 @@ router.post(
       return;
     }
 
-    // Enforce monthly attachment upload cap (resilient — won't crash on DB issues)
-    const user = userRepo.findById(req.user.id);
-    const plan = user?.plan ?? 'free';
+    // Enforce monthly attachment upload cap against the BILLING (pool) user so
+    // invitees share the inviter's allowance. Resilient — fail open on DB err.
+    const actor = userRepo.findById(req.user.id);
+    const billingUser = actor ? getBillingUser(actor) : undefined;
+    const billingUserId = billingUser?.id ?? req.user.id;
+    const plan = billingUser?.plan ?? actor?.plan ?? 'free';
     const monthlyLimit = MONTHLY_ATTACHMENT_LIMITS[plan] ?? 10;
     let usedThisMonth = 0;
     try {
-      usedThisMonth = featureUsageRepo.countThisMonth(req.user.id, 'attachment_upload');
+      usedThisMonth = featureUsageRepo.countThisMonthByBillingUser(billingUserId, 'attachment_upload');
     } catch (err) {
       console.error('[upload] Failed to check attachment usage:', err);
       // Fail open — allow upload if we can't check usage
@@ -219,9 +223,10 @@ router.post(
 
       extractedData = await extractWithRetry(dataUrl);
 
-      // Log successful upload toward monthly cap (non-fatal)
+      // Log successful upload toward monthly cap (non-fatal). Writes both
+      // user_id (actor) and billing_user_id (pool owner).
       try {
-        featureUsageRepo.log(req.user.id, 'attachment_upload');
+        featureUsageRepo.logWithBilling(req.user.id, billingUserId, 'attachment_upload');
       } catch (logErr) {
         console.error('[upload] Failed to log attachment usage:', logErr);
       }

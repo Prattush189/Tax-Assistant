@@ -9,8 +9,11 @@ import { useTheme } from './hooks/useTheme';
 import { usePluginMode, usePluginParentMessage } from './hooks/usePluginMode';
 import { useChatManager } from './hooks/useChatManager';
 import { useNoticeDrafter } from './hooks/useNoticeDrafter';
+import { useItrManager } from './hooks/useItrManager';
+import { useProfileManager } from './hooks/useProfileManager';
 import { useAuth } from './contexts/AuthContext';
 import { AuthGuard } from './components/auth/AuthGuard';
+import { AcceptInvitePage } from './components/auth/AcceptInvitePage';
 import { PluginAuthBridge } from './components/auth/PluginAuthBridge';
 import { Sidebar } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
@@ -21,11 +24,13 @@ import { AdminDashboard } from './components/admin/AdminDashboard';
 import { PlanPage } from './components/plan/PlanPage';
 import { SettingsPage } from './components/settings/SettingsPage';
 import { NoticeDrafterPage } from './components/notices/NoticeDrafterPage';
+import { ItrView } from './components/itr/ItrView';
+import { ProfileView } from './components/profile/ProfileView';
 import { TaxCalculatorProvider } from './contexts/TaxCalculatorContext';
 import type { ParentToIframeMessage } from './lib/pluginProtocol';
 import { cn } from './lib/utils';
 
-type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings';
+type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile';
 
 /**
  * Dispatches SET_VIEW / SET_CALCULATOR_TAB / LOGOUT into local state.
@@ -74,6 +79,8 @@ function AppContent() {
 
   const chatManager = useChatManager();
   const noticeDrafter = useNoticeDrafter();
+  const itrManager = useItrManager(user?.role === 'admin');
+  const profileManager = useProfileManager(!!user);
 
   return (
     <div className={cn(
@@ -99,6 +106,16 @@ function AppContent() {
           onNewNotice={noticeDrafter.clearDraft}
           onSwitchNotice={noticeDrafter.loadNotice}
           onDeleteNotice={noticeDrafter.removeNotice}
+          itrDraftList={itrManager.drafts}
+          currentItrDraftId={itrManager.currentDraftId}
+          onNewItrDraft={itrManager.clearDraft}
+          onSwitchItrDraft={itrManager.loadDraft}
+          onDeleteItrDraft={itrManager.removeDraft}
+          profileList={profileManager.profiles}
+          currentProfileId={profileManager.currentProfileId}
+          onNewProfile={profileManager.clearCurrent}
+          onSwitchProfile={profileManager.loadProfile}
+          onDeleteProfile={profileManager.removeProfile}
           user={user}
           onLogout={logout}
           activeView={activeView}
@@ -140,6 +157,8 @@ function AppContent() {
               {activeView === 'admin' && user?.role === 'admin' && <AdminDashboard />}
               {activeView === 'plan' && <PlanPage />}
               {activeView === 'notices' && <NoticeDrafterPage drafter={noticeDrafter} />}
+              {activeView === 'itr' && user?.role === 'admin' && <ItrView manager={itrManager} />}
+              {activeView === 'profile' && <ProfileView manager={profileManager} />}
               {activeView === 'settings' && <SettingsPage />}
             </motion.div>
           </AnimatePresence>
@@ -155,9 +174,37 @@ function AppContent() {
   );
 }
 
+/**
+ * Reads `?invite=<token>` from the URL once on mount. We don't use a router;
+ * instead App.tsx shows the AcceptInvitePage BEFORE the AuthGuard renders,
+ * so an unauthenticated invitee can land directly on the accept flow. After
+ * accepting, we clear the query string so refresh doesn't re-fire.
+ */
+function useInviteToken(): { token: string | null; clear: () => void } {
+  const [token, setToken] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    return new URLSearchParams(window.location.search).get('invite');
+  });
+  const clear = useCallback(() => {
+    if (typeof window !== 'undefined') {
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+    setToken(null);
+  }, []);
+  return { token, clear };
+}
+
 export default function App() {
   const { setIsDarkMode } = useTheme();
   const { isPluginMode } = usePluginMode(setIsDarkMode);
+  const invite = useInviteToken();
+
+  // Invite accept flow supersedes both plugin auth AND the normal AuthGuard.
+  // Anyone landing with `?invite=<token>` sees the accept page until they
+  // consume the token.
+  if (invite.token) {
+    return <AcceptInvitePage token={invite.token} onDone={invite.clear} />;
+  }
 
   if (isPluginMode) {
     return (

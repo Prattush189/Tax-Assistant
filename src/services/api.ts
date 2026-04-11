@@ -461,3 +461,306 @@ export async function updateProfile(id: string, data: Record<string, unknown>): 
 export async function deleteProfile(id: string): Promise<void> {
   await authFetch(`/api/profiles/${id}`, { method: 'DELETE' });
 }
+
+// ── ITR Filing API (admin-only) ──────────────────────────────────────────
+
+export type ItrFormType = 'ITR1' | 'ITR4';
+
+export interface ItrDraft {
+  id: string;
+  user_id: string;
+  form_type: ItrFormType;
+  assessment_year: string;
+  name: string;
+  ui_payload: Record<string, unknown>;
+  last_validated_at: string | null;
+  last_validation_errors: string | null;
+  exported_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ItrEnumOption {
+  code: string;
+  label: string;
+}
+
+export interface ItrValidationError {
+  path: string;
+  message: string;
+  params?: Record<string, unknown>;
+}
+
+export interface ItrBusinessRuleViolation {
+  ruleId: string;
+  severity: 'error' | 'warning';
+  path: string;
+  message: string;
+}
+
+export interface ItrValidationResult {
+  valid: boolean;
+  schemaValid: boolean;
+  schemaErrors: ItrValidationError[];
+  businessRules: ItrBusinessRuleViolation[];
+}
+
+export interface ItrFinalizeResult extends ItrValidationResult {
+  payload: Record<string, unknown> | null;
+}
+
+export async function fetchItrDrafts(): Promise<{ drafts: ItrDraft[] }> {
+  return authFetch('/api/itr/drafts');
+}
+
+export async function createItrDraft(input: {
+  form_type: ItrFormType;
+  assessment_year: string;
+  name: string;
+  ui_payload?: Record<string, unknown>;
+}): Promise<ItrDraft> {
+  return authFetch('/api/itr/drafts', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function fetchItrDraft(id: string): Promise<ItrDraft> {
+  return authFetch(`/api/itr/drafts/${id}`);
+}
+
+export async function updateItrDraft(
+  id: string,
+  patch: { name?: string; ui_payload?: Record<string, unknown> },
+): Promise<void> {
+  await authFetch(`/api/itr/drafts/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+}
+
+export async function deleteItrDraft(id: string): Promise<void> {
+  await authFetch(`/api/itr/drafts/${id}`, { method: 'DELETE' });
+}
+
+export async function validateItr(input: {
+  form_type: ItrFormType;
+  payload: unknown;
+  draft_id?: string;
+}): Promise<ItrValidationResult> {
+  return authFetch('/api/itr/validate', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function finalizeItr(input: {
+  form_type: ItrFormType;
+  payload: unknown;
+  intermediaryCity?: string;
+  swId?: string;
+  draft_id?: string;
+}): Promise<ItrFinalizeResult> {
+  return authFetch('/api/itr/finalize', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+// Cached enum fetcher — enums are static once loaded.
+const enumCache = new Map<string, ItrEnumOption[]>();
+export async function fetchItrEnum(
+  name: 'states' | 'countries' | 'nature-of-business' | 'tds-sections',
+): Promise<ItrEnumOption[]> {
+  const cached = enumCache.get(name);
+  if (cached) return cached;
+  const data = (await authFetch(`/api/itr/enums/${name}`)) as { options: ItrEnumOption[] };
+  enumCache.set(name, data.options);
+  return data.options;
+}
+
+// ── Generic Profiles API (identity, address, banks, per-AY data) ────────
+
+export interface GenericProfileBank {
+  ifsc?: string;
+  name?: string;
+  accountNo?: string;
+  type?: 'SB' | 'CA' | 'CC' | 'OD' | 'NRO' | 'OTH';
+  isDefault?: boolean;
+}
+
+export interface GenericProfile {
+  id: string;
+  user_id: string;
+  name: string;
+  identity: Record<string, unknown>;
+  address: Record<string, unknown>;
+  banks: GenericProfileBank[];
+  noticeDefaults: Record<string, unknown>;
+  perAy: Record<string, Record<string, unknown>>;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function fetchGenericProfiles(): Promise<{ profiles: GenericProfile[] }> {
+  return authFetch('/api/generic-profiles');
+}
+
+export async function fetchGenericProfile(id: string): Promise<GenericProfile> {
+  return authFetch(`/api/generic-profiles/${id}`);
+}
+
+export async function createGenericProfile(name: string): Promise<GenericProfile> {
+  return authFetch('/api/generic-profiles', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function updateGenericProfile(
+  id: string,
+  patch: Partial<Omit<GenericProfile, 'id' | 'user_id' | 'created_at' | 'updated_at'>>,
+): Promise<GenericProfile> {
+  return authFetch(`/api/generic-profiles/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+}
+
+export async function updateGenericProfilePerAy(
+  id: string,
+  year: string,
+  patch: Record<string, unknown>,
+): Promise<GenericProfile> {
+  return authFetch(`/api/generic-profiles/${id}/per-ay/${year}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+}
+
+export async function deleteGenericProfile(id: string): Promise<void> {
+  await authFetch(`/api/generic-profiles/${id}`, { method: 'DELETE' });
+}
+
+// ── Email verification (OTP) ─────────────────────────────────────────────
+
+export interface VerifyEmailResult {
+  accessToken: string;
+  refreshToken: string;
+  user: { id: string; email: string; name: string; role: 'user' | 'admin'; plan: 'free' | 'pro' | 'enterprise' };
+}
+
+export async function verifyEmailCode(email: string, code: string): Promise<VerifyEmailResult> {
+  // This endpoint is public — we don't send the auth header.
+  const res = await fetch('/api/auth/verify-email', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, code }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Verification failed');
+  return data;
+}
+
+export async function resendVerificationCode(email: string): Promise<void> {
+  const res = await fetch('/api/auth/resend-verification', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Resend failed');
+}
+
+// ── Forgot password / reset password ─────────────────────────────────────
+
+export async function requestPasswordReset(email: string): Promise<void> {
+  const res = await fetch('/api/auth/forgot-password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Could not request password reset');
+}
+
+export async function resetPassword(
+  email: string,
+  code: string,
+  newPassword: string,
+): Promise<VerifyEmailResult> {
+  const res = await fetch('/api/auth/reset-password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, code, newPassword }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Password reset failed');
+  return data;
+}
+
+// ── Team invitations ─────────────────────────────────────────────────────
+
+export interface InvitationListItem {
+  id: string;
+  email: string | null;
+  phone: string | null;
+  status: 'pending' | 'accepted' | 'revoked' | 'expired';
+  expires_at: string;
+  accepted_at: string | null;
+  created_at: string;
+}
+
+export interface InvitationMember {
+  id: string;
+  email: string;
+  name: string;
+  phone: string | null;
+  created_at: string;
+}
+
+export interface InvitationsListResponse {
+  invitations: InvitationListItem[];
+  members: InvitationMember[];
+  seats: { accepted: number; pending: number; total: number; cap: number };
+  canInvite: boolean;
+}
+
+export interface CreatedInvitation extends InvitationListItem {
+  acceptUrl: string;
+  token: string;
+  emailSent: boolean;
+}
+
+export async function fetchInvitations(): Promise<InvitationsListResponse> {
+  return authFetch('/api/invitations');
+}
+
+export async function createInvitation(input: {
+  email?: string;
+  phone?: string;
+}): Promise<CreatedInvitation> {
+  return authFetch('/api/invitations', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function revokeInvitation(id: string): Promise<{ action: 'revoked' | 'detached' }> {
+  return authFetch(`/api/invitations/${id}`, { method: 'DELETE' });
+}
+
+export async function acceptInvitation(input: {
+  token: string;
+  password?: string;
+  name?: string;
+}): Promise<VerifyEmailResult> {
+  const res = await fetch('/api/invitations/accept', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Failed to accept invitation');
+  return data;
+}

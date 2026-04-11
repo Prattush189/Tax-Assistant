@@ -20,8 +20,9 @@ const stmts = {
   findByUserId: db.prepare('SELECT * FROM tax_profiles WHERE user_id = ? ORDER BY updated_at DESC'),
   findById: db.prepare('SELECT * FROM tax_profiles WHERE id = ?'),
   countByUser: db.prepare('SELECT COUNT(*) as count FROM tax_profiles WHERE user_id = ?'),
+  countByBillingUser: db.prepare('SELECT COUNT(*) as count FROM tax_profiles WHERE billing_user_id = ?'),
   create: db.prepare(
-    'INSERT INTO tax_profiles (id, user_id, name, description, fy, gross_salary, other_income, age_category, deductions_data, hra_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO tax_profiles (id, user_id, billing_user_id, name, description, fy, gross_salary, other_income, age_category, deductions_data, hra_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ),
   update: db.prepare(
     "UPDATE tax_profiles SET name = ?, description = ?, fy = ?, gross_salary = ?, other_income = ?, age_category = ?, deductions_data = ?, hra_data = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
@@ -42,14 +43,31 @@ export const profileRepo = {
     return (stmts.countByUser.get(userId) as { count: number }).count;
   },
 
+  countByBillingUser(billingUserId: string): number {
+    return (stmts.countByBillingUser.get(billingUserId) as { count: number }).count;
+  },
+
   create(
     userId: string,
     name: string,
     description: string | null,
     data: { fy: string; gross_salary: string; other_income: string; age_category: string; deductions_data: string; hra_data: string },
+    billingUserId?: string,
   ): TaxProfile {
     const id = crypto.randomBytes(16).toString('hex');
-    stmts.create.run(id, userId, name, description, data.fy, data.gross_salary, data.other_income, data.age_category, data.deductions_data, data.hra_data);
+    stmts.create.run(
+      id,
+      userId,
+      billingUserId ?? userId,
+      name,
+      description,
+      data.fy,
+      data.gross_salary,
+      data.other_income,
+      data.age_category,
+      data.deductions_data,
+      data.hra_data,
+    );
     return this.findById(id)!;
   },
 

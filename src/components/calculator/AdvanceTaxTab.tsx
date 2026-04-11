@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useMemo } from 'react';
+import { useTaxCalculator } from '../../contexts/TaxCalculatorContext';
 import { cn } from '../../lib/utils';
 import { formatINR } from '../../lib/utils';
 import { calculateAdvanceTax } from '../../lib/advanceTaxEngine';
@@ -37,10 +38,15 @@ function NumberInput({
 }
 
 export function AdvanceTaxTab() {
-  const [fy, setFy] = useState<string>(SUPPORTED_FY[0]);
-  const [estimatedIncome, setEstimatedIncome] = useState('');
-  const [tdsDeducted, setTdsDeducted] = useState('');
-  const [selfAssessment, setSelfAssessment] = useState('');
+  // Lifted state — persists across tab switches
+  const { advanceTaxTabState, setAdvanceTaxTabState } = useTaxCalculator();
+  const { fy, estimatedIncome, tdsDeducted, selfAssessment } = advanceTaxTabState;
+  const setFy = (v: string) => setAdvanceTaxTabState((s) => ({ ...s, fy: v }));
+  const setEstimatedIncome = (v: string) =>
+    setAdvanceTaxTabState((s) => ({ ...s, estimatedIncome: v }));
+  const setTdsDeducted = (v: string) => setAdvanceTaxTabState((s) => ({ ...s, tdsDeducted: v }));
+  const setSelfAssessment = (v: string) =>
+    setAdvanceTaxTabState((s) => ({ ...s, selfAssessment: v }));
 
   const result = useMemo(() => {
     const income = Number(estimatedIncome) || 0;

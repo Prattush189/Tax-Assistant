@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { grok, GROK_MODEL } from '../lib/grok.js';
 import { noticeRepo } from '../db/repositories/noticeRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
+import { getBillingUser } from '../lib/billing.js';
 import { AuthRequest } from '../types.js';
 import { retrieveContext } from '../rag/index.js';
 
@@ -96,11 +97,13 @@ router.post('/generate', async (req: AuthRequest, res: Response) => {
     return;
   }
 
-  // Check plan limit
-  const user = userRepo.findById(req.user.id);
-  const plan = user?.plan ?? 'free';
+  // Check plan limit against the BILLING (pool) user.
+  const actor = userRepo.findById(req.user.id);
+  const billingUser = actor ? getBillingUser(actor) : undefined;
+  const billingUserId = billingUser?.id ?? req.user.id;
+  const plan = billingUser?.plan ?? actor?.plan ?? 'free';
   const limit = NOTICE_LIMITS[plan] ?? NOTICE_LIMITS.free;
-  const used = noticeRepo.countByUserMonth(req.user.id);
+  const used = noticeRepo.countByBillingUserMonth(billingUserId);
 
   if (used >= limit) {
     res.status(429).json({
@@ -110,10 +113,10 @@ router.post('/generate', async (req: AuthRequest, res: Response) => {
     return;
   }
 
-  // Save notice record
+  // Save notice record — stamped with both user_id (actor) and billing_user_id (pool).
   const inputData = JSON.stringify({ noticeType, subType, senderDetails, recipientDetails, noticeDetails, keyPoints });
   const title = `${noticeType.toUpperCase()} - ${subType || 'Reply'} - ${noticeDetails?.noticeNumber || 'Draft'}`;
-  const noticeId = noticeRepo.create(req.user.id, noticeType, subType, title, inputData);
+  const noticeId = noticeRepo.create(req.user.id, noticeType, subType, title, inputData, billingUserId);
 
   // Build the user prompt
   let userPrompt = `Draft a professional reply to the following notice:\n\n`;
@@ -200,13 +203,17 @@ router.post('/generate', async (req: AuthRequest, res: Response) => {
 });
 
 // ── List user's notices ──
+// The notices list still scopes to the actor (data isolation), but the
+// usage counter on the response shows the shared-pool remaining capacity.
 router.get('/', async (req: AuthRequest, res: Response) => {
   if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
   const notices = noticeRepo.findByUser(req.user.id);
-  const user = userRepo.findById(req.user.id);
-  const plan = user?.plan ?? 'free';
+  const actor = userRepo.findById(req.user.id);
+  const billingUser = actor ? getBillingUser(actor) : undefined;
+  const billingUserId = billingUser?.id ?? req.user.id;
+  const plan = billingUser?.plan ?? actor?.plan ?? 'free';
   const limit = NOTICE_LIMITS[plan] ?? NOTICE_LIMITS.free;
-  const used = noticeRepo.countByUserMonth(req.user.id);
+  const used = noticeRepo.countByBillingUserMonth(billingUserId);
   res.json({ notices, usage: { used, limit } });
 });
 

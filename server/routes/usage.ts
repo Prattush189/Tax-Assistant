@@ -6,6 +6,7 @@ import { noticeRepo } from '../db/repositories/noticeRepo.js';
 import { profileRepo } from '../db/repositories/profileRepo.js';
 import { AuthRequest } from '../types.js';
 import { getUserLimits, getEffectivePlan } from '../lib/planLimits.js';
+import { getBillingUser, countSeats, SEAT_CAP } from '../lib/billing.js';
 
 const router = Router();
 
@@ -35,13 +36,17 @@ router.get('/', (req: AuthRequest, res: Response) => {
     return;
   }
 
-  const plan = getEffectivePlan(user);
-  const limits = getUserLimits(user);
+  // Usage counters always reflect the POOL owner (inviter or self).
+  // This means an invitee sees the combined "3,200 of 10,000 used" number
+  // — consistent with the plan text — rather than their personal slice.
+  const billingUser = getBillingUser(user);
+  const plan = getEffectivePlan(billingUser);
+  const limits = getUserLimits(billingUser);
 
   // Messages
   let messagesUsed = 0;
   try {
-    messagesUsed = usageRepo.countByUser(req.user.id, periodStartIST(limits.messages.period));
+    messagesUsed = usageRepo.countByBillingUser(billingUser.id, periodStartIST(limits.messages.period));
   } catch (err) {
     console.error('[usage] messages count failed', err);
   }
@@ -49,7 +54,7 @@ router.get('/', (req: AuthRequest, res: Response) => {
   // Attachments (monthly)
   let attachmentsUsed = 0;
   try {
-    attachmentsUsed = featureUsageRepo.countThisMonth(req.user.id, 'attachment_upload');
+    attachmentsUsed = featureUsageRepo.countThisMonthByBillingUser(billingUser.id, 'attachment_upload');
   } catch (err) {
     console.error('[usage] attachments count failed', err);
   }
@@ -57,7 +62,7 @@ router.get('/', (req: AuthRequest, res: Response) => {
   // AI Suggestions (monthly)
   let suggestionsUsed = 0;
   try {
-    suggestionsUsed = featureUsageRepo.countThisMonth(req.user.id, 'ai_suggestions');
+    suggestionsUsed = featureUsageRepo.countThisMonthByBillingUser(billingUser.id, 'ai_suggestions');
   } catch (err) {
     console.error('[usage] suggestions count failed', err);
   }
@@ -65,7 +70,7 @@ router.get('/', (req: AuthRequest, res: Response) => {
   // Notice drafts (monthly)
   let noticesUsed = 0;
   try {
-    noticesUsed = noticeRepo.countByUserMonth(req.user.id);
+    noticesUsed = noticeRepo.countByBillingUserMonth(billingUser.id);
   } catch (err) {
     console.error('[usage] notices count failed', err);
   }
@@ -73,15 +78,27 @@ router.get('/', (req: AuthRequest, res: Response) => {
   // Saved profiles (count — not period based)
   let profilesUsed = 0;
   try {
-    profilesUsed = profileRepo.countByUser(req.user.id);
+    profilesUsed = profileRepo.countByBillingUser(billingUser.id);
   } catch (err) {
     console.error('[usage] profiles count failed', err);
   }
+
+  // Surface "shared with" info for invited users
+  const isSharedMember = !!user.inviter_id && user.inviter_id !== user.id;
+  const sharedWith = isSharedMember
+    ? {
+        inviterId: billingUser.id,
+        inviterName: billingUser.name,
+        memberCount: countSeats(billingUser.id).accepted, // incl. inviter
+        seatCap: SEAT_CAP,
+      }
+    : undefined;
 
   res.json({
     plan,
     pluginRole: user.plugin_role ?? undefined,
     consultantId: user.plugin_consultant_id ?? undefined,
+    sharedWith,
     usage: {
       messages: {
         used: messagesUsed,

@@ -7,6 +7,9 @@ import { LoadingAnimation } from '../ui/LoadingAnimation';
 
 interface SignupPageProps {
   onSwitchToLogin: () => void;
+  /** Called with the normalized email after signup succeeds and a verification
+   *  code has been sent. Parent routes to the VerifyEmailPage. */
+  onNeedsVerification?: (email: string) => void;
 }
 
 const features = [
@@ -15,7 +18,7 @@ const features = [
   { icon: BarChart3, label: 'Tax Calculator & Dashboard' },
 ];
 
-export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
+export function SignupPage({ onSwitchToLogin, onNeedsVerification }: SignupPageProps) {
   const { signup } = useAuth();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -40,7 +43,10 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
 
     setIsSubmitting(true);
     try {
-      await signup(name, email, password);
+      const result = await signup(name, email, password);
+      if (result.needsEmailVerification) {
+        onNeedsVerification?.(result.email ?? email.toLowerCase().trim());
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Signup failed');
     } finally {

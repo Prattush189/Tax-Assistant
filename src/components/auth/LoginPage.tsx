@@ -7,6 +7,12 @@ import { LoadingAnimation } from '../ui/LoadingAnimation';
 
 interface LoginPageProps {
   onSwitchToSignup: () => void;
+  /** Called when the login response indicates the email still needs verification.
+   *  Parent routes to the VerifyEmailPage. */
+  onNeedsVerification?: (email: string) => void;
+  /** Called when the user clicks "Forgot password?" — parent routes to the
+   *  ForgotPasswordPage and can prefill the email from the login field. */
+  onForgotPassword?: (email: string) => void;
 }
 
 const features = [
@@ -15,9 +21,10 @@ const features = [
   { icon: BarChart3, label: 'Tax Calculator & Dashboard' },
 ];
 
-export function LoginPage({ onSwitchToSignup }: LoginPageProps) {
+export function LoginPage({ onSwitchToSignup, onNeedsVerification, onForgotPassword }: LoginPageProps) {
   const { login } = useAuth();
-  const [email, setEmail] = useState('');
+  // `identifier` may be email OR phone — server dispatches on the '@' sign
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
@@ -29,7 +36,10 @@ export function LoginPage({ onSwitchToSignup }: LoginPageProps) {
     setIsSubmitting(true);
 
     try {
-      await login(email, password);
+      const result = await login(identifier, password);
+      if (result.needsEmailVerification) {
+        onNeedsVerification?.(result.email ?? identifier);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed');
     } finally {
@@ -113,19 +123,31 @@ export function LoginPage({ onSwitchToSignup }: LoginPageProps) {
 
           <form onSubmit={handleSubmit} className="space-y-5">
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Email</label>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Email or phone</label>
               <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                type="text"
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
+                autoComplete="username"
                 required
                 className="w-full px-4 py-3 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 text-gray-900 dark:text-white transition-all placeholder:text-gray-400"
-                placeholder="you@example.com"
+                placeholder="you@example.com or 9999999999"
               />
             </motion.div>
 
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Password</label>
+              <div className="flex items-baseline justify-between mb-2">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Password</label>
+                {onForgotPassword && (
+                  <button
+                    type="button"
+                    onClick={() => onForgotPassword(identifier)}
+                    className="text-xs font-medium text-emerald-600 dark:text-emerald-400 hover:underline"
+                  >
+                    Forgot password?
+                  </button>
+                )}
+              </div>
               <div className="relative">
                 <input
                   type={showPassword ? 'text' : 'password'}

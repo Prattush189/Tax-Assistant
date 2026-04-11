@@ -8,14 +8,33 @@ interface User {
   plan: 'free' | 'pro' | 'enterprise';
 }
 
+export interface SignupResult {
+  /** Set when the backend requires email OTP verification before issuing JWTs. */
+  needsEmailVerification?: boolean;
+  /** Pre-normalized email the user should enter their code for. */
+  email?: string;
+}
+
+export interface LoginResult {
+  /** Set when login is blocked pending email verification (password-based only). */
+  needsEmailVerification?: boolean;
+  email?: string;
+}
+
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  /** Accepts email OR phone as the identifier. Returns a hint when the user
+   *  still needs to verify their email — callers should route to the OTP page. */
+  login: (identifier: string, password: string) => Promise<LoginResult>;
   loginWithGoogle: (idToken: string) => Promise<void>;
   loginWithSso: (accessToken: string, refreshToken: string, user: User) => void;
-  signup: (name: string, email: string, password: string) => Promise<void>;
+  /** Returns `{ needsEmailVerification: true, email }` instead of setting the
+   *  user — a JWT is only issued after POST /api/auth/verify-email succeeds. */
+  signup: (name: string, email: string, password: string) => Promise<SignupResult>;
+  /** Called by VerifyEmailPage after the server returns tokens. */
+  completeEmailVerification: (accessToken: string, refreshToken: string, user: User) => void;
   logout: () => void;
   getAuthHeader: () => Record<string, string>;
   refreshUser: () => Promise<void>;
@@ -34,8 +53,15 @@ async function apiFetch(url: string, options: RequestInit = {}) {
       ...options.headers,
     },
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Request failed');
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    // Preserve server-provided metadata (e.g. needsEmailVerification) on the error
+    const err = new Error(data.error || 'Request failed') as Error & Record<string, unknown>;
+    for (const k of Object.keys(data ?? {})) {
+      if (k !== 'error') err[k] = data[k];
+    }
+    throw err;
+  }
   return data;
 }
 
@@ -94,14 +120,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     validate();
   }, [refreshAccessToken, logout, fetchMe]);
 
-  const login = async (email: string, password: string) => {
-    const data = await apiFetch('/api/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ email, password }),
-    });
-    localStorage.setItem(TOKEN_KEY, data.accessToken);
-    localStorage.setItem(REFRESH_KEY, data.refreshToken);
-    setUser(data.user);
+  const login = async (identifier: string, password: string): Promise<LoginResult> => {
+    try {
+      const data = await apiFetch('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ identifier, password }),
+      });
+      localStorage.setItem(TOKEN_KEY, data.accessToken);
+      localStorage.setItem(REFRESH_KEY, data.refreshToken);
+      setUser(data.user);
+      return {};
+    } catch (err) {
+      const e = err as Error & { needsEmailVerification?: boolean; email?: string };
+      if (e.needsEmailVerification) {
+        return { needsEmailVerification: true, email: e.email ?? identifier };
+      }
+      throw err;
+    }
   };
 
   const loginWithGoogle = async (code: string) => {
@@ -121,15 +156,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(ssoUser);
   }, []);
 
-  const signup = async (name: string, email: string, password: string) => {
+  const signup = async (name: string, email: string, password: string): Promise<SignupResult> => {
     const data = await apiFetch('/api/auth/signup', {
       method: 'POST',
       body: JSON.stringify({ name, email, password }),
     });
-    localStorage.setItem(TOKEN_KEY, data.accessToken);
-    localStorage.setItem(REFRESH_KEY, data.refreshToken);
-    setUser(data.user);
+    if (data.needsEmailVerification) {
+      // No tokens yet — caller routes to VerifyEmailPage
+      return { needsEmailVerification: true, email: data.email ?? email.toLowerCase().trim() };
+    }
+    // Legacy path (should not happen after server rollout, but handles dev fallback)
+    if (data.accessToken && data.refreshToken && data.user) {
+      localStorage.setItem(TOKEN_KEY, data.accessToken);
+      localStorage.setItem(REFRESH_KEY, data.refreshToken);
+      setUser(data.user);
+    }
+    return {};
   };
+
+  /** Persists JWTs + user from a successful /verify-email response. */
+  const completeEmailVerification = useCallback(
+    (accessToken: string, refreshToken: string, verifiedUser: User) => {
+      localStorage.setItem(TOKEN_KEY, accessToken);
+      localStorage.setItem(REFRESH_KEY, refreshToken);
+      setUser(verifiedUser);
+    },
+    [],
+  );
 
   const refreshUser = useCallback(async () => {
     const token = localStorage.getItem(TOKEN_KEY);
@@ -154,6 +207,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loginWithGoogle,
         loginWithSso,
         signup,
+        completeEmailVerification,
         logout,
         getAuthHeader,
         refreshUser,

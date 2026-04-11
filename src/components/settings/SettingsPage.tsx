@@ -10,6 +10,7 @@ import {
 import { usePreferences } from '../../hooks/usePreferences';
 import { cn } from '../../lib/utils';
 import toast from 'react-hot-toast';
+import { TeamSection } from './TeamSection';
 
 interface SectionProps {
   title: string;
@@ -326,6 +327,9 @@ export function SettingsPage() {
               </button>
             </div>
           </Section>
+
+          {/* Team — shows for all plans (with explainer on non-enterprise) */}
+          <TeamSection />
 
           {/* Delete Account */}
           <Section

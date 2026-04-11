@@ -15,6 +15,9 @@ export interface UserRow {
   plugin_limits: string | null;       // JSON — see server/lib/planLimits.ts
   plugin_role: string | null;         // 'consultant' | 'staff' | 'client'
   plugin_consultant_id: string | null;
+  phone: string | null;               // digits-only, used for phone-login plugin users
+  email_verified: number;             // 0 | 1 (SQLite has no bool)
+  inviter_id: string | null;          // pool owner for shared-plan members
   created_at: string;
   updated_at: string;
 }
@@ -22,6 +25,7 @@ export interface UserRow {
 const stmts = {
   findByEmail: db.prepare('SELECT * FROM users WHERE email = ?'),
   findById: db.prepare('SELECT * FROM users WHERE id = ?'),
+  findByPhone: db.prepare('SELECT * FROM users WHERE phone = ?'),
   findByGoogleId: db.prepare('SELECT * FROM users WHERE google_id = ?'),
   findByExternalId: db.prepare('SELECT * FROM users WHERE external_id = ?'),
   findAll: db.prepare(`
@@ -45,13 +49,13 @@ const stmts = {
     "UPDATE users SET suspended_until = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
   ),
   createFromGoogle: db.prepare(
-    "INSERT INTO users (id, email, password, name, google_id) VALUES (?, ?, '', ?, ?)"
+    "INSERT INTO users (id, email, password, name, google_id, email_verified) VALUES (?, ?, '', ?, ?, 1)"
   ),
   linkGoogle: db.prepare(
     "UPDATE users SET google_id = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
   ),
   createFromExternal: db.prepare(
-    "INSERT INTO users (id, email, password, name, external_id) VALUES (?, ?, '', ?, ?)"
+    "INSERT INTO users (id, email, password, name, external_id, email_verified) VALUES (?, ?, '', ?, ?, 1)"
   ),
   linkExternalId: db.prepare(
     "UPDATE users SET external_id = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
@@ -59,6 +63,29 @@ const stmts = {
   updatePluginOverrides: db.prepare(
     "UPDATE users SET plugin_plan = ?, plugin_limits = ?, plugin_role = ?, plugin_consultant_id = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
   ),
+  // Phone + create-from-phone + email verified + inviter
+  createFromPhone: db.prepare(
+    "INSERT INTO users (id, email, password, name, phone, email_verified) VALUES (?, ?, ?, ?, ?, 0)"
+  ),
+  setPhone: db.prepare(
+    "UPDATE users SET phone = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
+  ),
+  markEmailVerified: db.prepare(
+    "UPDATE users SET email_verified = 1, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
+  ),
+  setInviterId: db.prepare(
+    "UPDATE users SET inviter_id = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
+  ),
+  clearInviterIdById: db.prepare(
+    "UPDATE users SET inviter_id = NULL, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
+  ),
+  detachAllInviteesOfInviter: db.prepare(
+    "UPDATE users SET inviter_id = NULL, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE inviter_id = ?"
+  ),
+  listInvitees: db.prepare(
+    'SELECT id, email, name, phone, created_at FROM users WHERE inviter_id = ? ORDER BY created_at ASC'
+  ),
+  countInvitees: db.prepare('SELECT COUNT(*) as n FROM users WHERE inviter_id = ?'),
   updateEmail: db.prepare(
     "UPDATE users SET email = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
   ),
@@ -159,4 +186,89 @@ export const userRepo = {
   deleteById(id: string): void {
     stmts.deleteById.run(id);
   },
+
+  /* ---------- Phone login + identifier dispatch ------------------------ */
+
+  findByPhone(phone: string): UserRow | undefined {
+    return stmts.findByPhone.get(normalizePhone(phone)) as UserRow | undefined;
+  },
+
+  /**
+   * Looks up by email if the identifier contains `@`, otherwise by phone.
+   * Used by POST /api/auth/login which now accepts `{identifier, password}`.
+   */
+  findByIdentifier(identifier: string): UserRow | undefined {
+    const id = identifier.trim();
+    if (id.includes('@')) return this.findByEmail(id);
+    return this.findByPhone(id);
+  },
+
+  setPhone(userId: string, phone: string): void {
+    stmts.setPhone.run(normalizePhone(phone), userId);
+  },
+
+  /**
+   * Creates a phone-only user using a synthetic `<digits>@phone.local` email
+   * placeholder so the `email NOT NULL` constraint stays intact. Login skips
+   * the email-verified check for these accounts.
+   */
+  createFromPhone(phone: string, hashedPassword: string, name: string): UserRow {
+    const id = crypto.randomBytes(16).toString('hex');
+    const digits = normalizePhone(phone);
+    const syntheticEmail = `${digits}@phone.local`;
+    stmts.createFromPhone.run(id, syntheticEmail, hashedPassword, name, digits);
+    return this.findById(id)!;
+  },
+
+  /* ---------- Email verification + invite plumbing --------------------- */
+
+  markEmailVerified(userId: string): void {
+    stmts.markEmailVerified.run(userId);
+  },
+
+  setInviterId(userId: string, inviterId: string): void {
+    stmts.setInviterId.run(inviterId, userId);
+  },
+
+  clearInviterId(userId: string): void {
+    stmts.clearInviterIdById.run(userId);
+  },
+
+  /**
+   * On enterprise→lower plan change, detach every user that was invited by
+   * the given inviter. Historical usage rows keep their old billing_user_id
+   * for audit; future writes now route to each user's own id via the billing
+   * helper.
+   */
+  detachAllInvitees(inviterId: string): void {
+    stmts.detachAllInviteesOfInviter.run(inviterId);
+  },
+
+  listInvitees(
+    inviterId: string,
+  ): Array<{ id: string; email: string; name: string; phone: string | null; created_at: string }> {
+    return stmts.listInvitees.all(inviterId) as Array<{
+      id: string;
+      email: string;
+      name: string;
+      phone: string | null;
+      created_at: string;
+    }>;
+  },
+
+  countInvitees(inviterId: string): number {
+    return (stmts.countInvitees.get(inviterId) as { n: number }).n;
+  },
 };
+
+/**
+ * Phone normalizer: strip all non-digit characters except a leading `+`.
+ * Keeps the representation consistent so `9999999999`, `+91 99999 99999`,
+ * and `(999) 999-9999` all hit the same row.
+ */
+export function normalizePhone(raw: string): string {
+  const trimmed = raw.trim();
+  const hasPlus = trimmed.startsWith('+');
+  const digits = trimmed.replace(/\D/g, '');
+  return hasPlus ? `+${digits}` : digits;
+}

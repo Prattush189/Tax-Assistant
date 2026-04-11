@@ -16,7 +16,7 @@ export interface Notice {
 
 const stmts = {
   create: db.prepare(
-    'INSERT INTO notices (id, user_id, notice_type, sub_type, title, input_data) VALUES (?, ?, ?, ?, ?, ?)'
+    'INSERT INTO notices (id, user_id, billing_user_id, notice_type, sub_type, title, input_data) VALUES (?, ?, ?, ?, ?, ?, ?)'
   ),
   findById: db.prepare('SELECT * FROM notices WHERE id = ?'),
   findByUser: db.prepare(
@@ -33,12 +33,28 @@ const stmts = {
     SELECT COUNT(*) AS count FROM notices
     WHERE user_id = ? AND created_at >= ?
   `),
+  countByBillingUserMonth: db.prepare(`
+    SELECT COUNT(*) AS count FROM notices
+    WHERE billing_user_id = ? AND created_at >= ?
+  `),
 };
 
 export const noticeRepo = {
-  create(userId: string, noticeType: string, subType: string | null, title: string | null, inputData: string | null): string {
+  /**
+   * Create a notice row. `billingUserId` identifies the pool owner whose
+   * monthly notice quota is charged — defaults to `userId` for standalone
+   * users (no inviter).
+   */
+  create(
+    userId: string,
+    noticeType: string,
+    subType: string | null,
+    title: string | null,
+    inputData: string | null,
+    billingUserId?: string,
+  ): string {
     const id = crypto.randomBytes(16).toString('hex');
-    stmts.create.run(id, userId, noticeType, subType, title, inputData);
+    stmts.create.run(id, userId, billingUserId ?? userId, noticeType, subType, title, inputData);
     return id;
   },
 
@@ -68,6 +84,14 @@ export const noticeRepo = {
     const start = new Date(now.getFullYear(), now.getMonth(), 1);
     const since = start.toISOString().replace('Z', '');
     const row = stmts.countByUserMonth.get(userId, since) as { count: number };
+    return row.count;
+  },
+
+  countByBillingUserMonth(billingUserId: string): number {
+    const now = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+    const start = new Date(now.getFullYear(), now.getMonth(), 1);
+    const since = start.toISOString().replace('Z', '');
+    const row = stmts.countByBillingUserMonth.get(billingUserId, since) as { count: number };
     return row.count;
   },
 };

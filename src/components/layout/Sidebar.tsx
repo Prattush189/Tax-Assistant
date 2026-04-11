@@ -1,12 +1,12 @@
-import { X, Plus, Moon, Sun, LogOut, Trash2, MessageSquare, MessageCircle, Calculator, LayoutDashboard, Shield, CreditCard, FileText, Settings, AlertTriangle, Lock } from 'lucide-react';
+import { X, Plus, Moon, Sun, LogOut, Trash2, MessageSquare, MessageCircle, Calculator, LayoutDashboard, Shield, CreditCard, FileText, FileSpreadsheet, User, Settings, AlertTriangle, Lock } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { ChatItem, NoticeItem } from '../../services/api';
+import { ChatItem, NoticeItem, ItrDraft, GenericProfile } from '../../services/api';
 import { useState } from 'react';
 import { usePreferences } from '../../hooks/usePreferences';
 import { useAuth } from '../../contexts/AuthContext';
 import { CalculatorTab, CALCULATOR_TABS } from '../calculator/CalculatorView';
 
-type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings';
+type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile';
 
 interface SidebarProps {
   isOpen: boolean;
@@ -23,6 +23,16 @@ interface SidebarProps {
   onNewNotice: () => void;
   onSwitchNotice: (noticeId: string) => void;
   onDeleteNotice: (noticeId: string) => void;
+  itrDraftList: ItrDraft[];
+  currentItrDraftId: string | null;
+  onNewItrDraft: () => void;
+  onSwitchItrDraft: (draftId: string) => void;
+  onDeleteItrDraft: (draftId: string) => void;
+  profileList: GenericProfile[];
+  currentProfileId: string | null;
+  onNewProfile: () => void;
+  onSwitchProfile: (profileId: string) => void;
+  onDeleteProfile: (profileId: string) => void;
   user: { id: string; email: string; name: string; role: string; plan?: string } | null;
   onLogout: () => void;
   activeView: ActiveView;
@@ -42,6 +52,8 @@ const baseNavItems: { id: ActiveView; label: string; icon: typeof MessageCircle 
 ];
 
 const adminNavItem = { id: 'admin' as ActiveView, label: 'Admin', icon: Shield };
+const itrNavItem = { id: 'itr' as ActiveView, label: 'ITR', icon: FileSpreadsheet };
+const profileNavItem = { id: 'profile' as ActiveView, label: 'Profile', icon: User };
 
 function timeAgo(dateStr: string): string {
   const istNow = Date.now() + (5.5 * 60 * 60 * 1000) + (new Date().getTimezoneOffset() * 60 * 1000);
@@ -77,6 +89,8 @@ export function Sidebar({
   isOpen, onClose, isDarkMode, onToggleTheme,
   chatList, currentChatId, onNewChat, onSwitchChat, onDeleteChat,
   noticeList, currentNoticeId, onNewNotice, onSwitchNotice, onDeleteNotice,
+  itrDraftList, currentItrDraftId, onNewItrDraft, onSwitchItrDraft, onDeleteItrDraft,
+  profileList, currentProfileId, onNewProfile, onSwitchProfile, onDeleteProfile,
   user, onLogout, activeView, onViewChange,
   calculatorTab, onCalculatorTabChange,
 }: SidebarProps) {
@@ -85,6 +99,8 @@ export function Sidebar({
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [pendingDeleteChat, setPendingDeleteChat] = useState<{ id: string; title: string } | null>(null);
   const [pendingDeleteNotice, setPendingDeleteNotice] = useState<{ id: string; title: string } | null>(null);
+  const [pendingDeleteItr, setPendingDeleteItr] = useState<{ id: string; title: string } | null>(null);
+  const [pendingDeleteProfile, setPendingDeleteProfile] = useState<{ id: string; title: string } | null>(null);
   const { prefs } = usePreferences();
 
   const handleDelete = async (e: React.MouseEvent, chatId: string) => {
@@ -132,7 +148,51 @@ export function Sidebar({
     onClose();
   };
 
-  const navItems = [...baseNavItems, ...(user?.role === 'admin' ? [adminNavItem] : [])];
+  const handleDeleteItr = (e: React.MouseEvent, draftId: string) => {
+    e.stopPropagation();
+    if (prefs.confirmBeforeDeletingChats) {
+      const draft = itrDraftList.find((d) => d.id === draftId);
+      setPendingDeleteItr({ id: draftId, title: draft?.name || 'this draft' });
+      return;
+    }
+    performDeleteItr(draftId);
+  };
+
+  const performDeleteItr = async (draftId: string) => {
+    setDeletingId(draftId);
+    try {
+      await onDeleteItrDraft(draftId);
+    } finally {
+      setDeletingId(null);
+      setPendingDeleteItr(null);
+    }
+  };
+
+  const handleDeleteProfile = (e: React.MouseEvent, profileId: string) => {
+    e.stopPropagation();
+    if (prefs.confirmBeforeDeletingChats) {
+      const profile = profileList.find((p) => p.id === profileId);
+      setPendingDeleteProfile({ id: profileId, title: profile?.name || 'this profile' });
+      return;
+    }
+    performDeleteProfile(profileId);
+  };
+
+  const performDeleteProfile = async (profileId: string) => {
+    setDeletingId(profileId);
+    try {
+      await onDeleteProfile(profileId);
+    } finally {
+      setDeletingId(null);
+      setPendingDeleteProfile(null);
+    }
+  };
+
+  const navItems = [
+    ...baseNavItems,
+    profileNavItem,
+    ...(user?.role === 'admin' ? [itrNavItem, adminNavItem] : []),
+  ];
 
   return (
     <aside className={cn(
@@ -196,6 +256,28 @@ export function Sidebar({
           >
             <Plus className="w-4 h-4" />
             New Notice
+          </button>
+        )}
+
+        {/* New ITR Draft Button */}
+        {activeView === 'itr' && (
+          <button
+            onClick={() => { onNewItrDraft(); onClose(); }}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-xl shadow-md shadow-emerald-600/15 transition-all text-sm"
+          >
+            <Plus className="w-4 h-4" />
+            New ITR Draft
+          </button>
+        )}
+
+        {/* New Profile Button */}
+        {activeView === 'profile' && (
+          <button
+            onClick={() => { onNewProfile(); onClose(); }}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-xl shadow-md shadow-emerald-600/15 transition-all text-sm"
+          >
+            <Plus className="w-4 h-4" />
+            New Profile
           </button>
         )}
       </div>
@@ -290,6 +372,94 @@ export function Sidebar({
               </div>
             )}
           </>
+        ) : activeView === 'profile' ? (
+          <>
+            <h2 className="text-[11px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider px-2 py-2">Profiles</h2>
+            {profileList.length === 0 ? (
+              <p className="text-sm text-gray-400 dark:text-gray-500 px-3 py-4 text-center">No profiles yet. Create one!</p>
+            ) : (
+              <div className="space-y-0.5">
+                {profileList.map((profile) => {
+                  const isActive = currentProfileId === profile.id;
+                  return (
+                    <button
+                      key={profile.id}
+                      onClick={() => { onSwitchProfile(profile.id); onClose(); }}
+                      className={cn(
+                        "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left transition-all group relative",
+                        isActive
+                          ? "bg-emerald-50 dark:bg-emerald-900/15 text-emerald-700 dark:text-emerald-300"
+                          : "text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/60"
+                      )}
+                    >
+                      <User className={cn(
+                        "w-4 h-4 shrink-0",
+                        isActive ? "text-emerald-500" : "text-gray-300 dark:text-gray-600"
+                      )} />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{profile.name}</p>
+                        <p className="text-[11px] text-gray-400 dark:text-gray-500">{timeAgo(profile.updated_at)}</p>
+                      </div>
+                      <button
+                        onClick={(e) => handleDeleteProfile(e, profile.id)}
+                        disabled={deletingId === profile.id}
+                        className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all shrink-0"
+                      >
+                        <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                      </button>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        ) : activeView === 'itr' ? (
+          <>
+            <h2 className="text-[11px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider px-2 py-2">ITR Drafts</h2>
+            {itrDraftList.length === 0 ? (
+              <p className="text-sm text-gray-400 dark:text-gray-500 px-3 py-4 text-center">No drafts yet. Start one!</p>
+            ) : (
+              <div className="space-y-0.5">
+                {itrDraftList.map((draft) => {
+                  const isActive = currentItrDraftId === draft.id;
+                  return (
+                    <button
+                      key={draft.id}
+                      onClick={() => { onSwitchItrDraft(draft.id); onClose(); }}
+                      className={cn(
+                        "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left transition-all group relative",
+                        isActive
+                          ? "bg-emerald-50 dark:bg-emerald-900/15 text-emerald-700 dark:text-emerald-300"
+                          : "text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/60"
+                      )}
+                    >
+                      <FileSpreadsheet className={cn(
+                        "w-4 h-4 shrink-0",
+                        isActive ? "text-emerald-500" : "text-gray-300 dark:text-gray-600"
+                      )} />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{draft.name}</p>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] font-medium uppercase text-emerald-600/70 dark:text-emerald-400/70">
+                            {draft.form_type} · AY {draft.assessment_year}
+                          </span>
+                          <span className="text-[11px] text-gray-400 dark:text-gray-500">·</span>
+                          <p className="text-[11px] text-gray-400 dark:text-gray-500">{timeAgo(draft.updated_at)}</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={(e) => handleDeleteItr(e, draft.id)}
+                        disabled={deletingId === draft.id}
+                        className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all shrink-0"
+                      >
+                        <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                      </button>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </>
         ) : activeView === 'calculator' ? (
           <>
             <h2 className="text-[11px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider px-2 py-2">Calculators</h2>
@@ -361,6 +531,18 @@ export function Sidebar({
               </span>
             </div>
             <button
+              onClick={() => onViewChange('settings')}
+              className={cn(
+                'p-1.5 rounded-lg transition-colors',
+                activeView === 'settings'
+                  ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400'
+                  : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 dark:text-gray-400',
+              )}
+              title="Settings"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
+            <button
               onClick={onLogout}
               className="p-1.5 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
               title="Logout"
@@ -405,6 +587,86 @@ export function Sidebar({
                 className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50"
               >
                 {deletingId === pendingDeleteNotice.id ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete profile confirmation dialog */}
+      {pendingDeleteProfile && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={() => setPendingDeleteProfile(null)}
+        >
+          <div
+            className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-6 max-w-sm w-full border border-gray-200 dark:border-gray-700"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-red-100 dark:bg-red-900/30 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-red-600 dark:text-red-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Delete profile?</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400 break-words">
+                  "{pendingDeleteProfile.title}" and all its per-AY data will be permanently deleted.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setPendingDeleteProfile(null)}
+                className="px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => performDeleteProfile(pendingDeleteProfile.id)}
+                disabled={deletingId === pendingDeleteProfile.id}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50"
+              >
+                {deletingId === pendingDeleteProfile.id ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete ITR draft confirmation dialog */}
+      {pendingDeleteItr && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={() => setPendingDeleteItr(null)}
+        >
+          <div
+            className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-6 max-w-sm w-full border border-gray-200 dark:border-gray-700"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-red-100 dark:bg-red-900/30 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-red-600 dark:text-red-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Delete ITR draft?</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400 break-words">
+                  "{pendingDeleteItr.title}" will be permanently deleted.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setPendingDeleteItr(null)}
+                className="px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => performDeleteItr(pendingDeleteItr.id)}
+                disabled={deletingId === pendingDeleteItr.id}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50"
+              >
+                {deletingId === pendingDeleteItr.id ? 'Deleting...' : 'Delete'}
               </button>
             </div>
           </div>

@@ -16,6 +16,7 @@ import {
   type DeductionType,
   type PayeeStatus,
 } from '../../lib/tdsEngine';
+import { useTaxCalculator } from '../../contexts/TaxCalculatorContext';
 
 /**
  * Given an FY, should we show the IT Act 2025 (new) section as primary?
@@ -37,19 +38,31 @@ function sectionLabel(section: TdsSection, fy: TdsFY): string {
 }
 
 export function TdsTab() {
-  const [fy, setFy] = useState<TdsFY>('2025-26');
-  const [category, setCategory] = useState<TdsCategory>('resident');
-  const [sectionId, setSectionId] = useState<string>(
-    getTdsSectionsForCategory('resident')[0].id,
-  );
-  const [amount, setAmount] = useState('');
-  const [hasPAN, setHasPAN] = useState(true);
-  const [deductionType, setDeductionType] = useState<DeductionType>('prescribed');
-  const [aggregatePaid, setAggregatePaid] = useState('');
-  const [lowerRatePct, setLowerRatePct] = useState('');
-  const [payeeStatus, setPayeeStatus] = useState<PayeeStatus>('individual');
+  // Lifted state — persists across tab switches
+  const { tdsTabState, setTdsTabState } = useTaxCalculator();
+  const {
+    fy,
+    category,
+    sectionId,
+    amount,
+    hasPAN,
+    deductionType,
+    aggregatePaid,
+    lowerRatePct,
+    payeeStatus,
+  } = tdsTabState;
 
-  // Combobox state
+  const setFy = (v: TdsFY) => setTdsTabState((s) => ({ ...s, fy: v }));
+  const setCategory = (v: TdsCategory) => setTdsTabState((s) => ({ ...s, category: v }));
+  const setSectionId = (v: string) => setTdsTabState((s) => ({ ...s, sectionId: v }));
+  const setAmount = (v: string) => setTdsTabState((s) => ({ ...s, amount: v }));
+  const setHasPAN = (v: boolean) => setTdsTabState((s) => ({ ...s, hasPAN: v }));
+  const setDeductionType = (v: DeductionType) => setTdsTabState((s) => ({ ...s, deductionType: v }));
+  const setAggregatePaid = (v: string) => setTdsTabState((s) => ({ ...s, aggregatePaid: v }));
+  const setLowerRatePct = (v: string) => setTdsTabState((s) => ({ ...s, lowerRatePct: v }));
+  const setPayeeStatus = (v: PayeeStatus) => setTdsTabState((s) => ({ ...s, payeeStatus: v }));
+
+  // Combobox UI state — ephemeral, stays local
   const [comboOpen, setComboOpen] = useState(false);
   const [comboQuery, setComboQuery] = useState('');
   const comboRef = useRef<HTMLDivElement>(null);

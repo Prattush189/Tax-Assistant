@@ -11,10 +11,68 @@ import {
   deleteProfile,
   TaxProfileData,
 } from '../services/api';
+import { getTdsSectionsForCategory } from '../lib/tdsEngine';
 
 import { SUPPORTED_FY } from '../data/taxRules';
+import type {
+  TdsFY,
+  TdsCategory,
+  DeductionType,
+  PayeeStatus,
+} from '../lib/tdsEngine';
+import type { CapitalGainsAssetType, GstTransactionType } from '../types';
 
 type FY = typeof SUPPORTED_FY[number];
+
+/* ---------- Per-tab state slices ------------------------------------------
+ * Lifted from each tab's local useState so that tab switches within
+ * CalculatorView don't lose the user's work, and profile save/load can
+ * read all tabs uniformly. See .planning/sessions/validated-greeting-matsumoto
+ * plan for the bug fix context.
+ */
+
+export interface TdsTabState {
+  fy: TdsFY;
+  category: TdsCategory;
+  sectionId: string;
+  amount: string;
+  hasPAN: boolean;
+  deductionType: DeductionType;
+  aggregatePaid: string;
+  lowerRatePct: string;
+  payeeStatus: PayeeStatus;
+}
+
+export interface CapitalGainsTabState {
+  fy: '2025-26' | '2024-25';
+  assetType: CapitalGainsAssetType;
+  salePrice: string;
+  purchasePrice: string;
+  holdingMonths: string;
+  acquisitionBeforeJuly2024: boolean;
+  indexedCost: string;
+}
+
+export interface GstTabState {
+  amount: string;
+  rate: number;
+  transactionType: GstTransactionType;
+  amountIncludesGST: boolean;
+}
+
+export interface AdvanceTaxTabState {
+  fy: string;
+  estimatedIncome: string;
+  tdsDeducted: string;
+  selfAssessment: string;
+}
+
+export interface SalaryOptTabState {
+  fy: string;
+  ctc: string;
+  monthlyRent: string;
+  isMetro: boolean;
+}
 
 const deductionsInitial = {
   section80C: '',
@@ -67,6 +125,17 @@ interface TaxCalculatorState {
   deleteCurrentProfile: () => Promise<void>;
   loadProfiles: () => Promise<void>;
   clearProfile: () => void;
+  // Per-tab state (lifted to survive tab switches)
+  tdsTabState: TdsTabState;
+  setTdsTabState: React.Dispatch<React.SetStateAction<TdsTabState>>;
+  cgTabState: CapitalGainsTabState;
+  setCgTabState: React.Dispatch<React.SetStateAction<CapitalGainsTabState>>;
+  gstTabState: GstTabState;
+  setGstTabState: React.Dispatch<React.SetStateAction<GstTabState>>;
+  advanceTaxTabState: AdvanceTaxTabState;
+  setAdvanceTaxTabState: React.Dispatch<React.SetStateAction<AdvanceTaxTabState>>;
+  salaryOptTabState: SalaryOptTabState;
+  setSalaryOptTabState: React.Dispatch<React.SetStateAction<SalaryOptTabState>>;
 }
 
 const TaxCalculatorContext = React.createContext<TaxCalculatorState | null>(null);
@@ -90,6 +159,50 @@ export function TaxCalculatorProvider({ children }: { children: React.ReactNode 
   const [currentProfileName, setCurrentProfileName] = useState('');
   const [profiles, setProfiles] = useState<TaxProfileData[]>([]);
   const [profileLimit, setProfileLimit] = useState(1);
+
+  // Per-tab state (lifted from each tab's local useState — see plan doc)
+  const [tdsTabState, setTdsTabState] = useState<TdsTabState>(() => ({
+    fy: '2025-26',
+    category: 'resident',
+    sectionId: getTdsSectionsForCategory('resident')[0].id,
+    amount: '',
+    hasPAN: true,
+    deductionType: 'prescribed',
+    aggregatePaid: '',
+    lowerRatePct: '',
+    payeeStatus: 'individual',
+  }));
+
+  const [cgTabState, setCgTabState] = useState<CapitalGainsTabState>({
+    fy: '2025-26',
+    assetType: 'equity',
+    salePrice: '',
+    purchasePrice: '',
+    holdingMonths: '',
+    acquisitionBeforeJuly2024: false,
+    indexedCost: '',
+  });
+
+  const [gstTabState, setGstTabState] = useState<GstTabState>({
+    amount: '',
+    rate: 18,
+    transactionType: 'intraState',
+    amountIncludesGST: false,
+  });
+
+  const [advanceTaxTabState, setAdvanceTaxTabState] = useState<AdvanceTaxTabState>({
+    fy: SUPPORTED_FY[0],
+    estimatedIncome: '',
+    tdsDeducted: '',
+    selfAssessment: '',
+  });
+
+  const [salaryOptTabState, setSalaryOptTabState] = useState<SalaryOptTabState>({
+    fy: SUPPORTED_FY[0],
+    ctc: '',
+    monthlyRent: '',
+    isMetro: true,
+  });
 
   const { oldResult, newResult } = useMemo(() => {
     const rules = getTaxRules(fy);
@@ -240,6 +353,17 @@ export function TaxCalculatorProvider({ children }: { children: React.ReactNode 
         deleteCurrentProfile,
         loadProfiles,
         clearProfile,
+        // Per-tab state
+        tdsTabState,
+        setTdsTabState,
+        cgTabState,
+        setCgTabState,
+        gstTabState,
+        setGstTabState,
+        advanceTaxTabState,
+        setAdvanceTaxTabState,
+        salaryOptTabState,
+        setSalaryOptTabState,
       }}
     >
       {children}

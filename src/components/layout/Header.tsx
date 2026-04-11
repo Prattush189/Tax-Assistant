@@ -1,8 +1,8 @@
-import { Menu, Moon, Sun, LogOut, MessageCircle, Calculator, LayoutDashboard, CreditCard, FileText, Shield, Settings, X, Minus } from 'lucide-react';
+import { Menu, Moon, Sun, LogOut, MessageCircle, Calculator, LayoutDashboard, CreditCard, FileText, FileSpreadsheet, User, Shield, Settings, X, Minus } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { postToParent } from '../../lib/pluginProtocol';
 
-type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings';
+type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile';
 
 interface HeaderProps {
   isPluginMode: boolean;
@@ -19,6 +19,7 @@ const navItems: { id: ActiveView; label: string; icon: typeof MessageCircle }[] 
   { id: 'chat', label: 'Chat', icon: MessageCircle },
   { id: 'calculator', label: 'Calculator', icon: Calculator },
   { id: 'notices', label: 'Notices', icon: FileText },
+  { id: 'profile', label: 'Profile', icon: User },
   { id: 'dashboard', label: 'Stats', icon: LayoutDashboard },
   { id: 'plan', label: 'Plan', icon: CreditCard },
 ];
@@ -39,7 +40,12 @@ export function Header({
 }: HeaderProps) {
   const allNavItems = [
     ...navItems,
-    ...(user?.role === 'admin' ? [{ id: 'admin' as ActiveView, label: 'Admin', icon: Shield }] : []),
+    ...(user?.role === 'admin'
+      ? [
+          { id: 'itr' as ActiveView, label: 'ITR', icon: FileSpreadsheet },
+          { id: 'admin' as ActiveView, label: 'Admin', icon: Shield },
+        ]
+      : []),
   ];
 
   return (

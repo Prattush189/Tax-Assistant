@@ -1,9 +1,10 @@
-import { useState, useMemo } from 'react';
+import { useMemo } from 'react';
 import { cn } from '../../lib/utils';
 import { formatINR } from '../../lib/utils';
 import { calculateCapitalGains } from '../../lib/capitalGainsEngine';
 import { getTaxRules } from '../../data/taxRules';
 import type { CapitalGainsAssetType } from '../../types';
+import { useTaxCalculator } from '../../contexts/TaxCalculatorContext';
 
 type FY = '2025-26' | '2024-25';
 
@@ -46,13 +47,25 @@ function NumberInput({
 }
 
 export function CapitalGainsTab() {
-  const [fy, setFy] = useState<FY>('2025-26');
-  const [assetType, setAssetType] = useState<CapitalGainsAssetType>('equity');
-  const [salePrice, setSalePrice] = useState('');
-  const [purchasePrice, setPurchasePrice] = useState('');
-  const [holdingMonths, setHoldingMonths] = useState('');
-  const [acquisitionBeforeJuly2024, setAcquisitionBeforeJuly2024] = useState(false);
-  const [indexedCost, setIndexedCost] = useState('');
+  // Lifted state — persists across tab switches
+  const { cgTabState, setCgTabState } = useTaxCalculator();
+  const {
+    fy,
+    assetType,
+    salePrice,
+    purchasePrice,
+    holdingMonths,
+    acquisitionBeforeJuly2024,
+    indexedCost,
+  } = cgTabState;
+  const setFy = (v: FY) => setCgTabState((s) => ({ ...s, fy: v }));
+  const setAssetType = (v: CapitalGainsAssetType) => setCgTabState((s) => ({ ...s, assetType: v }));
+  const setSalePrice = (v: string) => setCgTabState((s) => ({ ...s, salePrice: v }));
+  const setPurchasePrice = (v: string) => setCgTabState((s) => ({ ...s, purchasePrice: v }));
+  const setHoldingMonths = (v: string) => setCgTabState((s) => ({ ...s, holdingMonths: v }));
+  const setAcquisitionBeforeJuly2024 = (v: boolean) =>
+    setCgTabState((s) => ({ ...s, acquisitionBeforeJuly2024: v }));
+  const setIndexedCost = (v: string) => setCgTabState((s) => ({ ...s, indexedCost: v }));
 
   const result = useMemo(() => {
     const sale = Number(salePrice) || 0;
