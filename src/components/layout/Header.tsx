@@ -9,7 +9,7 @@ interface HeaderProps {
   isDarkMode: boolean;
   onToggleTheme: () => void;
   onOpenSidebar: () => void;
-  user: { id: string; email: string; name: string; role: string } | null;
+  user: { id: string; email: string; name: string; role: string; itr_enabled?: boolean } | null;
   onLogout: () => void;
   activeView?: ActiveView;
   onViewChange?: (view: ActiveView) => void;
@@ -38,14 +38,12 @@ export function Header({
   activeView,
   onViewChange,
 }: HeaderProps) {
+  // ITR visible to admins OR users with the itr_enabled capability.
+  const canAccessItr = user?.role === 'admin' || user?.itr_enabled === true;
   const allNavItems = [
     ...navItems,
-    ...(user?.role === 'admin'
-      ? [
-          { id: 'itr' as ActiveView, label: 'ITR', icon: FileSpreadsheet },
-          { id: 'admin' as ActiveView, label: 'Admin', icon: Shield },
-        ]
-      : []),
+    ...(canAccessItr ? [{ id: 'itr' as ActiveView, label: 'ITR', icon: FileSpreadsheet }] : []),
+    ...(user?.role === 'admin' ? [{ id: 'admin' as ActiveView, label: 'Admin', icon: Shield }] : []),
   ];
 
   return (

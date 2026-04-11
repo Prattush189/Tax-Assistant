@@ -56,6 +56,13 @@ if (!colNames.includes('plugin_consultant_id')) {
   db.exec("CREATE INDEX IF NOT EXISTS idx_users_plugin_consultant_id ON users(plugin_consultant_id)");
 }
 
+// ITR tab access capability — independent of admin role so non-admin
+// users can be granted ITR-only access without the full admin surface.
+// Flipped via server/scripts/grant-itr.ts or the admin UI (future).
+if (!colNames.includes('itr_enabled')) {
+  db.exec("ALTER TABLE users ADD COLUMN itr_enabled INTEGER NOT NULL DEFAULT 0");
+}
+
 // Phone login + email verification + team invitations (v2 team features).
 // NOTE: `phone` is nullable and unique via partial index (below) — it is only
 // set for plugin clients who log in via phone. Existing email-only users

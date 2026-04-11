@@ -16,7 +16,7 @@ import { invitationRepo, hashInviteToken, generateInviteToken, InvitationStatus 
 import { userRepo } from '../db/repositories/userRepo.js';
 import { canInvite, countSeats, SEAT_CAP } from '../lib/billing.js';
 import { mailerConfigured, sendInviteEmail } from '../lib/mailer.js';
-import { generateTokens } from './auth.js';
+import { generateTokens, toUserResponse } from './auth.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
@@ -76,13 +76,7 @@ publicInvitationRouter.post('/accept', async (req: Request, res: Response) => {
     const tokens = generateTokens(fresh);
     res.json({
       ...tokens,
-      user: {
-        id: fresh.id,
-        email: fresh.email,
-        name: fresh.name,
-        role: fresh.role ?? 'user',
-        plan: fresh.plan ?? 'free',
-      },
+      user: toUserResponse(fresh),
     });
     return;
   }
@@ -113,13 +107,7 @@ publicInvitationRouter.post('/accept', async (req: Request, res: Response) => {
   const tokens = generateTokens(fresh);
   res.status(201).json({
     ...tokens,
-    user: {
-      id: fresh.id,
-      email: fresh.email,
-      name: fresh.name,
-      role: fresh.role ?? 'user',
-      plan: fresh.plan ?? 'free',
-    },
+    user: toUserResponse(fresh),
   });
 });
 

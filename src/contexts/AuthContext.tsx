@@ -6,6 +6,8 @@ interface User {
   name: string;
   role: 'user' | 'admin';
   plan: 'free' | 'pro' | 'enterprise';
+  /** Grants ITR tab access independently of admin role. */
+  itr_enabled?: boolean;
 }
 
 export interface SignupResult {

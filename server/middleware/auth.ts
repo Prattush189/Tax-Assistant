@@ -80,3 +80,22 @@ export function adminMiddleware(req: AuthRequest, res: Response, next: NextFunct
   }
   next();
 }
+
+// ITR access — admin role OR itr_enabled = 1. Must be used after authMiddleware.
+// Used for /api/itr/* routes so non-admin ITR-granted users can hit them.
+export function itrAccessMiddleware(req: AuthRequest, res: Response, next: NextFunction): void {
+  if (!req.user) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  if (req.user.role === 'admin') {
+    next();
+    return;
+  }
+  const user = userRepo.findById(req.user.id);
+  if (user && user.itr_enabled === 1) {
+    next();
+    return;
+  }
+  res.status(403).json({ error: 'ITR access required' });
+}

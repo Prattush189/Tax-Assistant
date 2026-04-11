@@ -10,14 +10,15 @@ import { NATURE_OF_BUSINESS } from '../lib/itr/enums/natureOfBusiness.js';
 import { TDS_SECTIONS } from '../lib/itr/enums/sections.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { getBillingUserId } from '../lib/billing.js';
-import { adminMiddleware } from '../middleware/auth.js';
+import { itrAccessMiddleware } from '../middleware/auth.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
 
-// All ITR routes are admin-only. authMiddleware is applied at the parent
-// '/api' mount in server/index.ts; we layer adminMiddleware on top here.
-router.use(adminMiddleware);
+// ITR routes require admin role OR itr_enabled = 1 on the user. authMiddleware
+// is applied at the parent '/api' mount in server/index.ts; itrAccessMiddleware
+// layers on top. See server/scripts/grant-itr.ts for granting access.
+router.use(itrAccessMiddleware);
 
 function isValidFormType(v: unknown): v is ItrFormType {
   return v === 'ITR1' || v === 'ITR4';

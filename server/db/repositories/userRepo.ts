@@ -18,6 +18,7 @@ export interface UserRow {
   phone: string | null;               // digits-only, used for phone-login plugin users
   email_verified: number;             // 0 | 1 (SQLite has no bool)
   inviter_id: string | null;          // pool owner for shared-plan members
+  itr_enabled: number;                // 0 | 1 — grants ITR tab without admin role
   created_at: string;
   updated_at: string;
 }
@@ -86,6 +87,9 @@ const stmts = {
     'SELECT id, email, name, phone, created_at FROM users WHERE inviter_id = ? ORDER BY created_at ASC'
   ),
   countInvitees: db.prepare('SELECT COUNT(*) as n FROM users WHERE inviter_id = ?'),
+  setItrEnabled: db.prepare(
+    "UPDATE users SET itr_enabled = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
+  ),
   updateEmail: db.prepare(
     "UPDATE users SET email = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
   ),
@@ -258,6 +262,15 @@ export const userRepo = {
 
   countInvitees(inviterId: string): number {
     return (stmts.countInvitees.get(inviterId) as { n: number }).n;
+  },
+
+  /**
+   * Toggle ITR tab access independently of admin role. Passing `true` grants
+   * the ITR tab + access to the ITR API routes. Passing `false` revokes it.
+   * See itrAccessMiddleware and server/scripts/grant-itr.ts.
+   */
+  setItrEnabled(userId: string, enabled: boolean): void {
+    stmts.setItrEnabled.run(enabled ? 1 : 0, userId);
   },
 };
 

@@ -33,7 +33,7 @@ interface SidebarProps {
   onNewProfile: () => void;
   onSwitchProfile: (profileId: string) => void;
   onDeleteProfile: (profileId: string) => void;
-  user: { id: string; email: string; name: string; role: string; plan?: string } | null;
+  user: { id: string; email: string; name: string; role: string; plan?: string; itr_enabled?: boolean } | null;
   onLogout: () => void;
   activeView: ActiveView;
   onViewChange: (view: ActiveView) => void;
@@ -188,10 +188,14 @@ export function Sidebar({
     }
   };
 
+  // ITR shows for admins OR users with the explicit itr_enabled capability.
+  // Admin nav item stays admin-only.
+  const canAccessItr = user?.role === 'admin' || user?.itr_enabled === true;
   const navItems = [
     ...baseNavItems,
     profileNavItem,
-    ...(user?.role === 'admin' ? [itrNavItem, adminNavItem] : []),
+    ...(canAccessItr ? [itrNavItem] : []),
+    ...(user?.role === 'admin' ? [adminNavItem] : []),
   ];
 
   return (

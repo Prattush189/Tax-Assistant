@@ -79,7 +79,10 @@ function AppContent() {
 
   const chatManager = useChatManager();
   const noticeDrafter = useNoticeDrafter();
-  const itrManager = useItrManager(user?.role === 'admin');
+  // ITR tab is gated on admin role OR the explicit itr_enabled capability.
+  // See itrAccessMiddleware on the server and server/scripts/grant-itr.ts.
+  const canAccessItr = user?.role === 'admin' || user?.itr_enabled === true;
+  const itrManager = useItrManager(canAccessItr);
   const profileManager = useProfileManager(!!user);
 
   return (
@@ -157,7 +160,7 @@ function AppContent() {
               {activeView === 'admin' && user?.role === 'admin' && <AdminDashboard />}
               {activeView === 'plan' && <PlanPage />}
               {activeView === 'notices' && <NoticeDrafterPage drafter={noticeDrafter} />}
-              {activeView === 'itr' && user?.role === 'admin' && <ItrView manager={itrManager} />}
+              {activeView === 'itr' && canAccessItr && <ItrView manager={itrManager} />}
               {activeView === 'profile' && <ProfileView manager={profileManager} />}
               {activeView === 'settings' && <SettingsPage />}
             </motion.div>

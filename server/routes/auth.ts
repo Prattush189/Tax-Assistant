@@ -42,6 +42,28 @@ export function generateTokens(user: { id: string; email: string; role?: string;
 const VALID_PLUGIN_PLANS = new Set(['free', 'pro', 'enterprise', 'enterprise-shared']);
 const VALID_PLUGIN_ROLES = new Set(['consultant', 'staff', 'client']);
 
+/**
+ * Canonical user payload returned by every auth response. Keeping this in
+ * one place makes it impossible to forget `itr_enabled` on some paths.
+ */
+export function toUserResponse(u: {
+  id: string;
+  email: string;
+  name: string;
+  role?: 'user' | 'admin' | null;
+  plan?: string | null;
+  itr_enabled?: number | null;
+}) {
+  return {
+    id: u.id,
+    email: u.email,
+    name: u.name,
+    role: u.role ?? 'user',
+    plan: u.plan ?? 'free',
+    itr_enabled: u.itr_enabled === 1,
+  };
+}
+
 const OTP_TTL_SECONDS = 10 * 60;           // 10 minutes
 const OTP_RESEND_COOLDOWN_MS = 60 * 1000;  // 60 seconds
 const OTP_MAX_ATTEMPTS = 5;
@@ -174,13 +196,7 @@ router.post('/verify-email', async (req: Request, res: Response) => {
   const tokens = generateTokens(fresh);
   res.json({
     ...tokens,
-    user: {
-      id: fresh.id,
-      email: fresh.email,
-      name: fresh.name,
-      role: fresh.role ?? 'user',
-      plan: fresh.plan ?? 'free',
-    },
+    user: toUserResponse(fresh),
   });
 });
 
@@ -333,13 +349,7 @@ router.post('/reset-password', async (req: Request, res: Response) => {
   const tokens = generateTokens(fresh);
   res.json({
     ...tokens,
-    user: {
-      id: fresh.id,
-      email: fresh.email,
-      name: fresh.name,
-      role: fresh.role ?? 'user',
-      plan: fresh.plan ?? 'free',
-    },
+    user: toUserResponse(fresh),
   });
 });
 
@@ -389,7 +399,7 @@ router.post('/login', async (req: Request, res: Response) => {
   const tokens = generateTokens(user);
   res.json({
     ...tokens,
-    user: { id: user.id, email: user.email, name: user.name, role: user.role ?? 'user', plan: user.plan ?? 'free' },
+    user: toUserResponse(user),
   });
 });
 
@@ -471,7 +481,7 @@ router.post('/google', async (req: Request, res: Response) => {
     const tokens = generateTokens(user);
     res.json({
       ...tokens,
-      user: { id: user.id, email: user.email, name: user.name, role: user.role ?? 'user', plan: user.plan ?? 'free' },
+      user: toUserResponse(user),
     });
   } catch (err: any) {
     console.error('[auth/google] Verification failed:', err.message);
@@ -486,7 +496,7 @@ router.get('/me', authMiddleware, (req: AuthRequest, res: Response) => {
     res.status(404).json({ error: 'User not found' });
     return;
   }
-  res.json({ id: user.id, email: user.email, name: user.name, role: user.role ?? 'user', plan: user.plan ?? 'free' });
+  res.json(toUserResponse(user));
 });
 
 // PATCH /api/auth/name (protected) — change display name
@@ -505,7 +515,7 @@ router.patch('/name', authMiddleware, async (req: AuthRequest, res: Response) =>
   userRepo.updateName(req.user!.id, name.trim());
   const updated = userRepo.findById(req.user!.id)!;
   res.json({
-    user: { id: updated.id, email: updated.email, name: updated.name, role: updated.role ?? 'user', plan: updated.plan ?? 'free' },
+    user: toUserResponse(updated),
   });
 });
 
@@ -557,7 +567,7 @@ router.patch('/email', authMiddleware, async (req: AuthRequest, res: Response) =
   const tokens = generateTokens(updated);
   res.json({
     ...tokens,
-    user: { id: updated.id, email: updated.email, name: updated.name, role: updated.role ?? 'user', plan: updated.plan ?? 'free' },
+    user: toUserResponse(updated),
   });
 });
 
@@ -826,11 +836,7 @@ router.post('/plugin-sso', (req: Request, res: Response) => {
   res.json({
     ...tokens,
     user: {
-      id: fresh.id,
-      email: fresh.email,
-      name: fresh.name,
-      role: fresh.role ?? 'user',
-      plan: effectivePlan,
+      ...toUserResponse({ ...fresh, plan: effectivePlan }),
       pluginRole: fresh.plugin_role ?? undefined,
       consultantId: fresh.plugin_consultant_id ?? undefined,
     },
