@@ -873,6 +873,48 @@ export function retrieveContext(query: string, topK = DEFAULT_TOP_K): string | n
     .join('\n\n---\n\n');
 }
 
+/**
+ * Decide whether a comparison-guide chunk has real Act section content
+ * worth opening a PDF viewer for.
+ *
+ * Returns false (and the client falls back to the text-only SectionModal)
+ * when the chunk is editorial content like a forms mapping, deadline
+ * calendar, or commentary — content that has no corresponding page in the
+ * Act PDFs.
+ */
+function chunkHasActSectionContent(chunkText: string, sectionLabel: string): boolean {
+  const labelLower = sectionLabel.toLowerCase();
+  const textLower = chunkText.toLowerCase();
+
+  // 1. Reject obvious editorial / forms-mapping sections by label
+  const editorialLabels = [
+    'forms mapping',
+    'tds/tcs returns',
+    'tds/tcs certificates',
+    'self-declaration forms',
+    'other key forms',
+    'deadlines',
+    'compliance calendar',
+    'due dates',
+  ];
+  if (editorialLabels.some(kw => labelLower.includes(kw))) return false;
+
+  // 2. Reject chunks dominated by form references (Form X → Form Y pattern)
+  const formToFormMatches = chunkText.match(/\bForm\s+\d+[A-Z]*\b/gi) ?? [];
+  const arrowMatches = chunkText.match(/(?:→|->|—>)/g) ?? [];
+  if (formToFormMatches.length >= 4 && arrowMatches.length >= 3) return false;
+
+  // 3. Require at least ONE Act-section-style token in the chunk body:
+  //    • 80C, 194J, 143(1), 393(1), 115BAC — classic numbered sections
+  //    • "Chapter XXII" / "Schedule VII" — chapter/schedule references
+  const hasSectionToken = /\b\d{1,3}[A-Z]{1,3}(?:\(\d+[A-Za-z]?\))?\b/.test(chunkText)
+    || /\bSection\s+\d{1,3}\b/i.test(chunkText)
+    || /\bchapter\s+[IVXLC]+/i.test(textLower)
+    || /\bschedule\s+[IVXLC]+/i.test(textLower);
+
+  return hasSectionToken;
+}
+
 export function retrieveContextWithRefs(query: string, topK = DEFAULT_TOP_K): RetrievalResult | null {
   const chunks = doRetrieve(query, topK);
   if (chunks.length === 0) return null;
@@ -894,10 +936,15 @@ export function retrieveContextWithRefs(query: string, topK = DEFAULT_TOP_K): Re
       text: c.text,
     };
     if (cfg?.pdfFile) ref.pdfFile = cfg.pdfFile;
-    // For comparison source: only attach IT Act PDFs if the chunk is about IT, not GST
+    // For comparison source: only attach IT Act PDFs if the chunk
+    //   (a) is NOT about GST (the Act PDFs are IT Act only), AND
+    //   (b) actually has Act section content worth opening the viewer for
+    //       (forms-mapping / deadline-only chunks get a text-only fallback).
     if (cfg?.pdfFiles) {
       const isGstChunk = /\bGST\b|\bCGST\b|\bSGST\b|\bIGST\b|\bUTGST\b/i.test(c.text);
-      if (!isGstChunk) ref.pdfFiles = cfg.pdfFiles;
+      if (!isGstChunk && chunkHasActSectionContent(c.text, c.section)) {
+        ref.pdfFiles = cfg.pdfFiles;
+      }
     }
     return ref;
   });

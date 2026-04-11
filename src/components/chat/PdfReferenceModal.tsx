@@ -68,6 +68,12 @@ function extractSectionNumbers(text: string): string[] {
   return Array.from(found);
 }
 
+export interface PageSearchResult {
+  page: number;
+  score: number;
+  hadStrongMatch: boolean;
+}
+
 /**
  * Find the best PDF page for a reference.
  *
@@ -79,58 +85,73 @@ function extractSectionNumbers(text: string): string[] {
  *      by section.
  *   2. Fall back to literal substring match of the first 150 chars.
  *   3. Last resort: word-overlap scoring (original behaviour).
+ *
+ * Returns the best page, its score, and whether the match was "strong"
+ * (either an exact substring hit or a section-header token match). When
+ * `hadStrongMatch` is false, the caller should show a warning that the
+ * page may not correspond exactly to the reference text.
  */
 async function findPageForText(
   pdfDoc: pdfjs.PDFDocumentProxy,
   searchText: string,
-): Promise<number> {
+): Promise<PageSearchResult> {
   const sectionTokens = extractSectionNumbers(searchText);
   const needle = normalize(searchText).slice(0, 150);
   const needleWords = needle.split(' ').filter(w => w.length > 3);
 
-  if (sectionTokens.length === 0 && !needle) return 1;
+  if (sectionTokens.length === 0 && !needle) {
+    return { page: 1, score: 0, hadStrongMatch: false };
+  }
 
   let bestPage = 1;
   let bestScore = 0;
+  let bestStrong = false;
 
   for (let i = 1; i <= pdfDoc.numPages; i++) {
     const page = await pdfDoc.getPage(i);
     const content = await page.getTextContent();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rawPageText = content.items.map((item: any) => item.str ?? '').join(' ');
-    // Normalized for word-overlap comparison
     const pageText = normalize(rawPageText);
     // De-spaced version so "80 C" and "143 ( 1 )" fragments match "80C" / "143(1)"
     const despaced = rawPageText.replace(/\s+/g, '').toUpperCase();
 
     let score = 0;
+    let strong = false;
 
     // ── Section-number match ── strongest signal
     for (const tok of sectionTokens) {
-      // (a) Exact de-spaced appearance
       if (despaced.includes(tok)) score += 2;
-      // (b) Section-header style: "80c." or "80c " at a word boundary
       const escaped = tok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const headerRegex = new RegExp(`\\b${escaped}\\.?\\s`, 'i');
-      if (headerRegex.test(rawPageText)) score += 10;
+      if (headerRegex.test(rawPageText)) {
+        score += 10;
+        strong = true;
+      }
     }
 
-    // ── Literal substring fallback ──
-    if (score === 0 && needle && pageText.includes(needle)) return i;
+    // ── Literal substring match — strongest fallback ──
+    if (needle && pageText.includes(needle)) {
+      return { page: i, score: 100, hadStrongMatch: true };
+    }
 
     // ── Word-overlap fallback (weighted lower than section matches) ──
     if (needleWords.length > 0) {
       const hits = needleWords.filter(w => pageText.includes(w)).length;
-      score += hits; // +1 per word (much weaker than +10 per section header)
+      score += hits;
     }
 
     if (score > bestScore) {
       bestScore = score;
       bestPage = i;
+      bestStrong = strong;
     }
   }
 
-  return bestPage;
+  // Threshold: a best score below 3 and no strong match means nothing
+  // meaningful was found — caller should warn.
+  const hadStrongMatch = bestStrong || bestScore >= 3;
+  return { page: bestPage, score: bestScore, hadStrongMatch };
 }
 
 // Highlight matching text spans on the rendered text layer
@@ -205,6 +226,7 @@ function SinglePdfViewer({
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [numPages, setNumPages] = useState(0);
   const [currentPage, setCurrentPage] = useState<number | null>(null);
+  const [noExactMatch, setNoExactMatch] = useState(false);
   const [loading, setLoading] = useState(true);
   const [searching, setSearching] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -261,8 +283,9 @@ function SinglePdfViewer({
     async (pdf: pdfjs.PDFDocumentProxy) => {
       setNumPages(pdf.numPages);
       setSearching(true);
-      const page = await findPageForText(pdf, searchText);
-      setCurrentPage(page);
+      const result = await findPageForText(pdf, searchText);
+      setCurrentPage(result.page);
+      setNoExactMatch(!result.hadStrongMatch);
       setSearching(false);
     },
     [searchText],
@@ -345,6 +368,15 @@ function SinglePdfViewer({
               <ZoomIn className="w-4 h-4" />
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Weak-match warning */}
+      {isReady && noExactMatch && (
+        <div className="px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-800/40 shrink-0">
+          <p className="text-[11px] text-amber-700 dark:text-amber-300">
+            The referenced text is editorial / commentary — no exact section match was found in this PDF. Showing the first page.
+          </p>
         </div>
       )}
 
