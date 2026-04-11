@@ -344,3 +344,84 @@ export function zeroChapVIA(): UiChapVIA {
     TotalChapVIADeductions: 0,
   };
 }
+
+/**
+ * Canonical list of Chapter VI-A line-item keys. Shared between the mapper
+ * (toCbdtJson) and the wizard's Deductions step so the total is computed from
+ * a single source of truth.
+ */
+export const CHAP_VIA_KEYS: Array<keyof UiChapVIA> = [
+  'Section80C',
+  'Section80CCC',
+  'Section80CCDEmployeeOrSE',
+  'Section80CCD1B',
+  'Section80CCDEmployer',
+  'Section80D',
+  'Section80DD',
+  'Section80DDB',
+  'Section80E',
+  'Section80EE',
+  'Section80EEA',
+  'Section80EEB',
+  'Section80G',
+  'Section80GG',
+  'Section80GGA',
+  'Section80GGC',
+  'Section80U',
+  'Section80TTA',
+  'Section80TTB',
+  'AnyOthSec80CCH',
+];
+
+export function sumChapVIA(c: UiChapVIA | undefined): number {
+  if (!c) return 0;
+  return CHAP_VIA_KEYS.reduce((acc, k) => acc + (Number(c[k]) || 0), 0);
+}
+
+/**
+ * Chapter VI-A sections still allowed under the NEW tax regime for ITR-1
+ * (Finance Act 2023+). Full list: 80CCD(2), 80CCH (Agniveer), 80JJAA.
+ * 80JJAA isn't modelled in UiChapVIA's 20-key surface — only two here.
+ */
+export const NEW_REGIME_CHAP_VIA_KEYS: Array<keyof UiChapVIA> = [
+  'Section80CCDEmployer',   // 80CCD(2)
+  'AnyOthSec80CCH',         // 80CCH
+];
+
+/**
+ * Regime-aware Chapter VI-A sum. Under the new regime, only the two allowed
+ * sections contribute; under the old regime, all 20 line items contribute.
+ */
+export function sumChapVIAForRegime(
+  c: UiChapVIA | undefined,
+  regime: 'new' | 'old',
+): number {
+  if (!c) return 0;
+  const keys = regime === 'new' ? NEW_REGIME_CHAP_VIA_KEYS : CHAP_VIA_KEYS;
+  return keys.reduce((acc, k) => acc + (Number(c[k]) || 0), 0);
+}
+
+/**
+ * Produces the DeductUndChapVIA block for the CBDT envelope. Under the new
+ * regime we strip the disallowed fields so the server business rule
+ * `ruleTotalChapVIAMatches` sees a consistent { fields, total } pair.
+ *
+ * Upstream callers are expected to preserve the user's raw
+ * UsrDeductUndChapVIA separately so toggling back to old regime restores
+ * their values.
+ */
+export function filterChapVIAForRegime(
+  c: UiChapVIA | undefined,
+  regime: 'new' | 'old',
+): UiChapVIA {
+  if (!c) return { TotalChapVIADeductions: 0 };
+  if (regime === 'old') {
+    return { ...c };
+  }
+  const filtered: UiChapVIA = {};
+  for (const k of NEW_REGIME_CHAP_VIA_KEYS) {
+    const v = c[k];
+    if (typeof v === 'number') filtered[k] = v;
+  }
+  return filtered;
+}

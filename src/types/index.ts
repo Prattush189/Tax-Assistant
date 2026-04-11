@@ -127,11 +127,24 @@ export interface GstRules {
   specialRates: number[];
 }
 
+export interface SurchargeBracket {
+  /** Income strictly above this threshold triggers this rate (rupees). */
+  above: number;
+  /** Surcharge as a decimal, e.g. 0.10 for 10%. */
+  rate: number;
+}
+
+export interface SurchargeRules {
+  new: SurchargeBracket[];
+  old: SurchargeBracket[];
+}
+
 export interface TaxRules {
   fy: string;
   newRegime: NewRegimeConfig;
   oldRegime: OldRegimeConfig;
   cess: number;
+  surcharge: SurchargeRules;
   capitalGains: CapitalGainsRules;
   gst: GstRules;
 }

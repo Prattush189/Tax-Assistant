@@ -52,6 +52,18 @@ export interface BankSlice {
   isDefault?: boolean;             // exactly one should be true for refund
 }
 
+export interface JurisdictionBlock {
+  areaCode?: string;
+  areaDescription?: string;
+  aoType?: string;
+  rangeCode?: string;
+  aoNumber?: string;
+  aoName?: string;
+  aoEmail?: string;
+  aoBuildingId?: string;
+  aoBuildingDescription?: string;
+}
+
 export interface NoticeDefaultsSlice {
   senderName?: string;
   senderPan?: string;
@@ -60,6 +72,12 @@ export interface NoticeDefaultsSlice {
   recipientOfficer?: string;
   recipientOffice?: string;
   recipientAddress?: string;
+  /**
+   * Assessing officer jurisdiction details imported from the Income Tax
+   * portal via /api/it-portal/import. Stored here so the notice drafter can
+   * optionally address the AO directly in future.
+   */
+  jurisdiction?: JurisdictionBlock;
 }
 
 /* ---------- Per-AY slices ------------------------------------------------ */

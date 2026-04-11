@@ -1,8 +1,8 @@
-import { Menu, Moon, Sun, LogOut, MessageCircle, Calculator, LayoutDashboard, CreditCard, FileText, FileSpreadsheet, User, Shield, Settings, X, Minus } from 'lucide-react';
+import { Menu, Moon, Sun, LogOut, MessageCircle, Calculator, LayoutDashboard, CreditCard, FileText, FileSpreadsheet, Gavel, User, Shield, Settings, X, Minus } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { postToParent } from '../../lib/pluginProtocol';
 
-type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile';
+type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions';
 
 interface HeaderProps {
   isPluginMode: boolean;
@@ -40,9 +40,14 @@ export function Header({
 }: HeaderProps) {
   // ITR visible to admins OR users with the itr_enabled capability.
   const canAccessItr = user?.role === 'admin' || user?.itr_enabled === true;
+  // Board Resolutions is admin-only for v1.
+  const canAccessBoardResolutions = user?.role === 'admin';
   const allNavItems = [
     ...navItems,
     ...(canAccessItr ? [{ id: 'itr' as ActiveView, label: 'ITR', icon: FileSpreadsheet }] : []),
+    ...(canAccessBoardResolutions
+      ? [{ id: 'board_resolutions' as ActiveView, label: 'Resolutions', icon: Gavel }]
+      : []),
     ...(user?.role === 'admin' ? [{ id: 'admin' as ActiveView, label: 'Admin', icon: Shield }] : []),
   ];
 

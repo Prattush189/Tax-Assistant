@@ -55,6 +55,21 @@ export const FY_2025_26: TaxRules = {
     },
   },
   cess: 0.04,
+  surcharge: {
+    // New regime caps at 25% above ₹5Cr (Finance Act 2023)
+    new: [
+      { above: 5_000_000,  rate: 0.10 }, // > ₹50L
+      { above: 10_000_000, rate: 0.15 }, // > ₹1Cr
+      { above: 20_000_000, rate: 0.25 }, // > ₹2Cr
+    ],
+    // Old regime retains 37% for > ₹5Cr
+    old: [
+      { above: 5_000_000,  rate: 0.10 }, // > ₹50L
+      { above: 10_000_000, rate: 0.15 }, // > ₹1Cr
+      { above: 20_000_000, rate: 0.25 }, // > ₹2Cr
+      { above: 50_000_000, rate: 0.37 }, // > ₹5Cr
+    ],
+  },
   capitalGains: {
     equity: {
       ltcg: { rate: 0.125, holdingMonths: 12, exemption: 125000 },

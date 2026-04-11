@@ -15,9 +15,10 @@ interface RegimeCardProps {
   result: IncomeTaxResult;
   isWinner: boolean;
   showOldOnlyFields: boolean;
+  fy: string;
 }
 
-function RegimeCard({ label, result, isWinner, showOldOnlyFields }: RegimeCardProps) {
+function RegimeCard({ label, result, isWinner, showOldOnlyFields, fy }: RegimeCardProps) {
   return (
     <div
       className={cn(
@@ -35,6 +36,30 @@ function RegimeCard({ label, result, isWinner, showOldOnlyFields }: RegimeCardPr
           </span>
         )}
       </h3>
+
+      {/* Prominent total-tax banner */}
+      <div className="mb-4 pb-3 border-b border-gray-100 dark:border-gray-700">
+        <div className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">
+          Total tax for FY {fy}
+        </div>
+        <div className="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-0.5">
+          {formatINR(result.totalTax)}
+        </div>
+        <div className="mt-1 flex gap-4 text-xs text-gray-500 dark:text-gray-400">
+          <span>
+            Effective{' '}
+            <span className="font-medium text-gray-700 dark:text-gray-300">
+              {result.effectiveRate.toFixed(2)}%
+            </span>
+          </span>
+          <span>
+            Marginal{' '}
+            <span className="font-medium text-gray-700 dark:text-gray-300">
+              {(result.marginalRate * 100).toFixed(0)}%
+            </span>
+          </span>
+        </div>
+      </div>
 
       {/* Income breakdown */}
       <div className="space-y-1 text-xs mb-3">
@@ -105,14 +130,6 @@ function RegimeCard({ label, result, isWinner, showOldOnlyFields }: RegimeCardPr
           <span className="text-gray-500 dark:text-gray-400">Cess (4%)</span>
           <span className="text-gray-700 dark:text-gray-300">{formatINR(result.cess)}</span>
         </div>
-        <div className="flex justify-between border-t border-gray-200 dark:border-gray-600 pt-1 mt-1">
-          <span className="text-gray-800 dark:text-gray-100 font-bold text-sm">Total Tax</span>
-          <span className="text-gray-800 dark:text-gray-100 font-bold text-sm">{formatINR(result.totalTax)}</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-gray-400 dark:text-gray-500">Effective rate</span>
-          <span className="text-gray-500 dark:text-gray-400">{result.effectiveRate.toFixed(2)}%</span>
-        </div>
       </div>
     </div>
   );
@@ -146,12 +163,14 @@ export function RegimeComparison({ oldResult, newResult, fy }: RegimeComparisonP
           result={oldResult}
           isWinner={betterRegime === 'old'}
           showOldOnlyFields={true}
+          fy={fy}
         />
         <RegimeCard
           label="New Regime"
           result={newResult}
           isWinner={betterRegime === 'new'}
           showOldOnlyFields={false}
+          fy={fy}
         />
       </div>
 

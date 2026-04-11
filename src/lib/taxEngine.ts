@@ -1,4 +1,4 @@
-import type { TaxRules, AgeCategory, TaxRegime, Slab } from '../types';
+import type { TaxRules, AgeCategory, TaxRegime, Slab, SurchargeBracket } from '../types';
 
 export interface HRAInput {
   actualHRA: number;
@@ -53,6 +53,7 @@ export interface IncomeTaxResult {
   cess: number;
   totalTax: number;
   effectiveRate: number;      // totalTax / grossIncome as a percentage
+  marginalRate: number;       // top slab rate actually reached, e.g. 0.30
 }
 
 // ── Core helpers ──────────────────────────────────────────────────────────────
@@ -142,44 +143,142 @@ export function applyMarginalRelief(
 
 /**
  * Compute surcharge on tax based on taxable income.
- * Includes marginal relief to prevent cliff at thresholds.
+ *
+ * Marginal relief rule: the total (tax + surcharge) at income I must not
+ * exceed (tax at threshold T, no surcharge) + (I − T). This means as you
+ * cross a surcharge threshold, the extra tax burden cannot outrun the extra
+ * rupees earned above the threshold.
+ *
+ * Correct formula:
+ *   allowed      = taxSlabAt(T) + (I − T)
+ *   preRelief    = taxAfterRebate + taxAfterRebate × rate
+ *   surcharge    = max(0, allowed − taxAfterRebate)   (only if preRelief > allowed)
  */
 export function computeSurcharge(
   taxAfterRebate: number,
   taxableIncome: number,
-  regime: TaxRegime,
+  brackets: SurchargeBracket[],
+  slabTaxAt: (income: number) => number,
 ): { surcharge: number; surchargeRate: number } {
   if (taxAfterRebate <= 0) return { surcharge: 0, surchargeRate: 0 };
 
-  // Surcharge slabs
-  const surchargeSlabs = [
-    { threshold: 5000000,  rate: 0.10 },  // ₹50L–₹1Cr
-    { threshold: 10000000, rate: 0.15 },  // ₹1Cr–₹2Cr
-    { threshold: 20000000, rate: 0.25 },  // ₹2Cr–₹5Cr
-    { threshold: 50000000, rate: regime === 'new' ? 0.25 : 0.37 }, // Above ₹5Cr (25% cap for new regime)
-  ];
+  // Find the highest bracket the income strictly exceeds.
+  let active: SurchargeBracket | undefined;
+  for (const b of brackets) {
+    if (taxableIncome > b.above) active = b;
+  }
+  if (!active) return { surcharge: 0, surchargeRate: 0 };
 
-  let surchargeRate = 0;
-  for (const slab of surchargeSlabs) {
-    if (taxableIncome > slab.threshold) {
-      surchargeRate = slab.rate;
-    }
+  let surcharge = taxAfterRebate * active.rate;
+
+  // Marginal relief against the threshold this surcharge rate kicks in at.
+  const taxAtThreshold = slabTaxAt(active.above);
+  const allowed = taxAtThreshold + (taxableIncome - active.above);
+  if (taxAfterRebate + surcharge > allowed) {
+    surcharge = Math.max(0, allowed - taxAfterRebate);
   }
 
-  if (surchargeRate === 0) return { surcharge: 0, surchargeRate: 0 };
+  return { surcharge: Math.round(surcharge), surchargeRate: active.rate };
+}
 
-  let surcharge = taxAfterRebate * surchargeRate;
+/**
+ * Result shape for the post-deduction tax pipeline. Subset of IncomeTaxResult
+ * without the gross-income / deduction fields.
+ */
+export interface TaxOnIncomeResult {
+  slabTax: number;
+  slabBreakdown: SlabBreakdown[];
+  rebate87A: number;
+  marginalRelief: number;
+  taxAfterRebate: number;
+  surcharge: number;
+  surchargeRate: number;
+  cess: number;
+  totalTax: number;
+  marginalRate: number;
+}
 
-  // Marginal relief: surcharge cannot exceed income above the threshold
-  const applicableThreshold = surchargeSlabs.find(s => taxableIncome <= s.threshold * 2 && taxableIncome > s.threshold)?.threshold;
-  if (applicableThreshold) {
-    const excessIncome = taxableIncome - applicableThreshold;
-    if (surcharge > excessIncome) {
-      surcharge = excessIncome;
+/**
+ * Compute tax on an already-taxable income (post standard deduction, HRA,
+ * Chapter VI-A — all deductions subtracted upstream by the caller).
+ *
+ * Use when the caller owns the deduction pipeline and only needs the
+ * post-deduction tax math (e.g. the ITR wizard, which already computes
+ * TotalIncome per CBDT rules before invoking this helper).
+ *
+ * For the full end-to-end flow (gross salary → deductions → tax), use
+ * `calculateIncomeTax`.
+ */
+export function computeTaxOnTaxableIncome(
+  taxableIncome: number,
+  regime: TaxRegime,
+  ageCategory: AgeCategory,
+  rules: TaxRules,
+): TaxOnIncomeResult {
+  const slabs = regime === 'new' ? rules.newRegime.slabs : rules.oldRegime.slabs[ageCategory];
+
+  const { total: slabTax, breakdown: slabBreakdown } = computeSlabTax(taxableIncome, slabs);
+
+  let rebate87A = 0;
+  let marginalRelief = 0;
+  let taxAfterRebate: number;
+
+  if (regime === 'new') {
+    const res = applyMarginalRelief(slabTax, taxableIncome, rules.newRegime);
+    rebate87A = res.rebate87A;
+    marginalRelief = res.marginalRelief;
+    taxAfterRebate = res.effectiveTax;
+  } else {
+    const { maxRebate, incomeThreshold } = rules.oldRegime.rebate87A;
+    if (taxableIncome <= incomeThreshold) {
+      rebate87A = Math.min(slabTax, maxRebate);
     }
+    taxAfterRebate = slabTax - rebate87A;
   }
 
-  return { surcharge: Math.round(surcharge), surchargeRate };
+  const brackets = regime === 'new' ? rules.surcharge.new : rules.surcharge.old;
+  const { surcharge, surchargeRate } = computeSurcharge(
+    taxAfterRebate,
+    taxableIncome,
+    brackets,
+    (inc) => computeSlabTax(inc, slabs).total,
+  );
+
+  const taxPlusSurcharge = taxAfterRebate + surcharge;
+  const cess = taxPlusSurcharge * rules.cess;
+  const totalTax = taxPlusSurcharge + cess;
+  const marginalRate = topSlabRateReached(taxableIncome, slabs);
+
+  return {
+    slabTax,
+    slabBreakdown,
+    rebate87A,
+    marginalRelief,
+    taxAfterRebate,
+    surcharge,
+    surchargeRate,
+    cess,
+    totalTax,
+    marginalRate,
+  };
+}
+
+/**
+ * Determine the top slab rate the income actually reaches.
+ * Walks the slab table and returns the rate of the band the last rupee lands in.
+ */
+function topSlabRateReached(taxableIncome: number, slabs: Slab[]): number {
+  if (taxableIncome <= 0) return 0;
+  let prevLimit = 0;
+  let topRate = 0;
+  for (const slab of slabs) {
+    if (taxableIncome > prevLimit) {
+      topRate = slab.rate;
+    }
+    if (slab.upTo === Infinity) break;
+    prevLimit = slab.upTo;
+  }
+  return topRate;
 }
 
 // ── Main calculation ──────────────────────────────────────────────────────────
@@ -198,10 +297,14 @@ export function calculateIncomeTax(
   const grossIncome = grossSalary + otherIncome;
 
   // ── Standard deduction ────────────────────────────────────────────────────
-  const standardDeduction =
+  // Cap at the actual gross so the displayed math never reads negative when
+  // the statutory deduction exceeds the user's gross (e.g. ₹45k gross with a
+  // ₹75k statutory deduction should show "−45,000", not "−75,000").
+  const statutoryStandardDeduction =
     regime === 'new'
       ? rules.newRegime.standardDeduction
       : rules.oldRegime.standardDeduction;
+  const standardDeduction = Math.min(statutoryStandardDeduction, Math.max(0, grossIncome));
 
   // ── HRA exemption (old regime only) ──────────────────────────────────────
   let hraExemption = 0;
@@ -245,43 +348,9 @@ export function calculateIncomeTax(
   const totalDeductions = standardDeduction + hraExemption + totalOtherDeductions;
   const taxableIncome = Math.max(0, grossIncome - totalDeductions);
 
-  // ── Slab tax ──────────────────────────────────────────────────────────────
-  let slabs: Slab[];
-  if (regime === 'new') {
-    slabs = rules.newRegime.slabs;
-  } else {
-    slabs = rules.oldRegime.slabs[ageCategory];
-  }
-
-  const { total: slabTax, breakdown: slabBreakdown } = computeSlabTax(taxableIncome, slabs);
-
-  // ── Rebate / marginal relief ──────────────────────────────────────────────
-  let rebate87A = 0;
-  let marginalRelief = 0;
-  let taxAfterRebate: number;
-
-  if (regime === 'new') {
-    const result = applyMarginalRelief(slabTax, taxableIncome, rules.newRegime);
-    rebate87A = result.rebate87A;
-    marginalRelief = result.marginalRelief;
-    taxAfterRebate = result.effectiveTax;
-  } else {
-    // Old regime: simple 87A rebate, no marginal relief
-    const { maxRebate, incomeThreshold } = rules.oldRegime.rebate87A;
-    if (taxableIncome <= incomeThreshold) {
-      rebate87A = Math.min(slabTax, maxRebate);
-    }
-    taxAfterRebate = slabTax - rebate87A;
-  }
-
-  // ── Surcharge ─────────────────────────────────────────────────────────────
-  const { surcharge, surchargeRate } = computeSurcharge(taxAfterRebate, taxableIncome, regime);
-  const taxPlusSurcharge = taxAfterRebate + surcharge;
-
-  // ── Cess (on tax + surcharge) ────────────────────────────────────────────
-  const cess = taxPlusSurcharge * rules.cess;
-  const totalTax = taxPlusSurcharge + cess;
-  const effectiveRate = grossIncome > 0 ? (totalTax / grossIncome) * 100 : 0;
+  // ── Post-deduction pipeline (slabs → rebate → surcharge → cess) ─────────
+  const postDed = computeTaxOnTaxableIncome(taxableIncome, regime, ageCategory, rules);
+  const effectiveRate = grossIncome > 0 ? (postDed.totalTax / grossIncome) * 100 : 0;
 
   return {
     grossIncome,
@@ -289,16 +358,17 @@ export function calculateIncomeTax(
     hraExemption,
     totalDeductions,
     taxableIncome,
-    slabTax,
-    slabBreakdown,
-    rebate87A,
-    marginalRelief,
-    taxAfterRebate,
-    surcharge,
-    surchargeRate,
-    cess,
-    totalTax,
+    slabTax: postDed.slabTax,
+    slabBreakdown: postDed.slabBreakdown,
+    rebate87A: postDed.rebate87A,
+    marginalRelief: postDed.marginalRelief,
+    taxAfterRebate: postDed.taxAfterRebate,
+    surcharge: postDed.surcharge,
+    surchargeRate: postDed.surchargeRate,
+    cess: postDed.cess,
+    totalTax: postDed.totalTax,
     effectiveRate,
+    marginalRate: postDed.marginalRate,
   };
 }
 

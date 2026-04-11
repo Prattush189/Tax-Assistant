@@ -18,6 +18,8 @@ import profilesRouter from './routes/profiles.js';
 import genericProfilesRouter from './routes/genericProfiles.js';
 import usageRouter from './routes/usage.js';
 import itrRouter from './routes/itr.js';
+import boardResolutionsRouter from './routes/boardResolutions.js';
+import itPortalImportRouter from './routes/itPortalImport.js';
 import invitationsRouter, { publicInvitationRouter } from './routes/invitations.js';
 import { authMiddleware, adminMiddleware } from './middleware/auth.js';
 import { authLimiter, chatLimiter, uploadLimiter } from './middleware/rateLimiter.js';
@@ -101,6 +103,8 @@ app.use('/api/profiles', profilesRouter);
 app.use('/api/generic-profiles', genericProfilesRouter);
 app.use('/api/usage', usageRouter);
 app.use('/api/itr', itrRouter);
+app.use('/api/board-resolutions', boardResolutionsRouter);
+app.use('/api/it-portal', itPortalImportRouter);
 app.use('/api/invitations', invitationsRouter);
 
 // Admin — requires auth + admin role

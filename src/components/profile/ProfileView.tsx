@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { User, MapPin, Landmark, Briefcase, Shield, FileText, Building } from 'lucide-react';
+import { User, MapPin, Landmark, Briefcase, Shield, FileText, Building, Download } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { ProfileManager, ProfileAy } from '../../hooks/useProfileManager';
 import { ProfilePicker } from './ProfilePicker';
@@ -11,6 +11,7 @@ import { DeductionsTab } from './tabs/DeductionsTab';
 import { NoticeDefaultsTab } from './tabs/NoticeDefaultsTab';
 import { BusinessTab } from './tabs/BusinessTab';
 import { PROFILE_AYS } from './lib/profileModel';
+import { PortalImportDialog } from '../portal-import/PortalImportDialog';
 
 type ProfileSubTab =
   | 'identity'
@@ -37,6 +38,7 @@ interface Props {
 
 export function ProfileView({ manager }: Props) {
   const [activeSubTab, setActiveSubTab] = useState<ProfileSubTab>('identity');
+  const [showImport, setShowImport] = useState(false);
 
   if (!manager.currentProfile) {
     return <ProfilePicker manager={manager} />;
@@ -128,9 +130,28 @@ export function ProfileView({ manager }: Props) {
                 </select>
               </>
             )}
+            <button
+              onClick={() => setShowImport(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 border border-emerald-200 dark:border-emerald-900/40 rounded-lg transition-colors"
+            >
+              <Download className="w-3.5 h-3.5" />
+              Import from IT portal
+            </button>
             <span className="text-[11px] text-gray-400 dark:text-gray-500">Auto-saved</span>
           </div>
         </div>
+
+        <PortalImportDialog
+          open={showImport}
+          onClose={() => setShowImport(false)}
+          existingProfileId={manager.currentProfile.id}
+          onImported={async (result) => {
+            // Re-fetch the profile list and the current profile so the tabs
+            // reflect the imported data.
+            await manager.refresh();
+            await manager.loadProfile(result.profileId);
+          }}
+        />
 
         {/* Tab content */}
         <div className="flex-1 overflow-y-auto p-4 md:p-6">

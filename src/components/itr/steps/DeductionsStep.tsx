@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { ItrWizardDraft, UiChapVIA } from '../lib/uiModel';
+import { ItrWizardDraft, UiChapVIA, sumChapVIAForRegime } from '../lib/uiModel';
 import { Card, Field, Grid2, RupeeInput, Accordion } from '../shared/Inputs';
 import { AlertTriangle } from 'lucide-react';
 import { LoadFromProfile } from '../../profile/shared/LoadFromProfile';
@@ -35,21 +35,22 @@ const SECTION_LABELS: Array<{ key: keyof UiChapVIA; label: string; hint?: string
 
 export function DeductionsStep({ draft, onChange }: Props) {
   const isNewRegime = draft.FilingStatus?.OptOutNewTaxRegime === 'N';
+  const regime: 'new' | 'old' = isNewRegime ? 'new' : 'old';
   const chap = draft.ITR1_IncomeDeductions?.UsrDeductUndChapVIA ?? {};
 
+  // Regime-aware total so stale old-regime values (hidden under new regime)
+  // don't inflate the badge. Matches what computeDerivedTotals will compute.
   const total = useMemo(
-    () =>
-      SECTION_LABELS.reduce((acc, s) => acc + (Number(chap[s.key]) || 0), 0),
-    [chap],
+    () => sumChapVIAForRegime(chap as UiChapVIA, regime),
+    [chap, regime],
   );
 
   const patchChap = (patch: Partial<UiChapVIA>) => {
     onChange((prev) => {
       const inc = prev.ITR1_IncomeDeductions ?? {};
       const base = inc.UsrDeductUndChapVIA ?? {};
-      const nextUsr = { ...base, ...patch };
-      const nextTotal = SECTION_LABELS.reduce((acc, s) => acc + (Number(nextUsr[s.key]) || 0), 0);
-      nextUsr.TotalChapVIADeductions = nextTotal;
+      const nextUsr: UiChapVIA = { ...base, ...patch };
+      nextUsr.TotalChapVIADeductions = sumChapVIAForRegime(nextUsr, regime);
       return {
         ...prev,
         ITR1_IncomeDeductions: {

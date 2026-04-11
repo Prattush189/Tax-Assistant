@@ -1,52 +1,60 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { FileSpreadsheet, ChevronRight, ChevronLeft } from 'lucide-react';
+import { Gavel, ChevronRight, ChevronLeft } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { ItrManager } from '../../hooks/useItrManager';
-import { getStepOrder, STEP_LABELS, StepId, emptyDraft, ItrWizardDraft } from './lib/uiModel';
-import { FormPickerStep } from './steps/FormPickerStep';
-import { PersonalInfoStep } from './steps/PersonalInfoStep';
-import { FilingStatusStep } from './steps/FilingStatusStep';
-import { IncomeStep } from './steps/IncomeStep';
-import { BusinessIncomeStep } from './steps/BusinessIncomeStep';
-import { DeductionsStep } from './steps/DeductionsStep';
-import { TaxesPaidStep } from './steps/TaxesPaidStep';
-import { BankRefundStep } from './steps/BankRefundStep';
+import { BoardResolutionManager } from '../../hooks/useBoardResolutionManager';
+import {
+  BoardResolutionDraft,
+  StepId,
+  STEP_LABELS,
+  STEP_DESCRIPTIONS,
+  TEMPLATE_TITLES,
+  TemplateId,
+  emptyDraft,
+  getStepOrder,
+} from './lib/uiModel';
+import { TEMPLATE_LIST } from './lib/resolutionTemplates';
+import { TemplatePickerStep } from './steps/TemplatePickerStep';
+import { CompanyInfoStep } from './steps/CompanyInfoStep';
+import { MeetingInfoStep } from './steps/MeetingInfoStep';
+import { ResolutionBodyStep } from './steps/ResolutionBodyStep';
+import { SignatoriesStep } from './steps/SignatoriesStep';
 import { ReviewStep } from './steps/ReviewStep';
 
 interface Props {
-  manager: ItrManager;
+  manager: BoardResolutionManager;
 }
 
-export function ItrView({ manager }: Props) {
-  const [step, setStep] = useState<StepId>('formPicker');
-  const [localDraft, setLocalDraft] = useState<ItrWizardDraft>(() => emptyDraft('ITR1'));
-  const stepOrder = useMemo(() => getStepOrder(localDraft.formType), [localDraft.formType]);
+export function BoardResolutionView({ manager }: Props) {
+  const [step, setStep] = useState<StepId>('templatePicker');
+  const [localDraft, setLocalDraft] = useState<BoardResolutionDraft>(() => emptyDraft('appointment_of_director'));
+  const stepOrder = useMemo(() => getStepOrder(localDraft.templateId), [localDraft.templateId]);
 
-  // Sync when the selected draft changes (or clears)
+  // Sync when selected draft changes
   useEffect(() => {
     if (manager.currentDraft) {
-      const payload = manager.currentDraft.ui_payload as Partial<ItrWizardDraft>;
+      const payload = manager.currentDraft.ui_payload as Partial<BoardResolutionDraft>;
       setLocalDraft({
-        ...emptyDraft(manager.currentDraft.form_type),
+        ...emptyDraft(manager.currentDraft.template_id),
         ...payload,
-        formType: manager.currentDraft.form_type,
+        templateId: manager.currentDraft.template_id,
       });
-      // If a fresh draft (no personal info), start at personal. Otherwise review.
-      const hasAnyData = payload && Object.keys(payload).length > 0;
-      setStep(hasAnyData ? 'personal' : 'personal');
+      setStep('company');
     } else {
-      setLocalDraft(emptyDraft('ITR1'));
-      setStep('formPicker');
+      setLocalDraft(emptyDraft('appointment_of_director'));
+      setStep('templatePicker');
     }
-  }, [manager.currentDraft?.id, manager.currentDraft?.form_type]);
+  }, [manager.currentDraft?.id, manager.currentDraft?.template_id]);
 
   const updateDraft = useCallback(
-    (patch: Partial<ItrWizardDraft> | ((prev: ItrWizardDraft) => ItrWizardDraft)) => {
+    (patch: Partial<BoardResolutionDraft> | ((prev: BoardResolutionDraft) => BoardResolutionDraft)) => {
       setLocalDraft((prev) => {
         const next = typeof patch === 'function' ? patch(prev) : { ...prev, ...patch };
-        // Push to manager (debounced autosave)
+        // Defer the manager state update to a microtask so we don't trigger
+        // a parent re-render while this component is still committing.
         if (manager.currentDraftId) {
-          manager.updatePayload(next as unknown as Record<string, unknown>);
+          Promise.resolve().then(() => {
+            manager.updatePayload(next as unknown as Record<string, unknown>);
+          });
         }
         return next;
       });
@@ -61,7 +69,6 @@ export function ItrView({ manager }: Props) {
   const goPrev = () => { if (canGoPrev) setStep(stepOrder[stepIndex - 1]); };
   const goNext = () => { if (canGoNext) setStep(stepOrder[stepIndex + 1]); };
 
-  // Empty state — no draft selected yet
   if (!manager.currentDraft) {
     return <NoDraftSelected manager={manager} />;
   }
@@ -72,9 +79,9 @@ export function ItrView({ manager }: Props) {
       <aside className="hidden md:flex w-64 border-r border-gray-200 dark:border-gray-800 bg-white dark:bg-[#151210] p-4 flex-col shrink-0">
         <div className="mb-4">
           <div className="flex items-center gap-2 mb-1">
-            <FileSpreadsheet className="w-4 h-4 text-emerald-500" />
+            <Gavel className="w-4 h-4 text-emerald-500" />
             <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-              {manager.currentDraft.form_type} — AY {manager.currentDraft.assessment_year}
+              {TEMPLATE_TITLES[manager.currentDraft.template_id]}
             </h2>
           </div>
           <p className="text-[11px] text-gray-500 dark:text-gray-500 truncate">{manager.currentDraft.name}</p>
@@ -129,7 +136,7 @@ export function ItrView({ manager }: Props) {
                 {STEP_DESCRIPTIONS[step]}
               </p>
             </div>
-            <StepBody step={step} draft={localDraft} onChange={updateDraft} manager={manager} />
+            <StepBody step={step} draft={localDraft} onChange={updateDraft} />
           </div>
         </div>
         {/* Step nav */}
@@ -169,55 +176,35 @@ export function ItrView({ manager }: Props) {
   );
 }
 
-const STEP_DESCRIPTIONS: Record<StepId, string> = {
-  formPicker: 'Pick the ITR form for this return.',
-  personal: 'PAN, Aadhaar, address, contact details, and employer category.',
-  filing: 'Return type, regime, and filing due date.',
-  income: 'Salary, house property, and other sources.',
-  business: 'Presumptive business / profession income (44AD / 44ADA / 44AE).',
-  deductions: 'Chapter VI-A deductions (80C, 80D, etc.). Locked under the new regime.',
-  taxes: 'TDS, TCS, advance tax, and self-assessment tax payments.',
-  bank: 'Bank account(s) for refund credit.',
-  review: 'Live validation, JSON export, and PDF preview.',
-};
-
 function StepBody({
   step,
   draft,
   onChange,
-  manager,
 }: {
   step: StepId;
-  draft: ItrWizardDraft;
-  onChange: (patch: Partial<ItrWizardDraft> | ((p: ItrWizardDraft) => ItrWizardDraft)) => void;
-  manager: ItrManager;
+  draft: BoardResolutionDraft;
+  onChange: (patch: Partial<BoardResolutionDraft> | ((p: BoardResolutionDraft) => BoardResolutionDraft)) => void;
 }) {
   switch (step) {
-    case 'formPicker':
-      return <FormPickerStep draft={draft} onChange={onChange} />;
-    case 'personal':
-      return <PersonalInfoStep draft={draft} onChange={onChange} manager={manager} />;
-    case 'filing':
-      return <FilingStatusStep draft={draft} onChange={onChange} />;
-    case 'income':
-      return <IncomeStep draft={draft} onChange={onChange} />;
-    case 'business':
-      return <BusinessIncomeStep draft={draft} onChange={onChange} />;
-    case 'deductions':
-      return <DeductionsStep draft={draft} onChange={onChange} />;
-    case 'taxes':
-      return <TaxesPaidStep draft={draft} onChange={onChange} />;
-    case 'bank':
-      return <BankRefundStep draft={draft} onChange={onChange} />;
+    case 'templatePicker':
+      return <TemplatePickerStep draft={draft} onChange={onChange} />;
+    case 'company':
+      return <CompanyInfoStep draft={draft} onChange={onChange} />;
+    case 'meeting':
+      return <MeetingInfoStep draft={draft} onChange={onChange} />;
+    case 'body':
+      return <ResolutionBodyStep draft={draft} onChange={onChange} />;
+    case 'signatories':
+      return <SignatoriesStep draft={draft} onChange={onChange} />;
     case 'review':
-      return <ReviewStep draft={draft} onChange={onChange} manager={manager} />;
+      return <ReviewStep draft={draft} onChange={onChange} />;
     default:
       return null;
   }
 }
 
-function NoDraftSelected({ manager }: { manager: ItrManager }) {
-  const [formType, setFormType] = useState<'ITR1' | 'ITR4'>('ITR1');
+function NoDraftSelected({ manager }: { manager: BoardResolutionManager }) {
+  const [templateId, setTemplateId] = useState<TemplateId>('appointment_of_director');
   const [name, setName] = useState('');
   const [creating, setCreating] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -231,8 +218,7 @@ function NoDraftSelected({ manager }: { manager: ItrManager }) {
     setCreating(true);
     try {
       await manager.createDraft({
-        form_type: formType,
-        assessment_year: '2025-26',
+        template_id: templateId,
         name: name.trim(),
       });
     } catch (e) {
@@ -247,33 +233,36 @@ function NoDraftSelected({ manager }: { manager: ItrManager }) {
       <div className="max-w-2xl mx-auto w-full">
         <div className="text-center mb-8 mt-8">
           <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-emerald-100 dark:bg-emerald-900/30 mb-4">
-            <FileSpreadsheet className="w-7 h-7 text-emerald-600 dark:text-emerald-400" />
+            <Gavel className="w-7 h-7 text-emerald-600 dark:text-emerald-400" />
           </div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-1">
-            ITR Filing
+            Board Resolutions
           </h1>
           <p className="text-sm text-gray-500 dark:text-gray-500 max-w-md mx-auto">
-            Generate a CBDT-compliant ITR-1 or ITR-4 JSON for AY 2025-26.
-            Upload into the government's Common Utility to submit.
+            Generate Companies Act 2013 board resolution PDFs from standard templates. Admin-only feature.
           </p>
         </div>
 
         <div className="bg-white dark:bg-[#1a1714] border border-gray-200 dark:border-gray-800 rounded-2xl p-6 space-y-5">
           <div>
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">Start a new draft</h3>
-            <div className="grid grid-cols-2 gap-3">
-              <FormCard
-                selected={formType === 'ITR1'}
-                onClick={() => setFormType('ITR1')}
-                title="ITR-1 Sahaj"
-                subtitle="Salaried • one house property • no capital gains (LTCG 112A ≤ ₹1.25L allowed)"
-              />
-              <FormCard
-                selected={formType === 'ITR4'}
-                onClick={() => setFormType('ITR4')}
-                title="ITR-4 Sugam"
-                subtitle="Presumptive business (44AD / 44ADA / 44AE) up to ₹50L total income"
-              />
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">Pick a template</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {TEMPLATE_LIST.map((tpl) => (
+                <button
+                  key={tpl.id}
+                  type="button"
+                  onClick={() => setTemplateId(tpl.id)}
+                  className={cn(
+                    'text-left p-4 rounded-xl border transition-all',
+                    templateId === tpl.id
+                      ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20 ring-2 ring-emerald-500/30'
+                      : 'border-gray-200 dark:border-gray-800 hover:border-gray-300 dark:hover:border-gray-700',
+                  )}
+                >
+                  <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1">{tpl.title}</p>
+                  <p className="text-[11px] text-gray-500 dark:text-gray-500">{tpl.subtitle}</p>
+                </button>
+              ))}
             </div>
           </div>
 
@@ -285,7 +274,7 @@ function NoDraftSelected({ manager }: { manager: ItrManager }) {
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Ramesh Kumar — AY 2025-26"
+              placeholder="e.g. Acme — Appointment of Director"
               className="w-full px-3 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 transition-colors text-gray-900 dark:text-gray-100"
             />
           </div>
@@ -308,32 +297,5 @@ function NoDraftSelected({ manager }: { manager: ItrManager }) {
         )}
       </div>
     </div>
-  );
-}
-
-function FormCard({
-  selected,
-  onClick,
-  title,
-  subtitle,
-}: {
-  selected: boolean;
-  onClick: () => void;
-  title: string;
-  subtitle: string;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        'text-left p-4 rounded-xl border transition-all',
-        selected
-          ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20 ring-2 ring-emerald-500/30'
-          : 'border-gray-200 dark:border-gray-800 hover:border-gray-300 dark:hover:border-gray-700',
-      )}
-    >
-      <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1">{title}</p>
-      <p className="text-[11px] text-gray-500 dark:text-gray-500">{subtitle}</p>
-    </button>
   );
 }

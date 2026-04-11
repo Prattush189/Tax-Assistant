@@ -7,7 +7,41 @@
  * endpoint replaces this with authoritative values and stamps the real
  * Digest.
  */
-import type { ItrWizardDraft, UiChapVIA } from './uiModel';
+import type { ItrWizardDraft, UiChapVIA, UiTaxComputation } from './uiModel';
+import { sumChapVIAForRegime, filterChapVIAForRegime } from './uiModel';
+import { computeTaxOnTaxableIncome } from '../../../lib/taxEngine';
+import { getTaxRules } from '../../../data/taxRules';
+import type { AgeCategory, TaxRegime } from '../../../types';
+
+/**
+ * Map wizard `assessmentYear` (e.g. '2025') to the corresponding FY key used
+ * by the tax rules data module. AY is the year FOLLOWING the income year — AY
+ * 2025-26 assessments taxes FY 2024-25 income.
+ */
+function fyForAssessmentYear(ay: string): string {
+  if (ay === '2025') return '2024-25';
+  if (ay === '2026') return '2025-26';
+  if (ay === '2027') return '2026-27';
+  return '2024-25';
+}
+
+/**
+ * Derive age category from DOB as of the last day of the FY being filed
+ * (= 31 March of the AY start year). Defaults to 'below60' when DOB is
+ * missing or unparseable.
+ */
+function deriveAgeCategory(dobIso: string | undefined, ay: string): AgeCategory {
+  if (!dobIso) return 'below60';
+  const dob = new Date(dobIso);
+  if (Number.isNaN(dob.getTime())) return 'below60';
+  const ayEnd = new Date(`${ay}-03-31`);
+  let age = ayEnd.getFullYear() - dob.getFullYear();
+  const m = ayEnd.getMonth() - dob.getMonth();
+  if (m < 0 || (m === 0 && ayEnd.getDate() < dob.getDate())) age -= 1;
+  if (age >= 80) return 'superSenior80plus';
+  if (age >= 60) return 'senior60to80';
+  return 'below60';
+}
 
 function buildPlaceholderCreationInfo() {
   const now = new Date();
@@ -85,42 +119,77 @@ export function computeDerivedTotals(draft: ItrWizardDraft): ItrWizardDraft {
   inc.GrossTotIncomeIncLTCG112A =
     inc.GrossTotIncome + (d.LTCG112A?.LongCap112A ?? 0);
 
-  // Chapter VI-A totals
+  // ── Regime derivation ───────────────────────────────────────────────────
+  // OptOutNewTaxRegime: 'Y' = opted out (= old regime), 'N' = default (= new).
+  const regime: TaxRegime = d.FilingStatus?.OptOutNewTaxRegime === 'Y' ? 'old' : 'new';
+
+  // ── Chapter VI-A totals (regime-aware) ─────────────────────────────────
+  // In new regime, only 80CCD(2) and 80CCH are deductible from taxable
+  // income. Any other Chapter VI-A values entered in the draft (stale from
+  // a previous old-regime session, or entered while the UI was gated) are
+  // ignored for the tax calc and stripped from the DeductUndChapVIA block
+  // written to the CBDT envelope. The raw UsrDeductUndChapVIA is preserved
+  // so toggling back to old regime restores the user's values.
   const userChapVia = inc.UsrDeductUndChapVIA ?? {};
-  const claimedTotal = sumChapVIA(userChapVia);
+  const claimedTotal = sumChapVIAForRegime(userChapVia, regime);
   inc.UsrDeductUndChapVIA = { ...userChapVia, TotalChapVIADeductions: claimedTotal };
-  inc.DeductUndChapVIA = { ...(inc.DeductUndChapVIA ?? {}), ...userChapVia, TotalChapVIADeductions: claimedTotal };
+  const allowedChapVia = filterChapVIAForRegime(userChapVia, regime);
+  inc.DeductUndChapVIA = { ...allowedChapVia, TotalChapVIADeductions: claimedTotal };
 
   inc.TotalIncome = Math.max(0, inc.GrossTotIncome - claimedTotal);
 
-  const out = { ...d, ITR1_IncomeDeductions: inc };
-  return out;
-}
+  // ── Tax computation ────────────────────────────────────────────────────
+  const ageCategory = deriveAgeCategory(d.PersonalInfo?.DOB, d.assessmentYear);
+  const fy = fyForAssessmentYear(d.assessmentYear);
+  const rules = getTaxRules(fy);
+  const taxRes = computeTaxOnTaxableIncome(inc.TotalIncome ?? 0, regime, ageCategory, rules);
 
-function sumChapVIA(c: UiChapVIA): number {
-  const keys: Array<keyof UiChapVIA> = [
-    'Section80C',
-    'Section80CCC',
-    'Section80CCDEmployeeOrSE',
-    'Section80CCD1B',
-    'Section80CCDEmployer',
-    'Section80D',
-    'Section80DD',
-    'Section80DDB',
-    'Section80E',
-    'Section80EE',
-    'Section80EEA',
-    'Section80EEB',
-    'Section80G',
-    'Section80GG',
-    'Section80GGA',
-    'Section80GGC',
-    'Section80U',
-    'Section80TTA',
-    'Section80TTB',
-    'AnyOthSec80CCH',
-  ];
-  return keys.reduce((acc, k) => acc + (Number(c[k]) || 0), 0);
+  const priorTax = d.ITR1_TaxComputation ?? {};
+  const priorIntrst = priorTax.IntrstPay ?? {};
+  const section89 = priorTax.Section89 ?? 0;
+
+  const totalIntrst =
+    (priorIntrst.IntrstPayUs234A ?? 0) +
+    (priorIntrst.IntrstPayUs234B ?? 0) +
+    (priorIntrst.IntrstPayUs234C ?? 0) +
+    (priorIntrst.LateFilingFee234F ?? 0);
+
+  const grossTaxLiability = Math.round(taxRes.totalTax);
+  const netTax = Math.max(0, grossTaxLiability - section89);
+  const totTaxPlusIntrst = netTax + totalIntrst;
+
+  const nextTax: UiTaxComputation = {
+    TotalTaxPayable: Math.round(taxRes.slabTax),
+    Rebate87A: Math.round(taxRes.rebate87A),
+    TaxPayableOnRebate: Math.round(taxRes.taxAfterRebate),
+    EducationCess: Math.round(taxRes.cess),
+    GrossTaxLiability: grossTaxLiability,
+    Section89: section89,
+    NetTaxLiability: netTax,
+    TotalIntrstPay: totalIntrst,
+    IntrstPay: { ...priorIntrst },
+    TotTaxPlusIntrstPay: totTaxPlusIntrst,
+  };
+
+  // Bal payable / refund due
+  const totalPaid = d.TaxPaid?.TaxesPaid?.TotalTaxesPaid ?? 0;
+  const bal = totTaxPlusIntrst - totalPaid;
+  const nextTaxPaid = {
+    ...(d.TaxPaid ?? {}),
+    BalTaxPayable: Math.max(0, bal),
+  };
+  const nextRefund = {
+    ...(d.Refund ?? {}),
+    RefundDue: Math.max(0, -bal),
+  };
+
+  return {
+    ...d,
+    ITR1_IncomeDeductions: inc,
+    ITR1_TaxComputation: nextTax,
+    TaxPaid: nextTaxPaid,
+    Refund: nextRefund,
+  };
 }
 
 /**

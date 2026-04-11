@@ -145,6 +145,10 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_email_codes_user_purpose ON email_verifi
 db.exec("CREATE INDEX IF NOT EXISTS idx_itr_drafts_user_id ON itr_drafts(user_id)");
 db.exec("CREATE INDEX IF NOT EXISTS idx_itr_drafts_updated_at ON itr_drafts(updated_at DESC)");
 
+// Indexes for board_resolutions — same idempotency rule.
+db.exec("CREATE INDEX IF NOT EXISTS idx_board_resolutions_user_id ON board_resolutions(user_id)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_board_resolutions_updated_at ON board_resolutions(updated_at DESC)");
+
 // Indexes for generic profiles table (identity, address, banks, per-AY data)
 db.exec("CREATE INDEX IF NOT EXISTS idx_profiles_user_id ON profiles(user_id)");
 db.exec("CREATE INDEX IF NOT EXISTS idx_profiles_updated_at ON profiles(updated_at DESC)");

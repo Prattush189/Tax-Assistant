@@ -1,13 +1,17 @@
 import { useEffect, useState } from 'react';
+import { Download } from 'lucide-react';
 import { ItrWizardDraft, UiPersonalInfo, UiAddress } from '../lib/uiModel';
 import { fetchItrEnum, ItrEnumOption } from '../../../services/api';
 import { Card, Field, Grid2, Grid3, TextInput, PanInput, AadhaarInput, NumberInput, Select } from '../shared/Inputs';
 import { LoadFromProfile } from '../../profile/shared/LoadFromProfile';
 import { profileToItrPersonal } from '../../profile/lib/prefillAdapters';
+import { PortalImportDialog } from '../../portal-import/PortalImportDialog';
+import type { ItrManager } from '../../../hooks/useItrManager';
 
 interface Props {
   draft: ItrWizardDraft;
   onChange: (patch: Partial<ItrWizardDraft> | ((p: ItrWizardDraft) => ItrWizardDraft)) => void;
+  manager?: ItrManager;
 }
 
 const EMPLOYER_CATEGORIES: ReadonlyArray<{ code: NonNullable<UiPersonalInfo['EmployerCategory']>; label: string }> = [
@@ -22,12 +26,13 @@ const EMPLOYER_CATEGORIES: ReadonlyArray<{ code: NonNullable<UiPersonalInfo['Emp
   { code: 'NA', label: 'Not Applicable' },
 ];
 
-export function PersonalInfoStep({ draft, onChange }: Props) {
+export function PersonalInfoStep({ draft, onChange, manager }: Props) {
   const p = draft.PersonalInfo ?? {};
   const a = p.Address ?? {};
 
   const [states, setStates] = useState<ItrEnumOption[]>([]);
   const [countries, setCountries] = useState<ItrEnumOption[]>([]);
+  const [showImport, setShowImport] = useState(false);
   useEffect(() => {
     fetchItrEnum('states').then(setStates).catch(() => undefined);
     fetchItrEnum('countries').then(setCountries).catch(() => undefined);
@@ -60,12 +65,34 @@ export function PersonalInfoStep({ draft, onChange }: Props) {
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={() => setShowImport(true)}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 border border-emerald-200 dark:border-emerald-900/40 rounded-lg transition-colors"
+        >
+          <Download className="w-3.5 h-3.5" />
+          Import from IT portal
+        </button>
         <LoadFromProfile
           onPick={(profile) => onChange((prev) => profileToItrPersonal(profile, prev))}
           label="Load identity + address"
         />
       </div>
+
+      <PortalImportDialog
+        open={showImport}
+        onClose={() => setShowImport(false)}
+        itrDraftId={manager?.currentDraftId ?? undefined}
+        onImported={async () => {
+          // The server has already patched the ITR draft's PersonalInfo +
+          // Banks. Re-fetch the draft so the wizard's local state picks up
+          // the server-side changes.
+          if (manager?.currentDraftId) {
+            await manager.loadDraft(manager.currentDraftId);
+          }
+        }}
+      />
       <Card title="Identity">
         <Grid2>
           <Field label="PAN" required>

@@ -174,3 +174,21 @@ CREATE TABLE IF NOT EXISTS itr_drafts (
   created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
 );
+
+-- Board resolution drafts (admin-only; Companies Act 2013 resolution templates).
+-- Indexes are created in server/db/index.ts migration block, NOT here.
+CREATE TABLE IF NOT EXISTS board_resolutions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  template_id TEXT NOT NULL CHECK(template_id IN (
+    'appointment_of_director',
+    'bank_account_opening',
+    'borrowing_powers',
+    'share_allotment'
+  )),
+  name TEXT NOT NULL,
+  ui_payload TEXT NOT NULL DEFAULT '{}',
+  exported_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+);

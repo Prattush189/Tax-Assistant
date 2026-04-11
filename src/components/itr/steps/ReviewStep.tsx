@@ -243,6 +243,24 @@ export function ReviewStep({ draft, onChange, manager }: Props) {
         </div>
       </Card>
 
+      {/* Tax computation */}
+      <Card title="Tax computation">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+          <SummaryRow label="Taxable income" value={materialized.ITR1_IncomeDeductions?.TotalIncome ?? 0} />
+          <SummaryRow label="Tax on income" value={materialized.ITR1_TaxComputation?.TotalTaxPayable ?? 0} />
+          <SummaryRow label="Rebate u/s 87A" value={materialized.ITR1_TaxComputation?.Rebate87A ?? 0} />
+          <SummaryRow label="Tax after rebate" value={materialized.ITR1_TaxComputation?.TaxPayableOnRebate ?? 0} />
+          <SummaryRow label="Health & edu. cess (4%)" value={materialized.ITR1_TaxComputation?.EducationCess ?? 0} />
+          <SummaryRow label="Gross tax liability" value={materialized.ITR1_TaxComputation?.GrossTaxLiability ?? 0} />
+          <SummaryRow label="Net tax liability" value={materialized.ITR1_TaxComputation?.NetTaxLiability ?? 0} highlight />
+          <SummaryRow label="Interest u/s 234A/B/C + 234F" value={materialized.ITR1_TaxComputation?.TotalIntrstPay ?? 0} />
+          <SummaryRow label="Total payable" value={materialized.ITR1_TaxComputation?.TotTaxPlusIntrstPay ?? 0} />
+          <SummaryRow label="Taxes already paid" value={materialized.TaxPaid?.TaxesPaid?.TotalTaxesPaid ?? 0} />
+          <SummaryRow label="Balance payable" value={materialized.TaxPaid?.BalTaxPayable ?? 0} />
+          <SummaryRow label="Refund due" value={materialized.Refund?.RefundDue ?? 0} highlight />
+        </div>
+      </Card>
+
       {/* Export actions */}
       <Card title="Export">
         <div className="flex flex-wrap gap-2">

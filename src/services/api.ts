@@ -579,6 +579,93 @@ export async function fetchItrEnum(
   return data.options;
 }
 
+// ── Board Resolution API (admin-only) ───────────────────────────────────
+
+export type BoardResolutionTemplateId =
+  | 'appointment_of_director'
+  | 'bank_account_opening'
+  | 'borrowing_powers'
+  | 'share_allotment';
+
+export interface BoardResolutionDraft {
+  id: string;
+  user_id: string;
+  template_id: BoardResolutionTemplateId;
+  name: string;
+  ui_payload: Record<string, unknown>;
+  exported_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function fetchBoardResolutionDrafts(): Promise<{ drafts: BoardResolutionDraft[] }> {
+  return authFetch('/api/board-resolutions/drafts');
+}
+
+export async function createBoardResolutionDraft(input: {
+  template_id: BoardResolutionTemplateId;
+  name: string;
+  ui_payload?: Record<string, unknown>;
+}): Promise<BoardResolutionDraft> {
+  return authFetch('/api/board-resolutions/drafts', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function fetchBoardResolutionDraft(id: string): Promise<BoardResolutionDraft> {
+  return authFetch(`/api/board-resolutions/drafts/${id}`);
+}
+
+export async function updateBoardResolutionDraft(
+  id: string,
+  patch: { name?: string; ui_payload?: Record<string, unknown> },
+): Promise<void> {
+  await authFetch(`/api/board-resolutions/drafts/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+}
+
+export async function deleteBoardResolutionDraft(id: string): Promise<void> {
+  await authFetch(`/api/board-resolutions/drafts/${id}`, { method: 'DELETE' });
+}
+
+// ── Income Tax portal import ────────────────────────────────────────────
+
+export interface ItPortalImportResult {
+  ok: true;
+  profileId: string;
+  prefilledDraftId: string | null;
+  imported: {
+    name: string;
+    pan: string;
+    bankCount: number;
+    hasJurisdiction: boolean;
+  };
+}
+
+/**
+ * Imports identity + address + banks + jurisdiction from the Income Tax
+ * e-filing portal in a single round trip. The server authenticates with
+ * the provided PAN + password, fetches the data, upserts a generic profile,
+ * and optionally prefills an open ITR draft.
+ *
+ * SECURITY: the password travels over HTTPS and is used only for the
+ * one-shot portal call. The server does not log or persist it.
+ */
+export async function importFromItPortal(input: {
+  pan: string;
+  password: string;
+  profileId?: string;
+  itrDraftId?: string;
+}): Promise<ItPortalImportResult> {
+  return authFetch('/api/it-portal/import', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
 // ── Generic Profiles API (identity, address, banks, per-AY data) ────────
 
 export interface GenericProfileBank {

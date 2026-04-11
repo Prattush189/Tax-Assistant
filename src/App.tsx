@@ -10,6 +10,7 @@ import { usePluginMode, usePluginParentMessage } from './hooks/usePluginMode';
 import { useChatManager } from './hooks/useChatManager';
 import { useNoticeDrafter } from './hooks/useNoticeDrafter';
 import { useItrManager } from './hooks/useItrManager';
+import { useBoardResolutionManager } from './hooks/useBoardResolutionManager';
 import { useProfileManager } from './hooks/useProfileManager';
 import { useAuth } from './contexts/AuthContext';
 import { AuthGuard } from './components/auth/AuthGuard';
@@ -25,12 +26,13 @@ import { PlanPage } from './components/plan/PlanPage';
 import { SettingsPage } from './components/settings/SettingsPage';
 import { NoticeDrafterPage } from './components/notices/NoticeDrafterPage';
 import { ItrView } from './components/itr/ItrView';
+import { BoardResolutionView } from './components/board-resolutions/BoardResolutionView';
 import { ProfileView } from './components/profile/ProfileView';
 import { TaxCalculatorProvider } from './contexts/TaxCalculatorContext';
 import type { ParentToIframeMessage } from './lib/pluginProtocol';
 import { cn } from './lib/utils';
 
-type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile';
+type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions';
 
 /**
  * Dispatches SET_VIEW / SET_CALCULATOR_TAB / LOGOUT into local state.
@@ -83,6 +85,9 @@ function AppContent() {
   // See itrAccessMiddleware on the server and server/scripts/grant-itr.ts.
   const canAccessItr = user?.role === 'admin' || user?.itr_enabled === true;
   const itrManager = useItrManager(canAccessItr);
+  // Board Resolutions is admin-only for v1. See adminMiddleware on the server.
+  const canAccessBoardResolutions = user?.role === 'admin';
+  const boardResolutionManager = useBoardResolutionManager(canAccessBoardResolutions);
   const profileManager = useProfileManager(!!user);
 
   return (
@@ -114,6 +119,11 @@ function AppContent() {
           onNewItrDraft={itrManager.clearDraft}
           onSwitchItrDraft={itrManager.loadDraft}
           onDeleteItrDraft={itrManager.removeDraft}
+          boardResolutionList={boardResolutionManager.drafts}
+          currentBoardResolutionId={boardResolutionManager.currentDraftId}
+          onNewBoardResolution={boardResolutionManager.clearDraft}
+          onSwitchBoardResolution={boardResolutionManager.loadDraft}
+          onDeleteBoardResolution={boardResolutionManager.removeDraft}
           profileList={profileManager.profiles}
           currentProfileId={profileManager.currentProfileId}
           onNewProfile={profileManager.clearCurrent}
@@ -161,6 +171,9 @@ function AppContent() {
               {activeView === 'plan' && <PlanPage />}
               {activeView === 'notices' && <NoticeDrafterPage drafter={noticeDrafter} />}
               {activeView === 'itr' && canAccessItr && <ItrView manager={itrManager} />}
+              {activeView === 'board_resolutions' && canAccessBoardResolutions && (
+                <BoardResolutionView manager={boardResolutionManager} />
+              )}
               {activeView === 'profile' && <ProfileView manager={profileManager} />}
               {activeView === 'settings' && <SettingsPage />}
             </motion.div>
