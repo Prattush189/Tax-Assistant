@@ -63,8 +63,8 @@ export function IdentityTab({ manager }: Props) {
           </Field>
         </Grid2>
         <Grid2>
-          <Field label="Date of birth" hint="YYYY-MM-DD">
-            <TextInput value={id.dob} onChange={(v) => patch({ dob: v })} placeholder="1990-05-15" />
+          <Field label="Date of birth" hint="DD/MM/YYYY">
+            <TextInput value={id.dob} onChange={(v) => patch({ dob: v })} placeholder="15/05/1990" />
           </Field>
           <Field label="Employer category">
             <Select

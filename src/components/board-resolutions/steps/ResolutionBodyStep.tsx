@@ -81,11 +81,11 @@ function AppointmentBodyForm({ draft, onChange }: Props) {
               options={DESIGNATION_OPTIONS}
             />
           </Field>
-          <Field label="Appointment date" required hint="YYYY-MM-DD">
+          <Field label="Appointment date" required hint="DD/MM/YYYY">
             <TextInput
               value={a.appointmentDate}
               onChange={(v) => patch({ appointmentDate: v })}
-              placeholder="2026-04-01"
+              placeholder="01/04/2026"
             />
           </Field>
         </Grid2>

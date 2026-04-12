@@ -48,11 +48,11 @@ export function FilingStatusStep({ draft, onChange }: Props) {
               options={RETURN_SECTIONS.map((r) => ({ code: r.code, label: r.label }))}
             />
           </Field>
-          <Field label="Filing due date" required hint="YYYY-MM-DD · default 2025-07-31 for AY 2025-26">
+          <Field label="Filing due date" required hint="DD/MM/YYYY · default 31/07/2025 for AY 2025-26">
             <TextInput
               value={fs.ItrFilingDueDate}
               onChange={(v) => patchFiling({ ItrFilingDueDate: v })}
-              placeholder="2025-07-31"
+              placeholder="31/07/2025"
             />
           </Field>
         </Grid2>
@@ -61,11 +61,11 @@ export function FilingStatusStep({ draft, onChange }: Props) {
             <Field label="Original ack no" hint="Required for revised/belated">
               <TextInput value={fs.ReceiptNo} onChange={(v) => patchFiling({ ReceiptNo: v })} />
             </Field>
-            <Field label="Original filing date" hint="YYYY-MM-DD">
+            <Field label="Original filing date" hint="DD/MM/YYYY">
               <TextInput
                 value={fs.OrigRetFiledDate}
                 onChange={(v) => patchFiling({ OrigRetFiledDate: v })}
-                placeholder="2025-07-15"
+                placeholder="15/07/2025"
               />
             </Field>
           </Grid2>

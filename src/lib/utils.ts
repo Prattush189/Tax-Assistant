@@ -20,3 +20,20 @@ export function formatINRCompact(amount: number): string {
   if (amount >= 100000)   return `₹${(amount / 100000).toFixed(2)}L`;
   return formatINR(amount);
 }
+
+// ── Date Formatting ─────────────────────────────────────────────────────
+
+/**
+ * Format any date-like value as DD/MM/YYYY.
+ * Accepts ISO strings ("2025-07-31"), epoch ms, or Date objects.
+ * Returns an empty string for invalid/falsy input.
+ */
+export function formatDate(input: string | number | Date | null | undefined): string {
+  if (!input) return '';
+  const d = input instanceof Date ? input : new Date(input);
+  if (Number.isNaN(d.getTime())) return '';
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const yyyy = d.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
+}

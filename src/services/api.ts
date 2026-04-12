@@ -654,6 +654,63 @@ export interface ItPortalImportResult {
  * SECURITY: the password travels over HTTPS and is used only for the
  * one-shot portal call. The server does not log or persist it.
  */
+// ── Writing style profile ───────────────────────────────────────────────
+
+export interface StyleRules {
+  tone?: string;
+  formalityLevel?: number;
+  languagePatterns?: string[];
+  typicalPhrases?: string[];
+  paragraphStyle?: string;
+  openingStyle?: string;
+  closingStyle?: string;
+  citationStyle?: string;
+  overallDescription?: string;
+}
+
+export interface StyleProfile {
+  id: string;
+  name: string;
+  sourceFilename: string | null;
+  rules: StyleRules;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function getStyleProfile(): Promise<{ styleProfile: StyleProfile | null }> {
+  return authFetch('/api/style-profile');
+}
+
+export async function extractStyleProfile(input: File | string, name?: string): Promise<{ ok: true; styleProfile: StyleProfile }> {
+  if (typeof input === 'string') {
+    return authFetch('/api/style-profile/extract', {
+      method: 'POST',
+      body: JSON.stringify({ text: input, name }),
+    });
+  }
+  // File upload — use FormData
+  const form = new FormData();
+  form.append('sample', input);
+  if (name) form.append('name', name);
+  const token = localStorage.getItem('token');
+  const res = await fetch('/api/style-profile/extract', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Upload failed' }));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function deleteStyleProfile(): Promise<{ ok: true }> {
+  return authFetch('/api/style-profile', { method: 'DELETE' });
+}
+
+// ── Income Tax portal import ────────────────────────────────────────────
+
 export async function importFromItPortal(input: {
   pan: string;
   password: string;

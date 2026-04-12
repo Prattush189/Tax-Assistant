@@ -114,8 +114,8 @@ export function PersonalInfoStep({ draft, onChange, manager }: Props) {
           </Field>
         </Grid3>
         <Grid2>
-          <Field label="Date of birth" required hint="YYYY-MM-DD · must be ≤ 2025-03-31">
-            <TextInput value={p.DOB} onChange={(v) => patchPersonal({ DOB: v })} placeholder="1990-05-15" />
+          <Field label="Date of birth" required hint="DD/MM/YYYY · must be ≤ 31/03/2025">
+            <TextInput value={p.DOB} onChange={(v) => patchPersonal({ DOB: v })} placeholder="15/05/1990" />
           </Field>
           <Field label="Employer category" required>
             <Select

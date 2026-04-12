@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { grok, GROK_MODEL } from '../lib/grok.js';
 import { noticeRepo } from '../db/repositories/noticeRepo.js';
+import { styleProfileRepo } from '../db/repositories/styleProfileRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { getBillingUser } from '../lib/billing.js';
 import { AuthRequest } from '../types.js';
@@ -166,13 +167,34 @@ router.post('/generate', async (req: AuthRequest, res: Response) => {
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('X-Accel-Buffering', 'no');
 
+  // Inject user's writing style if they've set one up via Settings
+  let systemPrompt = NOTICE_SYSTEM_PROMPT;
+  try {
+    const styleRow = styleProfileRepo.findByUserId(req.user.id);
+    if (styleRow) {
+      const rules = JSON.parse(styleRow.style_rules);
+      systemPrompt += `\n\nWRITING STYLE PREFERENCE:
+The user prefers the following writing style. Match it closely while keeping the letter structure:
+- Tone: ${rules.tone ?? 'formal'}
+- Formality: ${rules.formalityLevel ?? 7}/10
+- Paragraph style: ${rules.paragraphStyle ?? 'moderate'}
+- Opening pattern: ${rules.openingStyle ?? 'standard'}
+- Closing pattern: ${rules.closingStyle ?? 'standard'}
+- Citation style: ${rules.citationStyle ?? 'standard section references'}
+- Key phrases to use: ${(rules.typicalPhrases ?? []).join(', ') || 'none specified'}
+- Style description: ${rules.overallDescription ?? ''}`;
+    }
+  } catch {
+    // Style lookup failure should never block notice generation
+  }
+
   let fullResponse = '';
 
   try {
     const stream = await grok.chat.completions.create({
       model: GROK_MODEL,
       messages: [
-        { role: 'system', content: NOTICE_SYSTEM_PROMPT },
+        { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
       max_tokens: MAX_TOKENS,

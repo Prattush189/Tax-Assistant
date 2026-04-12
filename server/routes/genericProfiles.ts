@@ -1,10 +1,12 @@
 import { Router, Response } from 'express';
 import { profileRepoV2, ProfileSlice } from '../db/repositories/profileRepoV2.js';
 import { userRepo } from '../db/repositories/userRepo.js';
-import { getBillingUserId } from '../lib/billing.js';
+import { getBillingUserId, getBillingUser } from '../lib/billing.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
+
+const PROFILE_LIMITS: Record<string, number> = { free: 1, pro: 10, enterprise: 50 };
 
 const VALID_SLICES: ProfileSlice[] = [
   'identity_data',
@@ -55,10 +57,17 @@ function inflateRow(row: {
 router.get('/', (req: AuthRequest, res: Response) => {
   if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
   const rows = profileRepoV2.findByUserId(req.user.id);
-  res.json({ profiles: rows.map(inflateRow) });
+  const actor = userRepo.findById(req.user.id);
+  const billingUser = actor ? getBillingUser(actor) : undefined;
+  const plan = billingUser?.plan ?? actor?.plan ?? 'free';
+  const limit = PROFILE_LIMITS[plan] ?? 1;
+  const used = billingUser
+    ? profileRepoV2.countByBillingUser(billingUser.id)
+    : rows.length;
+  res.json({ profiles: rows.map(inflateRow), limit, used });
 });
 
-// POST /api/generic-profiles — create
+// POST /api/generic-profiles — create (rate-limited by plan)
 router.post('/', (req: AuthRequest, res: Response) => {
   if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
   const { name } = req.body ?? {};
@@ -67,7 +76,18 @@ router.post('/', (req: AuthRequest, res: Response) => {
     return;
   }
   const actor = userRepo.findById(req.user.id);
-  const billingUserId = getBillingUserId(actor ?? { id: req.user.id, inviter_id: null });
+  const billingUser = actor ? getBillingUser(actor) : undefined;
+  const billingUserId = billingUser?.id ?? req.user.id;
+  const plan = billingUser?.plan ?? actor?.plan ?? 'free';
+  const limit = PROFILE_LIMITS[plan] ?? 1;
+  const count = profileRepoV2.countByBillingUser(billingUserId);
+  if (count >= limit) {
+    res.status(429).json({
+      error: `You've reached your profile limit (${limit}). Upgrade your plan for more.`,
+      upgrade: true,
+    });
+    return;
+  }
   const row = profileRepoV2.create(req.user.id, name.trim(), billingUserId);
   res.status(201).json(inflateRow(row));
 });

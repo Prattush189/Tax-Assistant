@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { User, Mail, Lock, Trash2, AlertTriangle, Check, Sliders } from 'lucide-react';
+import { User, Mail, Lock, Trash2, AlertTriangle, Check, Sliders, PenTool } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import {
   updateAccountName,
@@ -11,6 +11,7 @@ import { usePreferences } from '../../hooks/usePreferences';
 import { cn } from '../../lib/utils';
 import toast from 'react-hot-toast';
 import { TeamSection } from './TeamSection';
+import { StyleSection } from './StyleSection';
 
 interface SectionProps {
   title: string;
@@ -326,6 +327,15 @@ export function SettingsPage() {
                 {savingPwd ? 'Updating...' : 'Update Password'}
               </button>
             </div>
+          </Section>
+
+          {/* Writing Style */}
+          <Section
+            title="Writing Style"
+            description="Upload a sample notice to teach the AI your preferred writing style"
+            icon={PenTool}
+          >
+            <StyleSection />
           </Section>
 
           {/* Team — shows for all plans (with explainer on non-enterprise) */}

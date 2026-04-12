@@ -17,11 +17,11 @@ export function MeetingInfoStep({ draft, onChange }: Props) {
     <div className="space-y-4">
       <Card title="Board meeting">
         <Grid2>
-          <Field label="Meeting date" required hint="YYYY-MM-DD">
+          <Field label="Meeting date" required hint="DD/MM/YYYY">
             <TextInput
               value={m.date}
               onChange={(v) => patchMeeting({ date: v })}
-              placeholder="2026-04-01"
+              placeholder="01/04/2026"
             />
           </Field>
           <Field label="Meeting time" hint="HH:MM (24-hour)">

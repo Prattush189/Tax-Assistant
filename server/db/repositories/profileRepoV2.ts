@@ -31,6 +31,9 @@ const stmts = {
   findByUserId: db.prepare(
     'SELECT * FROM profiles WHERE user_id = ? ORDER BY updated_at DESC'
   ),
+  countByBillingUser: db.prepare(
+    'SELECT COUNT(*) as cnt FROM profiles WHERE billing_user_id = ?'
+  ),
   findByIdForUser: db.prepare(
     'SELECT * FROM profiles WHERE id = ? AND user_id = ?'
   ),
@@ -61,6 +64,11 @@ const stmts = {
 export const profileRepoV2 = {
   findByUserId(userId: string): ProfileRow[] {
     return stmts.findByUserId.all(userId) as ProfileRow[];
+  },
+
+  countByBillingUser(billingUserId: string): number {
+    const row = stmts.countByBillingUser.get(billingUserId) as { cnt: number } | undefined;
+    return row?.cnt ?? 0;
   },
 
   findByIdForUser(id: string, userId: string): ProfileRow | undefined {

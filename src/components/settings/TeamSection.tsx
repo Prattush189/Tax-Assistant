@@ -261,7 +261,7 @@ export function TeamSection() {
                         <p className="text-sm text-gray-800 dark:text-gray-200 truncate">
                           {inv.email || inv.phone || '(unknown)'}
                         </p>
-                        <p className="text-[11px] text-gray-400">Expires {new Date(inv.expires_at + '+05:30').toLocaleDateString()}</p>
+                        <p className="text-[11px] text-gray-400">Expires {(() => { const d = new Date(inv.expires_at + '+05:30'); return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`; })()}</p>
                       </div>
                       <button
                         onClick={() => handleRevoke(inv.id, 'pending')}

@@ -153,6 +153,18 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_board_resolutions_updated_at ON board_re
 db.exec("CREATE INDEX IF NOT EXISTS idx_profiles_user_id ON profiles(user_id)");
 db.exec("CREATE INDEX IF NOT EXISTS idx_profiles_updated_at ON profiles(updated_at DESC)");
 
+// Style profiles — one per user, stores LLM-extracted writing style rules
+db.exec(`CREATE TABLE IF NOT EXISTS style_profiles (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL DEFAULT 'My Style',
+  source_filename TEXT,
+  raw_sample_text TEXT,
+  style_rules TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+)`);
+
 // Seed admin account
 const ADMIN_EMAIL = 'prattyush.jain@gmail.com';
 const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(ADMIN_EMAIL);
