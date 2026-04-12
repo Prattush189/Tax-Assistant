@@ -1,5 +1,10 @@
 import { useMemo } from 'react';
-import { ItrWizardDraft, UiIncomeDeductionsITR1, UiSalaryEmployer, UiLTCG112A } from '../lib/uiModel';
+import {
+  ItrWizardDraft, UiIncomeDeductionsITR1, UiSalaryEmployer, UiLTCG112A,
+  UiAllwncExemptUs10Entry, EXEMPT_ALLOWANCE_NATURES,
+  UiOtherSourceEntry, OTHER_SOURCE_NATURES,
+  UiExemptIncomeEntry, EXEMPT_INCOME_NATURES,
+} from '../lib/uiModel';
 import { Card, Field, Grid2, Grid3, TextInput, RupeeInput, Select, Accordion } from '../shared/Inputs';
 import { Plus, Trash2, AlertTriangle } from 'lucide-react';
 import { LoadFromProfile } from '../../profile/shared/LoadFromProfile';
@@ -35,6 +40,25 @@ export function IncomeStep({ draft, onChange }: Props) {
     }));
   };
 
+  // ── Exempt allowances u/s 10 ──────────────────────────────────────────
+  const exemptAllowances: UiAllwncExemptUs10Entry[] = draft.AllwncExemptUs10?.AllwncExemptUs10Dtls ?? [];
+  const patchExemptAllowances = (items: UiAllwncExemptUs10Entry[]) => {
+    const total = items.reduce((a, e) => a + (e.SalOthAmount ?? 0), 0);
+    onChange((prev) => ({ ...prev, AllwncExemptUs10: { AllwncExemptUs10Dtls: items, TotalAllwncExemptUs10: total } }));
+  };
+
+  // ── Other sources breakup ────────────────────────────────────────────
+  const othSrcEntries: UiOtherSourceEntry[] = draft.OthersInc?.OthersIncDtlsOthSrc ?? [];
+  const patchOthSrcEntries = (items: UiOtherSourceEntry[]) => {
+    onChange((prev) => ({ ...prev, OthersInc: { OthersIncDtlsOthSrc: items } }));
+  };
+
+  // ── Exempt income reporting ──────────────────────────────────────────
+  const exemptIncEntries: UiExemptIncomeEntry[] = draft.ExemptIncAgriOthUs10?.ExemptIncAgriOthUs10Dtls ?? [];
+  const patchExemptInc = (items: UiExemptIncomeEntry[]) => {
+    onChange((prev) => ({ ...prev, ExemptIncAgriOthUs10: { ExemptIncAgriOthUs10Dtls: items } }));
+  };
+
   const addEmployer = () => {
     onChange((prev) => ({
       ...prev,
@@ -68,6 +92,19 @@ export function IncomeStep({ draft, onChange }: Props) {
   );
   const stdDeductionLimit = isNewRegime ? 75000 : 50000;
   const autoStdDeduction = Math.min(stdDeductionLimit, totalGrossSalary + (inc.PerquisitesValue ?? 0) + (inc.ProfitsInSalary ?? 0));
+
+  const totalExemptAllowances = useMemo(
+    () => exemptAllowances.reduce((a, e) => a + (e.SalOthAmount ?? 0), 0),
+    [exemptAllowances],
+  );
+  const totalOthSrcBreakup = useMemo(
+    () => othSrcEntries.reduce((a, e) => a + (e.OthSrcOthAmount ?? 0), 0),
+    [othSrcEntries],
+  );
+  const totalExemptIncome = useMemo(
+    () => exemptIncEntries.reduce((a, e) => a + (e.OthAmount ?? 0), 0),
+    [exemptIncEntries],
+  );
 
   // HP auto: 30% std deduction for let-out/deemed
   const hpAnnual = inc.AnnualValue ?? 0;
@@ -184,6 +221,66 @@ export function IncomeStep({ draft, onChange }: Props) {
             </button>
           )}
         </Accordion>
+
+        <Accordion
+          title="Exempt allowances u/s 10"
+          subtitle={totalExemptAllowances > 0 ? `Total: ₹${totalExemptAllowances.toLocaleString('en-IN')}` : 'HRA, LTA, gratuity, etc.'}
+        >
+          {exemptAllowances.length === 0 ? (
+            <p className="text-sm text-gray-400 dark:text-gray-500 py-3 text-center">
+              No exempt allowances added yet.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {exemptAllowances.map((entry, i) => (
+                <div key={i} className="p-3 border border-gray-200 dark:border-gray-800 rounded-xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase">
+                      Allowance {i + 1}
+                    </p>
+                    <button
+                      onClick={() => patchExemptAllowances(exemptAllowances.filter((_, j) => j !== i))}
+                      className="text-red-500 hover:text-red-600 p-1 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  <Grid2>
+                    <Field label="Nature">
+                      <Select
+                        value={entry.SalNatureDesc}
+                        onChange={(v) => {
+                          const updated = [...exemptAllowances];
+                          updated[i] = { ...entry, SalNatureDesc: v };
+                          patchExemptAllowances(updated);
+                        }}
+                        options={EXEMPT_ALLOWANCE_NATURES}
+                        placeholder="Select nature"
+                      />
+                    </Field>
+                    <Field label="Amount">
+                      <RupeeInput
+                        value={entry.SalOthAmount}
+                        onChange={(v) => {
+                          const updated = [...exemptAllowances];
+                          updated[i] = { ...entry, SalOthAmount: v };
+                          patchExemptAllowances(updated);
+                        }}
+                      />
+                    </Field>
+                  </Grid2>
+                </div>
+              ))}
+            </div>
+          )}
+          <button
+            onClick={() => patchExemptAllowances([...exemptAllowances, { SalNatureDesc: '', SalOthAmount: 0 }])}
+            className="flex items-center gap-1 text-xs font-medium text-emerald-600 hover:text-emerald-700 px-2 py-1 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors mt-2"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Add allowance
+          </button>
+        </Accordion>
       </Card>
 
       {/* ── House Property ────────────────────────────────────────────────── */}
@@ -244,6 +341,66 @@ export function IncomeStep({ draft, onChange }: Props) {
           Enter total income from other sources (savings interest, FD interest, dividends, family pension, etc.)
           in the first field. If you receive family pension, enter the standard deduction (max ₹25,000) in the second field.
         </p>
+
+        <Accordion
+          title="Income breakup by nature (optional)"
+          subtitle={totalOthSrcBreakup > 0 ? `Total: ₹${totalOthSrcBreakup.toLocaleString('en-IN')}` : 'Savings, FD, dividends, etc.'}
+        >
+          {othSrcEntries.length === 0 ? (
+            <p className="text-sm text-gray-400 dark:text-gray-500 py-3 text-center">
+              No breakup entries added yet.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {othSrcEntries.map((entry, i) => (
+                <div key={i} className="p-3 border border-gray-200 dark:border-gray-800 rounded-xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase">
+                      Source {i + 1}
+                    </p>
+                    <button
+                      onClick={() => patchOthSrcEntries(othSrcEntries.filter((_, j) => j !== i))}
+                      className="text-red-500 hover:text-red-600 p-1 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  <Grid2>
+                    <Field label="Nature">
+                      <Select
+                        value={entry.OthSrcNatureDesc}
+                        onChange={(v) => {
+                          const updated = [...othSrcEntries];
+                          updated[i] = { ...entry, OthSrcNatureDesc: v };
+                          patchOthSrcEntries(updated);
+                        }}
+                        options={OTHER_SOURCE_NATURES}
+                        placeholder="Select nature"
+                      />
+                    </Field>
+                    <Field label="Amount">
+                      <RupeeInput
+                        value={entry.OthSrcOthAmount}
+                        onChange={(v) => {
+                          const updated = [...othSrcEntries];
+                          updated[i] = { ...entry, OthSrcOthAmount: v };
+                          patchOthSrcEntries(updated);
+                        }}
+                      />
+                    </Field>
+                  </Grid2>
+                </div>
+              ))}
+            </div>
+          )}
+          <button
+            onClick={() => patchOthSrcEntries([...othSrcEntries, { OthSrcNatureDesc: '', OthSrcOthAmount: 0 }])}
+            className="flex items-center gap-1 text-xs font-medium text-emerald-600 hover:text-emerald-700 px-2 py-1 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors mt-2"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Add source
+          </button>
+        </Accordion>
       </Card>
 
       {/* ── LTCG 112A ─────────────────────────────────────────────────────── */}
@@ -278,6 +435,72 @@ export function IncomeStep({ draft, onChange }: Props) {
             Auto-calculate LTCG: ₹{Math.max(0, (ltcg.TotSaleCnsdrn ?? 0) - (ltcg.TotCstAcqisn ?? 0)).toLocaleString('en-IN')}
           </button>
         )}
+      </Card>
+
+      {/* ── Exempt Income ─────────────────────────────────────────────────── */}
+      <Card title="Exempt income (for reporting only)">
+        <p className="text-[11px] text-gray-500 dark:text-gray-500 mb-2">
+          Reporting only — does not affect tax calculation. Agricultural income, insurance maturity, PF withdrawals, etc.
+        </p>
+        {exemptIncEntries.length === 0 ? (
+          <p className="text-sm text-gray-400 dark:text-gray-500 py-3 text-center">
+            No exempt income entries yet. Click "Add entry" to add one.
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {exemptIncEntries.map((entry, i) => (
+              <div key={i} className="p-3 border border-gray-200 dark:border-gray-800 rounded-xl space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase">
+                    Entry {i + 1}
+                  </p>
+                  <button
+                    onClick={() => patchExemptInc(exemptIncEntries.filter((_, j) => j !== i))}
+                    className="text-red-500 hover:text-red-600 p-1 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <Grid2>
+                  <Field label="Nature">
+                    <Select
+                      value={entry.NatureDesc}
+                      onChange={(v) => {
+                        const updated = [...exemptIncEntries];
+                        updated[i] = { ...entry, NatureDesc: v };
+                        patchExemptInc(updated);
+                      }}
+                      options={EXEMPT_INCOME_NATURES}
+                      placeholder="Select nature"
+                    />
+                  </Field>
+                  <Field label="Amount">
+                    <RupeeInput
+                      value={entry.OthAmount}
+                      onChange={(v) => {
+                        const updated = [...exemptIncEntries];
+                        updated[i] = { ...entry, OthAmount: v };
+                        patchExemptInc(updated);
+                      }}
+                    />
+                  </Field>
+                </Grid2>
+              </div>
+            ))}
+            {exemptIncEntries.length > 0 && (
+              <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400 px-1">
+                <span>Total exempt income: <strong className="text-gray-700 dark:text-gray-200">₹{totalExemptIncome.toLocaleString('en-IN')}</strong></span>
+              </div>
+            )}
+          </div>
+        )}
+        <button
+          onClick={() => patchExemptInc([...exemptIncEntries, { NatureDesc: '', OthAmount: 0 }])}
+          className="flex items-center gap-1 text-xs font-medium text-emerald-600 hover:text-emerald-700 px-2 py-1 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors mt-2"
+        >
+          <Plus className="w-3.5 h-3.5" />
+          Add entry
+        </button>
       </Card>
     </div>
   );

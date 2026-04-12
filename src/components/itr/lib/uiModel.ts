@@ -207,6 +207,167 @@ export interface UiSalaryEmployer {
   tdsOnSalary?: number;
 }
 
+// ── Exempt allowances u/s 10 ────────────────────────────────────────────
+
+export interface UiAllwncExemptUs10Entry {
+  SalNatureDesc?: string;      // '10(5)','10(10)','10(10A)','10(10AA)','10(13A)', etc.
+  SalOthNatureDesc?: string;   // free text if nature is 'EIC'
+  SalOthAmount?: number;
+}
+
+export const EXEMPT_ALLOWANCE_NATURES: ReadonlyArray<{ code: string; label: string }> = [
+  { code: '10(5)', label: 'Leave travel concession (LTA)' },
+  { code: '10(10)', label: 'Gratuity' },
+  { code: '10(10A)', label: 'Commuted pension' },
+  { code: '10(10AA)', label: 'Leave encashment on retirement' },
+  { code: '10(10B)(i)', label: 'Compensation — CG notified limit' },
+  { code: '10(10B)(ii)', label: 'Compensation — scheme' },
+  { code: '10(10C)', label: 'VRS compensation' },
+  { code: '10(10CC)', label: 'Tax-free perquisites' },
+  { code: '10(13A)', label: 'HRA' },
+  { code: '10(14)(i)', label: 'Prescribed allowances (special)' },
+  { code: '10(14)(ii)', label: 'Transport / conveyance' },
+  { code: 'EIC', label: 'Other exempt income' },
+];
+
+// ── Other source income breakup ─────────────────────────────────────────
+
+export interface UiOtherSourceEntry {
+  OthSrcNatureDesc?: string;    // 'SAV','IFD','TAX','FAP','DIV','OTH' etc.
+  OthSrcOthNatureDesc?: string; // free text if 'OTH'
+  OthSrcOthAmount?: number;
+}
+
+export const OTHER_SOURCE_NATURES: ReadonlyArray<{ code: string; label: string }> = [
+  { code: 'SAV', label: 'Savings bank interest' },
+  { code: 'IFD', label: 'FD / deposit interest' },
+  { code: 'TAX', label: 'Interest from IT refund' },
+  { code: 'FAP', label: 'Family pension' },
+  { code: 'DIV', label: 'Dividend income' },
+  { code: 'OTH', label: 'Other' },
+];
+
+// ── Schedule EA 10(13A) — HRA exemption calc ────────────────────────────
+
+export interface UiScheduleEA1013A {
+  Placeofwork?: '1' | '2';     // 1=metro, 2=other
+  ActlHRARecv?: number;
+  ActlRentPaid?: number;
+  BasicSalary?: number;
+  DearnessAllwnc?: number;
+  DtlsSalUsSec171?: number;    // salary u/s 17(1)
+}
+
+// ── Schedule 80D — Health insurance ─────────────────────────────────────
+
+export interface UiSchedule80D {
+  SeniorCitizenFlag?: 'Y' | 'N' | 'S';
+  SelfAndFamily?: number;
+  HealthInsPremSlfFam?: number;
+  PrevHlthChckUpSlfFam?: number;
+  ParentsSeniorCitizenFlag?: 'Y' | 'N' | 'P';
+  Parents?: number;
+  HlthInsPremParents?: number;
+  PrevHlthChckUpParents?: number;
+}
+
+// ── Schedule 80G — Donations ────────────────────────────────────────────
+
+export interface UiDonationEntry {
+  DoneeWithPanName?: string;
+  DoneePAN?: string;
+  ArnNbr?: string;
+  DonationAmtCash?: number;
+  DonationAmtOtherMode?: number;
+}
+
+export interface UiSchedule80G {
+  Don100Percent?: UiDonationEntry[];
+  Don50PercentNoApprReqd?: UiDonationEntry[];
+  Don100PercentApprReqd?: UiDonationEntry[];
+  Don50PercentApprReqd?: UiDonationEntry[];
+}
+
+// ── Schedule 80C — Investments ──────────────────────────────────────────
+
+export interface UiSchedule80CEntry {
+  IdentificationNo?: string;   // policy / account number
+  Amount?: number;
+}
+
+// ── Schedule Us24B — Housing loan ───────────────────────────────────────
+
+export interface UiLoanEntry24B {
+  LoanTknFrom?: 'B' | 'I';    // B=Bank, I=Other
+  BankOrInstnName?: string;
+  LoanAccNoOfBankOrInstnRefNo?: string;
+  DateofLoan?: string;
+  TotalLoanAmt?: number;
+  LoanOutstndngAmt?: number;
+  InterestPayable?: number;
+}
+
+// ── Schedule 80DD / 80U — Disability ────────────────────────────────────
+
+export interface UiSchedule80DD {
+  NatureOfDisability?: '1' | '2';     // 1=40-80%, 2=>80%
+  TypeOfDisability?: '1' | '2';       // 1=disability, 2=severe
+  DependentType?: '1' | '2' | '3' | '4' | '5' | '6' | '7';
+  DependentPan?: string;
+  DependentAadhaar?: string;
+  Form10IAAckNum?: string;
+  UDIDNum?: string;
+  DeductionAmount?: number;
+}
+
+export interface UiSchedule80U {
+  NatureOfDisability?: '1' | '2';
+  TypeOfDisability?: '1' | '2';
+  Form10IAAckNum?: string;
+  UDIDNum?: string;
+  DeductionAmount?: number;
+}
+
+// ── Schedule 80E/80EE/80EEA/80EEB — Loan details ───────────────────────
+
+export interface UiLoanEntryGeneric {
+  LoanTknFrom?: 'B' | 'I';
+  BankOrInstnName?: string;
+  LoanAccNo?: string;
+  DateofLoan?: string;
+  TotalLoanAmt?: number;
+  LoanOutstndngAmt?: number;
+  InterestAmt?: number;
+}
+
+// ── Schedule 80GGA / 80GGC — Donation details ───────────────────────────
+
+export interface UiDonationDetailEntry {
+  DoneeName?: string;
+  DoneePAN?: string;
+  DonationAmtCash?: number;
+  DonationAmtOtherMode?: number;
+  EligibleDonationAmt?: number;
+}
+
+// ── Exempt income reporting ─────────────────────────────────────────────
+
+export interface UiExemptIncomeEntry {
+  NatureDesc?: string;          // 'AGRI', '10(10BC)', '10(10D)', '10(11)', '10(12)', etc.
+  OthNatOfInc?: string;
+  OthAmount?: number;
+}
+
+export const EXEMPT_INCOME_NATURES: ReadonlyArray<{ code: string; label: string }> = [
+  { code: 'AGRI', label: 'Agricultural income' },
+  { code: '10(10D)', label: 'Insurance maturity (10(10D))' },
+  { code: '10(11)', label: 'Statutory provident fund (10(11))' },
+  { code: '10(12)', label: 'Recognized provident fund (10(12))' },
+  { code: '10(12C)', label: 'NPS trust (10(12C))' },
+  { code: '10(10BC)', label: 'Compensation to athletes (10(10BC))' },
+  { code: 'OTH', label: 'Other exempt income' },
+];
+
 // ── TDS / TCS / Tax Payments schedules ──────────────────────────────────
 
 export interface UiTDSonSalaryEntry {
@@ -275,6 +436,23 @@ export interface ItrWizardDraft {
   TDSonOthThanSals?: { TDSonOthThanSal?: UiTDSonOtherEntry[] };
   ScheduleTCS?: { TCS?: UiTCSEntry[] };
   TaxPayments?: { TaxPayment?: UiTaxPaymentEntry[] };
+  // Detailed schedules (line-item breakups)
+  AllwncExemptUs10?: { AllwncExemptUs10Dtls?: UiAllwncExemptUs10Entry[]; TotalAllwncExemptUs10?: number };
+  OthersInc?: { OthersIncDtlsOthSrc?: UiOtherSourceEntry[] };
+  ScheduleEA10_13A?: UiScheduleEA1013A;
+  Schedule80D?: UiSchedule80D;
+  Schedule80G?: UiSchedule80G;
+  Schedule80C?: { Schedule80CDtls?: UiSchedule80CEntry[]; TotalAmt?: number };
+  ScheduleUs24B?: { ScheduleUs24BDtls?: UiLoanEntry24B[]; TotalInterestUs24B?: number };
+  Schedule80DD?: UiSchedule80DD;
+  Schedule80U?: UiSchedule80U;
+  Schedule80E?: { Schedule80EDtls?: UiLoanEntryGeneric[]; TotalInterest80E?: number };
+  Schedule80EE?: { Schedule80EEDtls?: UiLoanEntryGeneric[]; TotalInterest80EE?: number };
+  Schedule80EEA?: { PropStmpDtyVal?: number; Schedule80EEADtls?: UiLoanEntryGeneric[]; TotalInterest80EEA?: number };
+  Schedule80EEB?: { Schedule80EEBDtls?: UiLoanEntryGeneric[]; TotalInterest80EEB?: number };
+  Schedule80GGA?: { DonationDtlsSciRsrchRuralDev?: UiDonationDetailEntry[]; TotalDonationsUs80GGA?: number; TotalEligibleDonationAmt80GGA?: number };
+  Schedule80GGC?: { Schedule80GGCDetails?: UiDonationDetailEntry[]; TotalDonationsUs80GGC?: number; TotalEligibleDonationAmt80GGC?: number };
+  ExemptIncAgriOthUs10?: { ExemptIncAgriOthUs10Dtls?: UiExemptIncomeEntry[] };
   /** UI-only: multi-employer list (flattened to the schema totals on export) */
   _salaryEmployers?: UiSalaryEmployer[];
 }

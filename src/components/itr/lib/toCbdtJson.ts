@@ -280,6 +280,34 @@ export function toCbdtJson(draft: ItrWizardDraft): Record<string, unknown> {
     if (d.ScheduleTCS?.TCS?.length) inner.ScheduleTCS = d.ScheduleTCS;
     if (d.TaxPayments?.TaxPayment?.length) inner.TaxPayments = d.TaxPayments;
     if (d.TaxReturnPreparer) inner.TaxReturnPreparer = d.TaxReturnPreparer;
+
+    // Detailed schedules — include if populated
+    if (d.Schedule80G) inner.Schedule80G = d.Schedule80G;
+    if (d.Schedule80GGA?.DonationDtlsSciRsrchRuralDev?.length) inner.Schedule80GGA = d.Schedule80GGA;
+    if (d.Schedule80GGC?.Schedule80GGCDetails?.length) inner.Schedule80GGC = d.Schedule80GGC;
+    if (d.Schedule80D) inner.Schedule80D = { Sec80DSelfFamSrCtznHealth: d.Schedule80D };
+    if (d.Schedule80DD?.DeductionAmount) inner.Schedule80DD = d.Schedule80DD;
+    if (d.Schedule80U?.DeductionAmount) inner.Schedule80U = d.Schedule80U;
+    if (d.Schedule80E?.Schedule80EDtls?.length) inner.Schedule80E = d.Schedule80E;
+    if (d.Schedule80EE?.Schedule80EEDtls?.length) inner.Schedule80EE = d.Schedule80EE;
+    if (d.Schedule80EEA?.Schedule80EEADtls?.length) inner.Schedule80EEA = d.Schedule80EEA;
+    if (d.Schedule80EEB?.Schedule80EEBDtls?.length) inner.Schedule80EEB = d.Schedule80EEB;
+    if (d.Schedule80C?.Schedule80CDtls?.length) inner.Schedule80C = d.Schedule80C;
+    if (d.ScheduleUs24B?.ScheduleUs24BDtls?.length) inner.ScheduleUs24B = d.ScheduleUs24B;
+    if (d.ScheduleEA10_13A) inner.ScheduleEA10_13A = d.ScheduleEA10_13A;
+
+    // Include exempt allowances and other source breakup inside IncomeDeductions
+    const incBlock = inner.ITR1_IncomeDeductions as Record<string, unknown>;
+    if (d.AllwncExemptUs10?.AllwncExemptUs10Dtls?.length) {
+      incBlock.AllwncExemptUs10 = d.AllwncExemptUs10;
+    }
+    if (d.OthersInc?.OthersIncDtlsOthSrc?.length) {
+      incBlock.OthersInc = d.OthersInc;
+    }
+    if (d.ExemptIncAgriOthUs10?.ExemptIncAgriOthUs10Dtls?.length) {
+      incBlock.ExemptIncAgriOthUs10 = { ExemptIncAgriOthUs10Dtls: d.ExemptIncAgriOthUs10.ExemptIncAgriOthUs10Dtls };
+    }
+
     return { ITR: { ITR1: inner } };
   }
 
