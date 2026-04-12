@@ -81,6 +81,11 @@ if (!colNames.includes('inviter_id')) {
   db.exec("ALTER TABLE users ADD COLUMN inviter_id TEXT");
   db.exec("CREATE INDEX IF NOT EXISTS idx_users_inviter_id ON users(inviter_id)");
 }
+// Single-session enforcement: each login stamps a random token; old sessions
+// are invalidated because the JWT's sessionToken no longer matches.
+if (!colNames.includes('session_token')) {
+  db.exec("ALTER TABLE users ADD COLUMN session_token TEXT");
+}
 // Grandfather all pre-existing users as verified exactly once, the first
 // time the email_verified column appears. New signups go through the OTP
 // flow regardless.

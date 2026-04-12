@@ -2,7 +2,7 @@
  * Plugin mode message protocol — v2
  *
  * Single source of truth for every postMessage exchanged between the iframe
- * (Smart AI) and the parent host (ai.smartbizin.com).
+ * (Smartbiz AI) and the parent host (ai.smartbizin.com).
  *
  * Every message is a discriminated union keyed by `type`.
  * Both sides MUST validate `event.origin` against `getAllowedOrigins()`.
@@ -40,7 +40,7 @@ export interface SsoPayload {
   signature: string;     // hex HMAC-SHA256 — see PLUGIN_INTEGRATION.md for base string
 
   // --- Optional enterprise-shared fields (all included in the signature) ---
-  plan?: PlanId;                    // override the user's Smart AI plan (e.g. 'enterprise-shared')
+  plan?: PlanId;                    // override the user's Smartbiz AI plan (e.g. 'enterprise-shared')
   limits?: PluginLimitOverrides;    // per-feature caps assigned by the consultant
   role?: ConsultantRole;            // consultant | staff | client
   consultantId?: string;            // parent's ID of the owning consultant (staff/client only)

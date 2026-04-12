@@ -114,7 +114,7 @@ export function PluginAuthBridge({ children }: PluginAuthBridgeProps) {
         <div className="flex flex-col items-center gap-4 max-w-xs text-center px-6">
           <LoadingAnimation size="md" />
           <p className="text-gray-600 dark:text-gray-300 text-sm font-medium">
-            {bridge.status === 'idle' ? 'Connecting to Smart AI…' : 'Verifying your account…'}
+            {bridge.status === 'idle' ? 'Connecting to Smartbiz AI…' : 'Verifying your account…'}
           </p>
           <p className="text-[11px] text-gray-400">Linking your host session</p>
         </div>

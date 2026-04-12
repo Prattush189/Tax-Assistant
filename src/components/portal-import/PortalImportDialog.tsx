@@ -110,7 +110,7 @@ export function PortalImportDialog({
                 <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
                 <div className="text-[11px] leading-relaxed text-amber-800 dark:text-amber-300">
                   <p className="font-semibold mb-1">
-                    You're giving Smart AI your Income Tax portal password.
+                    You're giving Smartbiz AI your Income Tax portal password.
                   </p>
                   <p>
                     It is used only for this one-shot import, held in server memory, and

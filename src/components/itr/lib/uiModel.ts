@@ -68,6 +68,15 @@ export interface UiFilingStatus {
   ItrFilingDueDate?: string;
   ReceiptNo?: string;
   OrigRetFiledDate?: string;
+  NoticeNo?: string;
+  NoticeDateUnderSec?: string;
+  // 7th proviso to section 139(1)
+  SeventhProvisio139?: 'Y' | 'N';
+  IncrExpAggAmt2LkTrvFrgnCntryFlg?: 'Y' | 'N';
+  AmtSeventhProvisio139ii?: number;
+  IncrExpAggAmt1LkElctrctyPrYrFlg?: 'Y' | 'N';
+  AmtSeventhProvisio139iii?: number;
+  clauseiv7provisio139i?: 'Y' | 'N';
 }
 
 export interface UiChapVIA {
@@ -100,9 +109,11 @@ export interface UiIncomeDeductionsITR1 {
   PerquisitesValue?: number;
   ProfitsInSalary?: number;
   IncomeNotified89A?: number;
+  IncomeNotifiedOther89A?: number;
   NetSalary?: number;
   DeductionUs16?: number;
   DeductionUs16ia?: number;
+  EntertainmentAlw16ii?: number;
   ProfessionalTaxUs16iii?: number;
   IncomeFromSal?: number;
   TypeOfHP?: 'S' | 'L' | 'D';
@@ -111,8 +122,10 @@ export interface UiIncomeDeductionsITR1 {
   AnnualValue?: number;
   StandardDeduction?: number;
   InterestPayable?: number;
+  ArrearsUnrealizedRentRcvd?: number;
   TotalIncomeOfHP?: number;
   IncomeOthSrc?: number;
+  DeductionUs57iia?: number;   // family pension std deduction (max ₹25k)
   GrossTotIncome?: number;
   GrossTotIncomeIncLTCG112A?: number;
   UsrDeductUndChapVIA?: UiChapVIA;
@@ -194,6 +207,47 @@ export interface UiSalaryEmployer {
   tdsOnSalary?: number;
 }
 
+// ── TDS / TCS / Tax Payments schedules ──────────────────────────────────
+
+export interface UiTDSonSalaryEntry {
+  EmployerOrDeductorOrCollectTAN?: string;
+  EmployerOrDeductorOrCollectName?: string;
+  IncChrgSal?: number;        // income charged to salary
+  TotalTDSSal?: number;       // TDS deducted
+}
+
+export interface UiTDSonOtherEntry {
+  EmployerOrDeductorOrCollectTAN?: string;
+  EmployerOrDeductorOrCollectName?: string;
+  UniqueTDSCerNo?: string;    // unique TDS certificate number
+  AmtForTaxDeworDed?: number; // gross amount
+  DeductedYr?: string;        // FY of deduction (YYYY-YY)
+  TotalTDSonOthThanSals?: number;
+  ClaimOutOfTotTDSOnAmtPaid?: number;
+}
+
+export interface UiTCSEntry {
+  EmployerOrDeductorOrCollectTAN?: string;
+  EmployerOrDeductorOrCollectName?: string;
+  AmtTaxCollected?: number;
+  CollectedYr?: string;
+  TotalTCS?: number;
+  ClaimOutOfTotTCS?: number;
+}
+
+export interface UiTaxPaymentEntry {
+  BSRCode?: string;
+  DateDep?: string;           // YYYY-MM-DD
+  SrlNoOfChaln?: string;
+  Amt?: number;
+}
+
+export interface UiTaxReturnPreparer {
+  IdentificationNoOfTRP?: string;
+  NameOfTRP?: string;
+  ReImbFrmGov?: number;
+}
+
 /**
  * The outer wizard draft shape. This merges all the slices above plus some
  * UI-only state (employers array, accordion flags) that isn't part of CBDT
@@ -215,6 +269,12 @@ export interface ItrWizardDraft {
   Refund?: UiRefund;
   LTCG112A?: UiLTCG112A;
   Verification?: UiVerification;
+  TaxReturnPreparer?: UiTaxReturnPreparer;
+  // TDS/TCS/TaxPayments schedules
+  TDSonSalaries?: { TDSonSalary?: UiTDSonSalaryEntry[] };
+  TDSonOthThanSals?: { TDSonOthThanSal?: UiTDSonOtherEntry[] };
+  ScheduleTCS?: { TCS?: UiTCSEntry[] };
+  TaxPayments?: { TaxPayment?: UiTaxPaymentEntry[] };
   /** UI-only: multi-employer list (flattened to the schema totals on export) */
   _salaryEmployers?: UiSalaryEmployer[];
 }
@@ -272,6 +332,10 @@ export function emptyDraft(formType: 'ITR1' | 'ITR4' = 'ITR1'): ItrWizardDraft {
       ReturnFileSec: 11,
       OptOutNewTaxRegime: 'N',
       ItrFilingDueDate: '2025-07-31',
+      SeventhProvisio139: 'N',
+      IncrExpAggAmt2LkTrvFrgnCntryFlg: 'N',
+      IncrExpAggAmt1LkElctrctyPrYrFlg: 'N',
+      clauseiv7provisio139i: 'N',
     },
     ITR1_IncomeDeductions: {
       GrossSalary: 0,

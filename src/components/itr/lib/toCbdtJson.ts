@@ -50,8 +50,8 @@ function buildPlaceholderCreationInfo() {
   const dd = String(now.getDate()).padStart(2, '0');
   return {
     SWVersionNo: '1.0',
-    SWCreatedBy: 'SW00000000',
-    JSONCreatedBy: 'SW00000000',
+    SWCreatedBy: 'SW20000015',
+    JSONCreatedBy: 'SW20000015',
     JSONCreationDate: `${yyyy}-${mm}-${dd}`,
     IntermediaryCity: 'Delhi',
     Digest: '-',
@@ -136,7 +136,25 @@ export function computeDerivedTotals(draft: ItrWizardDraft): ItrWizardDraft {
   const allowedChapVia = filterChapVIAForRegime(userChapVia, regime);
   inc.DeductUndChapVIA = { ...allowedChapVia, TotalChapVIADeductions: claimedTotal };
 
-  inc.TotalIncome = Math.max(0, inc.GrossTotIncome - claimedTotal);
+  // ITR-1 cap: TotalIncome ≤ ₹51,25,000 (schema maximum field constraint)
+  const rawTotalIncome = Math.max(0, inc.GrossTotIncome - claimedTotal);
+  inc.TotalIncome = Math.min(rawTotalIncome, 5125000);
+
+  // ── Auto-build TDSonSalaries from employers ────────────────────────────
+  const employers = d._salaryEmployers ?? [];
+  if (employers.length > 0) {
+    const tdsOnSalary = employers
+      .filter(e => (e.grossSalary ?? 0) > 0 || (e.tdsOnSalary ?? 0) > 0)
+      .map(e => ({
+        EmployerOrDeductorOrCollectTAN: e.tan,
+        EmployerOrDeductorOrCollectName: e.employerName,
+        IncChrgSal: e.grossSalary ?? 0,
+        TotalTDSSal: e.tdsOnSalary ?? 0,
+      }));
+    if (tdsOnSalary.length > 0) {
+      (d as unknown as Record<string, unknown>).TDSonSalaries = { TDSonSalary: tdsOnSalary };
+    }
+  }
 
   // ── Tax computation ────────────────────────────────────────────────────
   const ageCategory = deriveAgeCategory(d.PersonalInfo?.DOB, d.assessmentYear);
@@ -220,6 +238,12 @@ export function toCbdtJson(draft: ItrWizardDraft): Record<string, unknown> {
     if (d.LTCG112A && (d.LTCG112A.LongCap112A ?? 0) > 0) {
       inner.LTCG112A = d.LTCG112A;
     }
+    // TDS / TCS / TaxPayments schedules — include if populated
+    if (d.TDSonSalaries?.TDSonSalary?.length) inner.TDSonSalaries = d.TDSonSalaries;
+    if (d.TDSonOthThanSals?.TDSonOthThanSal?.length) inner.TDSonOthThanSals = d.TDSonOthThanSals;
+    if (d.ScheduleTCS?.TCS?.length) inner.ScheduleTCS = d.ScheduleTCS;
+    if (d.TaxPayments?.TaxPayment?.length) inner.TaxPayments = d.TaxPayments;
+    if (d.TaxReturnPreparer) inner.TaxReturnPreparer = d.TaxReturnPreparer;
     return { ITR: { ITR1: inner } };
   }
 

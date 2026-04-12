@@ -25,18 +25,35 @@ const JWT_REFRESH_EXPIRES_IN = process.env.JWT_REFRESH_EXPIRES_IN ?? '7d';
 const PLUGIN_SSO_SECRET = process.env.PLUGIN_SSO_SECRET ?? '';
 const PLUGIN_SSO_MAX_CLOCK_SKEW_MS = 5 * 60 * 1000; // 5 minutes
 
-export function generateTokens(user: { id: string; email: string; role?: string; plan?: string }) {
+export function generateTokens(user: { id: string; email: string; role?: string; plan?: string; sessionToken?: string }) {
+  const payload = {
+    id: user.id,
+    email: user.email,
+    role: user.role ?? 'user',
+    plan: user.plan ?? 'free',
+    ...(user.sessionToken ? { sessionToken: user.sessionToken } : {}),
+  };
   const accessToken = jwt.sign(
-    { id: user.id, email: user.email, role: user.role ?? 'user', plan: user.plan ?? 'free' },
+    payload,
     JWT_SECRET,
     { expiresIn: JWT_EXPIRES_IN as string | number }
   );
   const refreshToken = jwt.sign(
-    { id: user.id, email: user.email, role: user.role ?? 'user', plan: user.plan ?? 'free' },
+    payload,
     JWT_REFRESH_SECRET,
     { expiresIn: JWT_REFRESH_EXPIRES_IN as string | number }
   );
   return { accessToken, refreshToken };
+}
+
+/**
+ * Rotate the session token (invalidating all other sessions) and generate
+ * fresh JWTs that include the new token. Every login path should call this
+ * instead of bare `generateTokens()`.
+ */
+function loginAndIssueTokens(user: { id: string; email: string; role?: string; plan?: string }) {
+  const sessionToken = userRepo.rotateSessionToken(user.id);
+  return generateTokens({ ...user, sessionToken });
 }
 
 const VALID_PLUGIN_PLANS = new Set(['free', 'pro', 'enterprise', 'enterprise-shared']);
@@ -193,7 +210,7 @@ router.post('/verify-email', async (req: Request, res: Response) => {
   verificationRepo.markConsumed(row.id);
   userRepo.markEmailVerified(user.id);
   const fresh = userRepo.findById(user.id)!;
-  const tokens = generateTokens(fresh);
+  const tokens = loginAndIssueTokens(fresh);
   res.json({
     ...tokens,
     user: toUserResponse(fresh),
@@ -346,7 +363,7 @@ router.post('/reset-password', async (req: Request, res: Response) => {
   }
 
   const fresh = userRepo.findById(user.id)!;
-  const tokens = generateTokens(fresh);
+  const tokens = loginAndIssueTokens(fresh);
   res.json({
     ...tokens,
     user: toUserResponse(fresh),
@@ -396,7 +413,7 @@ router.post('/login', async (req: Request, res: Response) => {
     return;
   }
 
-  const tokens = generateTokens(user);
+  const tokens = loginAndIssueTokens(user);
   res.json({
     ...tokens,
     user: toUserResponse(user),
@@ -413,13 +430,22 @@ router.post('/refresh', (req: Request, res: Response) => {
   }
 
   try {
-    const payload = jwt.verify(refreshToken, JWT_REFRESH_SECRET) as { id: string; email: string };
+    const payload = jwt.verify(refreshToken, JWT_REFRESH_SECRET) as {
+      id: string; email: string; sessionToken?: string;
+    };
     const user = userRepo.findById(payload.id);
     if (!user) {
       res.status(401).json({ error: 'User not found' });
       return;
     }
-    const tokens = generateTokens(user);
+    // Validate session is still active — if the user logged in elsewhere,
+    // user.session_token has changed and this refresh token is stale.
+    if (user.session_token && payload.sessionToken && user.session_token !== payload.sessionToken) {
+      res.status(401).json({ error: 'Session expired — you logged in on another device' });
+      return;
+    }
+    // Reissue with the SAME session token (refresh doesn't create a new session)
+    const tokens = generateTokens({ ...user, sessionToken: user.session_token ?? undefined });
     res.json(tokens);
   } catch {
     res.status(401).json({ error: 'Invalid or expired refresh token' });
@@ -478,7 +504,7 @@ router.post('/google', async (req: Request, res: Response) => {
       user = userRepo.createFromGoogle(email, displayName, googleId!);
     }
 
-    const tokens = generateTokens(user);
+    const tokens = loginAndIssueTokens(user);
     res.json({
       ...tokens,
       user: toUserResponse(user),
@@ -564,7 +590,7 @@ router.patch('/email', authMiddleware, async (req: AuthRequest, res: Response) =
 
   userRepo.updateEmail(user.id, normalizedEmail);
   const updated = userRepo.findById(user.id)!;
-  const tokens = generateTokens(updated);
+  const tokens = loginAndIssueTokens(updated);
   res.json({
     ...tokens,
     user: toUserResponse(updated),
@@ -828,10 +854,11 @@ router.post('/plugin-sso', (req: Request, res: Response) => {
     typeof consultantId === 'string' ? consultantId : null,
   );
 
-  // Re-read so generateTokens + response reflect the latest overrides
+  // Re-read so loginAndIssueTokens + response reflect the latest overrides
   const fresh = userRepo.findById(user.id)!;
   const effectivePlan = getEffectivePlan(fresh);
-  const tokens = generateTokens({ ...fresh, plan: effectivePlan });
+  const sessionToken = userRepo.rotateSessionToken(user.id);
+  const tokens = generateTokens({ ...fresh, plan: effectivePlan, sessionToken });
 
   res.json({
     ...tokens,

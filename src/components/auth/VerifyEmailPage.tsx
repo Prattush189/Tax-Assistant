@@ -80,8 +80,8 @@ export function VerifyEmailPage({ email, onBack, onVerified }: VerifyEmailPagePr
         className="w-full max-w-md"
       >
         <div className="flex items-center gap-2 mb-8">
-          <img src="/logoAI.png" alt="Smart AI" className="w-10 h-10 object-contain" />
-          <span className="text-xl font-bold text-gray-800 dark:text-white">Smart AI</span>
+          <img src="/logoAI.png" alt="Smartbiz AI" className="w-10 h-10 object-contain" />
+          <span className="text-xl font-bold text-gray-800 dark:text-white">Smartbiz AI</span>
         </div>
 
         <div className="mb-8">

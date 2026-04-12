@@ -66,9 +66,9 @@ export function Header({
             <Menu className="w-5 h-5 text-gray-500 dark:text-gray-400" />
           </button>
         )}
-        <img src="/logoAI.png" alt="Smart AI Logo" className="w-6 h-6 object-contain" />
+        <img src="/logoAI.png" alt="Smartbiz AI Logo" className="w-6 h-6 object-contain" />
         <span className="font-semibold text-gray-800 dark:text-gray-200 text-sm">
-          Smart AI
+          Smartbiz AI
         </span>
       </div>
 

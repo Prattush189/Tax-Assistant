@@ -17,7 +17,7 @@ export function authMiddleware(req: AuthRequest, res: Response, next: NextFuncti
   const token = header.slice(7);
 
   try {
-    const payload = jwt.verify(token, JWT_SECRET) as AuthUser;
+    const payload = jwt.verify(token, JWT_SECRET) as AuthUser & { sessionToken?: string };
     // Check suspension
     const user = userRepo.findById(payload.id);
     if (user?.suspended_until) {
@@ -28,6 +28,18 @@ export function authMiddleware(req: AuthRequest, res: Response, next: NextFuncti
       }
       // Suspension expired — clear it
       userRepo.suspend(payload.id, null);
+    }
+    // Single-session enforcement: if the JWT's sessionToken doesn't match
+    // the DB's session_token, the user logged in elsewhere and this session
+    // is stale. Tokens minted before the session_token column existed have
+    // no sessionToken field — allow them through (backwards compat).
+    if (
+      user?.session_token &&
+      payload.sessionToken &&
+      user.session_token !== payload.sessionToken
+    ) {
+      res.status(401).json({ error: 'Session expired — you logged in on another device' });
+      return;
     }
     req.user = { id: payload.id, email: payload.email, role: user?.role ?? 'user' };
     next();
@@ -45,7 +57,7 @@ export function optionalAuthMiddleware(req: AuthRequest, res: Response, next: Ne
   if (header?.startsWith('Bearer ')) {
     const token = header.slice(7);
     try {
-      const payload = jwt.verify(token, JWT_SECRET) as AuthUser;
+      const payload = jwt.verify(token, JWT_SECRET) as AuthUser & { sessionToken?: string };
       const user = userRepo.findById(payload.id);
       if (user?.suspended_until) {
         const until = new Date(user.suspended_until + '+05:30');
@@ -55,7 +67,12 @@ export function optionalAuthMiddleware(req: AuthRequest, res: Response, next: Ne
         }
         userRepo.suspend(payload.id, null);
       }
-      req.user = { id: payload.id, email: payload.email, role: user?.role ?? 'user' };
+      // Session check — stale sessions are treated as guest (not 401 in optional mode)
+      if (user?.session_token && payload.sessionToken && user.session_token !== payload.sessionToken) {
+        // Treat as guest — don't attach user
+      } else {
+        req.user = { id: payload.id, email: payload.email, role: user?.role ?? 'user' };
+      }
     } catch {
       // Invalid token — treat as guest
     }

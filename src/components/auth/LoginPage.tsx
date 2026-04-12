@@ -62,8 +62,8 @@ export function LoginPage({ onSwitchToSignup, onNeedsVerification, onForgotPassw
             transition={{ duration: 0.6 }}
           >
             <div className="flex items-center gap-3 mb-8">
-              <img src="/logoAI.png" alt="Smart AI" className="w-12 h-12 object-contain" />
-              <span className="text-2xl font-bold text-white tracking-tight">Smart AI</span>
+              <img src="/logoAI.png" alt="Smartbiz AI" className="w-12 h-12 object-contain" />
+              <span className="text-2xl font-bold text-white tracking-tight">Smartbiz AI</span>
             </div>
 
             <h2 className="text-4xl font-bold text-white leading-tight mb-4">
@@ -102,8 +102,8 @@ export function LoginPage({ onSwitchToSignup, onNeedsVerification, onForgotPassw
           className="w-full max-w-md"
         >
           <div className="lg:hidden flex items-center gap-2 mb-8">
-            <img src="/logoAI.png" alt="Smart AI" className="w-10 h-10 object-contain" />
-            <span className="text-xl font-bold text-gray-800 dark:text-white">Smart AI</span>
+            <img src="/logoAI.png" alt="Smartbiz AI" className="w-10 h-10 object-contain" />
+            <span className="text-xl font-bold text-gray-800 dark:text-white">Smartbiz AI</span>
           </div>
 
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }}>

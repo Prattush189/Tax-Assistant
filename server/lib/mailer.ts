@@ -12,7 +12,7 @@
  * Required env vars:
  *   SMTP2GO_API_KEY   (api-... opaque token issued by smtp2go.com)
  *   SMTP2GO_FROM      (verified sender, e.g. "no-reply@assist.smartbizin.com"
- *                     or "Smart AI <no-reply@assist.smartbizin.com>")
+ *                     or "Smartbiz AI <no-reply@assist.smartbizin.com>")
  *
  * APP_URL is also required for invitation accept links; that one is read by
  * server/routes/invitations.ts, not here.
@@ -97,18 +97,18 @@ export async function sendMail(opts: SendMailInput): Promise<SendMailResult> {
  * up front so it reads clearly in notification previews.
  */
 export async function sendOtpEmail(to: string, code: string): Promise<SendMailResult> {
-  const subject = `${code} is your Smart AI verification code`;
+  const subject = `${code} is your Smartbiz AI verification code`;
   const text =
-    `Your Smart AI verification code is: ${code}\n\n` +
+    `Your Smartbiz AI verification code is: ${code}\n\n` +
     `This code expires in 10 minutes. If you didn't request this, you can safely ignore this email.`;
   const html = `
 <!doctype html><html><body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 32px 24px; color: #111827;">
   <div style="text-align: center; margin-bottom: 32px;">
-    <h1 style="font-size: 18px; font-weight: 600; color: #0D9668; margin: 0;">Smart AI</h1>
+    <h1 style="font-size: 18px; font-weight: 600; color: #0D9668; margin: 0;">Smartbiz AI</h1>
   </div>
   <h2 style="font-size: 20px; font-weight: 600; margin: 0 0 12px;">Verify your email</h2>
   <p style="font-size: 14px; line-height: 1.6; color: #4b5563; margin: 0 0 24px;">
-    Enter this code to finish creating your Smart AI account. It expires in 10 minutes.
+    Enter this code to finish creating your Smartbiz AI account. It expires in 10 minutes.
   </p>
   <div style="font-size: 32px; font-weight: 700; letter-spacing: 8px; text-align: center; padding: 20px; background: #ecfdf5; color: #065f46; border-radius: 12px; margin: 0 0 24px;">
     ${code}
@@ -125,18 +125,18 @@ export async function sendOtpEmail(to: string, code: string): Promise<SendMailRe
  * copy is appropriate ("reset" not "verify").
  */
 export async function sendPasswordResetEmail(to: string, code: string): Promise<SendMailResult> {
-  const subject = `${code} is your Smart AI password reset code`;
+  const subject = `${code} is your Smartbiz AI password reset code`;
   const text =
-    `Your Smart AI password reset code is: ${code}\n\n` +
+    `Your Smartbiz AI password reset code is: ${code}\n\n` +
     `This code expires in 10 minutes. If you didn't request a password reset, you can safely ignore this email — your password will not change.`;
   const html = `
 <!doctype html><html><body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 32px 24px; color: #111827;">
   <div style="text-align: center; margin-bottom: 32px;">
-    <h1 style="font-size: 18px; font-weight: 600; color: #0D9668; margin: 0;">Smart AI</h1>
+    <h1 style="font-size: 18px; font-weight: 600; color: #0D9668; margin: 0;">Smartbiz AI</h1>
   </div>
   <h2 style="font-size: 20px; font-weight: 600; margin: 0 0 12px;">Reset your password</h2>
   <p style="font-size: 14px; line-height: 1.6; color: #4b5563; margin: 0 0 24px;">
-    Someone requested a password reset for your Smart AI account. Enter the code below to choose a new password. It expires in 10 minutes.
+    Someone requested a password reset for your Smartbiz AI account. Enter the code below to choose a new password. It expires in 10 minutes.
   </p>
   <div style="font-size: 32px; font-weight: 700; letter-spacing: 8px; text-align: center; padding: 20px; background: #ecfdf5; color: #065f46; border-radius: 12px; margin: 0 0 24px;">
     ${code}
@@ -158,19 +158,19 @@ export async function sendInviteEmail(
   acceptUrl: string,
   inviterName: string,
 ): Promise<SendMailResult> {
-  const subject = `${inviterName} invited you to Smart AI`;
+  const subject = `${inviterName} invited you to Smartbiz AI`;
   const text =
-    `${inviterName} has invited you to join their Smart AI team.\n\n` +
+    `${inviterName} has invited you to join their Smartbiz AI team.\n\n` +
     `Accept the invitation here:\n${acceptUrl}\n\n` +
     `This link expires in 7 days.`;
   const html = `
 <!doctype html><html><body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 32px 24px; color: #111827;">
   <div style="text-align: center; margin-bottom: 32px;">
-    <h1 style="font-size: 18px; font-weight: 600; color: #0D9668; margin: 0;">Smart AI</h1>
+    <h1 style="font-size: 18px; font-weight: 600; color: #0D9668; margin: 0;">Smartbiz AI</h1>
   </div>
   <h2 style="font-size: 20px; font-weight: 600; margin: 0 0 12px;">You've been invited</h2>
   <p style="font-size: 14px; line-height: 1.6; color: #4b5563; margin: 0 0 24px;">
-    <strong>${escapeHtml(inviterName)}</strong> invited you to join their Smart AI team. Click the button below
+    <strong>${escapeHtml(inviterName)}</strong> invited you to join their Smartbiz AI team. Click the button below
     to accept and create your account.
   </p>
   <div style="text-align: center; margin: 0 0 24px;">

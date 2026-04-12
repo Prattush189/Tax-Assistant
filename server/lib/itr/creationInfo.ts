@@ -9,7 +9,8 @@
  */
 
 export const ITR_SW_VERSION = '1.0';
-export const ITR_SW_ID_PLACEHOLDER = 'SW00000000';
+/** Registered ERI Software ID — set via ITR_SW_ID env var, else placeholder. */
+export const ITR_SW_ID = process.env.ITR_SW_ID || 'SW20000015';
 export const ITR_INTERMEDIARY_CITY_DEFAULT = 'Delhi';
 
 /** Returns YYYY-MM-DD in IST (Asia/Kolkata). */
@@ -42,7 +43,7 @@ export function buildCreationInfo(
     now?: Date;
   } = {},
 ): CreationInfoFields {
-  const swId = opts.swId ?? ITR_SW_ID_PLACEHOLDER;
+  const swId = opts.swId ?? ITR_SW_ID;
   return {
     SWVersionNo: ITR_SW_VERSION,
     SWCreatedBy: swId,

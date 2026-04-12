@@ -6,7 +6,7 @@
  *      pushed by a parent/consultant app via the plugin SSO handshake.
  *   2. `plugin_plan` column — an override plan id (e.g. 'enterprise-shared')
  *      whose defaults apply if plugin_limits doesn't specify a given field.
- *   3. `plan` column — the user's standalone Smart AI plan.
+ *   3. `plan` column — the user's standalone Smartbiz AI plan.
  *
  * All route-level enforcement (chat, notices, upload, suggestions, profiles,
  * usage) should call `getUserLimits()` instead of defining its own constants.

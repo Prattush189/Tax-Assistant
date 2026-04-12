@@ -19,6 +19,7 @@ export interface UserRow {
   email_verified: number;             // 0 | 1 (SQLite has no bool)
   inviter_id: string | null;          // pool owner for shared-plan members
   itr_enabled: number;                // 0 | 1 — grants ITR tab without admin role
+  session_token: string | null;       // random token per login — single-session enforcement
   created_at: string;
   updated_at: string;
 }
@@ -73,6 +74,9 @@ const stmts = {
   ),
   markEmailVerified: db.prepare(
     "UPDATE users SET email_verified = 1, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
+  ),
+  updateSessionToken: db.prepare(
+    "UPDATE users SET session_token = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
   ),
   setInviterId: db.prepare(
     "UPDATE users SET inviter_id = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
@@ -271,6 +275,17 @@ export const userRepo = {
    */
   setItrEnabled(userId: string, enabled: boolean): void {
     stmts.setItrEnabled.run(enabled ? 1 : 0, userId);
+  },
+
+  /**
+   * Stamps a new random session token on the user row. All previously issued
+   * JWTs that carry a different sessionToken become invalid because the
+   * authMiddleware checks `jwt.sessionToken === user.session_token`.
+   */
+  rotateSessionToken(userId: string): string {
+    const token = crypto.randomBytes(16).toString('hex');
+    stmts.updateSessionToken.run(token, userId);
+    return token;
   },
 };
 

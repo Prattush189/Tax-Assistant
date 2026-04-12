@@ -446,20 +446,97 @@ export interface TaxProfileData {
   updated_at: string;
 }
 
+/**
+ * Calculator profiles now use the generic profiles system under the hood.
+ * The calc-specific state (fy, gross_salary, etc.) is stored inside
+ * perAy[fy].calculatorState in the generic profile's per_ay_data JSON.
+ * This unifies the two profile systems — one profile limit for everything.
+ */
+
+function genericToCalcProfile(gp: GenericProfile): TaxProfileData {
+  // Find the first AY that has calculatorState, or use defaults
+  const perAy = gp.perAy ?? {};
+  let calcState: Record<string, unknown> = {};
+  let calcFy = '2025-26';
+  for (const [ay, data] of Object.entries(perAy)) {
+    const cs = (data as Record<string, unknown>)?.calculatorState as Record<string, unknown> | undefined;
+    if (cs) {
+      calcState = cs;
+      calcFy = ay;
+      break;
+    }
+  }
+  return {
+    id: gp.id,
+    user_id: gp.user_id,
+    name: gp.name,
+    description: null,
+    fy: (calcState.fy as string) ?? calcFy,
+    gross_salary: (calcState.gross_salary as string) ?? '',
+    other_income: (calcState.other_income as string) ?? '',
+    age_category: (calcState.age_category as string) ?? 'below60',
+    deductions_data: (calcState.deductions_data as string) ?? '{}',
+    hra_data: (calcState.hra_data as string) ?? '{}',
+    created_at: gp.created_at,
+    updated_at: gp.updated_at,
+  };
+}
+
 export async function fetchProfiles(): Promise<{ profiles: TaxProfileData[]; limit: number; used: number }> {
-  return authFetch('/api/profiles');
+  const res: { profiles: GenericProfile[]; limit: number; used: number } =
+    await authFetch('/api/generic-profiles');
+  return {
+    profiles: res.profiles.map(genericToCalcProfile),
+    limit: res.limit,
+    used: res.used,
+  };
 }
 
 export async function createProfile(data: Record<string, unknown>): Promise<TaxProfileData> {
-  return authFetch('/api/profiles', { method: 'POST', body: JSON.stringify(data) });
+  const name = (data.name as string) || 'Calculator Profile';
+  const gp: GenericProfile = await authFetch('/api/generic-profiles', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+  // Store calc state inside perAy
+  const fy = (data.fy as string) || '2025-26';
+  const calcState = {
+    fy,
+    gross_salary: data.gross_salary ?? '',
+    other_income: data.other_income ?? '',
+    age_category: data.age_category ?? 'below60',
+    deductions_data: data.deductions_data ?? '{}',
+    hra_data: data.hra_data ?? '{}',
+  };
+  await authFetch(`/api/generic-profiles/${gp.id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ perAy: { [fy]: { calculatorState: calcState } } }),
+  });
+  return genericToCalcProfile({ ...gp, perAy: { [fy]: { calculatorState: calcState } } });
 }
 
 export async function updateProfile(id: string, data: Record<string, unknown>): Promise<void> {
-  await authFetch(`/api/profiles/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
+  const fy = (data.fy as string) || '2025-26';
+  const calcState = {
+    fy,
+    gross_salary: data.gross_salary ?? '',
+    other_income: data.other_income ?? '',
+    age_category: data.age_category ?? 'below60',
+    deductions_data: data.deductions_data ?? '{}',
+    hra_data: data.hra_data ?? '{}',
+  };
+  const patch: Record<string, unknown> = {
+    perAy: { [fy]: { calculatorState: calcState } },
+  };
+  if (data.name) patch.name = data.name;
+  await authFetch(`/api/generic-profiles/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
 }
 
 export async function deleteProfile(id: string): Promise<void> {
-  await authFetch(`/api/profiles/${id}`, { method: 'DELETE' });
+  await authFetch(`/api/generic-profiles/${id}`, { method: 'DELETE' });
 }
 
 // ── ITR Filing API (admin-only) ──────────────────────────────────────────

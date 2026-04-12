@@ -224,7 +224,7 @@ export function ChatInput({
         </div>
       </div>
       <p className="text-[10px] text-center text-gray-400 dark:text-gray-500 mt-3">
-        Smart AI can make mistakes. Always verify with a qualified professional.
+        Smartbiz AI can make mistakes. Always verify with a qualified professional.
       </p>
     </div>
   );

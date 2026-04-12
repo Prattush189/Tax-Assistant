@@ -241,8 +241,8 @@ export function Sidebar({
       <div className="p-4 border-b border-gray-100 dark:border-gray-800">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2.5">
-            <img src="/logoAI.png" alt="Smart AI Logo" className="w-8 h-8 object-contain" />
-            <h1 className="text-lg font-bold tracking-tight text-gray-900 dark:text-white">Smart AI</h1>
+            <img src="/logoAI.png" alt="Smartbiz AI Logo" className="w-8 h-8 object-contain" />
+            <h1 className="text-lg font-bold tracking-tight text-gray-900 dark:text-white">Smartbiz AI</h1>
           </div>
           <button
             onClick={onClose}

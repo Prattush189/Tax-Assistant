@@ -1,5 +1,5 @@
 import { ItrWizardDraft, UiFilingStatus } from '../lib/uiModel';
-import { Card, Field, Grid2, Grid3, TextInput, Select, Toggle } from '../shared/Inputs';
+import { Card, Field, Grid2, Grid3, TextInput, Select, Toggle, RupeeInput } from '../shared/Inputs';
 
 interface Props {
   draft: ItrWizardDraft;
@@ -84,6 +84,50 @@ export function FilingStatusStep({ draft, onChange }: Props) {
               ? 'New regime: most Chapter VI-A deductions are disabled. Standard deduction ₹75,000.'
               : 'Old regime: full Chapter VI-A deductions available. Standard deduction ₹50,000.'}
           </p>
+        </div>
+      </Card>
+
+      <Card title="7th proviso to section 139(1)">
+        <p className="text-[11px] text-gray-500 dark:text-gray-500 mb-3 leading-relaxed">
+          Have you fulfilled any of the following conditions in the previous year?
+        </p>
+        <div className="space-y-3">
+          <Toggle
+            checked={fs.SeventhProvisio139 === 'Y'}
+            onChange={(checked) => patchFiling({ SeventhProvisio139: checked ? 'Y' : 'N' })}
+            label="Deposited ₹1 crore or more in current account(s)"
+          />
+          <Toggle
+            checked={fs.IncrExpAggAmt2LkTrvFrgnCntryFlg === 'Y'}
+            onChange={(checked) => patchFiling({ IncrExpAggAmt2LkTrvFrgnCntryFlg: checked ? 'Y' : 'N' })}
+            label="Incurred ₹2 lakh or more on foreign travel"
+          />
+          {fs.IncrExpAggAmt2LkTrvFrgnCntryFlg === 'Y' && (
+            <Field label="Amount spent on foreign travel" hint="Min ₹2,00,000">
+              <RupeeInput
+                value={fs.AmtSeventhProvisio139ii}
+                onChange={(v) => patchFiling({ AmtSeventhProvisio139ii: v })}
+              />
+            </Field>
+          )}
+          <Toggle
+            checked={fs.IncrExpAggAmt1LkElctrctyPrYrFlg === 'Y'}
+            onChange={(checked) => patchFiling({ IncrExpAggAmt1LkElctrctyPrYrFlg: checked ? 'Y' : 'N' })}
+            label="Paid ₹1 lakh or more towards electricity"
+          />
+          {fs.IncrExpAggAmt1LkElctrctyPrYrFlg === 'Y' && (
+            <Field label="Amount paid for electricity" hint="Min ₹1,00,000">
+              <RupeeInput
+                value={fs.AmtSeventhProvisio139iii}
+                onChange={(v) => patchFiling({ AmtSeventhProvisio139iii: v })}
+              />
+            </Field>
+          )}
+          <Toggle
+            checked={fs.clauseiv7provisio139i === 'Y'}
+            onChange={(checked) => patchFiling({ clauseiv7provisio139i: checked ? 'Y' : 'N' })}
+            label="TDS/TCS deducted ₹25,000 or more (₹50,000 for senior citizens)"
+          />
         </div>
       </Card>
     </div>

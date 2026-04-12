@@ -61,8 +61,8 @@ export function AcceptInvitePage({ token, onDone }: AcceptInvitePageProps) {
         className="w-full max-w-md"
       >
         <div className="flex items-center gap-2 mb-8">
-          <img src="/logoAI.png" alt="Smart AI" className="w-10 h-10 object-contain" />
-          <span className="text-xl font-bold text-gray-800 dark:text-white">Smart AI</span>
+          <img src="/logoAI.png" alt="Smartbiz AI" className="w-10 h-10 object-contain" />
+          <span className="text-xl font-bold text-gray-800 dark:text-white">Smartbiz AI</span>
         </div>
 
         <div className="mb-8">
@@ -71,7 +71,7 @@ export function AcceptInvitePage({ token, onDone }: AcceptInvitePageProps) {
           </div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">Accept team invitation</h1>
           <p className="text-gray-500 dark:text-gray-400">
-            You've been invited to join a Smart AI team. If you already have an account with the
+            You've been invited to join a Smartbiz AI team. If you already have an account with the
             same email, your existing account will be linked. Otherwise we'll create a new account
             for you below.
           </p>

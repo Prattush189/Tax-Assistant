@@ -71,15 +71,15 @@ export function SignupPage({ onSwitchToLogin, onNeedsVerification }: SignupPageP
             transition={{ duration: 0.6 }}
           >
             <div className="flex items-center gap-3 mb-8">
-              <img src="/logoAI.png" alt="Smart AI" className="w-12 h-12 object-contain" />
-              <span className="text-2xl font-bold text-white tracking-tight">Smart AI</span>
+              <img src="/logoAI.png" alt="Smartbiz AI" className="w-12 h-12 object-contain" />
+              <span className="text-2xl font-bold text-white tracking-tight">Smartbiz AI</span>
             </div>
 
             <h2 className="text-4xl font-bold text-white leading-tight mb-4">
               Start Your Tax<br />Journey Today
             </h2>
             <p className="text-emerald-100/80 text-lg mb-12 max-w-md">
-              Join thousands of professionals who trust Smart AI for accurate tax guidance and notice drafting.
+              Join thousands of professionals who trust Smartbiz AI for accurate tax guidance and notice drafting.
             </p>
 
             <div className="space-y-4">
@@ -111,13 +111,13 @@ export function SignupPage({ onSwitchToLogin, onNeedsVerification }: SignupPageP
           className="w-full max-w-md"
         >
           <div className="lg:hidden flex items-center gap-2 mb-8">
-            <img src="/logoAI.png" alt="Smart AI" className="w-10 h-10 object-contain" />
-            <span className="text-xl font-bold text-gray-800 dark:text-white">Smart AI</span>
+            <img src="/logoAI.png" alt="Smartbiz AI" className="w-10 h-10 object-contain" />
+            <span className="text-xl font-bold text-gray-800 dark:text-white">Smartbiz AI</span>
           </div>
 
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }}>
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">Create your account</h1>
-            <p className="text-gray-500 dark:text-gray-400 mb-8">Get started with Smart AI</p>
+            <p className="text-gray-500 dark:text-gray-400 mb-8">Get started with Smartbiz AI</p>
           </motion.div>
 
           {error && (

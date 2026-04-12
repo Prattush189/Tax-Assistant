@@ -61,8 +61,6 @@ export class ItPortalClient {
    * to the raw `set-cookie` value.
    */
   private absorbCookies(res: Response): void {
-    // Node 20 exposes getSetCookie(); older runtimes only provide a single
-    // joined string (which is lossy). We handle both.
     const anyHeaders = res.headers as unknown as {
       getSetCookie?: () => string[];
     };
@@ -70,11 +68,15 @@ export class ItPortalClient {
     if (typeof anyHeaders.getSetCookie === 'function') {
       lines = anyHeaders.getSetCookie();
     } else {
+      // Fallback: `get('set-cookie')` joins multiple values with ', ' which
+      // is lossy for cookies. Split on ', ' only when the next segment looks
+      // like a new cookie (contains '=').
       const single = res.headers.get('set-cookie');
-      if (single) lines = [single];
+      if (single) {
+        lines = single.split(/,\s*(?=[A-Za-z_][A-Za-z0-9_]*=)/);
+      }
     }
     for (const line of lines) {
-      // Take the first "k=v" segment before the first ';'
       const first = line.split(';')[0];
       const eq = first.indexOf('=');
       if (eq > 0) {
@@ -93,20 +95,48 @@ export class ItPortalClient {
     const cookie = this.cookieHeader();
     if (cookie) headers.Cookie = cookie;
 
+    // Disable automatic redirect following so we can capture Set-Cookie
+    // headers at every hop. The portal sometimes returns 302 during auth.
     const res = await fetch(BASE + path, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
+      redirect: 'manual',
     });
     this.absorbCookies(res);
-    const raw = await res.text();
+
+    // Follow redirects manually (up to 5 hops) to capture cookies at each step
+    let finalRes = res;
+    let hops = 0;
+    while (
+      (finalRes.status === 301 || finalRes.status === 302 || finalRes.status === 307) &&
+      hops < 5
+    ) {
+      const location = finalRes.headers.get('location');
+      if (!location) break;
+      const redirectUrl = location.startsWith('http')
+        ? location
+        : BASE + location;
+      const redirectHeaders: Record<string, string> = { ...BASE_HEADERS };
+      const redirectCookie = this.cookieHeader();
+      if (redirectCookie) redirectHeaders.Cookie = redirectCookie;
+      finalRes = await fetch(redirectUrl, {
+        method: 'GET',
+        headers: redirectHeaders,
+        redirect: 'manual',
+      });
+      this.absorbCookies(finalRes);
+      hops++;
+    }
+
+    const raw = await finalRes.text();
     let data: T;
     try {
       data = JSON.parse(raw) as T;
     } catch {
       data = raw as unknown as T;
     }
-    return { status: res.status, raw, data };
+    return { status: finalRes.status, raw, data };
   }
 
   /**
@@ -275,10 +305,13 @@ export class ItPortalClient {
       if (parsed?.fullName) fullName = parsed.fullName;
     } catch {}
 
+    console.log('[itPortal] Login successful for', pan, '| cookies:', this.cookies.size,
+      '| keys:', Array.from(this.cookies.keys()).join(', '));
     return { ok: true, fullName };
   }
 
   async fetchUserProfile(pan: string): Promise<PortalUserProfile | null> {
+    console.log('[itPortal] Fetching user profile for', pan, '| cookies:', this.cookies.size);
     const res = await this.postJson<PortalUserProfile>(
       '/iec/servicesapi/auth/saveEntity',
       {
@@ -286,11 +319,20 @@ export class ItPortalClient {
         userId: pan,
       },
     );
-    if (res.status !== 200 || res.raw.includes('Unauthorized')) return null;
+    console.log('[itPortal] userProfile status:', res.status, '| body length:', res.raw.length);
+    if (res.status !== 200) {
+      console.warn('[itPortal] userProfile failed:', res.raw.slice(0, 300));
+      return null;
+    }
+    if (res.raw.includes('Unauthorized') || res.raw.includes('Request is not authenticated')) {
+      console.warn('[itPortal] userProfile: session expired');
+      return null;
+    }
     return res.data ?? null;
   }
 
   async fetchBankDetails(pan: string): Promise<PortalBankMasterDetails | null> {
+    console.log('[itPortal] Fetching bank details for', pan);
     const res = await this.postJson<PortalBankMasterDetails>(
       '/iec/servicesapi/auth/getEntity',
       {
@@ -299,13 +341,18 @@ export class ItPortalClient {
         header: { formName: 'FO-054-PBACC' },
       },
     );
-    if (res.status !== 200 || res.raw.includes('Unauthorized')) return null;
+    console.log('[itPortal] bankDetails status:', res.status);
+    if (res.status !== 200 || res.raw.includes('Unauthorized') || res.raw.includes('Request is not authenticated')) {
+      console.warn('[itPortal] bankDetails failed:', res.raw.slice(0, 300));
+      return null;
+    }
     return res.data ?? null;
   }
 
   async fetchJurisdiction(
     pan: string,
   ): Promise<PortalJurisdictionDetails | null> {
+    console.log('[itPortal] Fetching jurisdiction for', pan);
     const res = await this.postJson<PortalJurisdictionDetails>(
       '/iec/servicesapi/auth/saveEntity',
       {
@@ -313,7 +360,11 @@ export class ItPortalClient {
         loggedInUserId: pan,
       },
     );
-    if (res.status !== 200 || res.raw.includes('Unauthorized')) return null;
+    console.log('[itPortal] jurisdiction status:', res.status);
+    if (res.status !== 200 || res.raw.includes('Unauthorized') || res.raw.includes('Request is not authenticated')) {
+      console.warn('[itPortal] jurisdiction failed:', res.raw.slice(0, 300));
+      return null;
+    }
     return res.data ?? null;
   }
 
