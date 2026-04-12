@@ -104,7 +104,8 @@ export function computeDerivedTotals(draft: ItrWizardDraft): ItrWizardDraft {
 
   const sd = inc.DeductionUs16ia ?? 0;
   const ptax = inc.ProfessionalTaxUs16iii ?? 0;
-  inc.DeductionUs16 = sd + ptax;
+  const entAlw = inc.EntertainmentAlw16ii ?? 0;
+  inc.DeductionUs16 = sd + ptax + entAlw;
   inc.IncomeFromSal = Math.max(0, inc.NetSalary - inc.DeductionUs16);
 
   // House property: Let-out needs 30% SD; Self-occupied allows interest u/s 24(b)
@@ -112,9 +113,10 @@ export function computeDerivedTotals(draft: ItrWizardDraft): ItrWizardDraft {
   const hpInterest = inc.InterestPayable ?? 0;
   const hpStdDed = inc.TypeOfHP === 'L' || inc.TypeOfHP === 'D' ? Math.round(hpAnnual * 0.3) : 0;
   inc.StandardDeduction = hpStdDed;
-  inc.TotalIncomeOfHP = hpAnnual - hpStdDed - hpInterest;
+  inc.TotalIncomeOfHP = hpAnnual - hpStdDed - hpInterest + (inc.ArrearsUnrealizedRentRcvd ?? 0);
 
-  const othSrc = inc.IncomeOthSrc ?? 0;
+  // Other sources — subtract family pension std deduction u/s 57(iia)
+  const othSrc = (inc.IncomeOthSrc ?? 0) - (inc.DeductionUs57iia ?? 0);
   inc.GrossTotIncome = inc.IncomeFromSal + inc.TotalIncomeOfHP + othSrc;
   inc.GrossTotIncomeIncLTCG112A =
     inc.GrossTotIncome + (d.LTCG112A?.LongCap112A ?? 0);
@@ -154,6 +156,40 @@ export function computeDerivedTotals(draft: ItrWizardDraft): ItrWizardDraft {
     if (tdsOnSalary.length > 0) {
       (d as unknown as Record<string, unknown>).TDSonSalaries = { TDSonSalary: tdsOnSalary };
     }
+  }
+
+  // ── Auto-aggregate TDS/TCS/TaxPayments into TaxPaid.TaxesPaid ──────
+  {
+    const tdsSalaryTotal = (d.TDSonSalaries?.TDSonSalary ?? [])
+      .reduce((acc: number, e: { TotalTDSSal?: number }) => acc + (e.TotalTDSSal ?? 0), 0);
+    const tdsOtherTotal = (d.TDSonOthThanSals?.TDSonOthThanSal ?? [])
+      .reduce((acc: number, e: { TotalTDSonOthThanSals?: number }) => acc + (e.TotalTDSonOthThanSals ?? 0), 0);
+    const tcsTotal = (d.ScheduleTCS?.TCS ?? [])
+      .reduce((acc: number, e: { TotalTCS?: number }) => acc + (e.TotalTCS ?? 0), 0);
+    const taxPmtTotal = (d.TaxPayments?.TaxPayment ?? [])
+      .reduce((acc: number, e: { Amt?: number }) => acc + (e.Amt ?? 0), 0);
+
+    const tp = d.TaxPaid ?? {};
+    const existingTp = tp.TaxesPaid ?? {};
+    // Only override aggregates if itemized entries exist; otherwise keep user-entered values
+    const hasTdsItems = (d.TDSonSalaries?.TDSonSalary?.length ?? 0) > 0 || (d.TDSonOthThanSals?.TDSonOthThanSal?.length ?? 0) > 0;
+    const hasTcsItems = (d.ScheduleTCS?.TCS?.length ?? 0) > 0;
+    const hasTaxPmtItems = (d.TaxPayments?.TaxPayment?.length ?? 0) > 0;
+    const tds = hasTdsItems ? tdsSalaryTotal + tdsOtherTotal : (existingTp.TDS ?? 0);
+    const tcsVal = hasTcsItems ? tcsTotal : (existingTp.TCS ?? 0);
+    const advTax = hasTaxPmtItems ? taxPmtTotal : (existingTp.AdvanceTax ?? 0);
+    const selfAssess = existingTp.SelfAssessmentTax ?? 0;
+    d.TaxPaid = {
+      ...tp,
+      TaxesPaid: {
+        ...existingTp,
+        TDS: tds,
+        TCS: tcsVal,
+        AdvanceTax: advTax,
+        SelfAssessmentTax: selfAssess,
+        TotalTaxesPaid: tds + tcsVal + advTax + selfAssess,
+      },
+    };
   }
 
   // ── Tax computation ────────────────────────────────────────────────────
