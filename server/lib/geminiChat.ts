@@ -111,10 +111,11 @@ export async function* streamGeminiChat(
         continue; // skip malformed chunks
       }
 
-      // Extract text from candidates
+      // Extract text from candidates — skip "thought" parts from thinking models
       const candidate = event.candidates?.[0];
       if (candidate?.content?.parts) {
         for (const part of candidate.content.parts) {
+          if (part.thought) continue; // Gemini 3.x thinking models emit internal reasoning; hide it
           if (part.text) {
             yield { text: part.text };
           }

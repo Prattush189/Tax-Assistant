@@ -23,15 +23,27 @@ export const INPUT_COST_PER_TOKEN = 0.20 / 1_000_000;
 export const OUTPUT_COST_PER_TOKEN = 0.50 / 1_000_000;
 export const WEB_SEARCH_COST = 0.005; // $5 per 1000 calls
 
-// Gemini chat models for 3-tier cascade (free Google Search grounding)
-export const GEMINI_CHAT_MODEL_T1 = 'gemini-3.1-flash-lite-preview';  // Tier 1: 5K free searches/month (best quality)
-export const GEMINI_CHAT_MODEL_T2 = 'gemini-2.5-flash-lite';          // Tier 2: 500 free searches/day (separate pool)
-// Gemini 3.1 Flash-Lite Preview pricing (Tier 1 primary model)
+// ── Gemini chat models ─────────────────────────────────────────────
+// Fast mode:  Gemini 2.5 Flash-Lite → Gemini 3.1 Flash-Lite fallback
+// Think mode: Gemini 3 Flash       → Gemini 2.5 Flash fallback
+// Search grounding: 2.5 family = 1,500 RPD shared, 3.x family = 5,000/month shared
+export const GEMINI_CHAT_MODEL_T1 = 'gemini-3.1-flash-lite-preview';  // Fast fallback + Gemini 3 family
+export const GEMINI_CHAT_MODEL_T2 = 'gemini-2.5-flash-lite';          // Fast primary
+export const GEMINI_CHAT_MODEL_THINK = 'gemini-3-flash-preview';      // Think primary  (Gemini 3 family)
+export const GEMINI_CHAT_MODEL_THINK_FB = 'gemini-2.5-flash';         // Think fallback (Gemini 2.5 family)
+
+// Gemini 3.1 Flash-Lite Preview pricing
 export const GEMINI_T1_INPUT_COST = 0.25 / 1_000_000;    // $0.25/M tokens
 export const GEMINI_T1_OUTPUT_COST = 1.50 / 1_000_000;   // $1.50/M tokens
-// Gemini 2.5 Flash-Lite pricing (Tier 2 overflow)
+// Gemini 2.5 Flash-Lite pricing
 export const GEMINI_T2_INPUT_COST = 0.10 / 1_000_000;    // $0.10/M tokens
 export const GEMINI_T2_OUTPUT_COST = 0.40 / 1_000_000;   // $0.40/M tokens
+// Gemini 3 Flash Preview pricing (Think primary)
+export const GEMINI_THINK_INPUT_COST = 0.50 / 1_000_000;   // $0.50/M tokens
+export const GEMINI_THINK_OUTPUT_COST = 3.00 / 1_000_000;  // $3.00/M tokens
+// Gemini 2.5 Flash pricing (Think fallback)
+export const GEMINI_THINK_FB_INPUT_COST = 0.30 / 1_000_000;  // $0.30/M tokens
+export const GEMINI_THINK_FB_OUTPUT_COST = 2.50 / 1_000_000; // $2.50/M tokens
 export const GEMINI_API_KEYS: string[] = [
   process.env.GEMINI_API_KEY ?? process.env.GOOGLE_AI_API_KEY ?? '',
   process.env.GEMINI_API_KEY_2 ?? '',

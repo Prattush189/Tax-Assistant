@@ -20,16 +20,20 @@ function fmtTokens(n: number): string {
 }
 
 const MODEL_COLORS: Record<string, string> = {
-  'gemini-3.1-flash-lite-preview': 'bg-purple-500',
+  'gemini-3-flash-preview': 'bg-purple-500',
+  'gemini-3.1-flash-lite-preview': 'bg-violet-400',
   'gemini-2.5-flash-lite': 'bg-blue-500',
+  'gemini-2.5-flash': 'bg-sky-400',
   'grok-4-1-fast-reasoning': 'bg-amber-500',
   'unknown': 'bg-gray-400',
 };
 
 const MODEL_LABELS: Record<string, string> = {
-  'gemini-3.1-flash-lite-preview': 'Gemini 3.1 Flash-Lite (Tier 1)',
-  'gemini-2.5-flash-lite': 'Gemini 2.5 Flash-Lite (Tier 2)',
-  'grok-4-1-fast-reasoning': 'Grok 4.1 Fast (Tier 3)',
+  'gemini-3-flash-preview': 'Gemini 3 Flash (Think Primary)',
+  'gemini-3.1-flash-lite-preview': 'Gemini 3.1 Flash-Lite (Fast Fallback)',
+  'gemini-2.5-flash-lite': 'Gemini 2.5 Flash-Lite (Fast Primary)',
+  'gemini-2.5-flash': 'Gemini 2.5 Flash (Think Fallback)',
+  'grok-4-1-fast-reasoning': 'Grok 4.1 Fast (Legacy)',
 };
 
 interface ModelEntry {
@@ -62,7 +66,7 @@ export function ModelUsageDashboard() {
   if (!data) return null;
 
   const models: ModelEntry[] = (data as any).byModel ?? [];
-  const quota = (data as any).searchQuota ?? { tier1: { used: 0, limit: 4800 }, tier2: { used: 0, limit: 480 } };
+  const quota = (data as any).searchQuota ?? { tier1: { used: 0, limit: 5000 }, tier2: { used: 0, limit: 1500 } };
   const totalRequests = models.reduce((a, m) => a + m.requests, 0) || 1;
 
   return (
@@ -83,28 +87,48 @@ export function ModelUsageDashboard() {
         </div>
       </div>
 
-      {/* Cascade architecture diagram */}
+      {/* Dual-mode cascade architecture */}
       <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5">
-        <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-4">3-Tier Cascade Architecture</h3>
-        <div className="flex flex-col md:flex-row gap-3">
-          {[
-            { tier: 'Tier 1 (Primary)', model: 'Gemini 3.1 Flash-Lite', search: '5,000 free/month', tokens: '$0.25/$1.50 per M', color: 'border-purple-400 bg-purple-50 dark:bg-purple-900/10', badge: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400' },
-            { tier: 'Tier 2 (Overflow)', model: 'Gemini 2.5 Flash-Lite', search: '500 free/day', tokens: '$0.10/$0.40 per M', color: 'border-blue-400 bg-blue-50 dark:bg-blue-900/10', badge: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' },
-            { tier: 'Tier 3 (Fallback)', model: 'Grok 4.1 Fast', search: '$5/1K calls (paid)', tokens: '$0.20/$0.50 per M', color: 'border-amber-400 bg-amber-50 dark:bg-amber-900/10', badge: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' },
-          ].map((t, i) => (
-            <div key={i} className={cn('flex-1 rounded-xl border-2 p-4', t.color)}>
-              <span className={cn('text-[10px] font-bold uppercase px-2 py-0.5 rounded-full', t.badge)}>{t.tier}</span>
-              <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 mt-2">{t.model}</p>
-              <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">Search: {t.search}</p>
-              <p className="text-[11px] text-gray-500 dark:text-gray-400">Tokens: {t.tokens}</p>
+        <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-4">Dual-Mode Cascade Architecture</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Fast mode */}
+          <div className="rounded-xl border-2 border-blue-400 bg-blue-50 dark:bg-blue-900/10 p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Zap className="w-4 h-4 text-blue-500" />
+              <span className="text-xs font-bold uppercase text-blue-700 dark:text-blue-400">Fast Mode (1 credit)</span>
             </div>
-          ))}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold text-blue-500 bg-blue-100 dark:bg-blue-900/30 px-1.5 py-0.5 rounded">PRIMARY</span>
+                <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Gemini 2.5 Flash-Lite</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold text-violet-500 bg-violet-100 dark:bg-violet-900/30 px-1.5 py-0.5 rounded">FALLBACK</span>
+                <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Gemini 3.1 Flash-Lite</span>
+              </div>
+              <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">4,096 tokens | Selective web search | 2.5 family: 1,500 RPD</p>
+            </div>
+          </div>
+          {/* Thinking mode */}
+          <div className="rounded-xl border-2 border-purple-400 bg-purple-50 dark:bg-purple-900/10 p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Shield className="w-4 h-4 text-purple-500" />
+              <span className="text-xs font-bold uppercase text-purple-700 dark:text-purple-400">Think Mode (2 credits)</span>
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold text-purple-500 bg-purple-100 dark:bg-purple-900/30 px-1.5 py-0.5 rounded">PRIMARY</span>
+                <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Gemini 3 Flash</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold text-sky-500 bg-sky-100 dark:bg-sky-900/30 px-1.5 py-0.5 rounded">FALLBACK</span>
+                <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Gemini 2.5 Flash</span>
+              </div>
+              <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">8,000 tokens | Always web search | 3.x family: 5,000/month</p>
+            </div>
+          </div>
         </div>
-        <div className="flex items-center justify-center gap-2 mt-3 text-xs text-gray-400">
-          <span>Request</span> <span>→</span> <span className="text-purple-500 font-medium">Tier 1</span>
-          <span>→ if exhausted →</span> <span className="text-blue-500 font-medium">Tier 2</span>
-          <span>→ if exhausted →</span> <span className="text-amber-500 font-medium">Tier 3</span>
-        </div>
+        <p className="text-[10px] text-gray-400 text-center mt-3">Search grounding: 2.5 family shares 1,500 RPD | 3.x family shares 5,000/month | All free tier, per API key</p>
       </div>
 
       {/* Search quota status — per API key */}
@@ -118,18 +142,18 @@ export function ModelUsageDashboard() {
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <QuotaCard
-                label={key.tier1?.model ?? 'Gemini 3.1 Flash-Lite'}
-                tier="Tier 1"
+                label={key.tier1?.model ?? 'Gemini 3.x family'}
+                tier="3.x Pool"
                 used={key.tier1?.used ?? 0}
-                limit={key.tier1?.limit ?? 4800}
+                limit={key.tier1?.limit ?? 5000}
                 period={key.tier1?.period ?? 'monthly'}
                 color="purple"
               />
               <QuotaCard
-                label={key.tier2?.model ?? 'Gemini 2.5 Flash-Lite'}
-                tier="Tier 2"
+                label={key.tier2?.model ?? 'Gemini 2.5 family'}
+                tier="2.5 Pool"
                 used={key.tier2?.used ?? 0}
-                limit={key.tier2?.limit ?? 480}
+                limit={key.tier2?.limit ?? 1500}
                 period={key.tier2?.period ?? 'daily'}
                 color="blue"
               />

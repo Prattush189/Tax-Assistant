@@ -1,24 +1,23 @@
 /**
- * Search quota tracker for the 3-tier model cascade with dual API key rotation.
+ * Search quota tracker for dual-mode Gemini cascade with dual API key rotation.
  *
- * API Key 1 (GEMINI_API_KEY):
- *   Tier 1: Gemini 3.1 Flash-Lite Preview — 5,000 free searches/month
- *   Tier 2: Gemini 2.5 Flash-Lite          — 500 free searches/day
+ * Gemini 3.x family: 5,000 free searches/month (shared across all 3.x models)
+ *   - gemini-3-flash-preview       (Think primary)
+ *   - gemini-3.1-flash-lite-preview (Fast fallback)
  *
- * API Key 2 (GEMINI_API_KEY_2) — when Key 1 exhausted:
- *   Tier 1b: Gemini 3.1 Flash-Lite Preview — 5,000 free searches/month (separate account)
- *   Tier 2b: Gemini 2.5 Flash-Lite          — 500 free searches/day (separate account)
+ * Gemini 2.5 family: 1,500 free searches/day (shared across all 2.5 models)
+ *   - gemini-2.5-flash-lite  (Fast primary)
+ *   - gemini-2.5-flash       (Think fallback)
  *
- * Tier 3: Grok 4.1 Fast — paid search ($5/1K calls, cheapest paid)
- *
+ * Each API key gets its own set of counters.
  * Counters only increment on SUCCESS (not on attempt).
  */
 
 export type ModelTier = 'gemini-3' | 'gemini-2.5' | 'grok';
 
-// Conservative buffers
-const T1_LIMIT = 5000;   // 5,000/month per key (Gemini 3 family)
-const T2_LIMIT = 500;    // 500/day per key (Gemini 2.5 family)
+// Free tier search grounding limits (per API key)
+const T1_LIMIT = 5000;   // 5,000/month per key (Gemini 3 family — shared across 3.x models)
+const T2_LIMIT = 1500;   // 1,500/day per key (Gemini 2.5 family — shared across 2.5 models)
 
 interface KeyQuota {
   label: string;
@@ -96,8 +95,8 @@ export function getQuotaStatus() {
       index: i,
       label: k.label,
       active: i === 0 ? (k.t1Count < T1_LIMIT || k.t2Count < T2_LIMIT) : true,
-      tier1: { model: 'Gemini 3.1 Flash-Lite Preview', used: k.t1Count, limit: T1_LIMIT, remaining: T1_LIMIT - k.t1Count, period: 'monthly' },
-      tier2: { model: 'Gemini 2.5 Flash-Lite', used: k.t2Count, limit: T2_LIMIT, remaining: T2_LIMIT - k.t2Count, period: 'daily' },
+      tier1: { model: 'Gemini 3.x family (3 Flash + 3.1 Flash-Lite)', used: k.t1Count, limit: T1_LIMIT, remaining: T1_LIMIT - k.t1Count, period: 'monthly' },
+      tier2: { model: 'Gemini 2.5 family (Flash + Flash-Lite)', used: k.t2Count, limit: T2_LIMIT, remaining: T2_LIMIT - k.t2Count, period: 'daily' },
     })),
     totalFreeSearchCapacity: {
       monthly: T1_LIMIT * keys.length,
