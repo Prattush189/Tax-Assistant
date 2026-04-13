@@ -32,25 +32,25 @@ export interface UserLimits {
 /** Baseline defaults for each plan tier. */
 export const PLAN_DEFAULTS: Record<PlanId, UserLimits> = {
   free: {
-    messages: { limit: 10, period: 'day' },
-    attachments: 10,
-    suggestions: 50,
+    messages: { limit: 50, period: 'month' },
+    attachments: 5,
+    suggestions: 20,
     notices: 3,
     profiles: 1,
   },
   pro: {
-    messages: { limit: 1000, period: 'month' },
-    attachments: 100,
-    suggestions: 200,
-    notices: 30,
-    profiles: 10,
+    messages: { limit: 300, period: 'month' },
+    attachments: 30,
+    suggestions: 100,
+    notices: 15,
+    profiles: 5,
   },
   enterprise: {
-    messages: { limit: 10000, period: 'month' },
-    attachments: 500,
-    suggestions: 1000,
-    notices: 100,
-    profiles: 50,
+    messages: { limit: 3000, period: 'month' },
+    attachments: 200,
+    suggestions: 500,
+    notices: 50,
+    profiles: 25,
   },
   /**
    * enterprise-shared defaults are intentionally generous — the consultant's

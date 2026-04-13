@@ -81,12 +81,11 @@ function AppContent() {
 
   const chatManager = useChatManager();
   const noticeDrafter = useNoticeDrafter();
-  // ITR tab is gated on admin role OR the explicit itr_enabled capability.
-  // See itrAccessMiddleware on the server and server/scripts/grant-itr.ts.
-  const canAccessItr = user?.role === 'admin' || user?.itr_enabled === true;
+  // ITR + Board Resolutions: enterprise plan OR admin OR explicit itr_enabled.
+  const isEnterprise = user?.plan === 'enterprise';
+  const canAccessItr = user?.role === 'admin' || isEnterprise || user?.itr_enabled === true;
   const itrManager = useItrManager(canAccessItr);
-  // Board Resolutions is admin-only for v1. See adminMiddleware on the server.
-  const canAccessBoardResolutions = user?.role === 'admin';
+  const canAccessBoardResolutions = user?.role === 'admin' || isEnterprise;
   const boardResolutionManager = useBoardResolutionManager(canAccessBoardResolutions);
   const profileManager = useProfileManager(!!user);
 

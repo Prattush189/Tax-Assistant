@@ -6,7 +6,21 @@ import jsPDF from 'jspdf';
 import type { IncomeTaxResult } from './taxEngine';
 
 function fmt(n: number): string {
-  return '₹ ' + Math.round(n).toLocaleString('en-IN');
+  const rounded = Math.round(n);
+  const str = Math.abs(rounded).toString();
+  let formatted: string;
+  if (str.length <= 3) {
+    formatted = str;
+  } else {
+    const last3 = str.slice(-3);
+    const rest = str.slice(0, -3);
+    const groups: string[] = [];
+    for (let i = rest.length; i > 0; i -= 2) {
+      groups.unshift(rest.slice(Math.max(0, i - 2), i));
+    }
+    formatted = groups.join(',') + ',' + last3;
+  }
+  return (rounded < 0 ? '-' : '') + 'Rs. ' + formatted;
 }
 
 function pct(n: number): string {

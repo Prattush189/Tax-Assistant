@@ -154,7 +154,7 @@ export function ProfileSelector() {
       <select
         value={fy}
         onChange={(e) => setFy(e.target.value as typeof fy)}
-        className="px-2 py-1.5 text-xs font-medium bg-transparent border border-gray-200 dark:border-gray-700 rounded-lg text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-emerald-400"
+        className="px-2 py-1.5 text-xs font-medium bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-emerald-400"
       >
         {SUPPORTED_FY.map((f) => (
           <option key={f} value={f}>FY {f}</option>
@@ -165,7 +165,7 @@ export function ProfileSelector() {
       <select
         value={taxpayerCategory}
         onChange={(e) => setTaxpayerCategory(e.target.value as TaxpayerCategory)}
-        className="px-2 py-1.5 text-xs font-medium bg-transparent border border-gray-200 dark:border-gray-700 rounded-lg text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-emerald-400"
+        className="px-2 py-1.5 text-xs font-medium bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-emerald-400"
       >
         {CATEGORY_OPTIONS.map((c) => (
           <option key={c.value} value={c.value}>{c.label}</option>

@@ -9,7 +9,21 @@ import type { ItrWizardDraft } from './uiModel';
 import { computeDerivedTotals } from './toCbdtJson';
 
 function inr(n: number | undefined): string {
-  return '₹ ' + Math.round(Number(n) || 0).toLocaleString('en-IN');
+  const rounded = Math.round(Number(n) || 0);
+  const str = Math.abs(rounded).toString();
+  let formatted: string;
+  if (str.length <= 3) {
+    formatted = str;
+  } else {
+    const last3 = str.slice(-3);
+    const rest = str.slice(0, -3);
+    const groups: string[] = [];
+    for (let i = rest.length; i > 0; i -= 2) {
+      groups.unshift(rest.slice(Math.max(0, i - 2), i));
+    }
+    formatted = groups.join(',') + ',' + last3;
+  }
+  return (rounded < 0 ? '-' : '') + 'Rs. ' + formatted;
 }
 
 function title(doc: jsPDF, text: string, y: number): number {

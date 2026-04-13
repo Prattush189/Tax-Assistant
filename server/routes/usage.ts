@@ -3,7 +3,7 @@ import { userRepo } from '../db/repositories/userRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { noticeRepo } from '../db/repositories/noticeRepo.js';
-import { profileRepo } from '../db/repositories/profileRepo.js';
+import { profileRepoV2 } from '../db/repositories/profileRepoV2.js';
 import { AuthRequest } from '../types.js';
 import { getUserLimits, getEffectivePlan } from '../lib/planLimits.js';
 import { getBillingUser, countSeats, SEAT_CAP } from '../lib/billing.js';
@@ -78,7 +78,7 @@ router.get('/', (req: AuthRequest, res: Response) => {
   // Saved profiles (count — not period based)
   let profilesUsed = 0;
   try {
-    profilesUsed = profileRepo.countByBillingUser(billingUser.id);
+    profilesUsed = profileRepoV2.countByBillingUser(billingUser.id);
   } catch (err) {
     console.error('[usage] profiles count failed', err);
   }

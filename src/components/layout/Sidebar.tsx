@@ -222,8 +222,9 @@ export function Sidebar({
 
   // ITR shows for admins OR users with the explicit itr_enabled capability.
   // Board Resolutions and Admin nav items stay admin-only.
-  const canAccessItr = user?.role === 'admin' || user?.itr_enabled === true;
-  const canAccessBoardResolutions = user?.role === 'admin';
+  const isEnterprise = user?.plan === 'enterprise';
+  const canAccessItr = user?.role === 'admin' || isEnterprise || user?.itr_enabled === true;
+  const canAccessBoardResolutions = user?.role === 'admin' || isEnterprise;
   const navItems = [
     ...baseNavItems,
     profileNavItem,

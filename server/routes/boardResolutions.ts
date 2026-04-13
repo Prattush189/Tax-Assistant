@@ -3,13 +3,13 @@ import {
   boardResolutionRepo,
   BoardResolutionTemplateId,
 } from '../db/repositories/boardResolutionRepo.js';
-import { adminMiddleware } from '../middleware/auth.js';
+import { boardResolutionAccessMiddleware } from '../middleware/auth.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
 
-// Admin-only for v1. authMiddleware runs at /api mount in server/index.ts.
-router.use(adminMiddleware);
+// Enterprise plan required. authMiddleware runs at /api mount in server/index.ts.
+router.use(boardResolutionAccessMiddleware);
 
 const TEMPLATE_IDS: readonly BoardResolutionTemplateId[] = [
   'appointment_of_director',

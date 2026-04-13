@@ -2,7 +2,25 @@ import jsPDF from 'jspdf';
 import type { IncomeTaxResult } from './taxEngine';
 
 function formatINR(n: number): string {
-  return '\u20B9 ' + Math.round(n).toLocaleString('en-IN');
+  const rounded = Math.round(n);
+  // Indian number formatting: 1,00,000 pattern
+  // toLocaleString('en-IN') may not work in all Node/jsPDF contexts,
+  // so we format manually for reliability.
+  const str = Math.abs(rounded).toString();
+  let formatted: string;
+  if (str.length <= 3) {
+    formatted = str;
+  } else {
+    // Last 3 digits, then groups of 2
+    const last3 = str.slice(-3);
+    const rest = str.slice(0, -3);
+    const groups: string[] = [];
+    for (let i = rest.length; i > 0; i -= 2) {
+      groups.unshift(rest.slice(Math.max(0, i - 2), i));
+    }
+    formatted = groups.join(',') + ',' + last3;
+  }
+  return (rounded < 0 ? '-' : '') + 'Rs. ' + formatted;
 }
 
 export function exportTaxComputationPDF(

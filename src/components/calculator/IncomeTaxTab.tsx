@@ -50,7 +50,7 @@ function NumberInput({
 export function IncomeTaxTab() {
   const {
     fy,
-    taxpayerCategory,
+    taxpayerCategory, setTaxpayerCategory,
     grossSalary, setGrossSalary,
     otherIncome, setOtherIncome,
     ageCategory, setAgeCategory,
@@ -83,6 +83,7 @@ export function IncomeTaxTab() {
         <LoadFromProfile
           onPick={(profile) => {
             const p = profileToCalculator(profile, prefillAy);
+            if (p.taxpayerCategory) setTaxpayerCategory(p.taxpayerCategory);
             if (p.grossSalary !== undefined) setGrossSalary(p.grossSalary);
             if (p.otherIncome !== undefined) setOtherIncome(p.otherIncome);
             if (p.deductions) {

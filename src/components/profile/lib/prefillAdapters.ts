@@ -288,9 +288,12 @@ export function profileToNoticeForm(profile: GenericProfile): NoticeFormPrefill 
 
 /* ---------- Calculator adapter (Income Tax tab) ------------------------- */
 
+import type { TaxpayerCategory } from '../../../types';
+
 export interface CalculatorPrefill {
   grossSalary?: string;
   otherIncome?: string;
+  taxpayerCategory?: TaxpayerCategory;
   deductions?: {
     section80C?: string;
     section80D_self?: string;
@@ -308,12 +311,14 @@ export function profileToCalculator(profile: GenericProfile, ay: string): Calcul
   const per = getPerAy(profile, ay);
   const salary = per.salary ?? {};
   const d = per.deductions ?? {};
+  const id = getIdentity(profile);
   const employers = salary.employers ?? [];
   const totalGross = employers.reduce((acc, e) => acc + (Number(e.grossSalary) || 0), 0);
   const num = (n: number | undefined) => (n ? String(n) : '');
   return {
     grossSalary: totalGross > 0 ? String(totalGross) : '',
     otherIncome: num(salary.otherSourcesIncome),
+    taxpayerCategory: (id as { taxpayerCategory?: TaxpayerCategory }).taxpayerCategory,
     deductions: {
       section80C: num(d.section80C),
       section80D_self: num(d.section80D),
