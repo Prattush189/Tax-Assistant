@@ -16,6 +16,7 @@ export interface UsageStats {
   total_cost: number;
   unique_ips: number;
   unique_users: number;
+  total_search_calls: number;
 }
 
 export interface BlockedIp {
@@ -36,7 +37,7 @@ const stmts = {
     'INSERT INTO api_usage (ip, user_id, input_tokens, output_tokens, cost, is_plugin) VALUES (?, ?, ?, ?, ?, ?)'
   ),
   logWithBilling: db.prepare(
-    'INSERT INTO api_usage (ip, user_id, billing_user_id, input_tokens, output_tokens, cost, is_plugin, model) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO api_usage (ip, user_id, billing_user_id, input_tokens, output_tokens, cost, is_plugin, model, search_used) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ),
   getByIp: db.prepare(`
     SELECT
@@ -59,7 +60,8 @@ const stmts = {
       COALESCE(SUM(output_tokens), 0) AS total_output_tokens,
       COALESCE(SUM(cost), 0) AS total_cost,
       COUNT(DISTINCT ip) AS unique_ips,
-      COUNT(DISTINCT user_id) AS unique_users
+      COUNT(DISTINCT user_id) AS unique_users,
+      COALESCE(SUM(CASE WHEN search_used = 1 THEN 1 ELSE 0 END), 0) AS total_search_calls
     FROM api_usage
     WHERE created_at >= ?
   `),
@@ -182,8 +184,9 @@ export const usageRepo = {
     cost: number,
     isPlugin: boolean,
     model?: string,
+    searchUsed?: boolean,
   ): void {
-    stmts.logWithBilling.run(ip, userId, billingUserId, inputTokens, outputTokens, cost, isPlugin ? 1 : 0, model ?? null);
+    stmts.logWithBilling.run(ip, userId, billingUserId, inputTokens, outputTokens, cost, isPlugin ? 1 : 0, model ?? null, searchUsed ? 1 : 0);
   },
 
   getByIp(period: string = 'month'): UsageByIp[] {

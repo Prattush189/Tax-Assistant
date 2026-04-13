@@ -430,7 +430,8 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
       // Tier 1: Gemini 3.1 Flash-Lite Preview (5K free searches/month, best quality)
       // Tier 2: Gemini 2.5 Flash-Lite (500 free searches/day, cheapest tokens)
       // Tier 3: Grok 4.1 Fast (paid search $5/1K — cheapest paid option)
-      const tier: ModelTier = getTier();
+      const searchEnabled = shouldEnableWebSearch(message);
+      const tier: ModelTier = getTier(searchEnabled);
       let usedModel = '';
 
       if ((tier === 'gemini-3' || tier === 'gemini-2.5') && GEMINI_API_KEY_RAW) {
@@ -440,9 +441,8 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
         usedModel = geminiModel;
         const historyPlain = history.map(m => ({ role: m.role as string, content: m.content as string }));
 
-        const needsSearch = shouldEnableWebSearch(message);
         try {
-          for await (const chunk of streamGeminiChat(geminiModel, SYSTEM_INSTRUCTION, historyPlain, userContent, GEMINI_API_KEY_RAW, MAX_TOKENS, needsSearch)) {
+          for await (const chunk of streamGeminiChat(geminiModel, SYSTEM_INSTRUCTION, historyPlain, userContent, GEMINI_API_KEY_RAW, MAX_TOKENS, searchEnabled)) {
             if (chunk.text) {
               fullResponse += chunk.text;
               res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`);
@@ -525,8 +525,9 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
       const inputCost = isGeminiT1 ? GEMINI_T1_INPUT_COST : isGeminiT2 ? GEMINI_T2_INPUT_COST : INPUT_COST_PER_TOKEN;
       const outputCost = isGeminiT1 ? GEMINI_T1_OUTPUT_COST : isGeminiT2 ? GEMINI_T2_OUTPUT_COST : OUTPUT_COST_PER_TOKEN;
       const searchCost = isGemini ? 0 : (shouldEnableWebSearch(message) ? WEB_SEARCH_COST : 0);
+      const actualSearchUsed = searchEnabled;
       const cost = (inputTok * inputCost) + (outputTok * outputCost) + searchCost;
-      usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, inputTok, outputTok, cost, false, usedModel || undefined);
+      usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, inputTok, outputTok, cost, false, usedModel || undefined, actualSearchUsed);
 
       res.write(`data: ${JSON.stringify({ done: true, stop_reason: stopReason })}\n\n`);
       success = true;

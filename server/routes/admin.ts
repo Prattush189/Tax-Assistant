@@ -162,6 +162,8 @@ router.get('/api-costs', (req: AuthRequest, res: Response) => {
       avgCostPerMsgUsd: stats.total_requests > 0 ? stats.total_cost / stats.total_requests : 0,
       avgCostPerMsgInr: stats.total_requests > 0 ? Math.round((stats.total_cost / stats.total_requests) * usdToInr * 1000) / 1000 : 0,
       uniqueUsers: stats.unique_users,
+      totalSearchCalls: stats.total_search_calls,
+      searchPct: stats.total_requests > 0 ? Math.round((stats.total_search_calls / stats.total_requests) * 1000) / 10 : 0,
     },
     costByPlan,
     byUser: byUser.map(u => ({

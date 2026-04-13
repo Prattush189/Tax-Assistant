@@ -163,11 +163,14 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_clients_filing_status ON clients(filing_
 db.exec("CREATE INDEX IF NOT EXISTS idx_profiles_user_id ON profiles(user_id)");
 db.exec("CREATE INDEX IF NOT EXISTS idx_profiles_updated_at ON profiles(updated_at DESC)");
 
-// Add model column to api_usage for per-model cost tracking
+// Add model + search tracking columns to api_usage
 {
   const usageCols = (db.prepare("PRAGMA table_info(api_usage)").all() as { name: string }[]).map(c => c.name);
   if (!usageCols.includes('model')) {
     db.exec("ALTER TABLE api_usage ADD COLUMN model TEXT");
+  }
+  if (!usageCols.includes('search_used')) {
+    db.exec("ALTER TABLE api_usage ADD COLUMN search_used INTEGER NOT NULL DEFAULT 0");
   }
 }
 

@@ -82,6 +82,7 @@ export function ApiCostDashboard() {
         <SummaryCard icon={DollarSign} label="Total Cost" value={fmtInr(s.totalCostInr)} sub={fmtUsd(s.totalCostUsd)} />
         <SummaryCard icon={Zap} label="Avg Cost / Message" value={fmtInr(s.avgCostPerMsgInr)} sub={fmtUsd(s.avgCostPerMsgUsd)} />
         <SummaryCard icon={Users} label="Active Users" value={String(s.uniqueUsers)} />
+        <SummaryCard icon={Activity} label="Web Search Calls" value={String((s as any).totalSearchCalls ?? 0)} sub={`${(s as any).searchPct ?? 0}% of messages`} />
       </div>
 
       {/* Token summary */}

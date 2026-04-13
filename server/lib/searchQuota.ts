@@ -38,10 +38,18 @@ function checkResets(): void {
 /**
  * Pick the best available tier for the next chat request.
  * Tier 1 (Gemini 3) first for better quality, then Tier 2 (2.5) for cheapest tokens.
+ *
+ * Call with `searchEnabled=true` when the message will use Google Search grounding.
+ * Only search-enabled requests count toward the free tier limits — plain messages
+ * don't consume search quota and can always use the best tier.
  */
-export function getTier(): ModelTier {
+export function getTier(searchEnabled: boolean = false): ModelTier {
   checkResets();
 
+  // Non-search messages always use Tier 1 (best quality) — no quota consumed
+  if (!searchEnabled) return 'gemini-3';
+
+  // Search-enabled messages count toward the free grounding quota
   if (tier1Count < TIER1_LIMIT) {
     tier1Count++;
     return 'gemini-3';
