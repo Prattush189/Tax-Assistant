@@ -71,6 +71,21 @@ export const FY_2026_27: TaxRules = {
       { above: 50_000_000, rate: 0.37 }, // > ₹5Cr
     ],
   },
+  firm: {
+    rate: 0.30,
+    surchargeThreshold: 10_000_000,
+    surchargeRate: 0.12,
+  },
+  company: {
+    normalRate: 0.30,
+    section115BAARate: 0.22,
+    surcharge115BAA: 0.10,
+    surchargeNormal: [
+      { above: 10_000_000, rate: 0.07 },
+      { above: 100_000_000, rate: 0.12 },
+    ],
+    matRate: 0.15,
+  },
   capitalGains: {
     equity: {
       ltcg: { rate: 0.125, holdingMonths: 12, exemption: 125000 },

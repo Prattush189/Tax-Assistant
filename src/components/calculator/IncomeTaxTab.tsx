@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { cn } from '../../lib/utils';
-import type { AgeCategory } from '../../types';
+import type { AgeCategory, TaxpayerCategory } from '../../types';
 import { RegimeComparison } from './RegimeComparison';
 import { useTaxCalculator } from '../../contexts/TaxCalculatorContext';
 import { LoadFromProfile } from '../profile/shared/LoadFromProfile';
@@ -10,6 +10,13 @@ import { PROFILE_AYS, ProfileAy } from '../profile/lib/profileModel';
 import { SUPPORTED_FY } from '../../data/taxRules';
 
 type FY = typeof SUPPORTED_FY[number];
+
+const CATEGORY_OPTIONS: { value: TaxpayerCategory; label: string }[] = [
+  { value: 'Individual', label: 'Individual' },
+  { value: 'HUF', label: 'HUF' },
+  { value: 'Firm', label: 'Firm / LLP' },
+  { value: 'Company', label: 'Company' },
+];
 
 const AGE_OPTIONS: { value: AgeCategory; label: string }[] = [
   { value: 'below60', label: 'Below 60' },
@@ -54,6 +61,7 @@ function NumberInput({
 export function IncomeTaxTab() {
   const {
     fy, setFy,
+    taxpayerCategory, setTaxpayerCategory,
     grossSalary, setGrossSalary,
     otherIncome, setOtherIncome,
     ageCategory, setAgeCategory,
@@ -63,6 +71,9 @@ export function IncomeTaxTab() {
     hra, setHra,
     oldResult, newResult,
   } = useTaxCalculator();
+
+  const isIndividualOrHuf = taxpayerCategory === 'Individual' || taxpayerCategory === 'HUF';
+  const isIndividual = taxpayerCategory === 'Individual';
 
   const [prefillAy, setPrefillAy] = useState<ProfileAy>('2025-26');
 
@@ -105,11 +116,30 @@ export function IncomeTaxTab() {
           compact
         />
       </div>
-      {/* FY + Age selectors */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+      {/* Category + FY + Age selectors */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+        <div>
+          <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Taxpayer Category</p>
+          <div className="flex flex-col gap-1">
+            {CATEGORY_OPTIONS.map((opt) => (
+              <label key={opt.value} className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="taxpayerCategory"
+                  value={opt.value}
+                  checked={taxpayerCategory === opt.value}
+                  onChange={() => setTaxpayerCategory(opt.value)}
+                  className="accent-blue-600"
+                />
+                <span className="text-sm text-gray-700 dark:text-gray-300">{opt.label}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+
         <div>
           <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Financial Year</p>
-          <div className="flex gap-3">
+          <div className="flex flex-col gap-1">
             {SUPPORTED_FY.map((f) => (
               <label key={f} className="flex items-center gap-2 cursor-pointer">
                 <input
@@ -126,24 +156,26 @@ export function IncomeTaxTab() {
           </div>
         </div>
 
-        <div>
-          <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Age Category</p>
-          <div className="flex flex-col gap-1">
-            {AGE_OPTIONS.map((opt) => (
-              <label key={opt.value} className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="ageCategory"
-                  value={opt.value}
-                  checked={ageCategory === opt.value}
-                  onChange={() => setAgeCategory(opt.value)}
-                  className="accent-blue-600"
-                />
-                <span className="text-sm text-gray-700 dark:text-gray-300">{opt.label}</span>
-              </label>
-            ))}
+        {isIndividual && (
+          <div>
+            <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Age Category</p>
+            <div className="flex flex-col gap-1">
+              {AGE_OPTIONS.map((opt) => (
+                <label key={opt.value} className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="ageCategory"
+                    value={opt.value}
+                    checked={ageCategory === opt.value}
+                    onChange={() => setAgeCategory(opt.value)}
+                    className="accent-blue-600"
+                  />
+                  <span className="text-sm text-gray-700 dark:text-gray-300">{opt.label}</span>
+                </label>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Income fields */}
@@ -161,7 +193,8 @@ export function IncomeTaxTab() {
         />
       </div>
 
-      {/* Old Regime Deductions (expandable) */}
+      {/* Old Regime Deductions — only for Individual/HUF */}
+      {isIndividualOrHuf && (
       <div className="mb-4 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
         <button
           onClick={() => setShowDeductions(!showDeductions)}
@@ -245,8 +278,10 @@ export function IncomeTaxTab() {
           </div>
         )}
       </div>
+      )}
 
-      {/* HRA Exemption (expandable) */}
+      {/* HRA Exemption — only for Individual */}
+      {isIndividual && (
       <div className="mb-6 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
         <button
           onClick={() => setShowHRA(!showHRA)}
@@ -285,12 +320,28 @@ export function IncomeTaxTab() {
           </div>
         )}
       </div>
+      )}
+
+      {/* Firm/Company info banner */}
+      {!isIndividualOrHuf && (
+        <div className="mb-6 p-4 rounded-xl bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-900/40">
+          <p className="text-sm font-semibold text-blue-800 dark:text-blue-300">
+            {taxpayerCategory === 'Firm' ? 'Firm / LLP — flat 30% tax rate' : 'Company — 22% (Section 115BAA) or 30% normal rate'}
+          </p>
+          <p className="text-[11px] text-blue-700 dark:text-blue-400 mt-1">
+            {taxpayerCategory === 'Firm'
+              ? 'No regime choice. Surcharge: 12% if income exceeds ₹1 crore. Cess: 4%.'
+              : 'Default: Section 115BAA (22% + 10% surcharge + 4% cess). No deductions/exemptions under 115BAA.'}
+          </p>
+        </div>
+      )}
 
       {/* Results */}
       <RegimeComparison
         oldResult={oldResult}
         newResult={newResult}
         fy={fy}
+        taxpayerCategory={taxpayerCategory}
       />
     </div>
   );

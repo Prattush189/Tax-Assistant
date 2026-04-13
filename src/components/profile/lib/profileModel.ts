@@ -6,6 +6,8 @@
  * them. Each tab component reads/writes its own slice with strong typing.
  */
 
+import type { TaxpayerCategory } from '../../../types';
+
 export type AccountType = 'SB' | 'CA' | 'CC' | 'OD' | 'NRO' | 'OTH';
 export type EmployerCategory =
   | 'CGOV'
@@ -27,6 +29,7 @@ export interface IdentitySlice {
   dob?: string;                    // YYYY-MM-DD
   employerCategory?: EmployerCategory;
   fatherName?: string;             // used in ITR Verification
+  taxpayerCategory?: TaxpayerCategory;  // Individual, HUF, Firm, Company
 }
 
 export interface AddressSlice {

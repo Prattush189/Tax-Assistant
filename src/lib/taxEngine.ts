@@ -1,4 +1,4 @@
-import type { TaxRules, AgeCategory, TaxRegime, Slab, SurchargeBracket } from '../types';
+import type { TaxRules, AgeCategory, TaxRegime, Slab, SurchargeBracket, TaxpayerCategory } from '../types';
 
 export interface HRAInput {
   actualHRA: number;
@@ -13,6 +13,7 @@ export interface IncomeTaxInput {
   fy: string;
   regime: TaxRegime;
   ageCategory: AgeCategory;
+  category?: TaxpayerCategory; // default 'Individual'
   // Old regime only (ignored in new regime):
   deductions?: {
     section80C?: number;
@@ -261,6 +262,111 @@ export function computeTaxOnTaxableIncome(
     totalTax,
     marginalRate,
   };
+}
+
+/**
+ * Compute flat-rate tax for Firms / Companies (no slabs, no regime choice).
+ */
+export function computeFlatRateTax(
+  taxableIncome: number,
+  rate: number,
+  surchargeThreshold: number,
+  surchargeRate: number,
+  cessRate: number,
+): TaxOnIncomeResult {
+  const baseTax = Math.round(taxableIncome * rate);
+  let surcharge = 0;
+  let actualSurchargeRate = 0;
+  if (taxableIncome > surchargeThreshold) {
+    surcharge = Math.round(baseTax * surchargeRate);
+    actualSurchargeRate = surchargeRate;
+    // Marginal relief for firms: tax+surcharge at income I should not exceed
+    // tax at threshold T + (I - T)
+    const taxAtThreshold = Math.round(surchargeThreshold * rate);
+    const allowed = taxAtThreshold + (taxableIncome - surchargeThreshold);
+    if (baseTax + surcharge > allowed) {
+      surcharge = Math.max(0, allowed - baseTax);
+    }
+  }
+  const taxPlusSurcharge = baseTax + surcharge;
+  const cess = taxPlusSurcharge * cessRate;
+  const totalTax = taxPlusSurcharge + cess;
+
+  return {
+    slabTax: baseTax,
+    slabBreakdown: [{ slab: `Flat ${(rate * 100).toFixed(0)}%`, taxableAmount: taxableIncome, tax: baseTax }],
+    rebate87A: 0,
+    marginalRelief: 0,
+    taxAfterRebate: baseTax,
+    surcharge,
+    surchargeRate: actualSurchargeRate,
+    cess,
+    totalTax,
+    marginalRate: rate,
+  };
+}
+
+/**
+ * Category-aware tax computation. Routes to the correct calculator based
+ * on the taxpayer category.
+ */
+export function computeTaxForCategory(
+  taxableIncome: number,
+  regime: TaxRegime,
+  ageCategory: AgeCategory,
+  category: TaxpayerCategory,
+  rules: TaxRules,
+): TaxOnIncomeResult {
+  switch (category) {
+    case 'Firm':
+      return computeFlatRateTax(
+        taxableIncome,
+        rules.firm.rate,
+        rules.firm.surchargeThreshold,
+        rules.firm.surchargeRate,
+        rules.cess,
+      );
+    case 'Company': {
+      // Default to section 115BAA (22% + 10% surcharge) — most common
+      return computeFlatRateTax(
+        taxableIncome,
+        rules.company.section115BAARate,
+        0, // surcharge is flat 10% regardless of income under 115BAA
+        rules.company.surcharge115BAA,
+        rules.cess,
+      );
+    }
+    case 'HUF': {
+      // HUF uses same slabs as Individual below-60 but NO rebate u/s 87A
+      const slabs = regime === 'new' ? rules.newRegime.slabs : rules.oldRegime.slabs.below60;
+      const { total: slabTax, breakdown: slabBreakdown } = computeSlabTax(taxableIncome, slabs);
+      // No rebate, no marginal relief for HUF
+      const brackets = regime === 'new' ? rules.surcharge.new : rules.surcharge.old;
+      const { surcharge, surchargeRate } = computeSurcharge(
+        slabTax,
+        taxableIncome,
+        brackets,
+        (inc) => computeSlabTax(inc, slabs).total,
+      );
+      const taxPlusSurcharge = slabTax + surcharge;
+      const cess = taxPlusSurcharge * rules.cess;
+      return {
+        slabTax,
+        slabBreakdown,
+        rebate87A: 0,
+        marginalRelief: 0,
+        taxAfterRebate: slabTax,
+        surcharge,
+        surchargeRate,
+        cess,
+        totalTax: taxPlusSurcharge + cess,
+        marginalRate: topSlabRateReached(taxableIncome, slabs),
+      };
+    }
+    case 'Individual':
+    default:
+      return computeTaxOnTaxableIncome(taxableIncome, regime, ageCategory, rules);
+  }
 }
 
 /**

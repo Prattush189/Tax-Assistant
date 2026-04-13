@@ -139,16 +139,33 @@ export interface SurchargeRules {
   old: SurchargeBracket[];
 }
 
+export interface FirmTaxConfig {
+  rate: number;                // 0.30 flat
+  surchargeThreshold: number;  // ₹1Cr
+  surchargeRate: number;       // 0.12
+}
+
+export interface CompanyTaxConfig {
+  normalRate: number;          // 0.30 (or 0.25 for turnover ≤ ₹400Cr)
+  section115BAARate: number;   // 0.22 (new manufacturing)
+  surcharge115BAA: number;     // 0.10
+  surchargeNormal: SurchargeBracket[];
+  matRate: number;             // 0.15 (minimum alternate tax)
+}
+
 export interface TaxRules {
   fy: string;
   newRegime: NewRegimeConfig;
   oldRegime: OldRegimeConfig;
   cess: number;
   surcharge: SurchargeRules;
+  firm: FirmTaxConfig;
+  company: CompanyTaxConfig;
   capitalGains: CapitalGainsRules;
   gst: GstRules;
 }
 
+export type TaxpayerCategory = 'Individual' | 'HUF' | 'Firm' | 'Company';
 export type AgeCategory = 'below60' | 'senior60to80' | 'superSenior80plus';
 export type TaxRegime = 'new' | 'old';
 export type CapitalGainsAssetType = 'equity' | 'realEstate' | 'other';

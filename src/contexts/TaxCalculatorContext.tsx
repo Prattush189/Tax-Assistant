@@ -1,8 +1,8 @@
 import React, { createContext, useContext, useState, useMemo, useEffect, useCallback } from 'react';
-import { calculateIncomeTax } from '../lib/taxEngine';
+import { calculateIncomeTax, computeTaxForCategory } from '../lib/taxEngine';
 import type { IncomeTaxResult } from '../lib/taxEngine';
 import { getTaxRules } from '../data/taxRules';
-import type { AgeCategory } from '../types';
+import type { AgeCategory, TaxpayerCategory } from '../types';
 import { useAuth } from './AuthContext';
 import {
   fetchProfiles,
@@ -99,6 +99,8 @@ const hraInitial = {
 interface TaxCalculatorState {
   fy: FY;
   setFy: React.Dispatch<React.SetStateAction<FY>>;
+  taxpayerCategory: TaxpayerCategory;
+  setTaxpayerCategory: React.Dispatch<React.SetStateAction<TaxpayerCategory>>;
   grossSalary: string;
   setGrossSalary: React.Dispatch<React.SetStateAction<string>>;
   otherIncome: string;
@@ -144,6 +146,7 @@ export function TaxCalculatorProvider({ children }: { children: React.ReactNode 
   const { isAuthenticated } = useAuth();
 
   const [fy, setFy] = useState<FY>('2025-26');
+  const [taxpayerCategory, setTaxpayerCategory] = useState<TaxpayerCategory>('Individual');
   const [grossSalary, setGrossSalary] = useState('');
   const [otherIncome, setOtherIncome] = useState('');
   const [ageCategory, setAgeCategory] = useState<AgeCategory>('below60');
@@ -209,6 +212,23 @@ export function TaxCalculatorProvider({ children }: { children: React.ReactNode 
     const gross = Number(grossSalary) || 0;
     const other = Number(otherIncome) || 0;
 
+    // For Firm/Company: no regime choice, no individual deductions
+    if (taxpayerCategory === 'Firm' || taxpayerCategory === 'Company') {
+      const taxableIncome = gross + other; // simplified — no std deduction for firms
+      const result = computeTaxForCategory(taxableIncome, 'new', 'below60', taxpayerCategory, rules);
+      // Both old and new are the same (no regime choice)
+      const fullResult: IncomeTaxResult = {
+        grossIncome: gross + other,
+        standardDeduction: 0,
+        hraExemption: 0,
+        totalDeductions: 0,
+        taxableIncome,
+        ...result,
+        effectiveRate: (gross + other) > 0 ? (result.totalTax / (gross + other)) * 100 : 0,
+      };
+      return { oldResult: fullResult, newResult: fullResult };
+    }
+
     const hraInput = {
       actualHRA: Number(hra.actualHRA) || 0,
       basicPlusDa: Number(hra.basicPlusDa) || 0,
@@ -223,7 +243,6 @@ export function TaxCalculatorProvider({ children }: { children: React.ReactNode 
       section80CCD1B: Number(deductions.section80CCD1B) || 0,
       isSelfSenior: deductions.isSelfSenior,
       isParentsSenior: deductions.isParentsSenior,
-      // Extended deductions
       section80E: Number(deductions.section80E) || 0,
       section80G: Number(deductions.section80G) || 0,
       section80TTA: Number(deductions.section80TTA) || 0,
@@ -238,6 +257,7 @@ export function TaxCalculatorProvider({ children }: { children: React.ReactNode 
         fy,
         regime: 'old',
         ageCategory,
+        category: taxpayerCategory,
         deductions: deductionInput,
         hra: hraInput,
       },
@@ -251,12 +271,13 @@ export function TaxCalculatorProvider({ children }: { children: React.ReactNode 
         fy,
         regime: 'new',
         ageCategory,
+        category: taxpayerCategory,
       },
       rules,
     );
 
     return { oldResult, newResult };
-  }, [fy, grossSalary, otherIncome, ageCategory, deductions, hra]);
+  }, [fy, taxpayerCategory, grossSalary, otherIncome, ageCategory, deductions, hra]);
 
   const loadProfiles = useCallback(async () => {
     if (!isAuthenticated) return;
@@ -327,6 +348,8 @@ export function TaxCalculatorProvider({ children }: { children: React.ReactNode 
       value={{
         fy,
         setFy,
+        taxpayerCategory,
+        setTaxpayerCategory,
         grossSalary,
         setGrossSalary,
         otherIncome,

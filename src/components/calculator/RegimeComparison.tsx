@@ -5,10 +5,13 @@ import { generateTaxPlanningReport } from '../../lib/taxPlanningReport';
 import { useAuth } from '../../contexts/AuthContext';
 import type { IncomeTaxResult } from '../../lib/taxEngine';
 
+import type { TaxpayerCategory } from '../../types';
+
 interface RegimeComparisonProps {
   oldResult: IncomeTaxResult;
   newResult: IncomeTaxResult;
   fy: string;
+  taxpayerCategory?: TaxpayerCategory;
 }
 
 interface RegimeCardProps {
@@ -136,7 +139,8 @@ function RegimeCard({ label, result, isWinner, showOldOnlyFields, fy }: RegimeCa
   );
 }
 
-export function RegimeComparison({ oldResult, newResult, fy }: RegimeComparisonProps) {
+export function RegimeComparison({ oldResult, newResult, fy, taxpayerCategory = 'Individual' }: RegimeComparisonProps) {
+  const isFlatRate = taxpayerCategory === 'Firm' || taxpayerCategory === 'Company';
   const { user } = useAuth();
   const savings = Math.abs(newResult.totalTax - oldResult.totalTax);
   const betterRegime: 'new' | 'old' =
@@ -145,20 +149,32 @@ export function RegimeComparison({ oldResult, newResult, fy }: RegimeComparisonP
 
   return (
     <div className="mt-6">
-      {/* Recommendation banner */}
-      {savings === 0 ? (
-        <div className="bg-gray-50 dark:bg-gray-700/40 border border-gray-200 dark:border-gray-600 rounded-xl p-4 mb-4 text-gray-600 dark:text-gray-300 font-medium text-sm">
-          Both regimes result in equal tax for FY {fy}.
-        </div>
-      ) : (
-        <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-xl p-4 mb-4 text-green-800 dark:text-green-300 font-medium text-sm">
-          {betterRegime === 'new' ? 'New' : 'Old'} Regime saves you{' '}
-          <span className="font-bold">{formatINR(savings)}</span> for FY {fy}.
-        </div>
+      {/* Recommendation banner — only for individuals/HUF */}
+      {!isFlatRate && (
+        savings === 0 ? (
+          <div className="bg-gray-50 dark:bg-gray-700/40 border border-gray-200 dark:border-gray-600 rounded-xl p-4 mb-4 text-gray-600 dark:text-gray-300 font-medium text-sm">
+            Both regimes result in equal tax for FY {fy}.
+          </div>
+        ) : (
+          <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-xl p-4 mb-4 text-green-800 dark:text-green-300 font-medium text-sm">
+            {betterRegime === 'new' ? 'New' : 'Old'} Regime saves you{' '}
+            <span className="font-bold">{formatINR(savings)}</span> for FY {fy}.
+          </div>
+        )
       )}
 
-      {/* Side-by-side cards */}
-      <div className="flex flex-col md:flex-row gap-4">
+      {/* Cards — single card for Firm/Company, side-by-side for Individual/HUF */}
+      <div className={cn('flex flex-col gap-4', !isFlatRate && 'md:flex-row')}>
+        {isFlatRate ? (
+          <RegimeCard
+            label={taxpayerCategory === 'Firm' ? 'Firm / LLP (Flat 30%)' : 'Company (Section 115BAA — 22%)'}
+            result={newResult}
+            isWinner={false}
+            showOldOnlyFields={false}
+            fy={fy}
+          />
+        ) : (
+          <>
         <RegimeCard
           label="Old Regime"
           result={oldResult}
@@ -173,6 +189,8 @@ export function RegimeComparison({ oldResult, newResult, fy }: RegimeComparisonP
           showOldOnlyFields={false}
           fy={fy}
         />
+          </>
+        )}
       </div>
 
       {/* PDF Exports */}
