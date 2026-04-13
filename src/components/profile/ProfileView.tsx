@@ -14,6 +14,9 @@ import { TrendsTab } from './tabs/TrendsTab';
 import { PROFILE_AYS } from './lib/profileModel';
 import { PortalImportDialog } from '../portal-import/PortalImportDialog';
 
+import type { TaxpayerCategory } from '../../types';
+import type { IdentitySlice } from './lib/profileModel';
+
 type ProfileSubTab =
   | 'identity'
   | 'address'
@@ -24,7 +27,9 @@ type ProfileSubTab =
   | 'business'
   | 'trends';
 
-const SUB_TABS: { id: ProfileSubTab; label: string; icon: typeof User; perAy: boolean }[] = [
+type TabDef = { id: ProfileSubTab; label: string; icon: typeof User; perAy: boolean };
+
+const ALL_TABS: TabDef[] = [
   { id: 'identity', label: 'Identity', icon: User, perAy: false },
   { id: 'address', label: 'Address', icon: MapPin, perAy: false },
   { id: 'banks', label: 'Banks', icon: Landmark, perAy: false },
@@ -35,6 +40,22 @@ const SUB_TABS: { id: ProfileSubTab; label: string; icon: typeof User; perAy: bo
   { id: 'trends', label: 'Trends', icon: TrendingUp, perAy: false },
 ];
 
+/**
+ * Return visible tabs based on the profile's taxpayer category.
+ * - Individual: all except Business (unless they also have business income)
+ * - HUF: same as Individual
+ * - Firm/LLP: Identity, Address, Banks, Business, Notice, Trends (no Salary/Deductions)
+ * - Company: same as Firm
+ */
+function getTabsForCategory(category: TaxpayerCategory | undefined): TabDef[] {
+  const cat = category ?? 'Individual';
+  if (cat === 'Firm' || cat === 'Company') {
+    return ALL_TABS.filter(t => !['salary', 'deductions'].includes(t.id));
+  }
+  // Individual / HUF — show everything
+  return ALL_TABS;
+}
+
 interface Props {
   manager: ProfileManager;
 }
@@ -42,6 +63,16 @@ interface Props {
 export function ProfileView({ manager }: Props) {
   const [activeSubTab, setActiveSubTab] = useState<ProfileSubTab>('identity');
   const [showImport, setShowImport] = useState(false);
+
+  // Derive taxpayer category from the profile's identity slice
+  const identity = (manager.currentProfile?.identity ?? {}) as IdentitySlice;
+  const taxpayerCategory: TaxpayerCategory = identity.taxpayerCategory ?? 'Individual';
+  const SUB_TABS = getTabsForCategory(taxpayerCategory);
+
+  // If active tab got hidden after category change, reset to identity
+  if (!SUB_TABS.some(t => t.id === activeSubTab)) {
+    setActiveSubTab('identity');
+  }
 
   if (!manager.currentProfile) {
     return <ProfilePicker manager={manager} />;

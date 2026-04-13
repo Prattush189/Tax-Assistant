@@ -29,6 +29,8 @@ function inflateRow(row: {
   banks_data: string;
   notice_defaults: string;
   per_ay_data: string;
+  filing_status?: string;
+  notes?: string | null;
   created_at: string;
   updated_at: string;
 }) {
@@ -48,6 +50,8 @@ function inflateRow(row: {
     banks: safeParse<unknown[]>(row.banks_data, []),
     noticeDefaults: safeParse<Record<string, unknown>>(row.notice_defaults, {}),
     perAy: safeParse<Record<string, Record<string, unknown>>>(row.per_ay_data, {}),
+    filing_status: row.filing_status ?? 'pending',
+    notes: row.notes ?? null,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -129,6 +133,14 @@ router.patch('/:id', (req: AuthRequest, res: Response) => {
         typeof value === 'string' ? value : JSON.stringify(value ?? (slice === 'banks_data' ? [] : {}));
       profileRepoV2.updateSlice(row.id, req.user.id, slice, serialized);
     }
+  }
+
+  // Filing status + notes
+  if (typeof body.filing_status === 'string') {
+    profileRepoV2.updateFilingStatus(row.id, req.user.id, body.filing_status);
+  }
+  if (typeof body.notes === 'string') {
+    profileRepoV2.updateNotes(row.id, req.user.id, body.notes);
   }
 
   const updated = profileRepoV2.findByIdForUser(row.id, req.user.id);

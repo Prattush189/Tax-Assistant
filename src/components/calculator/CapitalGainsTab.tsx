@@ -50,8 +50,8 @@ function NumberInput({
 export function CapitalGainsTab() {
   // Lifted state — persists across tab switches
   const { cgTabState, setCgTabState } = useTaxCalculator();
+  const { fy } = useTaxCalculator(); // global FY
   const {
-    fy,
     assetType,
     salePrice,
     purchasePrice,
@@ -59,7 +59,6 @@ export function CapitalGainsTab() {
     acquisitionBeforeJuly2024,
     indexedCost,
   } = cgTabState;
-  const setFy = (v: FY) => setCgTabState((s) => ({ ...s, fy: v }));
   const setAssetType = (v: CapitalGainsAssetType) => setCgTabState((s) => ({ ...s, assetType: v }));
   const setSalePrice = (v: string) => setCgTabState((s) => ({ ...s, salePrice: v }));
   const setPurchasePrice = (v: string) => setCgTabState((s) => ({ ...s, purchasePrice: v }));
@@ -109,26 +108,6 @@ export function CapitalGainsTab() {
           <CGImportSection />
         </div>
       )}
-
-      {/* FY selector */}
-      <div className="mb-5">
-        <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Financial Year</p>
-        <div className="flex gap-3">
-          {(['2025-26', '2024-25'] as FY[]).map((f) => (
-            <label key={f} className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="radio"
-                name="cg-fy"
-                value={f}
-                checked={fy === f}
-                onChange={() => setFy(f)}
-                className="accent-blue-600"
-              />
-              <span className="text-sm text-gray-700 dark:text-gray-300">FY {f}</span>
-            </label>
-          ))}
-        </div>
-      </div>
 
       {/* Asset type selector */}
       <div className="mb-5">

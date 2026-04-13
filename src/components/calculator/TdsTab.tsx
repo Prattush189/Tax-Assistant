@@ -39,9 +39,9 @@ function sectionLabel(section: TdsSection, fy: TdsFY): string {
 
 export function TdsTab() {
   // Lifted state — persists across tab switches
-  const { tdsTabState, setTdsTabState } = useTaxCalculator();
+  const { tdsTabState, setTdsTabState, fy: globalFy } = useTaxCalculator();
+  const fy = globalFy as TdsFY; // use global FY
   const {
-    fy,
     category,
     sectionId,
     amount,
@@ -51,8 +51,6 @@ export function TdsTab() {
     lowerRatePct,
     payeeStatus,
   } = tdsTabState;
-
-  const setFy = (v: TdsFY) => setTdsTabState((s) => ({ ...s, fy: v }));
   const setCategory = (v: TdsCategory) => setTdsTabState((s) => ({ ...s, category: v }));
   const setSectionId = (v: string) => setTdsTabState((s) => ({ ...s, sectionId: v }));
   const setAmount = (v: string) => setTdsTabState((s) => ({ ...s, amount: v }));
@@ -153,26 +151,8 @@ export function TdsTab() {
 
   return (
     <div className="max-w-2xl">
-      {/* FY + Type row */}
+      {/* Type selector */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-            Financial Year
-          </label>
-          <div className="relative">
-            <select
-              value={fy}
-              onChange={e => setFy(e.target.value as TdsFY)}
-              className="w-full appearance-none pl-3 pr-9 py-2 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-            >
-              {TDS_FY_OPTIONS.map(o => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </select>
-            <ChevronDown className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-          </div>
-        </div>
-
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
             Type

@@ -39,9 +39,8 @@ function NumberInput({
 
 export function AdvanceTaxTab() {
   // Lifted state — persists across tab switches
-  const { advanceTaxTabState, setAdvanceTaxTabState } = useTaxCalculator();
-  const { fy, estimatedIncome, tdsDeducted, selfAssessment } = advanceTaxTabState;
-  const setFy = (v: string) => setAdvanceTaxTabState((s) => ({ ...s, fy: v }));
+  const { advanceTaxTabState, setAdvanceTaxTabState, fy } = useTaxCalculator();
+  const { estimatedIncome, tdsDeducted, selfAssessment } = advanceTaxTabState;
   const setEstimatedIncome = (v: string) =>
     setAdvanceTaxTabState((s) => ({ ...s, estimatedIncome: v }));
   const setTdsDeducted = (v: string) => setAdvanceTaxTabState((s) => ({ ...s, tdsDeducted: v }));
@@ -62,25 +61,6 @@ export function AdvanceTaxTab() {
 
   return (
     <div className="max-w-2xl">
-      {/* FY selector */}
-      <div className="mb-5">
-        <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Financial Year</p>
-        <div className="flex gap-3">
-          {SUPPORTED_FY.map((f) => (
-            <label key={f} className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="radio"
-                name="adv-fy"
-                value={f}
-                checked={fy === f}
-                onChange={() => setFy(f)}
-                className="accent-blue-600"
-              />
-              <span className="text-sm text-gray-700 dark:text-gray-300">FY {f}</span>
-            </label>
-          ))}
-        </div>
-      </div>
 
       {/* Income inputs */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">

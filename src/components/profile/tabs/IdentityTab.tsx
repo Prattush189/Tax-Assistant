@@ -1,5 +1,6 @@
 import { ProfileManager } from '../../../hooks/useProfileManager';
 import { IdentitySlice, EmployerCategory } from '../lib/profileModel';
+import type { TaxpayerCategory } from '../../../types';
 import {
   Card,
   Field,
@@ -34,8 +35,30 @@ export function IdentityTab({ manager }: Props) {
     manager.updateIdentity({ ...id, ...p });
   };
 
+  const isIndividualOrHuf = !id.taxpayerCategory || id.taxpayerCategory === 'Individual' || id.taxpayerCategory === 'HUF';
+
   return (
     <div className="space-y-4">
+      <Card title="Taxpayer category">
+        <div className="flex flex-wrap gap-3">
+          {(['Individual', 'HUF', 'Firm', 'Company'] as TaxpayerCategory[]).map(cat => (
+            <label key={cat} className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="taxpayerCategory"
+                value={cat}
+                checked={(id.taxpayerCategory ?? 'Individual') === cat}
+                onChange={() => patch({ taxpayerCategory: cat })}
+                className="accent-emerald-600"
+              />
+              <span className="text-sm text-gray-700 dark:text-gray-300">
+                {cat === 'Firm' ? 'Firm / LLP' : cat}
+              </span>
+            </label>
+          ))}
+        </div>
+      </Card>
+
       <Card title="Name">
         <Grid3>
           <Field label="First name">
@@ -62,18 +85,20 @@ export function IdentityTab({ manager }: Props) {
             <AadhaarInput value={id.aadhaar} onChange={(v) => patch({ aadhaar: v })} />
           </Field>
         </Grid2>
-        <Grid2>
-          <Field label="Date of birth" hint="DD/MM/YYYY">
-            <TextInput value={id.dob} onChange={(v) => patch({ dob: v })} placeholder="15/05/1990" />
-          </Field>
-          <Field label="Employer category">
-            <Select
-              value={id.employerCategory}
-              onChange={(v) => patch({ employerCategory: v })}
-              options={EMPLOYER_CATEGORIES}
-            />
-          </Field>
-        </Grid2>
+        {isIndividualOrHuf && (
+          <Grid2>
+            <Field label="Date of birth" hint="DD/MM/YYYY">
+              <TextInput value={id.dob} onChange={(v) => patch({ dob: v })} placeholder="15/05/1990" />
+            </Field>
+            <Field label="Employer category">
+              <Select
+                value={id.employerCategory}
+                onChange={(v) => patch({ employerCategory: v })}
+                options={EMPLOYER_CATEGORIES}
+              />
+            </Field>
+          </Grid2>
+        )}
       </Card>
     </div>
   );

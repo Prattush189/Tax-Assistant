@@ -10,9 +10,8 @@ function formatINR(n: number): string {
 
 export function SalaryOptimizerTab() {
   // Lifted state — persists across tab switches
-  const { salaryOptTabState, setSalaryOptTabState } = useTaxCalculator();
-  const { fy, ctc, monthlyRent, isMetro } = salaryOptTabState;
-  const setFy = (v: string) => setSalaryOptTabState((s) => ({ ...s, fy: v }));
+  const { salaryOptTabState, setSalaryOptTabState, fy } = useTaxCalculator();
+  const { ctc, monthlyRent, isMetro } = salaryOptTabState;
   const setCtc = (v: string) => setSalaryOptTabState((s) => ({ ...s, ctc: v }));
   const setMonthlyRent = (v: string) => setSalaryOptTabState((s) => ({ ...s, monthlyRent: v }));
   const setIsMetro = (v: boolean) => setSalaryOptTabState((s) => ({ ...s, isMetro: v }));
@@ -28,19 +27,6 @@ export function SalaryOptimizerTab() {
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
-      {/* FY Selector */}
-      <div>
-        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Financial Year</label>
-        <div className="flex gap-3">
-          {SUPPORTED_FY.map(f => (
-            <label key={f} className="flex items-center gap-2 cursor-pointer">
-              <input type="radio" name="fy" value={f} checked={fy === f} onChange={() => setFy(f)} className="accent-blue-600" />
-              <span className="text-sm text-gray-700 dark:text-gray-300">FY {f}</span>
-            </label>
-          ))}
-        </div>
-      </div>
-
       {/* Inputs */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>

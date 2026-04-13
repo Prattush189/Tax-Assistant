@@ -16,6 +16,8 @@ export interface ProfileRow {
   banks_data: string;        // JSON array
   notice_defaults: string;   // JSON
   per_ay_data: string;       // JSON map by AY
+  filing_status: string;     // pending | draft | validated | exported | filed | verified
+  notes: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -57,6 +59,12 @@ const stmts = {
   ),
   updatePerAy: db.prepare(
     "UPDATE profiles SET per_ay_data = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ? AND user_id = ?"
+  ),
+  updateFilingStatus: db.prepare(
+    "UPDATE profiles SET filing_status = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ? AND user_id = ?"
+  ),
+  updateNotes: db.prepare(
+    "UPDATE profiles SET notes = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ? AND user_id = ?"
   ),
   deleteById: db.prepare('DELETE FROM profiles WHERE id = ? AND user_id = ?'),
 };
@@ -126,6 +134,14 @@ export const profileRepoV2 = {
     const existingYear = current[year] ?? {};
     current[year] = { ...existingYear, ...yearPatch };
     return stmts.updatePerAy.run(JSON.stringify(current), id, userId).changes > 0;
+  },
+
+  updateFilingStatus(id: string, userId: string, status: string): boolean {
+    return stmts.updateFilingStatus.run(status, id, userId).changes > 0;
+  },
+
+  updateNotes(id: string, userId: string, notes: string): boolean {
+    return stmts.updateNotes.run(notes, id, userId).changes > 0;
   },
 
   deleteById(id: string, userId: string): boolean {

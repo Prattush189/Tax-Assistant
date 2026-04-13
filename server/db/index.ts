@@ -163,6 +163,17 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_clients_filing_status ON clients(filing_
 db.exec("CREATE INDEX IF NOT EXISTS idx_profiles_user_id ON profiles(user_id)");
 db.exec("CREATE INDEX IF NOT EXISTS idx_profiles_updated_at ON profiles(updated_at DESC)");
 
+// Add filing_status + notes to profiles (merge clients into profiles)
+{
+  const profileCols = (db.prepare("PRAGMA table_info(profiles)").all() as { name: string }[]).map(c => c.name);
+  if (!profileCols.includes('filing_status')) {
+    db.exec("ALTER TABLE profiles ADD COLUMN filing_status TEXT NOT NULL DEFAULT 'pending'");
+  }
+  if (!profileCols.includes('notes')) {
+    db.exec("ALTER TABLE profiles ADD COLUMN notes TEXT");
+  }
+}
+
 // Style profiles — one per user, stores LLM-extracted writing style rules
 db.exec(`CREATE TABLE IF NOT EXISTS style_profiles (
   id TEXT PRIMARY KEY,
