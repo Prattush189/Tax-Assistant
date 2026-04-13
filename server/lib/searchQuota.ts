@@ -1,9 +1,9 @@
 /**
  * In-memory search quota tracker for the 3-tier model cascade.
  *
- * Tier 1: Gemini 3 Flash-Lite   — 5,000 free searches/month (better quality)
- * Tier 2: Gemini 2.5 Flash-Lite — 500 free searches/day (separate pool, cheapest tokens)
- * Tier 3: Grok 4.1 Fast         — paid search ($5/1K calls)
+ * Tier 1: Gemini 3.1 Flash-Lite Preview — 5,000 free searches/month (better quality)
+ * Tier 2: Gemini 2.5 Flash-Lite        — 500 free searches/day (separate pool, cheapest tokens)
+ * Tier 3: Grok 4.1 Fast                — paid search ($5/1K calls)
  *
  * Counters reset automatically: Tier 1 monthly, Tier 2 daily.
  * Resets on server restart (acceptable — limits also reset server-side at Google).
@@ -54,12 +54,20 @@ export function getTier(): ModelTier {
 }
 
 /**
+ * Roll back the counter when Gemini fails (so failed requests don't eat quota).
+ */
+export function rollbackTier(tier: ModelTier): void {
+  if (tier === 'gemini-3' && tier1Count > 0) tier1Count--;
+  if (tier === 'gemini-2.5' && tier2Count > 0) tier2Count--;
+}
+
+/**
  * Current quota status — exposed to the admin API cost dashboard.
  */
 export function getQuotaStatus() {
   checkResets();
   return {
-    tier1: { model: 'Gemini 3 Flash-Lite', used: tier1Count, limit: TIER1_LIMIT, remaining: TIER1_LIMIT - tier1Count, period: 'monthly' },
+    tier1: { model: 'Gemini 3.1 Flash-Lite Preview', used: tier1Count, limit: TIER1_LIMIT, remaining: TIER1_LIMIT - tier1Count, period: 'monthly' },
     tier2: { model: 'Gemini 2.5 Flash-Lite', used: tier2Count, limit: TIER2_LIMIT, remaining: TIER2_LIMIT - tier2Count, period: 'daily' },
   };
 }

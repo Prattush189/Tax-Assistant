@@ -20,14 +20,14 @@ function fmtTokens(n: number): string {
 }
 
 const MODEL_COLORS: Record<string, string> = {
-  'gemini-3-flash-lite': 'bg-purple-500',
+  'gemini-3.1-flash-lite-preview': 'bg-purple-500',
   'gemini-2.5-flash-lite': 'bg-blue-500',
   'grok-4-1-fast-reasoning': 'bg-amber-500',
   'unknown': 'bg-gray-400',
 };
 
 const MODEL_LABELS: Record<string, string> = {
-  'gemini-3-flash-lite': 'Gemini 3 Flash-Lite (Tier 1)',
+  'gemini-3.1-flash-lite-preview': 'Gemini 3.1 Flash-Lite (Tier 1)',
   'gemini-2.5-flash-lite': 'Gemini 2.5 Flash-Lite (Tier 2)',
   'grok-4-1-fast-reasoning': 'Grok 4.1 Fast (Tier 3)',
 };
@@ -88,7 +88,7 @@ export function ModelUsageDashboard() {
         <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-4">3-Tier Cascade Architecture</h3>
         <div className="flex flex-col md:flex-row gap-3">
           {[
-            { tier: 'Tier 1 (Primary)', model: 'Gemini 3 Flash-Lite', search: '5,000 free/month', tokens: '$0.10/$0.40 per M', color: 'border-purple-400 bg-purple-50 dark:bg-purple-900/10', badge: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400' },
+            { tier: 'Tier 1 (Primary)', model: 'Gemini 3.1 Flash-Lite', search: '5,000 free/month', tokens: '$0.25/$1.50 per M', color: 'border-purple-400 bg-purple-50 dark:bg-purple-900/10', badge: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400' },
             { tier: 'Tier 2 (Overflow)', model: 'Gemini 2.5 Flash-Lite', search: '500 free/day', tokens: '$0.10/$0.40 per M', color: 'border-blue-400 bg-blue-50 dark:bg-blue-900/10', badge: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' },
             { tier: 'Tier 3 (Fallback)', model: 'Grok 4.1 Fast', search: '$5/1K calls (paid)', tokens: '$0.20/$0.50 per M', color: 'border-amber-400 bg-amber-50 dark:bg-amber-900/10', badge: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' },
           ].map((t, i) => (

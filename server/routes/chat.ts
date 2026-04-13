@@ -1,7 +1,7 @@
 // server/routes/chat.ts
 import { Router, Response } from 'express';
-import { grok, GROK_MODEL, INPUT_COST_PER_TOKEN, OUTPUT_COST_PER_TOKEN, WEB_SEARCH_COST, GEMINI_INPUT_COST, GEMINI_OUTPUT_COST, GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, GEMINI_API_KEY_RAW } from '../lib/grok.js';
-import { getTier, type ModelTier } from '../lib/searchQuota.js';
+import { grok, GROK_MODEL, INPUT_COST_PER_TOKEN, OUTPUT_COST_PER_TOKEN, WEB_SEARCH_COST, GEMINI_T1_INPUT_COST, GEMINI_T1_OUTPUT_COST, GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST, GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, GEMINI_API_KEY_RAW } from '../lib/grok.js';
+import { getTier, rollbackTier, type ModelTier } from '../lib/searchQuota.js';
 import { streamGeminiChat } from '../lib/geminiChat.js';
 import { chatRepo } from '../db/repositories/chatRepo.js';
 import { messageRepo } from '../db/repositories/messageRepo.js';
@@ -450,19 +450,12 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
               inputTok = chunk.inputTokens ?? 0;
               outputTok = chunk.outputTokens ?? 0;
               stopReason = 'end_turn';
-              // Grounding sources → pass as references
-              if (chunk.sources?.length) {
-                ragReferences = chunk.sources.map(s => ({
-                  source: 'web',
-                  section: '',
-                  label: s.title,
-                  text: s.url,
-                }));
-              }
+              // Don't pass grounding chunks as references — user doesn't want them
             }
           }
         } catch (geminiErr) {
-          // Gemini failed — fall through to Grok
+          // Gemini failed — rollback quota counter and fall through to Grok
+          rollbackTier(tier);
           console.warn(`[chat] Gemini ${geminiModel} failed, falling back to Grok:`, (geminiErr as Error).message?.slice(0, 120));
           usedModel = GROK_MODEL;
           // Fall through to Grok below
@@ -525,9 +518,11 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
       chatRepo.touchTimestamp(chatId);
 
       // Log usage — cost depends on which model was actually used
-      const isGemini = usedModel !== GROK_MODEL;
-      const inputCost = isGemini ? GEMINI_INPUT_COST : INPUT_COST_PER_TOKEN;
-      const outputCost = isGemini ? GEMINI_OUTPUT_COST : OUTPUT_COST_PER_TOKEN;
+      const isGeminiT1 = usedModel === GEMINI_CHAT_MODEL_T1;
+      const isGeminiT2 = usedModel === GEMINI_CHAT_MODEL_T2;
+      const isGemini = isGeminiT1 || isGeminiT2;
+      const inputCost = isGeminiT1 ? GEMINI_T1_INPUT_COST : isGeminiT2 ? GEMINI_T2_INPUT_COST : INPUT_COST_PER_TOKEN;
+      const outputCost = isGeminiT1 ? GEMINI_T1_OUTPUT_COST : isGeminiT2 ? GEMINI_T2_OUTPUT_COST : OUTPUT_COST_PER_TOKEN;
       const searchCost = isGemini ? 0 : (shouldEnableWebSearch(message) ? WEB_SEARCH_COST : 0);
       const cost = (inputTok * inputCost) + (outputTok * outputCost) + searchCost;
       usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, inputTok, outputTok, cost, false, usedModel || undefined);
