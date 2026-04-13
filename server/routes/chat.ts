@@ -427,16 +427,16 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
       let outputTok = 0;
 
       // ── 3-Tier Model Cascade ─────────────────────────────────────────
-      // Tier 1: Gemini 2.5 Flash-Lite (500 free searches/day)
-      // Tier 2: Gemini 3 Flash-Lite (5K free searches/month, separate pool)
+      // Tier 1: Gemini 3.1 Flash-Lite Preview (5K free searches/month, best quality)
+      // Tier 2: Gemini 2.5 Flash-Lite (500 free searches/day, cheapest tokens)
       // Tier 3: Grok 4.1 Fast (paid search $5/1K — cheapest paid option)
       const tier: ModelTier = getTier();
       let usedModel = '';
 
       if ((tier === 'gemini-3' || tier === 'gemini-2.5') && GEMINI_API_KEY_RAW) {
         // ── Gemini path: native API with Google Search grounding ──
-        // Tier 1 = Gemini 3 (better quality), Tier 2 = Gemini 2.5 (cheapest tokens)
-        const geminiModel = tier === 'gemini-3' ? GEMINI_CHAT_MODEL_T2 : GEMINI_CHAT_MODEL_T1;
+        // T1 = gemini-3.1-flash-lite-preview, T2 = gemini-2.5-flash-lite
+        const geminiModel = tier === 'gemini-3' ? GEMINI_CHAT_MODEL_T1 : GEMINI_CHAT_MODEL_T2;
         usedModel = geminiModel;
         const historyPlain = history.map(m => ({ role: m.role as string, content: m.content as string }));
 
@@ -527,7 +527,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
       const cost = (inputTok * inputCost) + (outputTok * outputCost) + searchCost;
       usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, inputTok, outputTok, cost, false, usedModel || undefined);
 
-      res.write(`data: ${JSON.stringify({ done: true, stop_reason: stopReason, references: ragReferences })}\n\n`);
+      res.write(`data: ${JSON.stringify({ done: true, stop_reason: stopReason })}\n\n`);
       success = true;
       break;
     } catch (err) {
