@@ -143,23 +143,6 @@ export function ChatInput({
               <Paperclip className="w-5 h-5" />
             </button>
 
-            {/* Fast / Thinking toggle */}
-            {onModeChange && (
-              <button
-                onClick={() => onModeChange(chatMode === 'fast' ? 'thinking' : 'fast')}
-                className={cn(
-                  'flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium transition-all shrink-0 border',
-                  chatMode === 'thinking'
-                    ? 'bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400 border-purple-200 dark:border-purple-800'
-                    : 'bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:border-purple-300',
-                )}
-                title={chatMode === 'fast' ? 'Switch to Thinking mode (deeper analysis, 2x credits)' : 'Switch to Fast mode (quick answers, 1x credit)'}
-              >
-                {chatMode === 'thinking' ? <Brain className="w-3.5 h-3.5" /> : <Zap className="w-3.5 h-3.5" />}
-                {chatMode === 'thinking' ? 'Thinking' : 'Fast'}
-              </button>
-            )}
-
             {/* Profile reference button */}
             <div className="relative shrink-0">
               <button
@@ -227,12 +210,29 @@ export function ChatInput({
               rows={1}
             />
 
+            {/* Fast / Thinking toggle — next to send */}
+            {onModeChange && (
+              <button
+                onClick={() => onModeChange(chatMode === 'fast' ? 'thinking' : 'fast')}
+                className={cn(
+                  'flex items-center gap-1 px-2.5 py-2 rounded-lg text-xs font-medium transition-all shrink-0 border',
+                  chatMode === 'thinking'
+                    ? 'bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400 border-purple-200 dark:border-purple-800'
+                    : 'bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:border-purple-300',
+                )}
+                title={chatMode === 'fast' ? 'Switch to Thinking mode (deeper analysis, 2x credits)' : 'Switch to Fast mode (quick answers, 1x credit)'}
+              >
+                {chatMode === 'thinking' ? <Brain className="w-3.5 h-3.5" /> : <Zap className="w-3.5 h-3.5" />}
+                {chatMode === 'thinking' ? 'Think' : 'Fast'}
+              </button>
+            )}
+
             {/* Send button */}
             <button
               onClick={() => { if (canSend) onSend(); }}
               disabled={!canSend}
               className={cn(
-                "p-2 rounded-lg transition-all shrink-0 self-end",
+                "p-2 rounded-lg transition-all shrink-0",
                 !canSend
                   ? 'text-gray-300 dark:text-gray-600 cursor-not-allowed'
                   : 'text-white bg-emerald-600 hover:bg-emerald-700 shadow-md shadow-emerald-600/15'

@@ -76,6 +76,7 @@ async function* streamWithWebSearch(
   systemPrompt: string,
   history: { role: string; content: string }[],
   userContent: string,
+  maxOutputTokens: number = MAX_TOKENS,
 ): AsyncGenerator<{ type: 'text'; text: string } | { type: 'usage'; input: number; output: number } | { type: 'done'; reason: string }> {
   const input = [
     { role: 'system', content: systemPrompt },
@@ -93,6 +94,7 @@ async function* streamWithWebSearch(
       model: GROK_MODEL,
       input,
       tools: [{ type: 'web_search' }],
+      max_output_tokens: maxOutputTokens,
       stream: true,
     }),
   });
@@ -184,7 +186,7 @@ const ATTACHMENTS_PER_MESSAGE: Record<string, number> = {
 };
 
 router.post('/chat', async (req: AuthRequest, res: Response) => {
-  const { chatId, message, fileContext, fileContexts: rawFileContexts, profileContext } = req.body;
+  const { chatId, message, fileContext, fileContexts: rawFileContexts, profileContext, chatMode } = req.body;
   // Normalize: support both single fileContext and array fileContexts
   const fileContexts: { filename: string; mimeType: string; extractedData?: unknown }[] =
     rawFileContexts ?? (fileContext ? [fileContext] : []);
@@ -221,10 +223,18 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
   const limits = getUserLimits(billingUser);
   const used = getMessageCount(billingUserId, limits.messages.period);
 
-  if (used >= limits.messages.limit) {
+  const isThinking = chatMode === 'thinking';
+  const creditCost = isThinking ? 2 : 1;
+  const modeMaxTokens = isThinking ? 8000 : MAX_TOKENS;
+
+  if (used + creditCost > limits.messages.limit) {
     const periodLabel = limits.messages.period === 'day' ? 'daily' : 'monthly';
+    const remaining = limits.messages.limit - used;
+    const insufficientMsg = isThinking && remaining > 0
+      ? `Thinking mode requires ${creditCost} credits but you only have ${remaining} left. Switch to Fast mode or upgrade your plan.`
+      : `You've reached your ${periodLabel} message limit (${limits.messages.limit} messages). Upgrade your plan for more.`;
     res.status(429).json({
-      error: `You've reached your ${periodLabel} message limit (${limits.messages.limit} messages). Upgrade your plan for more.`,
+      error: insufficientMsg,
       upgrade: true,
     });
     return;
@@ -339,84 +349,99 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
       let inputTok = 0;
       let outputTok = 0;
 
-      // ── 3-Tier Model Cascade ─────────────────────────────────────────
-      // Tier 1: Gemini 3.1 Flash-Lite Preview (5K free searches/month, best quality)
-      // Tier 2: Gemini 2.5 Flash-Lite (500 free searches/day, cheapest tokens)
-      // Tier 3: Grok 4.1 Fast (paid search $5/1K — cheapest paid option)
-      const searchEnabled = shouldEnableWebSearch(message);
-      const selection = selectTier(searchEnabled);
-      let { tier } = selection;
-      const { keyIndex } = selection;
+      // ── Dual-mode cascade ───────────────────────────────────────────
+      // FAST     (1 credit): Gemini 2.5 Flash-Lite → Gemini 3.1 → Grok, selective search, 4096 tokens
+      // THINKING (2 credits): Gemini 3.1 Flash-Lite → Grok fallback, always search, 8000 tokens
+      const searchEnabled = isThinking ? true : shouldEnableWebSearch(message);
       let usedModel = '';
+      const historyPlain = history.map(m => ({ role: m.role as string, content: m.content as string }));
 
-      const apiKey = keyIndex >= 0 && keyIndex < GEMINI_API_KEYS.length ? GEMINI_API_KEYS[keyIndex] : '';
-
-      if ((tier === 'gemini-3' || tier === 'gemini-2.5') && apiKey) {
-        // ── Gemini path: native API with Google Search grounding ──
-        const geminiModel = tier === 'gemini-3' ? GEMINI_CHAT_MODEL_T1 : GEMINI_CHAT_MODEL_T2;
-        usedModel = geminiModel;
-        const historyPlain = history.map(m => ({ role: m.role as string, content: m.content as string }));
-
-        try {
-          for await (const chunk of streamGeminiChat(geminiModel, SYSTEM_INSTRUCTION, historyPlain, userContent, apiKey, MAX_TOKENS, searchEnabled)) {
-            if (chunk.text) {
-              fullResponse += chunk.text;
-              res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`);
+      if (isThinking) {
+        // ── THINKING: Gemini 3.1 primary (always search) → Grok fallback ──
+        const selection = selectTier(true);
+        const thinkApiKey = selection.keyIndex >= 0 ? GEMINI_API_KEYS[selection.keyIndex] ?? '' : '';
+        if (thinkApiKey) {
+          const geminiModel = selection.tier === 'gemini-3' ? GEMINI_CHAT_MODEL_T1 : GEMINI_CHAT_MODEL_T2;
+          usedModel = geminiModel;
+          try {
+            for await (const chunk of streamGeminiChat(geminiModel, SYSTEM_INSTRUCTION, historyPlain, userContent, thinkApiKey, modeMaxTokens, true)) {
+              if (chunk.text) { fullResponse += chunk.text; res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`); }
+              if (chunk.done) { inputTok = chunk.inputTokens ?? 0; outputTok = chunk.outputTokens ?? 0; stopReason = 'end_turn'; }
             }
-            if (chunk.done) {
-              inputTok = chunk.inputTokens ?? 0;
-              outputTok = chunk.outputTokens ?? 0;
-              stopReason = 'end_turn';
-            }
+            confirmUsed(selection.tier, selection.keyIndex, true);
+          } catch (geminiErr) {
+            console.warn('[chat] Thinking: Gemini 3.1 failed, falling back to Grok:', (geminiErr as Error).message?.slice(0, 120));
+            fullResponse = ''; usedModel = '';
           }
-          // Only increment counter AFTER successful response
-          confirmUsed(tier, keyIndex, searchEnabled);
-        } catch (geminiErr) {
-          // Gemini failed — counter NOT incremented. Fall through to Grok.
-          console.warn(`[chat] Gemini ${geminiModel} (${selection.keyLabel}) failed, falling back to Grok:`, (geminiErr as Error).message?.slice(0, 120));
-          usedModel = '';
-          // Fall through to Grok below
         }
-      }
 
-      // ── Grok path: either Tier 3 or Gemini fallback ──
-      if (!fullResponse) {
-        usedModel = GROK_MODEL;
-        const useWebSearch = shouldEnableWebSearch(message);
-
-        if (useWebSearch) {
-          const historyPlain = history.map(m => ({ role: m.role as string, content: m.content as string }));
-          const webStream = streamWithWebSearch(SYSTEM_INSTRUCTION, historyPlain, userContent);
+        // Grok fallback for thinking
+        if (!fullResponse) {
+          usedModel = GROK_MODEL;
+          const webStream = streamWithWebSearch(SYSTEM_INSTRUCTION, historyPlain, userContent, modeMaxTokens);
           for await (const event of webStream) {
-            if (event.type === 'text') {
-              fullResponse += event.text;
-              res.write(`data: ${JSON.stringify({ text: event.text })}\n\n`);
-            } else if (event.type === 'usage') {
-              inputTok = event.input;
-              outputTok = event.output;
-            } else if (event.type === 'done') {
-              stopReason = event.reason;
+            if (event.type === 'text') { fullResponse += event.text; res.write(`data: ${JSON.stringify({ text: event.text })}\n\n`); }
+            else if (event.type === 'usage') { inputTok = event.input; outputTok = event.output; }
+            else if (event.type === 'done') { stopReason = event.reason; }
+          }
+        }
+      } else {
+        // ── FAST: Gemini 2.5 Flash-Lite → Gemini 3.1 fallback ──
+        const fastApiKey = GEMINI_API_KEYS[0] ?? '';
+        if (fastApiKey) {
+          usedModel = GEMINI_CHAT_MODEL_T2;
+          try {
+            for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_T2, SYSTEM_INSTRUCTION, historyPlain, userContent, fastApiKey, modeMaxTokens, searchEnabled)) {
+              if (chunk.text) { fullResponse += chunk.text; res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`); }
+              if (chunk.done) { inputTok = chunk.inputTokens ?? 0; outputTok = chunk.outputTokens ?? 0; stopReason = 'end_turn'; }
+            }
+            confirmUsed('gemini-2.5', 0, searchEnabled);
+          } catch (geminiErr) {
+            console.warn('[chat] Fast: Gemini 2.5 failed, falling back to Gemini 3.1:', (geminiErr as Error).message?.slice(0, 120));
+            fullResponse = ''; usedModel = '';
+          }
+        }
+
+        // Gemini 3.1 fallback for fast
+        if (!fullResponse) {
+          const selection = selectTier(searchEnabled);
+          const fbApiKey = selection.keyIndex >= 0 ? GEMINI_API_KEYS[selection.keyIndex] ?? '' : '';
+          if (fbApiKey && (selection.tier === 'gemini-3' || selection.tier === 'gemini-2.5')) {
+            const geminiModel = selection.tier === 'gemini-3' ? GEMINI_CHAT_MODEL_T1 : GEMINI_CHAT_MODEL_T2;
+            usedModel = geminiModel;
+            try {
+              for await (const chunk of streamGeminiChat(geminiModel, SYSTEM_INSTRUCTION, historyPlain, userContent, fbApiKey, modeMaxTokens, searchEnabled)) {
+                if (chunk.text) { fullResponse += chunk.text; res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`); }
+                if (chunk.done) { inputTok = chunk.inputTokens ?? 0; outputTok = chunk.outputTokens ?? 0; stopReason = 'end_turn'; }
+              }
+              confirmUsed(selection.tier, selection.keyIndex, searchEnabled);
+            } catch {
+              fullResponse = ''; usedModel = '';
             }
           }
-        } else {
-          const stream = await grok.chat.completions.create({
-            model: GROK_MODEL,
-            messages,
-            max_tokens: MAX_TOKENS,
-            stream: true,
-            stream_options: { include_usage: true },
-          });
-          for await (const chunk of stream) {
-            const delta = chunk.choices?.[0]?.delta?.content;
-            if (delta) {
-              fullResponse += delta;
-              res.write(`data: ${JSON.stringify({ text: delta })}\n\n`);
+        }
+
+        // Grok last-resort fallback for fast
+        if (!fullResponse) {
+          usedModel = GROK_MODEL;
+          if (searchEnabled) {
+            const webStream = streamWithWebSearch(SYSTEM_INSTRUCTION, historyPlain, userContent, modeMaxTokens);
+            for await (const event of webStream) {
+              if (event.type === 'text') { fullResponse += event.text; res.write(`data: ${JSON.stringify({ text: event.text })}\n\n`); }
+              else if (event.type === 'usage') { inputTok = event.input; outputTok = event.output; }
+              else if (event.type === 'done') { stopReason = event.reason; }
             }
-            const finishReason = chunk.choices?.[0]?.finish_reason;
-            if (finishReason) stopReason = finishReason === 'length' ? 'max_tokens' : 'end_turn';
-            if (chunk.usage) {
-              inputTok = chunk.usage.prompt_tokens ?? 0;
-              outputTok = chunk.usage.completion_tokens ?? 0;
+          } else {
+            const stream = await grok.chat.completions.create({
+              model: GROK_MODEL, messages, max_tokens: modeMaxTokens,
+              stream: true, stream_options: { include_usage: true },
+            });
+            for await (const chunk of stream) {
+              const delta = chunk.choices?.[0]?.delta?.content;
+              if (delta) { fullResponse += delta; res.write(`data: ${JSON.stringify({ text: delta })}\n\n`); }
+              const finishReason = chunk.choices?.[0]?.finish_reason;
+              if (finishReason) stopReason = finishReason === 'length' ? 'max_tokens' : 'end_turn';
+              if (chunk.usage) { inputTok = chunk.usage.prompt_tokens ?? 0; outputTok = chunk.usage.completion_tokens ?? 0; }
             }
           }
         }
@@ -440,10 +465,16 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
       const isGemini = isGeminiT1 || isGeminiT2;
       const inputCost = isGeminiT1 ? GEMINI_T1_INPUT_COST : isGeminiT2 ? GEMINI_T2_INPUT_COST : INPUT_COST_PER_TOKEN;
       const outputCost = isGeminiT1 ? GEMINI_T1_OUTPUT_COST : isGeminiT2 ? GEMINI_T2_OUTPUT_COST : OUTPUT_COST_PER_TOKEN;
-      const searchCost = isGemini ? 0 : (shouldEnableWebSearch(message) ? WEB_SEARCH_COST : 0);
-      const actualSearchUsed = searchEnabled && (usedModel !== GROK_MODEL || shouldEnableWebSearch(message));
+      const searchCost = isGemini ? 0 : (searchEnabled ? WEB_SEARCH_COST : 0);
+      const actualSearchUsed = searchEnabled;
       const cost = (inputTok * inputCost) + (outputTok * outputCost) + searchCost;
       usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, inputTok, outputTok, cost, false, usedModel || undefined, actualSearchUsed);
+      // Thinking mode costs 4 credits — log 3 extra zero-cost rows to consume them
+      if (isThinking) {
+        for (let c = 1; c < creditCost; c++) {
+          usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, 0, 0, 0, false, usedModel || undefined, false);
+        }
+      }
 
       res.write(`data: ${JSON.stringify({ done: true, stop_reason: stopReason })}\n\n`);
       success = true;
