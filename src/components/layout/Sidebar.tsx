@@ -1,4 +1,4 @@
-import { X, Plus, Moon, Sun, LogOut, Trash2, MessageSquare, MessageCircle, Calculator, LayoutDashboard, Shield, CreditCard, FileText, FileSpreadsheet, Gavel, User, Settings, AlertTriangle, Lock } from 'lucide-react';
+import { X, Plus, Moon, Sun, LogOut, Trash2, MessageSquare, MessageCircle, Calculator, LayoutDashboard, Shield, CreditCard, FileText, FileSpreadsheet, Gavel, User, Users, Settings, AlertTriangle, Lock } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { ChatItem, NoticeItem, ItrDraft, BoardResolutionDraft, GenericProfile } from '../../services/api';
 import { TEMPLATE_TITLES } from '../board-resolutions/lib/uiModel';
@@ -7,7 +7,7 @@ import { usePreferences } from '../../hooks/usePreferences';
 import { useAuth } from '../../contexts/AuthContext';
 import { CalculatorTab, CALCULATOR_TABS } from '../calculator/CalculatorView';
 
-type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions';
+type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions' | 'clients';
 
 interface SidebarProps {
   isOpen: boolean;
@@ -60,6 +60,7 @@ const baseNavItems: { id: ActiveView; label: string; icon: typeof MessageCircle 
 const adminNavItem = { id: 'admin' as ActiveView, label: 'Admin', icon: Shield };
 const itrNavItem = { id: 'itr' as ActiveView, label: 'ITR', icon: FileSpreadsheet };
 const boardResolutionsNavItem = { id: 'board_resolutions' as ActiveView, label: 'Resolutions', icon: Gavel };
+const clientsNavItem = { id: 'clients' as ActiveView, label: 'Clients', icon: Users };
 const profileNavItem = { id: 'profile' as ActiveView, label: 'Profile', icon: User };
 
 function timeAgo(dateStr: string): string {
@@ -229,6 +230,7 @@ export function Sidebar({
     profileNavItem,
     ...(canAccessItr ? [itrNavItem] : []),
     ...(canAccessBoardResolutions ? [boardResolutionsNavItem] : []),
+    clientsNavItem,
     ...(user?.role === 'admin' ? [adminNavItem] : []),
   ];
 

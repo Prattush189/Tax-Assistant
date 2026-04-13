@@ -2,7 +2,7 @@ import jsPDF from 'jspdf';
 import type { IncomeTaxResult } from './taxEngine';
 
 function formatINR(n: number): string {
-  return '\u20B9' + n.toLocaleString('en-IN');
+  return '\u20B9 ' + Math.round(n).toLocaleString('en-IN');
 }
 
 export function exportTaxComputationPDF(

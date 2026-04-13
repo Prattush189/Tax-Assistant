@@ -311,17 +311,125 @@ export function toCbdtJson(draft: ItrWizardDraft): Record<string, unknown> {
     return { ITR: { ITR1: inner } };
   }
 
-  // ITR-4 envelope (Phase C scaffold)
+  // ── ITR-4 envelope ─────────────────────────────────────────────────────
+  const bp = d._businessIncome;
+  const scheduleBP: Record<string, unknown> = {};
+
+  if (bp && bp.scheme !== 'NONE') {
+    // Nature of business
+    if (bp.scheme === '44AD' && bp.natureCode) {
+      scheduleBP.NatOfBus44AD = [{ NameOfBusiness: bp.tradeName ?? '', CodeAD: bp.natureCode }];
+      scheduleBP.PersumptiveInc44AD = {
+        GrsTotalTrnOver: (bp.grossTurnoverBank ?? 0) + (bp.grossTurnoverCash ?? 0) + (bp.grossTurnoverOther ?? 0),
+        GrsTrnOverBank: bp.grossTurnoverBank ?? 0,
+        GrsTotalTrnOverInCash: bp.grossTurnoverCash ?? 0,
+        GrsTrnOverAnyOthMode: bp.grossTurnoverOther ?? 0,
+        PersumptiveInc44AD6Per: bp.presumptiveInc6Per ?? 0,
+        PersumptiveInc44AD8Per: bp.presumptiveInc8Per ?? 0,
+        TotPersumptiveInc44AD: bp.totalPresumptive44AD ?? 0,
+      };
+    }
+    if (bp.scheme === '44ADA' && bp.natureCode) {
+      scheduleBP.NatOfBus44ADA = [{ NameOfBusiness: bp.tradeName ?? '', CodeADA: bp.natureCode }];
+      scheduleBP.PersumptiveInc44ADA = {
+        GrsReceipt: (bp.grossReceiptsBank ?? 0) + (bp.grossReceiptsCash ?? 0) + (bp.grossReceiptsOther ?? 0),
+        GrsTrnOverBank44ADA: bp.grossReceiptsBank ?? 0,
+        GrsTotalTrnOverInCash44ADA: bp.grossReceiptsCash ?? 0,
+        GrsTrnOverAnyOthMode44ADA: bp.grossReceiptsOther ?? 0,
+        TotPersumptiveInc44ADA: bp.totalPresumptive44ADA ?? 0,
+      };
+    }
+    if (bp.scheme === '44AE' && bp.natureCode) {
+      scheduleBP.NatOfBus44AE = [{ NameOfBusiness: bp.tradeName ?? '', CodeAE: bp.natureCode }];
+      const vehDetails = (bp.goodsVehicles ?? []).map(v => ({
+        RegNumberGoodsCarriage: v.RegNumberGoodsCarriage ?? '',
+        OwnedLeasedHiredFlag: v.OwnedLeasedHiredFlag ?? 'OWN',
+        TonnageCapacity: v.TonnageCapacity ?? 1,
+        HoldingPeriod: v.HoldingPeriod ?? 12,
+        PresumptiveIncome: v.PresumptiveIncome ?? 0,
+      }));
+      if (vehDetails.length > 0) scheduleBP.GoodsDtlsUs44AE = vehDetails;
+      const totalVehIncome = vehDetails.reduce((a, v) => a + v.PresumptiveIncome, 0);
+      scheduleBP.PersumptiveInc44AE = {
+        TotPersumInc44AE: totalVehIncome,
+        SalInterestByFirm: bp.salaryInterestByFirm ?? 0,
+        TotalPersumptiveInc: totalVehIncome + (bp.salaryInterestByFirm ?? 0),
+        IncChargeableUnderBus: totalVehIncome + (bp.salaryInterestByFirm ?? 0),
+      };
+    }
+
+    // GSTIN turnover
+    if (bp.gstinTurnover?.length) {
+      scheduleBP.TurnoverGrsRcptForGSTIN = bp.gstinTurnover.map(g => ({
+        GSTIN: g.GSTIN ?? '',
+        GrossTurnover: g.GrossTurnover ?? 0,
+        GrossReceipt: g.GrossReceipt ?? 0,
+      }));
+      scheduleBP.TotalTurnoverGrsRcptGSTIN = bp.gstinTurnover.reduce((a, g) => a + (g.GrossTurnover ?? 0), 0);
+    }
+
+    // Financial particulars
+    if (bp.financials) {
+      scheduleBP.FinanclPartclrOfBusiness = { ...bp.financials };
+    }
+  }
+
+  // Compute business income for IncomeDeductions
+  const businessIncome = bp?.scheme === '44AD' ? (bp.totalPresumptive44AD ?? 0)
+    : bp?.scheme === '44ADA' ? (bp.totalPresumptive44ADA ?? 0)
+    : bp?.scheme === '44AE' ? (bp.totalPresumptive44AE ?? 0) : 0;
+
+  const incDed = d.IncomeDeductions ?? d.ITR1_IncomeDeductions ?? {};
+  const itr4IncDed = { ...incDed, IncomeFromBusinessProf: businessIncome };
+
+  // Form_ITR4 (not Form_ITR1)
+  const formITR4 = {
+    FormName: 'ITR-4',
+    Description: d.Form_ITR1?.Description ?? 'For Indls/HUF/Firm with presumptive business income',
+    AssessmentYear: d.Form_ITR1?.AssessmentYear ?? '2025',
+    SchemaVer: d.Form_ITR1?.SchemaVer ?? 'Ver1.0',
+    FormVer: d.Form_ITR1?.FormVer ?? 'Ver1.0',
+  };
+
   const inner: Record<string, unknown> = {
     CreationInfo: ci,
-    Form_ITR1: d.Form_ITR1, // Note: the schema key is Form_ITR4 in reality — client just stores labels
+    Form_ITR4: formITR4,
     PersonalInfo: d.PersonalInfo,
     FilingStatus: d.FilingStatus,
-    IncomeDeductions: d.IncomeDeductions ?? d.ITR1_IncomeDeductions,
+    IncomeDeductions: itr4IncDed,
     TaxComputation: d.TaxComputation ?? d.ITR1_TaxComputation,
     TaxPaid: d.TaxPaid,
     Refund: d.Refund,
     Verification: d.Verification,
   };
+
+  // ScheduleBP
+  if (Object.keys(scheduleBP).length > 0) inner.ScheduleBP = scheduleBP;
+
+  // TDS/TCS/Schedules — same as ITR-1
+  if (d.TDSonSalaries?.TDSonSalary?.length) inner.TDSonSalaries = d.TDSonSalaries;
+  if (d.TDSonOthThanSals?.TDSonOthThanSal?.length) inner.TDSonOthThanSals = d.TDSonOthThanSals;
+  if (d.ScheduleTCS?.TCS?.length) inner.ScheduleTCS = d.ScheduleTCS;
+  // ITR-4 uses ScheduleIT for tax payments (same shape as TaxPayments)
+  if (d.TaxPayments?.TaxPayment?.length) {
+    inner.ScheduleIT = { TaxPayment: d.TaxPayments.TaxPayment, TotalTaxPayments: d.TaxPayments.TaxPayment.reduce((a: number, p: { Amt?: number }) => a + (p.Amt ?? 0), 0) };
+  }
+  if (d.TaxReturnPreparer) inner.TaxReturnPreparer = d.TaxReturnPreparer;
+  if (d.LTCG112A && (d.LTCG112A.LongCap112A ?? 0) > 0) inner.LTCG112A = d.LTCG112A;
+
+  // Detailed schedules
+  if (d.Schedule80G) inner.Schedule80G = d.Schedule80G;
+  if (d.Schedule80GGC?.Schedule80GGCDetails?.length) inner.Schedule80GGC = d.Schedule80GGC;
+  if (d.Schedule80D) inner.Schedule80D = { Sec80DSelfFamSrCtznHealth: d.Schedule80D };
+  if (d.Schedule80DD?.DeductionAmount) inner.Schedule80DD = d.Schedule80DD;
+  if (d.Schedule80U?.DeductionAmount) inner.Schedule80U = d.Schedule80U;
+  if (d.Schedule80E?.Schedule80EDtls?.length) inner.Schedule80E = d.Schedule80E;
+  if (d.Schedule80EE?.Schedule80EEDtls?.length) inner.Schedule80EE = d.Schedule80EE;
+  if (d.Schedule80EEA?.Schedule80EEADtls?.length) inner.Schedule80EEA = d.Schedule80EEA;
+  if (d.Schedule80EEB?.Schedule80EEBDtls?.length) inner.Schedule80EEB = d.Schedule80EEB;
+  if (d.Schedule80C?.Schedule80CDtls?.length) inner.Schedule80C = d.Schedule80C;
+  if (d.ScheduleUs24B?.ScheduleUs24BDtls?.length) inner.ScheduleUs24B = d.ScheduleUs24B;
+  if (d.ScheduleEA10_13A) inner.ScheduleEA10_13A = d.ScheduleEA10_13A;
+
   return { ITR: { ITR4: inner } };
 }

@@ -1,6 +1,7 @@
 import { cn, formatINR } from '../../lib/utils';
-import { Download } from 'lucide-react';
+import { Download, FileBarChart } from 'lucide-react';
 import { exportTaxComputationPDF } from '../../lib/pdfExport';
+import { generateTaxPlanningReport } from '../../lib/taxPlanningReport';
 import { useAuth } from '../../contexts/AuthContext';
 import type { IncomeTaxResult } from '../../lib/taxEngine';
 
@@ -174,16 +175,25 @@ export function RegimeComparison({ oldResult, newResult, fy }: RegimeComparisonP
         />
       </div>
 
-      {/* PDF Export */}
-      <div className="mt-4 flex justify-center">
+      {/* PDF Exports */}
+      <div className="mt-4 flex flex-wrap justify-center gap-2">
         {isPro ? (
-          <button
-            onClick={() => exportTaxComputationPDF(oldResult, newResult, fy, user?.name)}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/15 border border-emerald-200 dark:border-emerald-800/30 rounded-lg hover:bg-emerald-100 dark:hover:bg-emerald-900/25 transition-all"
-          >
-            <Download className="w-4 h-4" />
-            Download Tax Computation PDF
-          </button>
+          <>
+            <button
+              onClick={() => exportTaxComputationPDF(oldResult, newResult, fy, user?.name)}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/15 border border-emerald-200 dark:border-emerald-800/30 rounded-lg hover:bg-emerald-100 dark:hover:bg-emerald-900/25 transition-all"
+            >
+              <Download className="w-4 h-4" />
+              Tax Computation PDF
+            </button>
+            <button
+              onClick={() => generateTaxPlanningReport(oldResult, newResult, fy, user?.name)}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/15 border border-blue-200 dark:border-blue-800/30 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/25 transition-all"
+            >
+              <FileBarChart className="w-4 h-4" />
+              Tax Planning Report
+            </button>
+          </>
         ) : (
           <div className="flex items-center gap-2 px-4 py-2 text-sm text-gray-400 dark:text-gray-500 bg-gray-50 dark:bg-gray-800/40 border border-gray-200 dark:border-gray-700 rounded-lg cursor-not-allowed">
             <Download className="w-4 h-4" />

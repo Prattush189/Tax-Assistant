@@ -28,11 +28,12 @@ import { NoticeDrafterPage } from './components/notices/NoticeDrafterPage';
 import { ItrView } from './components/itr/ItrView';
 import { BoardResolutionView } from './components/board-resolutions/BoardResolutionView';
 import { ProfileView } from './components/profile/ProfileView';
+import { ClientDashboard } from './components/clients/ClientDashboard';
 import { TaxCalculatorProvider } from './contexts/TaxCalculatorContext';
 import type { ParentToIframeMessage } from './lib/pluginProtocol';
 import { cn } from './lib/utils';
 
-type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions';
+type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions' | 'clients';
 
 /**
  * Dispatches SET_VIEW / SET_CALCULATOR_TAB / LOGOUT into local state.
@@ -175,6 +176,7 @@ function AppContent() {
                 <BoardResolutionView manager={boardResolutionManager} />
               )}
               {activeView === 'profile' && <ProfileView manager={profileManager} />}
+              {activeView === 'clients' && <ClientDashboard />}
               {activeView === 'settings' && <SettingsPage />}
             </motion.div>
           </AnimatePresence>

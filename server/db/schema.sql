@@ -192,3 +192,24 @@ CREATE TABLE IF NOT EXISTS board_resolutions (
   created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
 );
+
+-- Clients table for CA bulk ITR filing management
+CREATE TABLE IF NOT EXISTS clients (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  billing_user_id TEXT,
+  name TEXT NOT NULL,
+  pan TEXT,
+  email TEXT,
+  phone TEXT,
+  profile_id TEXT REFERENCES profiles(id) ON DELETE SET NULL,
+  itr_draft_id TEXT REFERENCES itr_drafts(id) ON DELETE SET NULL,
+  form_type TEXT DEFAULT 'ITR1',
+  assessment_year TEXT DEFAULT '2025',
+  filing_status TEXT NOT NULL DEFAULT 'pending' CHECK(filing_status IN (
+    'pending', 'draft', 'validated', 'exported', 'filed', 'verified'
+  )),
+  notes TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+);

@@ -9,7 +9,7 @@ import type { ItrWizardDraft } from './uiModel';
 import { computeDerivedTotals } from './toCbdtJson';
 
 function inr(n: number | undefined): string {
-  return '₹' + (Number(n) || 0).toLocaleString('en-IN');
+  return '₹ ' + Math.round(Number(n) || 0).toLocaleString('en-IN');
 }
 
 function title(doc: jsPDF, text: string, y: number): number {

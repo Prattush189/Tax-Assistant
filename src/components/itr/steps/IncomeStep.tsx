@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   ItrWizardDraft, UiIncomeDeductionsITR1, UiSalaryEmployer, UiLTCG112A,
   UiAllwncExemptUs10Entry, EXEMPT_ALLOWANCE_NATURES,
@@ -6,9 +6,11 @@ import {
   UiExemptIncomeEntry, EXEMPT_INCOME_NATURES,
 } from '../lib/uiModel';
 import { Card, Field, Grid2, Grid3, TextInput, RupeeInput, Select, Accordion } from '../shared/Inputs';
-import { Plus, Trash2, AlertTriangle } from 'lucide-react';
+import { Plus, Trash2, AlertTriangle, FileUp } from 'lucide-react';
 import { LoadFromProfile } from '../../profile/shared/LoadFromProfile';
 import { profileToItrIncome } from '../../profile/lib/prefillAdapters';
+import { Form16ImportDialog } from './Form16ImportDialog';
+import { Form16ExtractedData } from '../../../services/api';
 
 interface Props {
   draft: ItrWizardDraft;
@@ -117,9 +119,61 @@ export function IncomeStep({ draft, onChange }: Props) {
 
   const ltcgOverLimit = (ltcg.LongCap112A ?? 0) > 125000;
 
+  const [form16Open, setForm16Open] = useState(false);
+
+  const handleForm16Import = (data: Form16ExtractedData) => {
+    onChange((prev) => {
+      const newEmployers: UiSalaryEmployer[] = [
+        ...(prev._salaryEmployers ?? []),
+      ];
+      // Add an employer entry from Form 16 data
+      if (data.grossSalary != null || data.employerName) {
+        newEmployers.push({
+          _uid: crypto.randomUUID(),
+          employerName: data.employerName ?? '',
+          tan: data.employerTAN ?? '',
+          grossSalary: data.grossSalary ?? 0,
+          tdsOnSalary: data.tdsOnSalary ?? 0,
+        });
+      }
+
+      const incPatch: Partial<UiIncomeDeductionsITR1> = {
+        ...(prev.ITR1_IncomeDeductions ?? {}),
+      };
+      if (data.perquisites17_2 != null) incPatch.PerquisitesValue = data.perquisites17_2;
+      if (data.profitsInLieu17_3 != null) incPatch.ProfitsInSalary = data.profitsInLieu17_3;
+      if (data.standardDeduction16ia != null) incPatch.DeductionUs16ia = data.standardDeduction16ia;
+      if (data.professionalTax16iii != null) incPatch.ProfessionalTaxUs16iii = data.professionalTax16iii;
+
+      // Deductions — patch into UsrDeductUndChapVIA within ITR1_IncomeDeductions
+      const existingChapVIA = prev.ITR1_IncomeDeductions?.UsrDeductUndChapVIA ?? {};
+      const chapViaPatch = { ...existingChapVIA };
+      if (data.section80C != null) chapViaPatch.Section80C = data.section80C;
+      if (data.section80D != null) chapViaPatch.Section80D = data.section80D;
+      if (data.section80CCD1B != null) chapViaPatch.Section80CCD1B = data.section80CCD1B;
+      if (data.section80E != null) chapViaPatch.Section80E = data.section80E;
+      if (data.section80G != null) chapViaPatch.Section80G = data.section80G;
+      if (data.section80TTA != null) chapViaPatch.Section80TTA = data.section80TTA;
+      incPatch.UsrDeductUndChapVIA = chapViaPatch;
+
+      return {
+        ...prev,
+        _salaryEmployers: newEmployers,
+        ITR1_IncomeDeductions: incPatch as UiIncomeDeductionsITR1,
+      };
+    });
+  };
+
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        <button
+          onClick={() => setForm16Open(true)}
+          className="flex items-center gap-1.5 text-xs font-medium text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300 px-3 py-1.5 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 transition-colors"
+        >
+          <FileUp className="w-3.5 h-3.5" />
+          Import from Form 16
+        </button>
         <LoadFromProfile
           onPick={(profile) =>
             onChange((prev) => profileToItrIncome(profile, prev, prev.assessmentYear))
@@ -502,6 +556,12 @@ export function IncomeStep({ draft, onChange }: Props) {
           Add entry
         </button>
       </Card>
+
+      <Form16ImportDialog
+        open={form16Open}
+        onClose={() => setForm16Open(false)}
+        onImported={handleForm16Import}
+      />
     </div>
   );
 }

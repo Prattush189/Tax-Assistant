@@ -1,10 +1,11 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { cn } from '../../lib/utils';
 import { formatINR } from '../../lib/utils';
 import { calculateCapitalGains } from '../../lib/capitalGainsEngine';
 import { getTaxRules } from '../../data/taxRules';
 import type { CapitalGainsAssetType } from '../../types';
 import { useTaxCalculator } from '../../contexts/TaxCalculatorContext';
+import { CGImportSection } from './CGImportSection';
 
 type FY = '2025-26' | '2024-25';
 
@@ -89,8 +90,26 @@ export function CapitalGainsTab() {
     );
   }, [fy, assetType, salePrice, purchasePrice, holdingMonths, acquisitionBeforeJuly2024, indexedCost]);
 
+  const [showImport, setShowImport] = useState(false);
+
   return (
     <div className="max-w-2xl">
+      {/* Import section toggle */}
+      <div className="mb-4 flex justify-end">
+        <button
+          onClick={() => setShowImport(!showImport)}
+          className="text-xs font-medium text-emerald-600 dark:text-emerald-400 hover:underline"
+        >
+          {showImport ? 'Hide broker import' : 'Import from broker CSV'}
+        </button>
+      </div>
+      {showImport && (
+        <div className="mb-6 p-4 bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800">
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">Import Capital Gains from Broker</h3>
+          <CGImportSection />
+        </div>
+      )}
+
       {/* FY selector */}
       <div className="mb-5">
         <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Financial Year</p>

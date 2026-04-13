@@ -154,6 +154,11 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_itr_drafts_updated_at ON itr_drafts(upda
 db.exec("CREATE INDEX IF NOT EXISTS idx_board_resolutions_user_id ON board_resolutions(user_id)");
 db.exec("CREATE INDEX IF NOT EXISTS idx_board_resolutions_updated_at ON board_resolutions(updated_at DESC)");
 
+// Indexes for clients table (CA bulk ITR filing)
+db.exec("CREATE INDEX IF NOT EXISTS idx_clients_user_id ON clients(user_id)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_clients_pan ON clients(pan)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_clients_filing_status ON clients(filing_status)");
+
 // Indexes for generic profiles table (identity, address, banks, per-AY data)
 db.exec("CREATE INDEX IF NOT EXISTS idx_profiles_user_id ON profiles(user_id)");
 db.exec("CREATE INDEX IF NOT EXISTS idx_profiles_updated_at ON profiles(updated_at DESC)");

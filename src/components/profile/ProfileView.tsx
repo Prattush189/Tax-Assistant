@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { User, MapPin, Landmark, Briefcase, Shield, FileText, Building, Download } from 'lucide-react';
+import { User, MapPin, Landmark, Briefcase, Shield, FileText, Building, Download, TrendingUp } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { ProfileManager, ProfileAy } from '../../hooks/useProfileManager';
 import { ProfilePicker } from './ProfilePicker';
@@ -10,6 +10,7 @@ import { SalaryIncomeTab } from './tabs/SalaryIncomeTab';
 import { DeductionsTab } from './tabs/DeductionsTab';
 import { NoticeDefaultsTab } from './tabs/NoticeDefaultsTab';
 import { BusinessTab } from './tabs/BusinessTab';
+import { TrendsTab } from './tabs/TrendsTab';
 import { PROFILE_AYS } from './lib/profileModel';
 import { PortalImportDialog } from '../portal-import/PortalImportDialog';
 
@@ -20,7 +21,8 @@ type ProfileSubTab =
   | 'salary'
   | 'deductions'
   | 'notice'
-  | 'business';
+  | 'business'
+  | 'trends';
 
 const SUB_TABS: { id: ProfileSubTab; label: string; icon: typeof User; perAy: boolean }[] = [
   { id: 'identity', label: 'Identity', icon: User, perAy: false },
@@ -30,6 +32,7 @@ const SUB_TABS: { id: ProfileSubTab; label: string; icon: typeof User; perAy: bo
   { id: 'deductions', label: 'Deductions', icon: Shield, perAy: true },
   { id: 'notice', label: 'Notice defaults', icon: FileText, perAy: false },
   { id: 'business', label: 'Business', icon: Building, perAy: true },
+  { id: 'trends', label: 'Trends', icon: TrendingUp, perAy: false },
 ];
 
 interface Props {
@@ -163,6 +166,7 @@ export function ProfileView({ manager }: Props) {
             {activeSubTab === 'deductions' && <DeductionsTab manager={manager} />}
             {activeSubTab === 'notice' && <NoticeDefaultsTab manager={manager} />}
             {activeSubTab === 'business' && <BusinessTab manager={manager} />}
+            {activeSubTab === 'trends' && <TrendsTab manager={manager} />}
           </div>
         </div>
       </div>

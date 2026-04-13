@@ -786,6 +786,107 @@ export async function deleteStyleProfile(): Promise<{ ok: true }> {
   return authFetch('/api/style-profile', { method: 'DELETE' });
 }
 
+// ── Form 16 Import ─────────────────────────────────────────────────────
+
+export interface Form16ExtractedData {
+  employerName: string | null;
+  employerTAN: string | null;
+  pan: string | null;
+  employeeName: string | null;
+  assessmentYear: string | null;
+  grossSalary: number | null;
+  perquisites17_2: number | null;
+  profitsInLieu17_3: number | null;
+  standardDeduction16ia: number | null;
+  professionalTax16iii: number | null;
+  incomeFromSal: number | null;
+  netSalary: number | null;
+  section80C: number | null;
+  section80D: number | null;
+  section80CCD1B: number | null;
+  section80E: number | null;
+  section80G: number | null;
+  section80TTA: number | null;
+  tdsOnSalary: number | null;
+}
+
+export interface Form16ImportResult {
+  success: boolean;
+  filename: string;
+  extractedData: Form16ExtractedData;
+}
+
+export async function importForm16(file: File): Promise<Form16ImportResult> {
+  const form = new FormData();
+  form.append('file', file);
+
+  const doFetch = () => fetch('/api/form16-import/import', {
+    method: 'POST',
+    headers: { ...getAuthHeaders() },
+    body: form,
+  });
+
+  let res = await doFetch();
+
+  if (res.status === 401) {
+    const refreshed = await tryRefreshToken();
+    if (refreshed) {
+      res = await doFetch();
+    }
+  }
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'Form 16 import failed');
+  }
+  return data as Form16ImportResult;
+}
+
+// ── Income Tax portal import ────────────────────────────────────────────
+
+// ── Client management (CA bulk ITR) ─────────────────────────────────────
+
+export interface ClientData {
+  id: string;
+  user_id: string;
+  name: string;
+  pan: string | null;
+  email: string | null;
+  phone: string | null;
+  profile_id: string | null;
+  itr_draft_id: string | null;
+  form_type: string;
+  assessment_year: string;
+  filing_status: string;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function fetchClients(): Promise<{ clients: ClientData[]; summary: Record<string, number>; limit: number; used: number }> {
+  return authFetch('/api/clients');
+}
+
+export async function createClient(data: { name: string; pan?: string; email?: string; phone?: string; formType?: string; assessmentYear?: string }): Promise<ClientData> {
+  return authFetch('/api/clients', { method: 'POST', body: JSON.stringify(data) });
+}
+
+export async function updateClient(id: string, data: Partial<ClientData>): Promise<ClientData> {
+  return authFetch(`/api/clients/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
+}
+
+export async function deleteClient(id: string): Promise<{ ok: true }> {
+  return authFetch(`/api/clients/${id}`, { method: 'DELETE' });
+}
+
+export async function createClientDraft(clientId: string): Promise<{ profileId: string; draftId: string; client: ClientData }> {
+  return authFetch(`/api/clients/${clientId}/create-draft`, { method: 'POST' });
+}
+
+export async function bulkCreateClients(clients: Array<{ name: string; pan?: string; email?: string; phone?: string }>): Promise<{ created: number; skipped: number; available: number }> {
+  return authFetch('/api/clients/bulk-create', { method: 'POST', body: JSON.stringify({ clients }) });
+}
+
 // ── Income Tax portal import ────────────────────────────────────────────
 
 export async function importFromItPortal(input: {

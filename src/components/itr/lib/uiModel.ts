@@ -368,6 +368,72 @@ export const EXEMPT_INCOME_NATURES: ReadonlyArray<{ code: string; label: string 
   { code: 'OTH', label: 'Other exempt income' },
 ];
 
+// ── ITR-4 Business Income (ScheduleBP) ──────────────────────────────────
+
+export interface UiGoodsDtlsUs44AE {
+  RegNumberGoodsCarriage?: string;
+  OwnedLeasedHiredFlag?: 'OWN' | 'LEASE' | 'HIRED';
+  TonnageCapacity?: number;       // 1-100
+  HoldingPeriod?: number;         // months 1-12
+  PresumptiveIncome?: number;
+}
+
+export interface UiTurnoverGSTIN {
+  GSTIN?: string;                  // 15 chars
+  GrossTurnover?: number;
+  GrossReceipt?: number;
+}
+
+export interface UiFinanclPartclrOfBusiness {
+  // Liabilities
+  PartnerMemberOwnCapital?: number;
+  SecuredLoans?: number;
+  UnSecuredLoans?: number;
+  Advances?: number;
+  SundryCreditors?: number;
+  OthrCurrLiab?: number;
+  TotCapLiabilities?: number;     // auto-sum
+  // Assets
+  FixedAssets?: number;
+  Inventories?: number;
+  SundryDebtors?: number;
+  BalWithBanks?: number;
+  CashInHand?: number;
+  LoansAndAdvances?: number;
+  OtherAssets?: number;
+  TotalAssets?: number;           // auto-sum
+}
+
+export interface UiBusinessIncome {
+  scheme: '44AD' | '44ADA' | '44AE' | 'NONE';
+  natureCode?: string;
+  tradeName?: string;
+  // 44AD — 3-way turnover split
+  grossTurnoverBank?: number;
+  grossTurnoverCash?: number;
+  grossTurnoverOther?: number;
+  presumptiveInc6Per?: number;    // auto: 6% of bank
+  presumptiveInc8Per?: number;    // auto: 8% of (cash + other)
+  totalPresumptive44AD?: number;
+  // 44ADA — 3-way receipt split
+  grossReceiptsBank?: number;
+  grossReceiptsCash?: number;
+  grossReceiptsOther?: number;
+  totalPresumptive44ADA?: number; // auto: 50% of total
+  // 44AE
+  goodsVehicles?: UiGoodsDtlsUs44AE[];
+  salaryInterestByFirm?: number;
+  totalPresumptive44AE?: number;
+  // GSTIN
+  gstinTurnover?: UiTurnoverGSTIN[];
+  // Financial particulars
+  financials?: UiFinanclPartclrOfBusiness;
+}
+
+export function defaultBusinessIncome(): UiBusinessIncome {
+  return { scheme: 'NONE' };
+}
+
 // ── TDS / TCS / Tax Payments schedules ──────────────────────────────────
 
 export interface UiTDSonSalaryEntry {
@@ -455,6 +521,8 @@ export interface ItrWizardDraft {
   ExemptIncAgriOthUs10?: { ExemptIncAgriOthUs10Dtls?: UiExemptIncomeEntry[] };
   /** UI-only: multi-employer list (flattened to the schema totals on export) */
   _salaryEmployers?: UiSalaryEmployer[];
+  /** UI-only: ITR-4 business income state (mapped to ScheduleBP on export) */
+  _businessIncome?: UiBusinessIncome;
 }
 
 export type StepId =
