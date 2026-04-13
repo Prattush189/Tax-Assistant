@@ -121,6 +121,8 @@ router.get('/stats/plans', (_req: AuthRequest, res: Response) => {
   res.json({ plans: rows });
 });
 
+import { getQuotaStatus } from '../lib/searchQuota.js';
+
 // ── API Cost Analytics Dashboard ──────────────────────────────────────────
 
 // GET /api/admin/api-costs — detailed cost breakdown by user, daily trend, recent requests
@@ -131,6 +133,7 @@ router.get('/api-costs', (req: AuthRequest, res: Response) => {
   const byUser = usageRepo.getByUser(period);
   const daily = usageRepo.getDailyUsage(period);
   const recent = usageRepo.getRecentRequests(100);
+  const byModel = usageRepo.getByModel(period);
 
   // Cost by plan tier
   const costByPlan: Record<string, { requests: number; cost: number; users: number }> = {};
@@ -145,8 +148,11 @@ router.get('/api-costs', (req: AuthRequest, res: Response) => {
   // INR conversion (approximate)
   const usdToInr = 85;
 
+  const quota = getQuotaStatus();
+
   res.json({
     period,
+    searchQuota: quota,
     summary: {
       totalRequests: stats.total_requests,
       totalInputTokens: stats.total_input_tokens,
@@ -170,6 +176,11 @@ router.get('/api-costs', (req: AuthRequest, res: Response) => {
     recent: recent.map(r => ({
       ...r,
       cost_inr: Math.round(r.cost * usdToInr * 1000) / 1000,
+    })),
+    byModel: byModel.map(m => ({
+      ...m,
+      total_cost_inr: Math.round(m.total_cost * usdToInr * 100) / 100,
+      avg_cost_inr: Math.round(m.avg_cost * usdToInr * 1000) / 1000,
     })),
   });
 });

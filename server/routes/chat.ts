@@ -1,6 +1,8 @@
 // server/routes/chat.ts
 import { Router, Response } from 'express';
-import { grok, GROK_MODEL, INPUT_COST_PER_TOKEN, OUTPUT_COST_PER_TOKEN, WEB_SEARCH_COST } from '../lib/grok.js';
+import { grok, GROK_MODEL, INPUT_COST_PER_TOKEN, OUTPUT_COST_PER_TOKEN, WEB_SEARCH_COST, GEMINI_INPUT_COST, GEMINI_OUTPUT_COST, GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, GEMINI_API_KEY_RAW } from '../lib/grok.js';
+import { getTier, type ModelTier } from '../lib/searchQuota.js';
+import { streamGeminiChat } from '../lib/geminiChat.js';
 import { chatRepo } from '../db/repositories/chatRepo.js';
 import { messageRepo } from '../db/repositories/messageRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
@@ -13,7 +15,7 @@ import type { ChatCompletionMessageParam } from 'openai/resources/chat/completio
 
 const router = Router();
 
-const MAX_TOKENS = 8192;
+const MAX_TOKENS = 4096;
 
 // ── Selective web search ──────────────────────────────────────────────────
 // When any of these patterns match the user's query, Grok is given the web
@@ -420,53 +422,92 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      const useWebSearch = shouldEnableWebSearch(message);
-
       let stopReason: string | null = null;
       let inputTok = 0;
       let outputTok = 0;
 
-      if (useWebSearch) {
-        // Use xAI Responses API for web search (Chat Completions doesn't support it)
+      // ── 3-Tier Model Cascade ─────────────────────────────────────────
+      // Tier 1: Gemini 2.5 Flash-Lite (500 free searches/day)
+      // Tier 2: Gemini 3 Flash-Lite (5K free searches/month, separate pool)
+      // Tier 3: Grok 4.1 Fast (paid search $5/1K — cheapest paid option)
+      const tier: ModelTier = getTier();
+      let usedModel = '';
+
+      if ((tier === 'gemini-3' || tier === 'gemini-2.5') && GEMINI_API_KEY_RAW) {
+        // ── Gemini path: native API with Google Search grounding ──
+        // Tier 1 = Gemini 3 (better quality), Tier 2 = Gemini 2.5 (cheapest tokens)
+        const geminiModel = tier === 'gemini-3' ? GEMINI_CHAT_MODEL_T2 : GEMINI_CHAT_MODEL_T1;
+        usedModel = geminiModel;
         const historyPlain = history.map(m => ({ role: m.role as string, content: m.content as string }));
-        const webStream = streamWithWebSearch(SYSTEM_INSTRUCTION, historyPlain, userContent);
 
-        for await (const event of webStream) {
-          if (event.type === 'text') {
-            fullResponse += event.text;
-            res.write(`data: ${JSON.stringify({ text: event.text })}\n\n`);
-          } else if (event.type === 'usage') {
-            inputTok = event.input;
-            outputTok = event.output;
-          } else if (event.type === 'done') {
-            stopReason = event.reason;
+        try {
+          for await (const chunk of streamGeminiChat(geminiModel, SYSTEM_INSTRUCTION, historyPlain, userContent, GEMINI_API_KEY_RAW, MAX_TOKENS)) {
+            if (chunk.text) {
+              fullResponse += chunk.text;
+              res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`);
+            }
+            if (chunk.done) {
+              inputTok = chunk.inputTokens ?? 0;
+              outputTok = chunk.outputTokens ?? 0;
+              stopReason = 'end_turn';
+              // Grounding sources → pass as references
+              if (chunk.sources?.length) {
+                ragReferences = chunk.sources.map(s => ({
+                  source: 'web',
+                  section: '',
+                  label: s.title,
+                  text: s.url,
+                }));
+              }
+            }
           }
+        } catch (geminiErr) {
+          // Gemini failed — fall through to Grok
+          console.warn(`[chat] Gemini ${geminiModel} failed, falling back to Grok:`, (geminiErr as Error).message?.slice(0, 120));
+          usedModel = GROK_MODEL;
+          // Fall through to Grok below
         }
-      } else {
-        // Standard Chat Completions API (no web search)
-        const stream = await grok.chat.completions.create({
-          model: GROK_MODEL,
-          messages,
-          max_tokens: MAX_TOKENS,
-          stream: true,
-          stream_options: { include_usage: true },
-        });
+      }
 
-        for await (const chunk of stream) {
-          const delta = chunk.choices?.[0]?.delta?.content;
-          if (delta) {
-            fullResponse += delta;
-            res.write(`data: ${JSON.stringify({ text: delta })}\n\n`);
+      // ── Grok path: either Tier 3 or Gemini fallback ──
+      if (!fullResponse) {
+        usedModel = GROK_MODEL;
+        const useWebSearch = shouldEnableWebSearch(message);
+
+        if (useWebSearch) {
+          const historyPlain = history.map(m => ({ role: m.role as string, content: m.content as string }));
+          const webStream = streamWithWebSearch(SYSTEM_INSTRUCTION, historyPlain, userContent);
+          for await (const event of webStream) {
+            if (event.type === 'text') {
+              fullResponse += event.text;
+              res.write(`data: ${JSON.stringify({ text: event.text })}\n\n`);
+            } else if (event.type === 'usage') {
+              inputTok = event.input;
+              outputTok = event.output;
+            } else if (event.type === 'done') {
+              stopReason = event.reason;
+            }
           }
-
-          const finishReason = chunk.choices?.[0]?.finish_reason;
-          if (finishReason) {
-            stopReason = finishReason === 'length' ? 'max_tokens' : 'end_turn';
-          }
-
-          if (chunk.usage) {
-            inputTok = chunk.usage.prompt_tokens ?? 0;
-            outputTok = chunk.usage.completion_tokens ?? 0;
+        } else {
+          const stream = await grok.chat.completions.create({
+            model: GROK_MODEL,
+            messages,
+            max_tokens: MAX_TOKENS,
+            stream: true,
+            stream_options: { include_usage: true },
+          });
+          for await (const chunk of stream) {
+            const delta = chunk.choices?.[0]?.delta?.content;
+            if (delta) {
+              fullResponse += delta;
+              res.write(`data: ${JSON.stringify({ text: delta })}\n\n`);
+            }
+            const finishReason = chunk.choices?.[0]?.finish_reason;
+            if (finishReason) stopReason = finishReason === 'length' ? 'max_tokens' : 'end_turn';
+            if (chunk.usage) {
+              inputTok = chunk.usage.prompt_tokens ?? 0;
+              outputTok = chunk.usage.completion_tokens ?? 0;
+            }
           }
         }
       }
@@ -483,10 +524,13 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
       }
       chatRepo.touchTimestamp(chatId);
 
-      // Log usage with both actor (user_id) and billing owner (billing_user_id).
-      // Actor preserves the audit trail; billing powers shared-pool counters.
-      const cost = (inputTok * INPUT_COST_PER_TOKEN) + (outputTok * OUTPUT_COST_PER_TOKEN) + (useWebSearch ? WEB_SEARCH_COST : 0);
-      usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, inputTok, outputTok, cost, false);
+      // Log usage — cost depends on which model was actually used
+      const isGemini = usedModel !== GROK_MODEL;
+      const inputCost = isGemini ? GEMINI_INPUT_COST : INPUT_COST_PER_TOKEN;
+      const outputCost = isGemini ? GEMINI_OUTPUT_COST : OUTPUT_COST_PER_TOKEN;
+      const searchCost = isGemini ? 0 : (shouldEnableWebSearch(message) ? WEB_SEARCH_COST : 0);
+      const cost = (inputTok * inputCost) + (outputTok * outputCost) + searchCost;
+      usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, inputTok, outputTok, cost, false, usedModel || undefined);
 
       res.write(`data: ${JSON.stringify({ done: true, stop_reason: stopReason, references: ragReferences })}\n\n`);
       success = true;

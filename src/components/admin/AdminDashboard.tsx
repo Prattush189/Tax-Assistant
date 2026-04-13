@@ -1,10 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Users, Activity, DollarSign, Shield, CheckCircle, RefreshCw, ShieldOff } from 'lucide-react';
+import { Users, Activity, DollarSign, Shield, CheckCircle, RefreshCw, ShieldOff, BarChart3, Cpu } from 'lucide-react';
 import { ApiCostDashboard } from './ApiCostDashboard';
+import { ModelUsageDashboard } from './ModelUsageDashboard';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import { adminFetchStats, adminFetchUsers, adminSuspendUser, adminUnsuspendUser, adminChangePlan, adminFetchTrend, adminFetchPlans } from '../../services/api';
 import { LoadingAnimation } from '../ui/LoadingAnimation';
 import toast from 'react-hot-toast';
+import { cn } from '../../lib/utils';
+
+type AdminTab = 'overview' | 'users' | 'api-costs' | 'model-usage';
 
 interface Stats {
   total_requests: number;
@@ -133,6 +137,15 @@ export function AdminDashboard() {
     } catch { toast.error('Failed to change plan'); }
   };
 
+  const [adminTab, setAdminTab] = useState<AdminTab>('overview');
+
+  const ADMIN_TABS: { id: AdminTab; label: string; icon: typeof Activity }[] = [
+    { id: 'overview', label: 'Overview', icon: BarChart3 },
+    { id: 'users', label: 'Users', icon: Users },
+    { id: 'api-costs', label: 'API Costs', icon: DollarSign },
+    { id: 'model-usage', label: 'Model Usage', icon: Cpu },
+  ];
+
   return (
     <div className="flex-1 overflow-y-auto p-4 lg:p-8">
       <div className="max-w-6xl mx-auto space-y-6">
@@ -157,6 +170,38 @@ export function AdminDashboard() {
             </button>
           </div>
         </div>
+
+        {/* Tab bar */}
+        <div className="flex gap-1 bg-gray-100 dark:bg-gray-800 rounded-xl p-1">
+          {ADMIN_TABS.map(tab => {
+            const Icon = tab.icon;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setAdminTab(tab.id)}
+                className={cn(
+                  'flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg transition-colors',
+                  adminTab === tab.id
+                    ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
+                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300',
+                )}
+              >
+                <Icon className="w-4 h-4" />
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* API Costs tab */}
+        {adminTab === 'api-costs' && <ApiCostDashboard />}
+
+        {/* Model Usage tab */}
+        {adminTab === 'model-usage' && <ModelUsageDashboard />}
+
+        {/* Overview + Users tabs use existing content below */}
+        {adminTab !== 'api-costs' && adminTab !== 'model-usage' && (
+        <>
 
         {/* Stats Cards */}
         {stats && (
@@ -223,7 +268,8 @@ export function AdminDashboard() {
           </div>
         )}
 
-        {/* Users Table */}
+        {/* Users Table — visible on overview and users tabs */}
+        {(adminTab === 'overview' || adminTab === 'users') && (
         <div className="bg-white/70 dark:bg-gray-900/70 backdrop-blur-sm border border-gray-200/50 dark:border-gray-800/50 rounded-2xl overflow-hidden">
           <div className="px-4 py-3 border-b border-gray-200/50 dark:border-gray-800/50 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
@@ -326,8 +372,9 @@ export function AdminDashboard() {
           </div>
         </div>
 
-        {/* API Cost Analytics */}
-        <ApiCostDashboard />
+        )}
+        </>
+        )}
       </div>
     </div>
   );

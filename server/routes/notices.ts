@@ -9,7 +9,7 @@ import { retrieveContext } from '../rag/index.js';
 
 const router = Router();
 
-const MAX_TOKENS = 8192;
+const MAX_TOKENS = 4096;
 
 // ── Plan-based notice limits (per month) ──
 const NOTICE_LIMITS: Record<string, number> = {

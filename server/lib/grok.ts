@@ -18,10 +18,17 @@ export const grokConfigured = !!XAI_API_KEY;
 
 export const GROK_MODEL = 'grok-4-1-fast-reasoning';
 
-// Pricing per token (Grok 4.1 Fast)
+// Pricing per token (Grok 4.1 Fast — Tier 3 fallback)
 export const INPUT_COST_PER_TOKEN = 0.20 / 1_000_000;
 export const OUTPUT_COST_PER_TOKEN = 0.50 / 1_000_000;
 export const WEB_SEARCH_COST = 0.005; // $5 per 1000 calls
+
+// Gemini chat models for 3-tier cascade (free Google Search grounding)
+export const GEMINI_CHAT_MODEL_T1 = 'gemini-2.5-flash-lite';   // Tier 1: 500 free searches/day
+export const GEMINI_CHAT_MODEL_T2 = 'gemini-3-flash-lite';     // Tier 2: 5K free searches/month (separate pool)
+export const GEMINI_INPUT_COST = 0.10 / 1_000_000;    // $0.10/M tokens
+export const GEMINI_OUTPUT_COST = 0.40 / 1_000_000;   // $0.40/M tokens
+export const GEMINI_API_KEY_RAW = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_AI_API_KEY ?? '';
 
 // ── Gemini (via OpenAI-compatible endpoint) — used for document extraction ──
 // Native PDF + image support, cheaper than Grok for vision tasks.

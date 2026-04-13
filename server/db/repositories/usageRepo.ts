@@ -36,7 +36,7 @@ const stmts = {
     'INSERT INTO api_usage (ip, user_id, input_tokens, output_tokens, cost, is_plugin) VALUES (?, ?, ?, ?, ?, ?)'
   ),
   logWithBilling: db.prepare(
-    'INSERT INTO api_usage (ip, user_id, billing_user_id, input_tokens, output_tokens, cost, is_plugin) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO api_usage (ip, user_id, billing_user_id, input_tokens, output_tokens, cost, is_plugin, model) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
   ),
   getByIp: db.prepare(`
     SELECT
@@ -126,12 +126,25 @@ const analyticsStmts = {
   `),
   recentRequests: db.prepare(`
     SELECT
-      a.id, a.user_id, a.input_tokens, a.output_tokens, a.cost, a.created_at,
+      a.id, a.user_id, a.input_tokens, a.output_tokens, a.cost, a.created_at, a.model,
       COALESCE(u.name, 'Guest') AS user_name
     FROM api_usage a
     LEFT JOIN users u ON a.user_id = u.id
     ORDER BY a.created_at DESC
     LIMIT ?
+  `),
+  byModel: db.prepare(`
+    SELECT
+      COALESCE(model, 'unknown') AS model,
+      COUNT(*) AS requests,
+      COALESCE(SUM(input_tokens), 0) AS total_input_tokens,
+      COALESCE(SUM(output_tokens), 0) AS total_output_tokens,
+      COALESCE(SUM(cost), 0) AS total_cost,
+      COALESCE(AVG(cost), 0) AS avg_cost
+    FROM api_usage
+    WHERE created_at >= ?
+    GROUP BY model
+    ORDER BY total_cost DESC
   `),
 };
 
@@ -168,8 +181,9 @@ export const usageRepo = {
     outputTokens: number,
     cost: number,
     isPlugin: boolean,
+    model?: string,
   ): void {
-    stmts.logWithBilling.run(ip, userId, billingUserId, inputTokens, outputTokens, cost, isPlugin ? 1 : 0);
+    stmts.logWithBilling.run(ip, userId, billingUserId, inputTokens, outputTokens, cost, isPlugin ? 1 : 0, model ?? null);
   },
 
   getByIp(period: string = 'month'): UsageByIp[] {
@@ -217,6 +231,13 @@ export const usageRepo = {
 
   getDailyUsage(period: string = 'month'): DailyUsage[] {
     return analyticsStmts.daily.all(periodToDate(period)) as DailyUsage[];
+  },
+
+  getByModel(period: string = 'month'): Array<{
+    model: string; requests: number; total_input_tokens: number;
+    total_output_tokens: number; total_cost: number; avg_cost: number;
+  }> {
+    return analyticsStmts.byModel.all(periodToDate(period)) as any[];
   },
 
   getRecentRequests(limit: number = 50): Array<{
