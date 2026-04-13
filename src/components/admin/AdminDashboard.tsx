@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Users, Activity, DollarSign, Shield, CheckCircle, RefreshCw, ShieldOff } from 'lucide-react';
+import { ApiCostDashboard } from './ApiCostDashboard';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import { adminFetchStats, adminFetchUsers, adminSuspendUser, adminUnsuspendUser, adminChangePlan, adminFetchTrend, adminFetchPlans } from '../../services/api';
 import { LoadingAnimation } from '../ui/LoadingAnimation';
@@ -324,6 +325,9 @@ export function AdminDashboard() {
             </table>
           </div>
         </div>
+
+        {/* API Cost Analytics */}
+        <ApiCostDashboard />
       </div>
     </div>
   );

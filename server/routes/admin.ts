@@ -121,4 +121,57 @@ router.get('/stats/plans', (_req: AuthRequest, res: Response) => {
   res.json({ plans: rows });
 });
 
+// ── API Cost Analytics Dashboard ──────────────────────────────────────────
+
+// GET /api/admin/api-costs — detailed cost breakdown by user, daily trend, recent requests
+router.get('/api-costs', (req: AuthRequest, res: Response) => {
+  const period = (req.query.period as string) ?? 'month';
+
+  const stats = usageRepo.getStats(period);
+  const byUser = usageRepo.getByUser(period);
+  const daily = usageRepo.getDailyUsage(period);
+  const recent = usageRepo.getRecentRequests(100);
+
+  // Cost by plan tier
+  const costByPlan: Record<string, { requests: number; cost: number; users: number }> = {};
+  for (const u of byUser) {
+    const plan = u.user_plan || 'free';
+    if (!costByPlan[plan]) costByPlan[plan] = { requests: 0, cost: 0, users: 0 };
+    costByPlan[plan].requests += u.requests;
+    costByPlan[plan].cost += u.total_cost;
+    costByPlan[plan].users += 1;
+  }
+
+  // INR conversion (approximate)
+  const usdToInr = 85;
+
+  res.json({
+    period,
+    summary: {
+      totalRequests: stats.total_requests,
+      totalInputTokens: stats.total_input_tokens,
+      totalOutputTokens: stats.total_output_tokens,
+      totalCostUsd: stats.total_cost,
+      totalCostInr: Math.round(stats.total_cost * usdToInr * 100) / 100,
+      avgCostPerMsgUsd: stats.total_requests > 0 ? stats.total_cost / stats.total_requests : 0,
+      avgCostPerMsgInr: stats.total_requests > 0 ? Math.round((stats.total_cost / stats.total_requests) * usdToInr * 1000) / 1000 : 0,
+      uniqueUsers: stats.unique_users,
+    },
+    costByPlan,
+    byUser: byUser.map(u => ({
+      ...u,
+      total_cost_inr: Math.round(u.total_cost * usdToInr * 100) / 100,
+      avg_cost_per_msg_inr: Math.round(u.avg_cost_per_msg * usdToInr * 1000) / 1000,
+    })),
+    daily: daily.map(d => ({
+      ...d,
+      total_cost_inr: Math.round(d.total_cost * usdToInr * 100) / 100,
+    })),
+    recent: recent.map(r => ({
+      ...r,
+      cost_inr: Math.round(r.cost * usdToInr * 1000) / 1000,
+    })),
+  });
+});
+
 export default router;

@@ -889,6 +889,54 @@ export async function bulkCreateClients(clients: Array<{ name: string; pan?: str
 
 // ── Income Tax portal import ────────────────────────────────────────────
 
+// ── Admin API cost analytics ─────────────────────────────────────────────
+
+export interface ApiCostUser {
+  user_id: string;
+  user_name: string;
+  user_email: string;
+  user_plan: string;
+  requests: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cost: number;
+  total_cost_inr: number;
+  avg_cost_per_msg: number;
+  avg_cost_per_msg_inr: number;
+  last_used: string;
+}
+
+export interface ApiCostDailyEntry {
+  date: string;
+  requests: number;
+  total_cost: number;
+  total_cost_inr: number;
+}
+
+export interface ApiCostData {
+  period: string;
+  summary: {
+    totalRequests: number;
+    totalInputTokens: number;
+    totalOutputTokens: number;
+    totalCostUsd: number;
+    totalCostInr: number;
+    avgCostPerMsgUsd: number;
+    avgCostPerMsgInr: number;
+    uniqueUsers: number;
+  };
+  costByPlan: Record<string, { requests: number; cost: number; users: number }>;
+  byUser: ApiCostUser[];
+  daily: ApiCostDailyEntry[];
+  recent: Array<{ id: number; user_name: string; input_tokens: number; output_tokens: number; cost: number; cost_inr: number; created_at: string }>;
+}
+
+export async function fetchApiCosts(period: string = 'month'): Promise<ApiCostData> {
+  return authFetch(`/api/admin/api-costs?period=${period}`);
+}
+
+// ── Income Tax portal import ────────────────────────────────────────────
+
 export async function importFromItPortal(input: {
   pan: string;
   password: string;

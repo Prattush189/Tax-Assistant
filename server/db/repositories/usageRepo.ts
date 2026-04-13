@@ -72,6 +72,69 @@ const stmts = {
   allBlocked: db.prepare('SELECT * FROM blocked_ips ORDER BY created_at DESC'),
 };
 
+export interface UsageByUser {
+  user_id: string;
+  user_name: string;
+  user_email: string;
+  user_plan: string;
+  requests: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cost: number;
+  avg_cost_per_msg: number;
+  last_used: string;
+}
+
+export interface DailyUsage {
+  date: string;
+  requests: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cost: number;
+}
+
+const analyticsStmts = {
+  byUser: db.prepare(`
+    SELECT
+      a.user_id,
+      COALESCE(u.name, 'Unknown') AS user_name,
+      COALESCE(u.email, '') AS user_email,
+      COALESCE(u.plan, 'free') AS user_plan,
+      COUNT(*) AS requests,
+      COALESCE(SUM(a.input_tokens), 0) AS total_input_tokens,
+      COALESCE(SUM(a.output_tokens), 0) AS total_output_tokens,
+      COALESCE(SUM(a.cost), 0) AS total_cost,
+      COALESCE(SUM(a.cost) * 1.0 / NULLIF(COUNT(*), 0), 0) AS avg_cost_per_msg,
+      MAX(a.created_at) AS last_used
+    FROM api_usage a
+    LEFT JOIN users u ON a.user_id = u.id
+    WHERE a.created_at >= ? AND a.user_id IS NOT NULL
+    GROUP BY a.user_id
+    ORDER BY total_cost DESC
+  `),
+  daily: db.prepare(`
+    SELECT
+      DATE(created_at) AS date,
+      COUNT(*) AS requests,
+      COALESCE(SUM(input_tokens), 0) AS total_input_tokens,
+      COALESCE(SUM(output_tokens), 0) AS total_output_tokens,
+      COALESCE(SUM(cost), 0) AS total_cost
+    FROM api_usage
+    WHERE created_at >= ?
+    GROUP BY DATE(created_at)
+    ORDER BY date ASC
+  `),
+  recentRequests: db.prepare(`
+    SELECT
+      a.id, a.user_id, a.input_tokens, a.output_tokens, a.cost, a.created_at,
+      COALESCE(u.name, 'Guest') AS user_name
+    FROM api_usage a
+    LEFT JOIN users u ON a.user_id = u.id
+    ORDER BY a.created_at DESC
+    LIMIT ?
+  `),
+};
+
 function periodToDate(period: string): string {
   const now = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
   if (period === 'day') now.setDate(now.getDate() - 1);
@@ -144,5 +207,22 @@ export const usageRepo = {
 
   allBlocked(): BlockedIp[] {
     return stmts.allBlocked.all() as BlockedIp[];
+  },
+
+  // ── Analytics (admin dashboard) ──────────────────────────────────────
+
+  getByUser(period: string = 'month'): UsageByUser[] {
+    return analyticsStmts.byUser.all(periodToDate(period)) as UsageByUser[];
+  },
+
+  getDailyUsage(period: string = 'month'): DailyUsage[] {
+    return analyticsStmts.daily.all(periodToDate(period)) as DailyUsage[];
+  },
+
+  getRecentRequests(limit: number = 50): Array<{
+    id: number; user_id: string; input_tokens: number; output_tokens: number;
+    cost: number; created_at: string; user_name: string;
+  }> {
+    return analyticsStmts.recentRequests.all(limit) as any[];
   },
 };
