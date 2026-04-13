@@ -3,6 +3,15 @@ import { useTaxCalculator } from '../../contexts/TaxCalculatorContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { Save, Plus, Trash2, ChevronDown, User } from 'lucide-react';
 import type { TaxProfileData } from '../../services/api';
+import type { TaxpayerCategory } from '../../types';
+import { SUPPORTED_FY } from '../../data/taxRules';
+
+const CATEGORY_OPTIONS: { value: TaxpayerCategory; label: string }[] = [
+  { value: 'Individual', label: 'Individual' },
+  { value: 'HUF', label: 'HUF' },
+  { value: 'Firm', label: 'Firm / LLP' },
+  { value: 'Company', label: 'Company' },
+];
 
 export function ProfileSelector() {
   const {
@@ -14,6 +23,8 @@ export function ProfileSelector() {
     loadProfile,
     deleteCurrentProfile,
     clearProfile,
+    fy, setFy,
+    taxpayerCategory, setTaxpayerCategory,
   } = useTaxCalculator();
 
   const { user, isAuthenticated } = useAuth();
@@ -138,6 +149,28 @@ export function ProfileSelector() {
           </div>
         )}
       </div>
+
+      {/* Global FY selector */}
+      <select
+        value={fy}
+        onChange={(e) => setFy(e.target.value as typeof fy)}
+        className="px-2 py-1.5 text-xs font-medium bg-transparent border border-gray-200 dark:border-gray-700 rounded-lg text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-emerald-400"
+      >
+        {SUPPORTED_FY.map((f) => (
+          <option key={f} value={f}>FY {f}</option>
+        ))}
+      </select>
+
+      {/* Global Taxpayer Category */}
+      <select
+        value={taxpayerCategory}
+        onChange={(e) => setTaxpayerCategory(e.target.value as TaxpayerCategory)}
+        className="px-2 py-1.5 text-xs font-medium bg-transparent border border-gray-200 dark:border-gray-700 rounded-lg text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-emerald-400"
+      >
+        {CATEGORY_OPTIONS.map((c) => (
+          <option key={c.value} value={c.value}>{c.label}</option>
+        ))}
+      </select>
 
       {/* Inline name input */}
       {showNameInput && (

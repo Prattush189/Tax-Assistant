@@ -210,24 +210,27 @@ export function Toggle({
   label: string;
 }) {
   return (
-    <label className="flex items-center gap-2 cursor-pointer select-none">
-      <button
-        type="button"
-        onClick={() => onChange(!checked)}
+    <div
+      className="flex items-center gap-3 cursor-pointer select-none"
+      onClick={() => onChange(!checked)}
+      role="switch"
+      aria-checked={checked}
+    >
+      <div
         className={cn(
-          'w-9 h-5 rounded-full transition-colors relative shrink-0',
-          checked ? 'bg-emerald-500' : 'bg-gray-200 dark:bg-gray-700',
+          'w-11 h-6 rounded-full transition-colors relative shrink-0',
+          checked ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-gray-600',
         )}
       >
         <span
           className={cn(
-            'absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform',
-            checked ? 'translate-x-4' : 'translate-x-0.5',
+            'absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-transform duration-200',
+            checked ? 'translate-x-5' : 'translate-x-0',
           )}
         />
-      </button>
+      </div>
       <span className="text-sm text-gray-700 dark:text-gray-300">{label}</span>
-    </label>
+    </div>
   );
 }
 

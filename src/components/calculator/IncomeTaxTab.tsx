@@ -1,22 +1,11 @@
 import { useState } from 'react';
 import { cn } from '../../lib/utils';
-import type { AgeCategory, TaxpayerCategory } from '../../types';
+import type { AgeCategory } from '../../types';
 import { RegimeComparison } from './RegimeComparison';
 import { useTaxCalculator } from '../../contexts/TaxCalculatorContext';
 import { LoadFromProfile } from '../profile/shared/LoadFromProfile';
 import { profileToCalculator } from '../profile/lib/prefillAdapters';
 import { PROFILE_AYS, ProfileAy } from '../profile/lib/profileModel';
-
-import { SUPPORTED_FY } from '../../data/taxRules';
-
-type FY = typeof SUPPORTED_FY[number];
-
-const CATEGORY_OPTIONS: { value: TaxpayerCategory; label: string }[] = [
-  { value: 'Individual', label: 'Individual' },
-  { value: 'HUF', label: 'HUF' },
-  { value: 'Firm', label: 'Firm / LLP' },
-  { value: 'Company', label: 'Company' },
-];
 
 const AGE_OPTIONS: { value: AgeCategory; label: string }[] = [
   { value: 'below60', label: 'Below 60' },
@@ -60,8 +49,8 @@ function NumberInput({
 
 export function IncomeTaxTab() {
   const {
-    fy, setFy,
-    taxpayerCategory, setTaxpayerCategory,
+    fy,
+    taxpayerCategory,
     grossSalary, setGrossSalary,
     otherIncome, setOtherIncome,
     ageCategory, setAgeCategory,
@@ -116,67 +105,27 @@ export function IncomeTaxTab() {
           compact
         />
       </div>
-      {/* Category + FY + Age selectors */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-        <div>
-          <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Taxpayer Category</p>
-          <div className="flex flex-col gap-1">
-            {CATEGORY_OPTIONS.map((opt) => (
-              <label key={opt.value} className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="taxpayerCategory"
-                  value={opt.value}
-                  checked={taxpayerCategory === opt.value}
-                  onChange={() => setTaxpayerCategory(opt.value)}
-                  className="accent-blue-600"
-                />
-                <span className="text-sm text-gray-700 dark:text-gray-300">{opt.label}</span>
-              </label>
-            ))}
-          </div>
+      {/* Age selector — only for Individual (FY + Category now in global ProfileSelector bar) */}
+      {isIndividual && (
+      <div className="mb-6">
+        <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Age Category</p>
+        <div className="flex gap-4">
+          {AGE_OPTIONS.map((opt) => (
+            <label key={opt.value} className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="ageCategory"
+                value={opt.value}
+                checked={ageCategory === opt.value}
+                onChange={() => setAgeCategory(opt.value)}
+                className="accent-blue-600"
+              />
+              <span className="text-sm text-gray-700 dark:text-gray-300">{opt.label}</span>
+            </label>
+          ))}
         </div>
-
-        <div>
-          <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Financial Year</p>
-          <div className="flex flex-col gap-1">
-            {SUPPORTED_FY.map((f) => (
-              <label key={f} className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="fy"
-                  value={f}
-                  checked={fy === f}
-                  onChange={() => setFy(f as any)}
-                  className="accent-blue-600"
-                />
-                <span className="text-sm text-gray-700 dark:text-gray-300">FY {f}</span>
-              </label>
-            ))}
-          </div>
-        </div>
-
-        {isIndividual && (
-          <div>
-            <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Age Category</p>
-            <div className="flex flex-col gap-1">
-              {AGE_OPTIONS.map((opt) => (
-                <label key={opt.value} className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="ageCategory"
-                    value={opt.value}
-                    checked={ageCategory === opt.value}
-                    onChange={() => setAgeCategory(opt.value)}
-                    className="accent-blue-600"
-                  />
-                  <span className="text-sm text-gray-700 dark:text-gray-300">{opt.label}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
+      )}
 
       {/* Income fields */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
