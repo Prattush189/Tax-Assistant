@@ -35,6 +35,7 @@ export async function* streamGeminiChat(
   userMessage: string,
   apiKey: string,
   maxOutputTokens: number = 4096,
+  enableSearch: boolean = false,
 ): AsyncGenerator<GeminiChatChunk> {
   // Build Gemini contents array
   const contents: GeminiContent[] = [];
@@ -53,16 +54,20 @@ export async function* streamGeminiChat(
     parts: [{ text: userMessage }],
   });
 
-  const body = {
+  const body: Record<string, unknown> = {
     systemInstruction: {
       parts: [{ text: systemPrompt }],
     },
     contents,
-    tools: [{ google_search: {} }],
     generationConfig: {
       maxOutputTokens,
     },
   };
+
+  // Only enable Google Search grounding when needed — preserves free quota
+  if (enableSearch) {
+    body.tools = [{ google_search: {} }];
+  }
 
   const url = `${BASE_URL}/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
 

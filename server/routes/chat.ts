@@ -440,8 +440,9 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
         usedModel = geminiModel;
         const historyPlain = history.map(m => ({ role: m.role as string, content: m.content as string }));
 
+        const needsSearch = shouldEnableWebSearch(message);
         try {
-          for await (const chunk of streamGeminiChat(geminiModel, SYSTEM_INSTRUCTION, historyPlain, userContent, GEMINI_API_KEY_RAW, MAX_TOKENS)) {
+          for await (const chunk of streamGeminiChat(geminiModel, SYSTEM_INSTRUCTION, historyPlain, userContent, GEMINI_API_KEY_RAW, MAX_TOKENS, needsSearch)) {
             if (chunk.text) {
               fullResponse += chunk.text;
               res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`);
