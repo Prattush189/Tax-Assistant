@@ -32,7 +32,12 @@ export const GEMINI_T1_OUTPUT_COST = 1.50 / 1_000_000;   // $1.50/M tokens
 // Gemini 2.5 Flash-Lite pricing (Tier 2 overflow)
 export const GEMINI_T2_INPUT_COST = 0.10 / 1_000_000;    // $0.10/M tokens
 export const GEMINI_T2_OUTPUT_COST = 0.40 / 1_000_000;   // $0.40/M tokens
-export const GEMINI_API_KEY_RAW = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_AI_API_KEY ?? '';
+export const GEMINI_API_KEYS: string[] = [
+  process.env.GEMINI_API_KEY ?? process.env.GOOGLE_AI_API_KEY ?? '',
+  process.env.GEMINI_API_KEY_2 ?? '',
+].filter(k => k.length > 0);
+// Backward compat
+export const GEMINI_API_KEY_RAW = GEMINI_API_KEYS[0] ?? '';
 
 // ── Gemini (via OpenAI-compatible endpoint) — used for document extraction ──
 // Native PDF + image support, cheaper than Grok for vision tasks.

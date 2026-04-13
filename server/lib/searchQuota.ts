@@ -1,81 +1,108 @@
 /**
- * In-memory search quota tracker for the 3-tier model cascade.
+ * Search quota tracker for the 3-tier model cascade with dual API key rotation.
  *
- * Tier 1: Gemini 3.1 Flash-Lite Preview — 5,000 free searches/month (better quality)
- * Tier 2: Gemini 2.5 Flash-Lite        — 500 free searches/day (separate pool, cheapest tokens)
- * Tier 3: Grok 4.1 Fast                — paid search ($5/1K calls)
+ * API Key 1 (GEMINI_API_KEY):
+ *   Tier 1: Gemini 3.1 Flash-Lite Preview — 5,000 free searches/month
+ *   Tier 2: Gemini 2.5 Flash-Lite          — 500 free searches/day
  *
- * Counters reset automatically: Tier 1 monthly, Tier 2 daily.
- * Resets on server restart (acceptable — limits also reset server-side at Google).
+ * API Key 2 (GEMINI_API_KEY_2) — when Key 1 exhausted:
+ *   Tier 1b: Gemini 3.1 Flash-Lite Preview — 5,000 free searches/month (separate account)
+ *   Tier 2b: Gemini 2.5 Flash-Lite          — 500 free searches/day (separate account)
+ *
+ * Tier 3: Grok 4.1 Fast — paid search ($5/1K calls, cheapest paid)
+ *
+ * Counters only increment on SUCCESS (not on attempt).
  */
 
 export type ModelTier = 'gemini-3' | 'gemini-2.5' | 'grok';
 
-// Conservative buffers to avoid hitting the hard limit
-const TIER1_LIMIT = 4800;  // actual: 5,000/month (Gemini 3)
-const TIER2_LIMIT = 480;   // actual: 500/day (Gemini 2.5)
+// Conservative buffers
+const T1_LIMIT = 5000;   // 5,000/month per key (Gemini 3 family)
+const T2_LIMIT = 500;    // 500/day per key (Gemini 2.5 family)
 
-let tier1Count = 0;   // Gemini 3 — monthly
-let tier1ResetMonth = new Date().getMonth();
+interface KeyQuota {
+  label: string;
+  t1Count: number;     // Gemini 3.1 monthly
+  t1ResetMonth: number;
+  t2Count: number;     // Gemini 2.5 daily
+  t2ResetDate: string;
+}
 
-let tier2Count = 0;   // Gemini 2.5 — daily
-let tier2ResetDate = new Date().toDateString();
+const keys: KeyQuota[] = [
+  { label: 'Key 1 (Primary)', t1Count: 0, t1ResetMonth: new Date().getMonth(), t2Count: 0, t2ResetDate: new Date().toDateString() },
+  { label: 'Key 2 (Secondary)', t1Count: 0, t1ResetMonth: new Date().getMonth(), t2Count: 0, t2ResetDate: new Date().toDateString() },
+];
 
-function checkResets(): void {
+function checkResets(k: KeyQuota): void {
   const now = new Date();
-  // Monthly reset for Tier 1 (Gemini 3)
-  if (now.getMonth() !== tier1ResetMonth) {
-    tier1Count = 0;
-    tier1ResetMonth = now.getMonth();
-  }
-  // Daily reset for Tier 2 (Gemini 2.5)
-  if (now.toDateString() !== tier2ResetDate) {
-    tier2Count = 0;
-    tier2ResetDate = now.toDateString();
-  }
+  if (now.getMonth() !== k.t1ResetMonth) { k.t1Count = 0; k.t1ResetMonth = now.getMonth(); }
+  if (now.toDateString() !== k.t2ResetDate) { k.t2Count = 0; k.t2ResetDate = now.toDateString(); }
+}
+
+export interface TierSelection {
+  tier: ModelTier;
+  keyIndex: number;     // 0 = key 1, 1 = key 2
+  keyLabel: string;
 }
 
 /**
- * Pick the best available tier for the next chat request.
- * Tier 1 (Gemini 3) first for better quality, then Tier 2 (2.5) for cheapest tokens.
- *
- * Call with `searchEnabled=true` when the message will use Google Search grounding.
- * Only search-enabled requests count toward the free tier limits — plain messages
- * don't consume search quota and can always use the best tier.
+ * Pick the best available tier + API key for the next chat request.
+ * Does NOT increment counters — call `confirmUsed()` after successful API call.
  */
-export function getTier(searchEnabled: boolean = false): ModelTier {
-  checkResets();
-
-  // Non-search messages always use Tier 1 (best quality) — no quota consumed
-  if (!searchEnabled) return 'gemini-3';
-
-  // Search-enabled messages count toward the free grounding quota
-  if (tier1Count < TIER1_LIMIT) {
-    tier1Count++;
-    return 'gemini-3';
+export function selectTier(searchEnabled: boolean): TierSelection {
+  // Non-search messages always use Tier 1 key 1 — no quota consumed
+  if (!searchEnabled) {
+    return { tier: 'gemini-3', keyIndex: 0, keyLabel: keys[0].label };
   }
-  if (tier2Count < TIER2_LIMIT) {
-    tier2Count++;
-    return 'gemini-2.5';
+
+  // Try each key's Tier 1 (Gemini 3.1 monthly), then Tier 2 (Gemini 2.5 daily)
+  for (let ki = 0; ki < keys.length; ki++) {
+    const k = keys[ki];
+    checkResets(k);
+
+    if (k.t1Count < T1_LIMIT) {
+      return { tier: 'gemini-3', keyIndex: ki, keyLabel: k.label };
+    }
+    if (k.t2Count < T2_LIMIT) {
+      return { tier: 'gemini-2.5', keyIndex: ki, keyLabel: k.label };
+    }
   }
-  return 'grok';
+
+  // All free quotas exhausted — fall to paid Grok
+  return { tier: 'grok', keyIndex: -1, keyLabel: 'N/A (Grok)' };
 }
 
 /**
- * Roll back the counter when Gemini fails (so failed requests don't eat quota).
+ * Call AFTER a successful Gemini API call to increment the counter.
+ * Only counts search-enabled requests.
  */
-export function rollbackTier(tier: ModelTier): void {
-  if (tier === 'gemini-3' && tier1Count > 0) tier1Count--;
-  if (tier === 'gemini-2.5' && tier2Count > 0) tier2Count--;
+export function confirmUsed(tier: ModelTier, keyIndex: number, searchEnabled: boolean): void {
+  if (!searchEnabled || keyIndex < 0 || keyIndex >= keys.length) return;
+
+  const k = keys[keyIndex];
+  checkResets(k);
+
+  if (tier === 'gemini-3') k.t1Count++;
+  else if (tier === 'gemini-2.5') k.t2Count++;
 }
 
 /**
  * Current quota status — exposed to the admin API cost dashboard.
  */
 export function getQuotaStatus() {
-  checkResets();
+  keys.forEach(checkResets);
   return {
-    tier1: { model: 'Gemini 3.1 Flash-Lite Preview', used: tier1Count, limit: TIER1_LIMIT, remaining: TIER1_LIMIT - tier1Count, period: 'monthly' },
-    tier2: { model: 'Gemini 2.5 Flash-Lite', used: tier2Count, limit: TIER2_LIMIT, remaining: TIER2_LIMIT - tier2Count, period: 'daily' },
+    keys: keys.map((k, i) => ({
+      index: i,
+      label: k.label,
+      active: i === 0 ? (k.t1Count < T1_LIMIT || k.t2Count < T2_LIMIT) : true,
+      tier1: { model: 'Gemini 3.1 Flash-Lite Preview', used: k.t1Count, limit: T1_LIMIT, remaining: T1_LIMIT - k.t1Count, period: 'monthly' },
+      tier2: { model: 'Gemini 2.5 Flash-Lite', used: k.t2Count, limit: T2_LIMIT, remaining: T2_LIMIT - k.t2Count, period: 'daily' },
+    })),
+    totalFreeSearchCapacity: {
+      monthly: T1_LIMIT * keys.length,
+      daily: T2_LIMIT * keys.length,
+      description: `${keys.length} API keys × ${T1_LIMIT}/month + ${T2_LIMIT}/day each`,
+    },
   };
 }

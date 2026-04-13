@@ -8,6 +8,7 @@ import {
   sendChatMessage,
   fetchUserUsage,
   ChatItem,
+  ChatMode,
 } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { postToParent } from '../lib/pluginProtocol';
@@ -22,6 +23,7 @@ export function useChatManager() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [chatMode, setChatMode] = useState<ChatMode>('fast');
   const [activeDocuments, setActiveDocuments] = useState<DocumentContext[]>([]);
   const [referencedProfile, setReferencedProfile] = useState<{ id: string; name: string; data: Record<string, unknown> } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -213,6 +215,7 @@ export function useChatManager() {
           if (references?.length) receivedRefs = references;
         },
         referencedProfile ? { name: referencedProfile.name, data: referencedProfile.data } : undefined,
+        chatMode,
       );
 
       setReferencedProfile(null);
@@ -393,5 +396,7 @@ export function useChatManager() {
     continueResponse,
     referencedProfile,
     setReferencedProfile,
+    chatMode,
+    setChatMode,
   };
 }

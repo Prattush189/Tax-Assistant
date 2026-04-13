@@ -1,7 +1,7 @@
 // server/routes/chat.ts
 import { Router, Response } from 'express';
-import { grok, GROK_MODEL, INPUT_COST_PER_TOKEN, OUTPUT_COST_PER_TOKEN, WEB_SEARCH_COST, GEMINI_T1_INPUT_COST, GEMINI_T1_OUTPUT_COST, GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST, GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, GEMINI_API_KEY_RAW } from '../lib/grok.js';
-import { getTier, rollbackTier, type ModelTier } from '../lib/searchQuota.js';
+import { grok, GROK_MODEL, INPUT_COST_PER_TOKEN, OUTPUT_COST_PER_TOKEN, WEB_SEARCH_COST, GEMINI_T1_INPUT_COST, GEMINI_T1_OUTPUT_COST, GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST, GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, GEMINI_API_KEYS } from '../lib/grok.js';
+import { selectTier, confirmUsed, type ModelTier } from '../lib/searchQuota.js';
 import { streamGeminiChat } from '../lib/geminiChat.js';
 import { chatRepo } from '../db/repositories/chatRepo.js';
 import { messageRepo } from '../db/repositories/messageRepo.js';
@@ -162,7 +162,9 @@ RULES:
 - If reference text is injected, use it silently — NEVER mention "the reference" or "provided context".
 - Cite section numbers (both old and new Act). Mention consulting a CA for official filing.
 - GST slabs (post 56th Council): 0% essentials, 5% daily needs, 18% standard, 40% demerit, 3% gold.
-- New regime slabs: 0-4L nil, 4-8L 5%, 8-12L 10%, 12-16L 15%, 16-20L 20%, 20-24L 25%, 24L+ 30%. Std deduction ₹75K, rebate 87A up to ₹12L.
+- NEW REGIME FY 2025-26: 0-4L nil, 4-8L 5%, 8-12L 10%, 12-16L 15%, 16-20L 20%, 20-24L 25%, 24L+ 30%. Std deduction ₹75K, rebate 87A ≤₹12L (max ₹60K).
+- NEW REGIME FY 2024-25: 0-3L nil, 3-7L 5%, 7-10L 10%, 10-12L 15%, 12-15L 20%, 15L+ 30%. Std deduction ₹50K (post July Budget ₹75K), rebate 87A ≤₹7L.
+- OLD REGIME (all FYs): Below-60: 0-2.5L nil, 2.5-5L 5%, 5-10L 20%, 10L+ 30%. Senior(60-80): 0-3L nil. Super-senior(80+): 0-5L nil. Std deduction ₹50K, rebate 87A ≤₹5L (max ₹12.5K).
 
 HANDLING ATTACHED DOCUMENTS:
 - If the user attaches a document and asks a vague question, your response MUST focus on the attached document's content.
@@ -342,18 +344,21 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
       // Tier 2: Gemini 2.5 Flash-Lite (500 free searches/day, cheapest tokens)
       // Tier 3: Grok 4.1 Fast (paid search $5/1K — cheapest paid option)
       const searchEnabled = shouldEnableWebSearch(message);
-      const tier: ModelTier = getTier(searchEnabled);
+      const selection = selectTier(searchEnabled);
+      let { tier } = selection;
+      const { keyIndex } = selection;
       let usedModel = '';
 
-      if ((tier === 'gemini-3' || tier === 'gemini-2.5') && GEMINI_API_KEY_RAW) {
+      const apiKey = keyIndex >= 0 && keyIndex < GEMINI_API_KEYS.length ? GEMINI_API_KEYS[keyIndex] : '';
+
+      if ((tier === 'gemini-3' || tier === 'gemini-2.5') && apiKey) {
         // ── Gemini path: native API with Google Search grounding ──
-        // T1 = gemini-3.1-flash-lite-preview, T2 = gemini-2.5-flash-lite
         const geminiModel = tier === 'gemini-3' ? GEMINI_CHAT_MODEL_T1 : GEMINI_CHAT_MODEL_T2;
         usedModel = geminiModel;
         const historyPlain = history.map(m => ({ role: m.role as string, content: m.content as string }));
 
         try {
-          for await (const chunk of streamGeminiChat(geminiModel, SYSTEM_INSTRUCTION, historyPlain, userContent, GEMINI_API_KEY_RAW, MAX_TOKENS, searchEnabled)) {
+          for await (const chunk of streamGeminiChat(geminiModel, SYSTEM_INSTRUCTION, historyPlain, userContent, apiKey, MAX_TOKENS, searchEnabled)) {
             if (chunk.text) {
               fullResponse += chunk.text;
               res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`);
@@ -362,14 +367,14 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
               inputTok = chunk.inputTokens ?? 0;
               outputTok = chunk.outputTokens ?? 0;
               stopReason = 'end_turn';
-              // Don't pass grounding chunks as references — user doesn't want them
             }
           }
+          // Only increment counter AFTER successful response
+          confirmUsed(tier, keyIndex, searchEnabled);
         } catch (geminiErr) {
-          // Gemini failed — rollback quota counter and fall through to Grok
-          rollbackTier(tier);
-          console.warn(`[chat] Gemini ${geminiModel} failed, falling back to Grok:`, (geminiErr as Error).message?.slice(0, 120));
-          usedModel = GROK_MODEL;
+          // Gemini failed — counter NOT incremented. Fall through to Grok.
+          console.warn(`[chat] Gemini ${geminiModel} (${selection.keyLabel}) failed, falling back to Grok:`, (geminiErr as Error).message?.slice(0, 120));
+          usedModel = '';
           // Fall through to Grok below
         }
       }
@@ -436,7 +441,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
       const inputCost = isGeminiT1 ? GEMINI_T1_INPUT_COST : isGeminiT2 ? GEMINI_T2_INPUT_COST : INPUT_COST_PER_TOKEN;
       const outputCost = isGeminiT1 ? GEMINI_T1_OUTPUT_COST : isGeminiT2 ? GEMINI_T2_OUTPUT_COST : OUTPUT_COST_PER_TOKEN;
       const searchCost = isGemini ? 0 : (shouldEnableWebSearch(message) ? WEB_SEARCH_COST : 0);
-      const actualSearchUsed = searchEnabled;
+      const actualSearchUsed = searchEnabled && (usedModel !== GROK_MODEL || shouldEnableWebSearch(message));
       const cost = (inputTok * inputCost) + (outputTok * outputCost) + searchCost;
       usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, inputTok, outputTok, cost, false, usedModel || undefined, actualSearchUsed);
 

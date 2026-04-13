@@ -107,24 +107,38 @@ export function ModelUsageDashboard() {
         </div>
       </div>
 
-      {/* Search quota status */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <QuotaCard
-          label={quota.tier1.model ?? 'Gemini 3 Flash-Lite'}
-          tier="Tier 1"
-          used={quota.tier1.used}
-          limit={quota.tier1.limit}
-          period={quota.tier1.period}
-          color="purple"
-        />
-        <QuotaCard
-          label={quota.tier2.model ?? 'Gemini 2.5 Flash-Lite'}
-          tier="Tier 2"
-          used={quota.tier2.used}
-          limit={quota.tier2.limit}
-          period={quota.tier2.period}
-          color="blue"
-        />
+      {/* Search quota status — per API key */}
+      <div className="space-y-3">
+        {(quota.keys ?? [{ label: 'Key 1', tier1: quota.tier1, tier2: quota.tier2 }]).map((key: any, ki: number) => (
+          <div key={ki} className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <div className={cn('w-2 h-2 rounded-full', key.active !== false ? 'bg-emerald-500' : 'bg-gray-400')} />
+              <h4 className="text-xs font-semibold text-gray-700 dark:text-gray-300">{key.label ?? `API Key ${ki + 1}`}</h4>
+              {key.active !== false && <span className="text-[9px] font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 px-1.5 py-0.5 rounded">ACTIVE</span>}
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <QuotaCard
+                label={key.tier1?.model ?? 'Gemini 3.1 Flash-Lite'}
+                tier="Tier 1"
+                used={key.tier1?.used ?? 0}
+                limit={key.tier1?.limit ?? 4800}
+                period={key.tier1?.period ?? 'monthly'}
+                color="purple"
+              />
+              <QuotaCard
+                label={key.tier2?.model ?? 'Gemini 2.5 Flash-Lite'}
+                tier="Tier 2"
+                used={key.tier2?.used ?? 0}
+                limit={key.tier2?.limit ?? 480}
+                period={key.tier2?.period ?? 'daily'}
+                color="blue"
+              />
+            </div>
+          </div>
+        ))}
+        {quota.totalFreeSearchCapacity && (
+          <p className="text-[10px] text-gray-400 px-2">{quota.totalFreeSearchCapacity.description}</p>
+        )}
       </div>
 
       {/* Per-model breakdown */}

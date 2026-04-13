@@ -20,6 +20,8 @@ function getAuthHeaders(): Record<string, string> {
 
 // ── Chat API (streaming) ─────────────────────────────────────────────────
 
+export type ChatMode = 'fast' | 'thinking';
+
 export async function sendChatMessage(
   chatId: string | null,
   message: string,
@@ -28,10 +30,12 @@ export async function sendChatMessage(
   fileContexts?: { filename: string; mimeType: string; extractedData?: unknown }[],
   onDone?: (stopReason: string | null, references?: SectionReference[]) => void,
   profileContext?: { name: string; data: Record<string, unknown> },
+  chatMode?: ChatMode,
 ): Promise<void> {
   const body: Record<string, unknown> = {
     message,
     chatId: chatId ?? undefined,
+    chatMode: chatMode ?? 'fast',
     // Send as single fileContext for backward compat, or array for multi
     ...(fileContexts && fileContexts.length === 1
       ? { fileContext: fileContexts[0] }

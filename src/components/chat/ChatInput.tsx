@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback } from 'react';
-import { Send, Paperclip, FileText, X, BookUser, Lock, BarChart3 } from 'lucide-react';
+import { Send, Paperclip, FileText, X, BookUser, Lock, BarChart3, Zap, Brain } from 'lucide-react';
+import type { ChatMode } from '../../services/api';
 import { cn } from '../../lib/utils';
 import { UploadPhase } from '../../hooks/useFileUpload';
 import { DocumentContext } from '../../types';
@@ -21,12 +22,15 @@ interface ChatInputProps {
   onReferenceProfile?: (profile: { id: string; name: string; data: Record<string, unknown> }) => void;
   onClearReference?: () => void;
   isPro?: boolean;
+  chatMode?: ChatMode;
+  onModeChange?: (mode: ChatMode) => void;
 }
 
 export function ChatInput({
   input, isLoading, onInputChange, onSend,
   activeDocuments, onFileSelect, onDetachDocument, uploadPhase, attachmentLimit,
   profiles, referencedProfile, onReferenceProfile, onClearReference, isPro,
+  chatMode = 'fast', onModeChange,
 }: ChatInputProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showProfileDropdown, setShowProfileDropdown] = useState(false);
@@ -138,6 +142,23 @@ export function ChatInput({
             >
               <Paperclip className="w-5 h-5" />
             </button>
+
+            {/* Fast / Thinking toggle */}
+            {onModeChange && (
+              <button
+                onClick={() => onModeChange(chatMode === 'fast' ? 'thinking' : 'fast')}
+                className={cn(
+                  'flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium transition-all shrink-0 border',
+                  chatMode === 'thinking'
+                    ? 'bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400 border-purple-200 dark:border-purple-800'
+                    : 'bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:border-purple-300',
+                )}
+                title={chatMode === 'fast' ? 'Switch to Thinking mode (deeper analysis, 2x credits)' : 'Switch to Fast mode (quick answers, 1x credit)'}
+              >
+                {chatMode === 'thinking' ? <Brain className="w-3.5 h-3.5" /> : <Zap className="w-3.5 h-3.5" />}
+                {chatMode === 'thinking' ? 'Thinking' : 'Fast'}
+              </button>
+            )}
 
             {/* Profile reference button */}
             <div className="relative shrink-0">
