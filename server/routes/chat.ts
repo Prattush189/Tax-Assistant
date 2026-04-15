@@ -358,9 +358,10 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
       const historyPlain = history.map(m => ({ role: m.role as string, content: m.content as string }));
 
       if (isThinking) {
-        // ── THINKING: Gemini 3 Flash primary (always search) ──
-        const selection = selectTier(true);  // picks best available Gemini 3 key
-        const thinkApiKey = selection.keyIndex >= 0 ? GEMINI_API_KEYS[selection.keyIndex] ?? '' : '';
+        // ── THINKING: Gemini 2.5 Flash primary (always search) ──
+        // 2.5 family uses the daily 1,500 RPD pool — track under 'gemini-2.5'.
+        const primaryIdx = getActiveKeyIndex();
+        const thinkApiKey = GEMINI_API_KEYS[primaryIdx] ?? '';
         if (thinkApiKey) {
           usedModel = GEMINI_CHAT_MODEL_THINK;
           try {
@@ -368,17 +369,17 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
               if (chunk.text) { fullResponse += chunk.text; res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`); }
               if (chunk.done) { inputTok = chunk.inputTokens ?? 0; outputTok = chunk.outputTokens ?? 0; stopReason = 'end_turn'; }
             }
-            confirmUsed('gemini-3', selection.keyIndex, true);
+            confirmUsed('gemini-2.5', primaryIdx, true);
           } catch (err) {
-            console.warn('[chat] Think: Gemini 3 Flash failed, falling back to 2.5 Flash:', (err as Error).message?.slice(0, 120));
+            console.warn('[chat] Think: Gemini 2.5 Flash failed, falling back to Gemini 3 Flash:', (err as Error).message?.slice(0, 120));
             fullResponse = ''; usedModel = '';
           }
         }
 
-        // Gemini 2.5 Flash fallback for thinking
+        // Gemini 3 Flash fallback for thinking — uses the 3.x monthly pool.
         if (!fullResponse) {
-          const activeIdx = getActiveKeyIndex();
-          const fbApiKey = GEMINI_API_KEYS[activeIdx] ?? '';
+          const selection = selectTier(true);  // pick best key for Gemini 3 quota
+          const fbApiKey = selection.keyIndex >= 0 ? GEMINI_API_KEYS[selection.keyIndex] ?? '' : '';
           if (fbApiKey) {
             usedModel = GEMINI_CHAT_MODEL_THINK_FB;
             try {
@@ -386,9 +387,9 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
                 if (chunk.text) { fullResponse += chunk.text; res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`); }
                 if (chunk.done) { inputTok = chunk.inputTokens ?? 0; outputTok = chunk.outputTokens ?? 0; stopReason = 'end_turn'; }
               }
-              confirmUsed('gemini-2.5', activeIdx, true);
+              confirmUsed('gemini-3', selection.keyIndex, true);
             } catch (err) {
-              console.warn('[chat] Think fallback: Gemini 2.5 Flash also failed:', (err as Error).message?.slice(0, 120));
+              console.warn('[chat] Think fallback: Gemini 3 Flash also failed:', (err as Error).message?.slice(0, 120));
               fullResponse = ''; usedModel = '';
             }
           }
@@ -442,23 +443,33 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
       }
       chatRepo.touchTimestamp(chatId);
 
-      // Log usage — cost depends on which model was actually used
-      const costMap: Record<string, [number, number]> = {
-        [GEMINI_CHAT_MODEL_T1]: [GEMINI_T1_INPUT_COST, GEMINI_T1_OUTPUT_COST],
-        [GEMINI_CHAT_MODEL_T2]: [GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST],
-        [GEMINI_CHAT_MODEL_THINK]: [GEMINI_THINK_INPUT_COST, GEMINI_THINK_OUTPUT_COST],
-        [GEMINI_CHAT_MODEL_THINK_FB]: [GEMINI_THINK_FB_INPUT_COST, GEMINI_THINK_FB_OUTPUT_COST],
-      };
-      const [inputCost, outputCost] = costMap[usedModel] ?? [INPUT_COST_PER_TOKEN, OUTPUT_COST_PER_TOKEN];
-      const searchCost = usedModel in costMap ? 0 : (searchEnabled ? WEB_SEARCH_COST : 0);
-      const actualSearchUsed = searchEnabled;
-      const cost = (inputTok * inputCost) + (outputTok * outputCost) + searchCost;
-      usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, inputTok, outputTok, cost, false, usedModel || undefined, actualSearchUsed);
-      // Thinking mode costs 4 credits — log 3 extra zero-cost rows to consume them
-      if (isThinking) {
-        for (let c = 1; c < creditCost; c++) {
-          usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, 0, 0, 0, false, usedModel || undefined, false);
+      // Log usage — cost depends on which model was actually used.
+      // Guard against silent failures: if no tokens were consumed and no
+      // response was produced, the call did NOT succeed — don't charge the
+      // user a credit for it (previously this still logged a usage row and
+      // ate into their message quota).
+      const didProduceOutput = (inputTok > 0 || outputTok > 0) && fullResponse.length > 0;
+      if (didProduceOutput) {
+        const costMap: Record<string, [number, number]> = {
+          [GEMINI_CHAT_MODEL_T1]: [GEMINI_T1_INPUT_COST, GEMINI_T1_OUTPUT_COST],
+          [GEMINI_CHAT_MODEL_T2]: [GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST],
+          [GEMINI_CHAT_MODEL_THINK]: [GEMINI_THINK_INPUT_COST, GEMINI_THINK_OUTPUT_COST],
+          [GEMINI_CHAT_MODEL_THINK_FB]: [GEMINI_THINK_FB_INPUT_COST, GEMINI_THINK_FB_OUTPUT_COST],
+        };
+        const [inputCost, outputCost] = costMap[usedModel] ?? [INPUT_COST_PER_TOKEN, OUTPUT_COST_PER_TOKEN];
+        const searchCost = usedModel in costMap ? 0 : (searchEnabled ? WEB_SEARCH_COST : 0);
+        const actualSearchUsed = searchEnabled;
+        const cost = (inputTok * inputCost) + (outputTok * outputCost) + searchCost;
+        usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, inputTok, outputTok, cost, false, usedModel || undefined, actualSearchUsed);
+        // Thinking mode costs 2 credits — log extra zero-cost rows to consume them.
+        // Only do this if the primary call actually succeeded.
+        if (isThinking) {
+          for (let c = 1; c < creditCost; c++) {
+            usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, 0, 0, 0, false, usedModel || undefined, false);
+          }
         }
+      } else {
+        console.warn('[chat] skipping usage log — no tokens and empty response (likely upstream failure)');
       }
 
       res.write(`data: ${JSON.stringify({ done: true, stop_reason: stopReason })}\n\n`);

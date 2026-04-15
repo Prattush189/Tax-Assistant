@@ -33,10 +33,10 @@ const MODEL_COLORS: Record<string, string> = {
 };
 
 const MODEL_LABELS: Record<string, string> = {
-  'gemini-3-flash-preview': 'Gemini 3 Flash (Think Primary)',
+  'gemini-3-flash-preview': 'Gemini 3 Flash (Think Fallback)',
   'gemini-3.1-flash-lite-preview': 'Gemini 3.1 Flash-Lite (Fast Fallback)',
   'gemini-2.5-flash-lite': 'Gemini 2.5 Flash-Lite (Fast Primary)',
-  'gemini-2.5-flash': 'Gemini 2.5 Flash (Think Fallback)',
+  'gemini-2.5-flash': 'Gemini 2.5 Flash (Think Primary)',
   'grok-4-1-fast-reasoning': 'Grok 4.1 Fast (Legacy)',
 };
 
@@ -192,13 +192,13 @@ export function ModelUsageDashboard() {
             <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <span className="text-[10px] font-bold text-purple-500 bg-purple-100 dark:bg-purple-900/30 px-1.5 py-0.5 rounded">PRIMARY</span>
-                <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Gemini 3 Flash</span>
+                <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Gemini 2.5 Flash</span>
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-[10px] font-bold text-sky-500 bg-sky-100 dark:bg-sky-900/30 px-1.5 py-0.5 rounded">FALLBACK</span>
-                <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Gemini 2.5 Flash</span>
+                <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Gemini 3 Flash</span>
               </div>
-              <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">8,000 tokens | Always web search | 3.x family: 5,000/month</p>
+              <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">8,000 tokens | Always web search | 2.5 family: 1,500/day</p>
             </div>
           </div>
         </div>

@@ -266,7 +266,7 @@ export function PlanPage() {
         key: sub.keyId,
         subscription_id: sub.subscriptionId,
         name: 'Smartbiz AI',
-        description: `${planId === 'pro' ? 'Pro' : 'Enterprise'} Plan — ${billing === 'monthly' ? 'Monthly' : 'Yearly'}`,
+        description: `${planId === 'pro' ? 'Pro' : 'Enterprise'} · ₹${PRICES[planId][billing].toLocaleString('en-IN')}/${billing === 'monthly' ? 'month' : 'year'} · Auto-renews · Cancel any time`,
         prefill: {
           name: user?.name ?? '',
           email: user?.email ?? '',

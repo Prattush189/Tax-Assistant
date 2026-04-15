@@ -229,6 +229,20 @@ db.exec(`CREATE TABLE IF NOT EXISTS payments (
 db.exec("CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments(user_id)");
 db.exec("CREATE INDEX IF NOT EXISTS idx_payments_order_id ON payments(razorpay_order_id)");
 
+// Gemini search-grounding quota — persisted per API key so counters survive
+// server restarts. Reset keys stored as:
+//   t1_reset_ym   = year*12 + month (e.g. 2026*12+3 for Apr 2026) — monthly rollover
+//   t2_reset_date = local date string (new Date().toDateString()) — daily rollover
+db.exec(`CREATE TABLE IF NOT EXISTS search_quota (
+  key_index INTEGER PRIMARY KEY,
+  label TEXT NOT NULL,
+  t1_count INTEGER NOT NULL DEFAULT 0,
+  t1_reset_ym INTEGER NOT NULL,
+  t2_count INTEGER NOT NULL DEFAULT 0,
+  t2_reset_date TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+)`);
+
 // Style profiles — one per user, stores LLM-extracted writing style rules
 db.exec(`CREATE TABLE IF NOT EXISTS style_profiles (
   id TEXT PRIMARY KEY,

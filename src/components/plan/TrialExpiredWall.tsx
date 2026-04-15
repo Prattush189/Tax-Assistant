@@ -65,7 +65,7 @@ export function TrialExpiredWall() {
         key: sub.keyId,
         subscription_id: sub.subscriptionId,
         name: 'Smartbiz AI',
-        description: `${planId === 'pro' ? 'Pro' : 'Enterprise'} Plan — ${billing === 'monthly' ? 'Monthly' : 'Yearly'}`,
+        description: `${planId === 'pro' ? 'Pro' : 'Enterprise'} · ₹${(billing === 'monthly' ? PLANS.find(p => p.id === planId)!.monthly : PLANS.find(p => p.id === planId)!.yearly).toLocaleString('en-IN')}/${billing === 'monthly' ? 'month' : 'year'} · Auto-renews · Cancel any time`,
         prefill: { name: user?.name ?? '', email: user?.email ?? '' },
         theme: { color: '#0D9668' },
         modal: { ondismiss: () => setPaying(null) },

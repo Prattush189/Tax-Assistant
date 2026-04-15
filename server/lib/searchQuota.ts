@@ -18,6 +18,7 @@
  */
 
 import { GEMINI_API_KEYS } from './grok.js';
+import db from '../db/index.js';
 
 export type ModelTier = 'gemini-3' | 'gemini-2.5' | 'grok';
 
@@ -35,21 +36,88 @@ let activeKeyIndex = 0;
 
 interface KeyQuota {
   label: string;
-  t1Count: number;     // Gemini 3.1 monthly
-  t1ResetMonth: number;
+  t1Count: number;     // Gemini 3.x monthly
+  t1ResetYm: number;   // year*12 + month — year-safe monthly rollover
   t2Count: number;     // Gemini 2.5 daily
-  t2ResetDate: string;
+  t2ResetDate: string; // new Date().toDateString()
 }
 
-const keys: KeyQuota[] = [
-  { label: 'Key 1 (Primary)', t1Count: 0, t1ResetMonth: new Date().getMonth(), t2Count: 0, t2ResetDate: new Date().toDateString() },
-  { label: 'Key 2 (Secondary)', t1Count: 0, t1ResetMonth: new Date().getMonth(), t2Count: 0, t2ResetDate: new Date().toDateString() },
-];
+function currentYm(now: Date = new Date()): number {
+  return now.getFullYear() * 12 + now.getMonth();
+}
 
-function checkResets(k: KeyQuota): void {
+function makeDefault(label: string): KeyQuota {
+  return { label, t1Count: 0, t1ResetYm: currentYm(), t2Count: 0, t2ResetDate: new Date().toDateString() };
+}
+
+const KEY_LABELS = ['Key 1 (Primary)', 'Key 2 (Secondary)'];
+const keys: KeyQuota[] = KEY_LABELS.map(makeDefault);
+
+// ── Persistence ────────────────────────────────────────────────────────────
+// Counters must survive server restarts. Each key's row is upserted on every
+// increment and on every reset-rollover.
+const persistStmt = db.prepare(`
+  INSERT INTO search_quota (key_index, label, t1_count, t1_reset_ym, t2_count, t2_reset_date, updated_at)
+  VALUES (@key_index, @label, @t1_count, @t1_reset_ym, @t2_count, @t2_reset_date, datetime('now', '+5 hours', '+30 minutes'))
+  ON CONFLICT(key_index) DO UPDATE SET
+    label = excluded.label,
+    t1_count = excluded.t1_count,
+    t1_reset_ym = excluded.t1_reset_ym,
+    t2_count = excluded.t2_count,
+    t2_reset_date = excluded.t2_reset_date,
+    updated_at = excluded.updated_at
+`);
+
+function persist(ki: number): void {
+  const k = keys[ki];
+  try {
+    persistStmt.run({
+      key_index: ki,
+      label: k.label,
+      t1_count: k.t1Count,
+      t1_reset_ym: k.t1ResetYm,
+      t2_count: k.t2Count,
+      t2_reset_date: k.t2ResetDate,
+    });
+  } catch (e) {
+    console.warn('[searchQuota] persist failed:', (e as Error).message);
+  }
+}
+
+// Load from DB on module init; any missing rows are inserted with current defaults.
+(function hydrate() {
+  try {
+    const rows = db.prepare('SELECT key_index, label, t1_count, t1_reset_ym, t2_count, t2_reset_date FROM search_quota').all() as Array<{
+      key_index: number; label: string; t1_count: number; t1_reset_ym: number; t2_count: number; t2_reset_date: string;
+    }>;
+    for (const r of rows) {
+      if (r.key_index < 0 || r.key_index >= keys.length) continue;
+      keys[r.key_index] = {
+        label: KEY_LABELS[r.key_index] ?? r.label,
+        t1Count: r.t1_count,
+        t1ResetYm: r.t1_reset_ym,
+        t2Count: r.t2_count,
+        t2ResetDate: r.t2_reset_date,
+      };
+    }
+    // Apply any expired resets and persist any missing rows.
+    for (let i = 0; i < keys.length; i++) {
+      checkResets(keys[i]);
+      persist(i);
+    }
+  } catch (e) {
+    console.warn('[searchQuota] hydrate failed, starting fresh:', (e as Error).message);
+  }
+})();
+
+function checkResets(k: KeyQuota): boolean {
   const now = new Date();
-  if (now.getMonth() !== k.t1ResetMonth) { k.t1Count = 0; k.t1ResetMonth = now.getMonth(); }
-  if (now.toDateString() !== k.t2ResetDate) { k.t2Count = 0; k.t2ResetDate = now.toDateString(); }
+  const ym = currentYm(now);
+  const today = now.toDateString();
+  let changed = false;
+  if (ym !== k.t1ResetYm) { k.t1Count = 0; k.t1ResetYm = ym; changed = true; }
+  if (today !== k.t2ResetDate) { k.t2Count = 0; k.t2ResetDate = today; changed = true; }
+  return changed;
 }
 
 export interface TierSelection {
@@ -81,7 +149,7 @@ export function selectTier(searchEnabled: boolean): TierSelection {
   for (let i = 0; i < keys.length; i++) {
     const ki = (activeKeyIndex + i) % keys.length;
     const k = keys[ki];
-    checkResets(k);
+    if (checkResets(k)) persist(ki);
 
     if (k.t1Count < t1Limit) {
       return { tier: 'gemini-3', keyIndex: ki, keyLabel: k.label };
@@ -107,13 +175,17 @@ export function confirmUsed(tier: ModelTier, keyIndex: number, searchEnabled: bo
 
   if (tier === 'gemini-3') k.t1Count++;
   else if (tier === 'gemini-2.5') k.t2Count++;
+  else return; // don't persist if nothing changed
+  persist(keyIndex);
 }
 
 /**
  * Current quota status — exposed to the admin API cost dashboard.
  */
 export function getQuotaStatus() {
-  keys.forEach(checkResets);
+  for (let i = 0; i < keys.length; i++) {
+    if (checkResets(keys[i])) persist(i);
+  }
   return {
     activeKeyIndex,
     t1Limit,

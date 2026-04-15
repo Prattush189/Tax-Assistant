@@ -213,7 +213,18 @@ export function ChatInput({
             {/* Fast / Thinking toggle — next to send */}
             {onModeChange && (
               <button
-                onClick={() => onModeChange(chatMode === 'fast' ? 'thinking' : 'fast')}
+                onClick={() => {
+                  const next: ChatMode = chatMode === 'fast' ? 'thinking' : 'fast';
+                  if (next === 'thinking') {
+                    // One-shot warning: Think mode consumes 2 credits per message
+                    toast('Think mode uses 2 credits per message (vs 1 for Fast). Use it for deeper analysis.', {
+                      icon: '🧠',
+                      duration: 4500,
+                      id: 'think-mode-warn', // de-dupe on rapid toggling
+                    });
+                  }
+                  onModeChange(next);
+                }}
                 className={cn(
                   'flex items-center gap-1 px-2.5 py-2 rounded-lg text-xs font-medium transition-all shrink-0 border',
                   chatMode === 'thinking'
