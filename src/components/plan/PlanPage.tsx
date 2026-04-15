@@ -2,9 +2,12 @@ import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import {
   fetchUserUsage,
+  fetchPaymentHistory,
+  PaymentHistoryResponse,
   UserUsageResponse,
-  createPaymentOrder,
-  verifyPayment,
+  createSubscription,
+  verifySubscriptionPayment,
+  cancelSubscription,
 } from '../../services/api';
 import {
   Check,
@@ -225,14 +228,20 @@ export function PlanPage() {
   const { user, refreshUser } = useAuth();
   const currentPlan = user?.plan || 'free';
   const [usage, setUsage] = useState<UserUsageResponse | null>(null);
+  const [history, setHistory] = useState<PaymentHistoryResponse | null>(null);
   const [billing, setBilling] = useState<'monthly' | 'yearly'>('monthly');
   const [paying, setPaying] = useState<string | null>(null); // 'pro' | 'enterprise'
   const [payError, setPayError] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelMsg, setCancelMsg] = useState<string | null>(null);
 
   useEffect(() => {
     fetchUserUsage()
       .then(setUsage)
       .catch((err) => console.error('Failed to fetch usage:', err));
+    fetchPaymentHistory()
+      .then(setHistory)
+      .catch((err) => console.error('Failed to fetch payment history:', err));
   }, []);
 
   const scrollToPlans = () => {
@@ -251,15 +260,13 @@ export function PlanPage() {
         return;
       }
 
-      const order = await createPaymentOrder(planId, billing);
+      const sub = await createSubscription(planId, billing);
 
       const options = {
-        key: order.keyId,
-        amount: order.amount,
-        currency: order.currency,
+        key: sub.keyId,
+        subscription_id: sub.subscriptionId,
         name: 'Smartbiz AI',
         description: `${planId === 'pro' ? 'Pro' : 'Enterprise'} Plan — ${billing === 'monthly' ? 'Monthly' : 'Yearly'}`,
-        order_id: order.orderId,
         prefill: {
           name: user?.name ?? '',
           email: user?.email ?? '',
@@ -269,21 +276,22 @@ export function PlanPage() {
           ondismiss: () => setPaying(null),
         },
         handler: async (response: {
-          razorpay_order_id: string;
           razorpay_payment_id: string;
+          razorpay_subscription_id: string;
           razorpay_signature: string;
         }) => {
           try {
-            await verifyPayment({
-              razorpay_order_id: response.razorpay_order_id,
+            await verifySubscriptionPayment({
               razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_subscription_id: response.razorpay_subscription_id,
               razorpay_signature: response.razorpay_signature,
+              plan: planId,
+              billing,
             });
-            // Refresh user context so plan reflects immediately
             await refreshUser();
-            // Refresh usage
-            const fresh = await fetchUserUsage();
-            setUsage(fresh);
+            const [freshUsage, freshHistory] = await Promise.all([fetchUserUsage(), fetchPaymentHistory()]);
+            setUsage(freshUsage);
+            setHistory(freshHistory);
           } catch {
             setPayError('Payment was received but activation failed. Please contact support.');
           } finally {
@@ -300,6 +308,23 @@ export function PlanPage() {
       setPaying(null);
     }
   }, [billing, user, refreshUser]);
+
+  const handleCancel = useCallback(async () => {
+    if (!window.confirm('Cancel your subscription? Your plan stays active until the current billing period ends, then downgrades to Free.')) return;
+    setCancelling(true);
+    setCancelMsg(null);
+    try {
+      const result = await cancelSubscription();
+      setCancelMsg(result.message);
+      await refreshUser();
+      const freshHistory = await fetchPaymentHistory();
+      setHistory(freshHistory);
+    } catch (err) {
+      setCancelMsg(err instanceof Error ? err.message : 'Could not cancel. Please try again.');
+    } finally {
+      setCancelling(false);
+    }
+  }, [refreshUser]);
 
   const trialDaysLeft = usage?.trialDaysLeft ?? null;
   const showTrialBanner = currentPlan === 'free' && trialDaysLeft !== null && trialDaysLeft <= 10;
@@ -601,6 +626,25 @@ export function PlanPage() {
                 {new Date(user.plan_expires_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}
               </span>.
             </p>
+          )}
+
+          {/* Cancel subscription — only shown when subscription is active */}
+          {history?.subscriptionStatus === 'active' && (
+            <div className="mt-5 pt-5 border-t border-gray-200 dark:border-gray-700">
+              {cancelMsg && (
+                <p className="text-sm text-amber-600 dark:text-amber-400 mb-3">{cancelMsg}</p>
+              )}
+              <button
+                onClick={handleCancel}
+                disabled={cancelling}
+                className="text-sm text-red-500 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300 font-medium disabled:opacity-50"
+              >
+                {cancelling ? 'Cancelling…' : 'Cancel subscription'}
+              </button>
+              <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                Your plan stays active until the end of the billing period.
+              </p>
+            </div>
           )}
         </div>
       </div>

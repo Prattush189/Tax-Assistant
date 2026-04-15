@@ -20,6 +20,7 @@ import usageRouter from './routes/usage.js';
 import itrRouter from './routes/itr.js';
 import boardResolutionsRouter from './routes/boardResolutions.js';
 import paymentsRouter from './routes/payments.js';
+import webhooksRouter from './routes/webhooks.js';
 import itPortalImportRouter from './routes/itPortalImport.js';
 import styleProfileRouter from './routes/styleProfile.js';
 import form16ImportRouter from './routes/form16Import.js';
@@ -27,6 +28,8 @@ import clientsRouter from './routes/clients.js';
 import invitationsRouter, { publicInvitationRouter } from './routes/invitations.js';
 import { authMiddleware, adminMiddleware, trialCheckMiddleware } from './middleware/auth.js';
 import { authLimiter, chatLimiter, uploadLimiter } from './middleware/rateLimiter.js';
+import { warmupRazorpayPlans } from './lib/razorpayPlans.js';
+import { startRenewalReminderJob } from './jobs/renewalReminder.js';
 import helmet from 'helmet';
 import cors from 'cors';
 import path from 'path';
@@ -82,7 +85,12 @@ app.use(
   })
 );
 
-// 3. Body parsing
+// 3a. Webhook route — must come BEFORE express.json() so req.body stays a Buffer
+//     for HMAC-SHA256 signature verification. express.raw() consumes the stream
+//     and sets req._body = true so express.json() skips re-parsing this route.
+app.use('/api/webhooks', express.raw({ type: 'application/json' }), webhooksRouter);
+
+// 3b. Body parsing for all other routes
 app.use(express.json({ limit: '1mb' }));
 
 // 4. API routes
@@ -154,6 +162,12 @@ if (process.env.NODE_ENV === 'production') {
 
 app.listen(PORT, () => {
   console.log(`[API] Server running on :${PORT} (${process.env.NODE_ENV ?? 'development'})`);
+
+  // Pre-create all 4 Razorpay Plans on startup so first payment has no delay
+  void warmupRazorpayPlans();
+
+  // Start 48-hour renewal reminder email job (runs hourly)
+  startRenewalReminderJob();
 });
 
 export default app;

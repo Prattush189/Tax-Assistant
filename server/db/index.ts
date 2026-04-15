@@ -190,6 +190,26 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_profiles_updated_at ON profiles(updated_
 if (!colNames.includes('plan_expires_at')) {
   db.exec("ALTER TABLE users ADD COLUMN plan_expires_at TEXT");
 }
+// Razorpay Subscription tracking
+if (!colNames.includes('razorpay_subscription_id')) {
+  db.exec("ALTER TABLE users ADD COLUMN razorpay_subscription_id TEXT");
+}
+if (!colNames.includes('subscription_status')) {
+  // 'active' | 'halted' | 'cancelled' | 'completed' | NULL
+  db.exec("ALTER TABLE users ADD COLUMN subscription_status TEXT");
+}
+if (!colNames.includes('renewal_reminder_sent_at')) {
+  db.exec("ALTER TABLE users ADD COLUMN renewal_reminder_sent_at TEXT");
+}
+
+// razorpay_plan_cache — stores the 4 Razorpay Plan IDs so we only create them once.
+// Key: e.g. 'pro_monthly' | 'pro_yearly' | 'enterprise_monthly' | 'enterprise_yearly'
+db.exec(`CREATE TABLE IF NOT EXISTS razorpay_plan_cache (
+  key TEXT PRIMARY KEY,
+  razorpay_plan_id TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+)`);
+
 
 // Payments — full audit trail of every Razorpay order attempt.
 db.exec(`CREATE TABLE IF NOT EXISTS payments (

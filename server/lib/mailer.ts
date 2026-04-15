@@ -191,6 +191,127 @@ export async function sendInviteEmail(
   return sendMail({ to, subject, html, text });
 }
 
+/**
+ * Sent ~48 hours before a subscription renews so the user can update their
+ * payment method or cancel if they no longer need the plan.
+ */
+export async function sendRenewalReminderEmail(
+  to: string,
+  name: string,
+  plan: string,
+  renewalDate: string,
+  amountInr: number,
+): Promise<SendMailResult> {
+  const planLabel = plan.charAt(0).toUpperCase() + plan.slice(1);
+  const subject   = `Your Smartbiz AI ${planLabel} plan renews in 48 hours`;
+  const text =
+    `Hi ${name},\n\n` +
+    `This is a reminder that your Smartbiz AI ${planLabel} plan will automatically renew on ${renewalDate} for ₹${amountInr.toLocaleString('en-IN')}.\n\n` +
+    `If you'd like to make changes or cancel, log in and visit the Plan section.\n\n` +
+    `Smartbiz AI Team`;
+  const html = `
+<!doctype html><html><body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 32px 24px; color: #111827;">
+  <div style="text-align: center; margin-bottom: 32px;">
+    <h1 style="font-size: 18px; font-weight: 600; color: #0D9668; margin: 0;">Smartbiz AI</h1>
+  </div>
+  <h2 style="font-size: 20px; font-weight: 600; margin: 0 0 12px;">Upcoming renewal in 48 hours</h2>
+  <p style="font-size: 14px; line-height: 1.6; color: #4b5563; margin: 0 0 16px;">
+    Hi ${escapeHtml(name)},
+  </p>
+  <p style="font-size: 14px; line-height: 1.6; color: #4b5563; margin: 0 0 24px;">
+    Your <strong>${escapeHtml(planLabel)} plan</strong> will automatically renew on
+    <strong>${escapeHtml(renewalDate)}</strong> for
+    <strong>₹${amountInr.toLocaleString('en-IN')}</strong>.
+  </p>
+  <div style="background: #f9fafb; border-radius: 12px; padding: 16px; margin: 0 0 24px;">
+    <p style="margin: 0; font-size: 14px; color: #6b7280;">
+      To update your payment method or cancel, visit the <strong>Plan</strong> section in your account.
+    </p>
+  </div>
+  <p style="font-size: 12px; color: #9ca3af; margin: 0;">
+    If you have any questions, reply to this email. — Smartbiz AI Team
+  </p>
+</body></html>`.trim();
+  return sendMail({ to, subject, html, text });
+}
+
+/**
+ * Sent when Razorpay halts a subscription after repeated payment failures.
+ */
+export async function sendSubscriptionHaltedEmail(
+  to: string,
+  name: string,
+  plan: string,
+): Promise<SendMailResult> {
+  const planLabel = plan.charAt(0).toUpperCase() + plan.slice(1);
+  const subject   = `Action needed — Smartbiz AI ${planLabel} payment failed`;
+  const text =
+    `Hi ${name},\n\n` +
+    `We were unable to process payment for your Smartbiz AI ${planLabel} plan. Your subscription has been paused.\n\n` +
+    `Please update your payment method by logging in and visiting the Plan section. Once updated, your subscription will resume automatically.\n\n` +
+    `Smartbiz AI Team`;
+  const html = `
+<!doctype html><html><body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 32px 24px; color: #111827;">
+  <div style="text-align: center; margin-bottom: 32px;">
+    <h1 style="font-size: 18px; font-weight: 600; color: #0D9668; margin: 0;">Smartbiz AI</h1>
+  </div>
+  <h2 style="font-size: 20px; font-weight: 600; margin: 0 0 12px; color: #dc2626;">Payment failed — action needed</h2>
+  <p style="font-size: 14px; line-height: 1.6; color: #4b5563; margin: 0 0 16px;">Hi ${escapeHtml(name)},</p>
+  <p style="font-size: 14px; line-height: 1.6; color: #4b5563; margin: 0 0 24px;">
+    We were unable to process payment for your <strong>${escapeHtml(planLabel)} plan</strong>.
+    Your subscription has been paused and access will be limited until payment is resolved.
+  </p>
+  <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 12px; padding: 16px; margin: 0 0 24px;">
+    <p style="margin: 0; font-size: 14px; color: #dc2626; font-weight: 600;">
+      Please update your payment method in the Plan section to restore full access.
+    </p>
+  </div>
+  <p style="font-size: 12px; color: #9ca3af; margin: 0;">
+    If you have questions, reply to this email. — Smartbiz AI Team
+  </p>
+</body></html>`.trim();
+  return sendMail({ to, subject, html, text });
+}
+
+/**
+ * Sent immediately after a successful subscription payment (first charge or renewal).
+ */
+export async function sendPaymentConfirmationEmail(
+  to: string,
+  name: string,
+  plan: string,
+  amountInr: number,
+  nextRenewalDate: string,
+): Promise<SendMailResult> {
+  const planLabel = plan.charAt(0).toUpperCase() + plan.slice(1);
+  const subject   = `Payment confirmed — Smartbiz AI ${planLabel}`;
+  const text =
+    `Hi ${name},\n\n` +
+    `Your payment of ₹${amountInr.toLocaleString('en-IN')} for the ${planLabel} plan has been received.\n\n` +
+    `Your plan is now active and will renew on ${nextRenewalDate}.\n\n` +
+    `Smartbiz AI Team`;
+  const html = `
+<!doctype html><html><body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 32px 24px; color: #111827;">
+  <div style="text-align: center; margin-bottom: 32px;">
+    <h1 style="font-size: 18px; font-weight: 600; color: #0D9668; margin: 0;">Smartbiz AI</h1>
+  </div>
+  <h2 style="font-size: 20px; font-weight: 600; margin: 0 0 12px;">Payment confirmed</h2>
+  <p style="font-size: 14px; line-height: 1.6; color: #4b5563; margin: 0 0 16px;">Hi ${escapeHtml(name)},</p>
+  <p style="font-size: 14px; line-height: 1.6; color: #4b5563; margin: 0 0 24px;">
+    Your payment of <strong>₹${amountInr.toLocaleString('en-IN')}</strong> for the
+    <strong>${escapeHtml(planLabel)} plan</strong> has been received. Your plan is now active.
+  </p>
+  <div style="background: #ecfdf5; border-radius: 12px; padding: 16px; margin: 0 0 24px;">
+    <p style="margin: 0 0 4px; font-size: 13px; color: #065f46; font-weight: 600;">Next renewal</p>
+    <p style="margin: 0; font-size: 14px; color: #059669;">${escapeHtml(nextRenewalDate)}</p>
+  </div>
+  <p style="font-size: 12px; color: #9ca3af; margin: 0;">
+    To manage or cancel your subscription, visit the Plan section. — Smartbiz AI Team
+  </p>
+</body></html>`.trim();
+  return sendMail({ to, subject, html, text });
+}
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')

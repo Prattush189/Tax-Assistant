@@ -20,7 +20,10 @@ export interface UserRow {
   inviter_id: string | null;          // pool owner for shared-plan members
   itr_enabled: number;                // 0 | 1 — grants ITR tab without admin role
   session_token: string | null;       // random token per login — single-session enforcement
-  plan_expires_at: string | null;     // ISO timestamp — paid plan expiry; NULL = no paid sub
+  plan_expires_at: string | null;           // ISO timestamp — paid plan expiry; NULL = no paid sub
+  razorpay_subscription_id: string | null;  // active Razorpay subscription ID
+  subscription_status: string | null;       // 'active' | 'halted' | 'cancelled' | 'completed' | null
+  renewal_reminder_sent_at: string | null;  // last time 48hr reminder email was sent
   created_at: string;
   updated_at: string;
 }
@@ -51,6 +54,27 @@ const stmts = {
   downgradePlanIfExpired: db.prepare(
     "UPDATE users SET plan = 'free', plan_expires_at = NULL, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ? AND plan != 'free' AND plan_expires_at IS NOT NULL AND plan_expires_at < datetime('now', '+5 hours', '+30 minutes')"
   ),
+  updateSubscription: db.prepare(
+    "UPDATE users SET razorpay_subscription_id = ?, subscription_status = ?, plan = ?, plan_expires_at = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
+  ),
+  updateSubscriptionStatus: db.prepare(
+    "UPDATE users SET subscription_status = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE razorpay_subscription_id = ?"
+  ),
+  findBySubscriptionId: db.prepare(
+    'SELECT * FROM users WHERE razorpay_subscription_id = ?'
+  ),
+  updateRenewalReminderSent: db.prepare(
+    "UPDATE users SET renewal_reminder_sent_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
+  ),
+  findDueForRenewalReminder: db.prepare(`
+    SELECT * FROM users
+    WHERE plan != 'free'
+      AND plan_expires_at IS NOT NULL
+      AND plan_expires_at > datetime('now', '+5 hours', '+30 minutes')
+      AND plan_expires_at <= datetime('now', '+5 hours', '+30 minutes', '+48 hours')
+      AND (renewal_reminder_sent_at IS NULL
+           OR renewal_reminder_sent_at < datetime('now', '+5 hours', '+30 minutes', '-20 days'))
+  `),
   updateRole: db.prepare(
     "UPDATE users SET role = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
   ),
@@ -149,6 +173,34 @@ export const userRepo = {
   downgradePlanIfExpired(id: string): boolean {
     const result = stmts.downgradePlanIfExpired.run(id);
     return result.changes > 0;
+  },
+
+  /** Set subscription ID, status, plan, and expiry atomically after Razorpay activation. */
+  updateSubscription(
+    id: string,
+    subscriptionId: string,
+    status: string,
+    plan: 'pro' | 'enterprise',
+    expiresAt: string,
+  ): void {
+    stmts.updateSubscription.run(subscriptionId, status, plan, expiresAt, id);
+  },
+
+  /** Update subscription_status by Razorpay subscription ID (used in webhooks). */
+  updateSubscriptionStatus(razorpaySubscriptionId: string, status: string): void {
+    stmts.updateSubscriptionStatus.run(status, razorpaySubscriptionId);
+  },
+
+  findBySubscriptionId(subscriptionId: string): UserRow | undefined {
+    return stmts.findBySubscriptionId.get(subscriptionId) as UserRow | undefined;
+  },
+
+  markRenewalReminderSent(id: string): void {
+    stmts.updateRenewalReminderSent.run(id);
+  },
+
+  findDueForRenewalReminder(): UserRow[] {
+    return stmts.findDueForRenewalReminder.all() as UserRow[];
   },
 
   updateRole(id: string, role: 'user' | 'admin'): void {

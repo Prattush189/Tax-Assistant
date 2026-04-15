@@ -304,27 +304,30 @@ export async function fetchUserUsage(): Promise<UserUsageResponse> {
 
 // ── Payments API ─────────────────────────────────────────────────────────
 
-export interface CreateOrderResponse {
-  orderId: string;
-  amount: number;
-  currency: string;
+export interface CreateSubscriptionResponse {
+  subscriptionId: string;
   keyId: string;
+  plan: string;
+  billing: string;
+  amount: number; // paise
 }
 
-export async function createPaymentOrder(
+export async function createSubscription(
   plan: 'pro' | 'enterprise',
   billing: 'monthly' | 'yearly',
-): Promise<CreateOrderResponse> {
-  return authFetch('/api/payments/create-order', {
+): Promise<CreateSubscriptionResponse> {
+  return authFetch('/api/payments/create-subscription', {
     method: 'POST',
     body: JSON.stringify({ plan, billing }),
   });
 }
 
-export async function verifyPayment(payload: {
-  razorpay_order_id: string;
+export async function verifySubscriptionPayment(payload: {
   razorpay_payment_id: string;
+  razorpay_subscription_id: string;
   razorpay_signature: string;
+  plan: string;
+  billing: string;
 }): Promise<{ success: boolean; plan: string; planExpiresAt: string }> {
   return authFetch('/api/payments/verify', {
     method: 'POST',
@@ -332,8 +335,28 @@ export async function verifyPayment(payload: {
   });
 }
 
-export async function fetchPaymentHistory() {
+export interface PaymentHistoryResponse {
+  subscriptionId: string | null;
+  subscriptionStatus: string | null;
+  payments: {
+    id: string;
+    plan: string;
+    billing: string;
+    amount: number;
+    currency: string;
+    status: string;
+    createdAt: string;
+    paidAt: string | null;
+    expiresAt: string | null;
+  }[];
+}
+
+export async function fetchPaymentHistory(): Promise<PaymentHistoryResponse> {
   return authFetch('/api/payments/history');
+}
+
+export async function cancelSubscription(): Promise<{ success: boolean; message: string }> {
+  return authFetch('/api/payments/subscription', { method: 'DELETE' });
 }
 
 // ── Account Settings API ────────────────────────────────────────────────

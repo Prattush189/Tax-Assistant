@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
-import { createPaymentOrder, verifyPayment, fetchUserUsage } from '../../services/api';
+import { createSubscription, verifySubscriptionPayment, fetchUserUsage } from '../../services/api';
 import { Crown, Building2, Shield, Loader2, AlertCircle, Lock } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
@@ -59,31 +59,31 @@ export function TrialExpiredWall() {
         return;
       }
 
-      const order = await createPaymentOrder(planId, billing);
+      const sub = await createSubscription(planId, billing);
 
       const options = {
-        key: order.keyId,
-        amount: order.amount,
-        currency: order.currency,
+        key: sub.keyId,
+        subscription_id: sub.subscriptionId,
         name: 'Smartbiz AI',
         description: `${planId === 'pro' ? 'Pro' : 'Enterprise'} Plan — ${billing === 'monthly' ? 'Monthly' : 'Yearly'}`,
-        order_id: order.orderId,
         prefill: { name: user?.name ?? '', email: user?.email ?? '' },
         theme: { color: '#0D9668' },
         modal: { ondismiss: () => setPaying(null) },
         handler: async (response: {
-          razorpay_order_id: string;
           razorpay_payment_id: string;
+          razorpay_subscription_id: string;
           razorpay_signature: string;
         }) => {
           try {
-            await verifyPayment({
-              razorpay_order_id: response.razorpay_order_id,
+            await verifySubscriptionPayment({
               razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_subscription_id: response.razorpay_subscription_id,
               razorpay_signature: response.razorpay_signature,
+              plan: planId,
+              billing,
             });
             await refreshUser();
-            // Trigger a usage refresh (wall disappears when plan upgrades)
+            // Wall disappears automatically once refreshUser() updates plan to paid
             await fetchUserUsage();
           } catch {
             setError('Payment received but activation failed. Please contact support.');
