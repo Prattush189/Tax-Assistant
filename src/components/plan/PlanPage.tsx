@@ -151,7 +151,8 @@ function UsageBar({ icon: Icon, label, used, limit, period }: UsageBarProps) {
     return 'bg-[#0D9668] dark:bg-[#2DD4A0]';
   };
 
-  const periodLabel = period === 'day' ? '/day' : period === 'month' ? '/mo' : '';
+  // Period label intentionally omitted — context shown in section header instead
+  const periodLabel = period === 'day' ? '/day' : '';
 
   return (
     <div className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-4">
@@ -508,8 +509,16 @@ export function PlanPage() {
           <div className="mb-10 bg-white/80 dark:bg-gray-900/80 backdrop-blur-xl border border-gray-200/50 dark:border-gray-700/50 rounded-2xl p-6">
             <div className="flex items-center justify-between mb-5">
               <div>
-                <h2 className="text-lg font-bold text-gray-800 dark:text-white">Your Usage</h2>
-                <p className="text-xs text-gray-500 dark:text-gray-400">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h2 className="text-lg font-bold text-gray-800 dark:text-white">Your Usage</h2>
+                  {usage.plan === 'free' && (
+                    <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
+                      <Clock className="w-3 h-3" />
+                      30-day trial
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
                   Current plan: <span className="font-semibold text-[#0D9668] dark:text-[#2DD4A0] capitalize">{usage.plan}</span>
                   {usage.planExpiresAt && (
                     <span className="ml-2 text-gray-400">

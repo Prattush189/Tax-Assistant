@@ -21,7 +21,6 @@ const navItems: { id: ActiveView; label: string; icon: typeof MessageCircle }[] 
   { id: 'notices', label: 'Notices', icon: FileText },
   { id: 'profile', label: 'Profile', icon: User },
   { id: 'dashboard', label: 'Stats', icon: LayoutDashboard },
-  { id: 'plan', label: 'Plan', icon: CreditCard },
 ];
 
 function getInitials(name: string): string {
@@ -38,9 +37,10 @@ export function Header({
   activeView,
   onViewChange,
 }: HeaderProps) {
-  const isEnterprise = user?.plan === 'enterprise';
-  const canAccessItr = user?.role === 'admin' || isEnterprise || user?.itr_enabled === true;
-  const canAccessBoardResolutions = user?.role === 'admin' || isEnterprise;
+  // ITR: admin-only OR explicit itr_enabled grant (not available to regular enterprise users yet).
+  // Board Resolutions: all authenticated users. Plan tab always last.
+  const canAccessItr = user?.role === 'admin' || user?.itr_enabled === true;
+  const canAccessBoardResolutions = !!user;
   const allNavItems = [
     ...navItems,
     ...(canAccessItr ? [{ id: 'itr' as ActiveView, label: 'ITR', icon: FileSpreadsheet }] : []),
@@ -48,6 +48,7 @@ export function Header({
       ? [{ id: 'board_resolutions' as ActiveView, label: 'Resolutions', icon: Gavel }]
       : []),
     ...(user?.role === 'admin' ? [{ id: 'admin' as ActiveView, label: 'Admin', icon: Shield }] : []),
+    { id: 'plan' as ActiveView, label: 'Plan', icon: CreditCard },
   ];
 
   return (

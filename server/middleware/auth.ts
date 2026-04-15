@@ -154,7 +154,8 @@ export function trialCheckMiddleware(req: AuthRequest, res: Response, next: Next
   next();
 }
 
-// ITR access — enterprise plan required (admin always has access).
+// ITR access — admin only OR explicit itr_enabled grant via script.
+// Not tied to enterprise plan — ITR is not yet fully released to general users.
 export function itrAccessMiddleware(req: AuthRequest, res: Response, next: NextFunction): void {
   if (!req.user) {
     res.status(401).json({ error: 'Authentication required' });
@@ -165,12 +166,11 @@ export function itrAccessMiddleware(req: AuthRequest, res: Response, next: NextF
     return;
   }
   const user = userRepo.findById(req.user.id);
-  const plan = user?.plan ?? 'free';
-  if (plan === 'enterprise' || (user && user.itr_enabled === 1)) {
+  if (user && user.itr_enabled === 1) {
     next();
     return;
   }
-  res.status(403).json({ error: 'Enterprise plan required for ITR filing' });
+  res.status(403).json({ error: 'ITR filing access not enabled for this account' });
 }
 
 /**

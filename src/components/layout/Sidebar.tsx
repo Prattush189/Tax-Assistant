@@ -54,7 +54,6 @@ const baseNavItems: { id: ActiveView; label: string; icon: typeof MessageCircle 
   { id: 'calculator', label: 'Calc', icon: Calculator },
   { id: 'notices', label: 'Notices', icon: FileText },
   { id: 'dashboard', label: 'Stats', icon: LayoutDashboard },
-  { id: 'plan', label: 'Plan', icon: CreditCard },
 ];
 
 const adminNavItem = { id: 'admin' as ActiveView, label: 'Admin', icon: Shield };
@@ -220,17 +219,19 @@ export function Sidebar({
     }
   };
 
-  // ITR shows for admins OR users with the explicit itr_enabled capability.
-  // Board Resolutions and Admin nav items stay admin-only.
+  // ITR: admin-only OR explicit itr_enabled grant (not available to regular enterprise users yet).
+  // Board Resolutions: open to all authenticated users (limits enforced server-side).
+  // Plan tab always last (rightmost).
   const isEnterprise = user?.plan === 'enterprise';
-  const canAccessItr = user?.role === 'admin' || isEnterprise || user?.itr_enabled === true;
-  const canAccessBoardResolutions = user?.role === 'admin' || isEnterprise;
+  const canAccessItr = user?.role === 'admin' || user?.itr_enabled === true;
+  const canAccessBoardResolutions = !!user;
   const navItems = [
     ...baseNavItems,
     profileNavItem,
     ...(canAccessItr ? [itrNavItem] : []),
     ...(canAccessBoardResolutions ? [boardResolutionsNavItem] : []),
     ...(user?.role === 'admin' ? [adminNavItem] : []),
+    { id: 'plan' as ActiveView, label: 'Plan', icon: CreditCard },
   ];
 
   return (

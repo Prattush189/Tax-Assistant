@@ -82,9 +82,9 @@ function AppContent() {
 
   const chatManager = useChatManager();
   const noticeDrafter = useNoticeDrafter();
-  // ITR: enterprise plan OR admin OR explicit itr_enabled.
+  // ITR: admin-only OR explicit itr_enabled grant (not available to regular enterprise users yet).
   const isEnterprise = user?.plan === 'enterprise';
-  const canAccessItr = user?.role === 'admin' || isEnterprise || user?.itr_enabled === true;
+  const canAccessItr = user?.role === 'admin' || user?.itr_enabled === true;
   const itrManager = useItrManager(canAccessItr);
   // Board Resolutions: open to all authenticated users (plan limits enforced server-side).
   const canAccessBoardResolutions = !!user;
