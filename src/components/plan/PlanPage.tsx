@@ -162,7 +162,7 @@ function PaymentSuccessDialog({
   const gst      = Math.round((total - base) * 100) / 100;
   const planName = payment.plan === 'pro' ? 'Pro' : 'Enterprise';
   const cycle    = payment.billing === 'monthly' ? 'Monthly' : 'Yearly';
-  const receiptNo = 'RCPT-' + payment.id.slice(0, 8).toUpperCase();
+  const receiptNo = 'AI-' + payment.id.slice(0, 10).toUpperCase();
 
   const handleReceipt = () =>
     generatePaymentReceipt(payment, { name: userName, email: userEmail });

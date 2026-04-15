@@ -1,8 +1,14 @@
 import jsPDF from 'jspdf';
 
 const GST_RATE = 0.18;
-const COMPANY_NAME = 'Smartbiz AI';
-const COMPANY_SUB  = 'Tax Planning & Advisory Platform';
+
+// ── Company details ───────────────────────────────────────────────────────────
+const COMPANY_NAME  = 'Smartbiz Technologies Private Limited';
+const COMPANY_BRAND = 'Smartbiz AI';           // short name for header bar
+const COMPANY_GSTIN = '03AAUCS1499L1ZM';
+const COMPANY_ADDR1 = 'House No. 48, Chaturbhuj Road, Yaseen Road';
+const COMPANY_ADDR2 = 'Amritsar, Punjab \u2013 143001';
+const COMPANY_SUB   = 'Tax Planning & Advisory Platform';
 const BRAND_R = 13, BRAND_G = 150, BRAND_H = 104; // #0D9668
 
 export interface PaymentData {
@@ -19,17 +25,17 @@ export interface UserInfo {
   email: string;
 }
 
-// ── helpers ──────────────────────────────────────────────────────────────────
+// ── helpers ───────────────────────────────────────────────────────────────────
 
 function fmt(n: number): string {
   return '\u20B9' + n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function receiptNo(id: string): string { return 'RCPT-' + id.slice(0, 8).toUpperCase(); }
-function invoiceNo(id: string): string { return 'INV-'  + id.slice(0, 8).toUpperCase(); }
+/** AI-XXXXXXXXXX — 10-char uppercase hex derived from payment ID */
+function docNo(id: string): string { return 'AI-' + id.slice(0, 10).toUpperCase(); }
 
 function planLabel(plan: string, billing: string): string {
-  return `Smartbiz AI ${plan === 'pro' ? 'Pro' : 'Enterprise'} Plan \u2014 ${billing === 'monthly' ? 'Monthly' : 'Yearly'}`;
+  return `${COMPANY_BRAND} ${plan === 'pro' ? 'Pro' : 'Enterprise'} Plan \u2014 ${billing === 'monthly' ? 'Monthly' : 'Yearly'}`;
 }
 
 function fmtDate(iso: string | null): string {
@@ -44,18 +50,21 @@ function getGstAmount(totalPaise: number): number {
   return Math.round((totalPaise / 100 - getBaseAmount(totalPaise)) * 100) / 100;
 }
 
-// ── shared header ─────────────────────────────────────────────────────────────
+// ── shared header / footer ────────────────────────────────────────────────────
 
 function drawHeader(doc: jsPDF, label: string): void {
   const W = doc.internal.pageSize.getWidth();
   doc.setFillColor(BRAND_R, BRAND_G, BRAND_H);
   doc.rect(0, 0, W, 18, 'F');
   doc.setTextColor(255, 255, 255);
-  doc.setFontSize(13);
+  doc.setFontSize(12);
   doc.setFont('helvetica', 'bold');
-  doc.text(COMPANY_NAME, 20, 12);
-  doc.setFontSize(8);
+  doc.text(COMPANY_BRAND, 20, 11);
+  doc.setFontSize(7);
   doc.setFont('helvetica', 'normal');
+  doc.text(COMPANY_NAME, 20, 15.5);
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'bold');
   doc.text(label, W - 20, 12, { align: 'right' });
 }
 
@@ -66,8 +75,8 @@ function drawFooter(doc: jsPDF, msg: string): void {
   doc.setFontSize(7);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(150, 150, 150);
-  doc.text(msg, W / 2, 276, { align: 'center' });
-  doc.text(COMPANY_NAME + ' \u00B7 ' + COMPANY_SUB, W / 2, 281, { align: 'center' });
+  doc.text(msg, W / 2, 275, { align: 'center' });
+  doc.text(COMPANY_NAME + '  \u00B7  GSTIN: ' + COMPANY_GSTIN, W / 2, 280, { align: 'center' });
 }
 
 // ── Receipt ───────────────────────────────────────────────────────────────────
@@ -87,7 +96,7 @@ export function generatePaymentReceipt(payment: PaymentData, user: UserInfo): vo
   doc.setFont('helvetica', 'bold');
   doc.text('Receipt No:', L, y);
   doc.setFont('helvetica', 'normal');
-  doc.text(receiptNo(payment.id), L + 29, y);
+  doc.text(docNo(payment.id), L + 29, y);
 
   doc.setFont('helvetica', 'bold');
   doc.text('Date:', R - 52, y);
@@ -99,21 +108,40 @@ export function generatePaymentReceipt(payment: PaymentData, user: UserInfo): vo
   doc.line(L, y, R, y);
   y += 8;
 
-  // ── Billed To ─────────────────────────────────────────────────────────────
+  // ── Billed By / To columns ────────────────────────────────────────────────
+  const mid = W / 2 + 5;
+
   doc.setFontSize(8);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(110, 110, 110);
-  doc.text('BILLED TO', L, y);
+  doc.text('BILLED BY', L, y);
+  doc.text('BILLED TO', mid, y);
   y += 5;
-  doc.setFont('helvetica', 'normal');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9.5);
   doc.setTextColor(30, 30, 30);
-  doc.setFontSize(10);
-  doc.text(user.name, L, y);
+  doc.text(COMPANY_BRAND, L, y);
+  doc.text(user.name, mid, y);
   y += 5;
-  doc.setFontSize(9);
-  doc.setTextColor(80, 80, 80);
-  doc.text(user.email, L, y);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(70, 70, 70);
+  doc.text(COMPANY_NAME, L, y);
+  doc.text(user.email, mid, y);
+  y += 5;
+
+  doc.text('GSTIN: ' + COMPANY_GSTIN, L, y);
+  y += 4;
+  doc.text(COMPANY_ADDR1, L, y);
+  y += 4;
+  doc.text(COMPANY_ADDR2, L, y);
   y += 12;
+
+  doc.setDrawColor(220, 220, 220);
+  doc.line(L, y, R, y);
+  y += 8;
 
   // ── Item table ────────────────────────────────────────────────────────────
   doc.setFillColor(245, 247, 250);
@@ -141,7 +169,7 @@ export function generatePaymentReceipt(payment: PaymentData, user: UserInfo): vo
   y += 6;
 
   // Totals
-  const col = R - 60;
+  const col = R - 65;
   doc.setFontSize(9);
   doc.setTextColor(80, 80, 80);
   doc.text('Sub-total (excl. GST)', col, y);
@@ -179,7 +207,7 @@ export function generatePaymentReceipt(payment: PaymentData, user: UserInfo): vo
   }
 
   drawFooter(doc, 'This is a computer-generated receipt and does not require a signature.');
-  doc.save(receiptNo(payment.id) + '.pdf');
+  doc.save(docNo(payment.id) + '_Receipt.pdf');
 }
 
 // ── Tax Invoice ───────────────────────────────────────────────────────────────
@@ -199,7 +227,7 @@ export function generatePaymentInvoice(payment: PaymentData, user: UserInfo): vo
   doc.setFont('helvetica', 'bold');
   doc.text('Invoice No:', L, y);
   doc.setFont('helvetica', 'normal');
-  doc.text(invoiceNo(payment.id), L + 28, y);
+  doc.text(docNo(payment.id), L + 28, y);
 
   doc.setFont('helvetica', 'bold');
   doc.text('Date:', R - 52, y);
@@ -210,7 +238,7 @@ export function generatePaymentInvoice(payment: PaymentData, user: UserInfo): vo
   doc.setFontSize(8.5);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(80, 80, 80);
-  doc.text('SAC Code: 9983 (IT & software services)', L, y);
+  doc.text('SAC Code: 9983 (IT & software services)  \u00B7  Place of Supply: Punjab (03)', L, y);
   y += 10;
 
   doc.setDrawColor(220, 220, 220);
@@ -219,6 +247,7 @@ export function generatePaymentInvoice(payment: PaymentData, user: UserInfo): vo
 
   // ── Billed By / To ────────────────────────────────────────────────────────
   const mid = W / 2 + 5;
+
   doc.setFontSize(8);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(110, 110, 110);
@@ -227,24 +256,35 @@ export function generatePaymentInvoice(payment: PaymentData, user: UserInfo): vo
   y += 5;
 
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
+  doc.setFontSize(9.5);
   doc.setTextColor(30, 30, 30);
-  doc.text(COMPANY_NAME, L, y);
+  doc.text(COMPANY_BRAND, L, y);
   doc.text(user.name, mid, y);
   y += 5;
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
-  doc.setTextColor(80, 80, 80);
-  doc.text(COMPANY_SUB, L, y);
+  doc.setTextColor(70, 70, 70);
+  doc.text(COMPANY_NAME, L, y);
   doc.text(user.email, mid, y);
-  y += 14;
+  y += 4.5;
+
+  doc.text('GSTIN: ' + COMPANY_GSTIN, L, y);
+  y += 4.5;
+  doc.text(COMPANY_ADDR1, L, y);
+  y += 4.5;
+  doc.text(COMPANY_ADDR2, L, y);
+  y += 12;
+
+  doc.setDrawColor(220, 220, 220);
+  doc.line(L, y, R, y);
+  y += 8;
 
   // ── Item table ────────────────────────────────────────────────────────────
   const colDesc = L + 2;
   const colQty  = L + 100;
   const colRate = L + 120;
-  const colIGST = L + 145;
+  const colIGST = L + 148;
   const colTot  = R - 2;
 
   doc.setFillColor(245, 247, 250);
@@ -252,11 +292,11 @@ export function generatePaymentInvoice(payment: PaymentData, user: UserInfo): vo
   doc.setFontSize(8);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(60, 60, 60);
-  doc.text('Description',  colDesc, y + 5.5);
-  doc.text('Qty',          colQty,  y + 5.5);
-  doc.text('Rate',         colRate, y + 5.5);
-  doc.text('IGST 18%',     colIGST, y + 5.5);
-  doc.text('Total',        colTot,  y + 5.5, { align: 'right' });
+  doc.text('Description', colDesc, y + 5.5);
+  doc.text('Qty',         colQty,  y + 5.5);
+  doc.text('Rate',        colRate, y + 5.5);
+  doc.text('IGST 18%',    colIGST, y + 5.5);
+  doc.text('Total',       colTot,  y + 5.5, { align: 'right' });
   y += 10;
 
   const base  = getBaseAmount(payment.amount);
@@ -267,7 +307,7 @@ export function generatePaymentInvoice(payment: PaymentData, user: UserInfo): vo
   doc.setFontSize(8.5);
   doc.setTextColor(30, 30, 30);
   doc.text(planLabel(payment.plan, payment.billing), colDesc, y + 5);
-  doc.text('1',         colQty,  y + 5);
+  doc.text('1',        colQty,  y + 5);
   doc.text(fmt(base),  colRate, y + 5);
   doc.text(fmt(gst),   colIGST, y + 5);
   doc.text(fmt(total), colTot,  y + 5, { align: 'right' });
@@ -277,11 +317,11 @@ export function generatePaymentInvoice(payment: PaymentData, user: UserInfo): vo
   doc.line(L, y, R, y);
   y += 6;
 
-  // Totals block (right-aligned)
-  const tCol = R - 60;
+  // Totals block
+  const tCol = R - 65;
   doc.setFontSize(9);
   doc.setTextColor(80, 80, 80);
-  doc.text('Taxable Amount:', tCol, y);
+  doc.text('Taxable Amount (excl. GST):', tCol, y);
   doc.text(fmt(base), R - 2, y, { align: 'right' });
   y += 6;
   doc.text('IGST @ 18%:', tCol, y);
@@ -315,8 +355,11 @@ export function generatePaymentInvoice(payment: PaymentData, user: UserInfo): vo
 
   doc.setFontSize(7.5);
   doc.setTextColor(130, 130, 130);
-  doc.text('Note: This invoice is issued for SaaS subscription services. IGST applicable as per the GST Act, 2017.', L, y);
+  doc.text(
+    'Note: This invoice is for SaaS subscription services. IGST applicable as per the IGST Act, 2017.',
+    L, y
+  );
 
   drawFooter(doc, 'This is a computer-generated tax invoice and does not require a physical signature.');
-  doc.save(invoiceNo(payment.id) + '.pdf');
+  doc.save(docNo(payment.id) + '_Invoice.pdf');
 }

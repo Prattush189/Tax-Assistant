@@ -247,7 +247,7 @@ function BillingTab({ userName, userEmail }: { userName: string; userEmail: stri
               const total   = p.amount / 100;
               const base    = Math.round(total / (1 + 0.18) * 100) / 100;
               const gst     = Math.round((total - base) * 100) / 100;
-              const rcptNo  = 'RCPT-' + p.id.slice(0, 8).toUpperCase();
+              const rcptNo  = 'AI-' + p.id.slice(0, 10).toUpperCase();
               const isPaid  = p.status === 'paid';
               const payData: PaymentData = {
                 id: p.id, plan: p.plan, billing: p.billing,
