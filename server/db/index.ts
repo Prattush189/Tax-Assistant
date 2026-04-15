@@ -172,6 +172,10 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_profiles_updated_at ON profiles(updated_
   if (!usageCols.includes('search_used')) {
     db.exec("ALTER TABLE api_usage ADD COLUMN search_used INTEGER NOT NULL DEFAULT 0");
   }
+  if (!usageCols.includes('category')) {
+    // 'chat' | 'notice' | 'suggestion' | null (legacy rows)
+    db.exec("ALTER TABLE api_usage ADD COLUMN category TEXT");
+  }
 }
 
 // Add filing_status + notes to profiles (merge clients into profiles)

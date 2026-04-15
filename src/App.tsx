@@ -75,10 +75,19 @@ function PluginMessageDispatcher({
 function AppContent() {
   const { isDarkMode, toggleTheme, setIsDarkMode } = useTheme();
   const { isPluginMode } = usePluginMode(setIsDarkMode);
-  const [activeView, setActiveView] = useState<ActiveView>('chat');
+  const [activeView, setActiveView] = useState<ActiveView>(() => {
+    const saved = localStorage.getItem('activeView') as ActiveView | null;
+    const valid: ActiveView[] = ['chat', 'calculator', 'dashboard', 'admin', 'plan', 'notices', 'settings', 'itr', 'profile', 'board_resolutions'];
+    return saved && valid.includes(saved) ? saved : 'chat';
+  });
   const [calculatorTab, setCalculatorTab] = useState<CalculatorTab>('income');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const { user, logout } = useAuth();
+
+  const navigateTo = useCallback((view: ActiveView) => {
+    localStorage.setItem('activeView', view);
+    setActiveView(view);
+  }, []);
 
   const chatManager = useChatManager();
   const noticeDrafter = useNoticeDrafter();
@@ -140,14 +149,14 @@ function AppContent() {
           user={user}
           onLogout={logout}
           activeView={activeView}
-          onViewChange={setActiveView}
+          onViewChange={navigateTo}
           calculatorTab={calculatorTab}
           onCalculatorTabChange={setCalculatorTab}
         />
       )}
       {isPluginMode && (
         <PluginMessageDispatcher
-          setActiveView={setActiveView}
+          setActiveView={navigateTo}
           setCalculatorTab={setCalculatorTab}
         />
       )}
@@ -161,7 +170,7 @@ function AppContent() {
             user={user}
             onLogout={logout}
             activeView={activeView}
-            onViewChange={setActiveView}
+            onViewChange={navigateTo}
           />
           <AnimatePresence mode="wait">
             <motion.div

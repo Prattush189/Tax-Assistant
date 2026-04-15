@@ -1,17 +1,22 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Clock, RefreshCw, ChevronLeft, ChevronRight, Search, Plug } from 'lucide-react';
+import { Clock, RefreshCw, ChevronLeft, ChevronRight, Search, Plug, Tag } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { adminFetchRecentCalls, RecentApiCall } from '../../services/api';
 import { LoadingAnimation } from '../ui/LoadingAnimation';
 
 const PAGE_SIZE = 100;
 
+const CATEGORY_COLORS: Record<string, string> = {
+  chat: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400',
+  notice: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400',
+  suggestion: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400',
+};
+
 const MODEL_COLORS: Record<string, string> = {
   'gemini-3-flash-preview': 'bg-purple-500',
   'gemini-3.1-flash-lite-preview': 'bg-violet-400',
   'gemini-2.5-flash-lite': 'bg-blue-500',
   'gemini-2.5-flash': 'bg-sky-400',
-  'grok-4-1-fast-reasoning': 'bg-amber-500',
   'unknown': 'bg-gray-400',
 };
 
@@ -20,7 +25,6 @@ const MODEL_LABELS: Record<string, string> = {
   'gemini-3.1-flash-lite-preview': 'Gemini 3.1 Flash-Lite',
   'gemini-2.5-flash-lite': 'Gemini 2.5 Flash-Lite',
   'gemini-2.5-flash': 'Gemini 2.5 Flash',
-  'grok-4-1-fast-reasoning': 'Grok 4.1 Fast',
 };
 
 function fmtTokens(n: number): string {
@@ -110,6 +114,7 @@ export function RecentApiCallsDashboard() {
               <tr>
                 <th className="text-left px-3 py-2 text-gray-500 font-medium">Time</th>
                 <th className="text-left px-3 py-2 text-gray-500 font-medium">User</th>
+                <th className="text-left px-3 py-2 text-gray-500 font-medium">Category</th>
                 <th className="text-left px-3 py-2 text-gray-500 font-medium">Model</th>
                 <th className="text-center px-3 py-2 text-gray-500 font-medium">Search</th>
                 <th className="text-center px-3 py-2 text-gray-500 font-medium">Plugin</th>
@@ -135,6 +140,16 @@ export function RecentApiCallsDashboard() {
                       )}
                     </td>
                     <td className="px-3 py-2">
+                      {c.category ? (
+                        <span className={cn('inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium capitalize', CATEGORY_COLORS[c.category] ?? 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400')}>
+                          <Tag className="w-2.5 h-2.5" />
+                          {c.category}
+                        </span>
+                      ) : (
+                        <span className="text-gray-300">—</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2">
                       <div className="flex items-center gap-1.5">
                         <div className={cn('w-2 h-2 rounded-full shrink-0', modelColor)} />
                         <span className="text-gray-700 dark:text-gray-300 whitespace-nowrap">{modelLabel}</span>
@@ -154,7 +169,7 @@ export function RecentApiCallsDashboard() {
               })}
               {calls.length === 0 && !loading && (
                 <tr>
-                  <td colSpan={8} className="px-3 py-8 text-center text-gray-400">No API calls recorded</td>
+                  <td colSpan={9} className="px-3 py-8 text-center text-gray-400">No API calls recorded</td>
                 </tr>
               )}
             </tbody>

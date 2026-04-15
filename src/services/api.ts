@@ -1017,6 +1017,7 @@ export interface RecentApiCall {
   cost_inr: number;
   search_used: boolean;
   is_plugin: boolean;
+  category: string | null;
   created_at: string;
 }
 

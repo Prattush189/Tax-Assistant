@@ -31,6 +31,9 @@ export function useChatManager() {
   const lastUserMsgRef = useRef<HTMLDivElement>(null);
   const scrollActionRef = useRef<'none' | 'user-to-top' | 'to-bottom'>('none');
   const streamingChatIdRef = useRef<string | null>(null);
+  // Stores the accumulated streaming text per chatId so switching away and
+  // back restores the in-progress response instead of losing it.
+  const streamingContentRef = useRef<Map<string, string>>(new Map());
 
   useEffect(() => {
     const action = scrollActionRef.current;
@@ -68,23 +71,36 @@ export function useChatManager() {
   useEffect(() => { loadChatList(); }, [loadChatList]);
 
   const switchChat = useCallback(async (chatId: string) => {
-    streamingChatIdRef.current = null;
+    // Point the ref at the new chat — any ongoing stream for a *different* chat
+    // becomes stale (isStale() returns true) while switching back to the same
+    // chat re-enables its callbacks.
+    streamingChatIdRef.current = chatId;
     setIsLoading(false);
     setCurrentChatId(chatId);
     setActiveDocuments([]);
     scrollActionRef.current = 'to-bottom';
     try {
       const msgs = await fetchChatMessages(chatId);
-      setMessages(
-        msgs.map(m => ({
-          role: m.role,
-          content: m.content,
-          timestamp: new Date(m.created_at + '+05:30'),
-          attachment: m.attachment_filename
-            ? { filename: m.attachment_filename, mimeType: m.attachment_mime_type! }
-            : undefined,
-        }))
-      );
+      const converted = msgs.map(m => ({
+        role: m.role,
+        content: m.content,
+        timestamp: new Date(m.created_at + '+05:30'),
+        attachment: m.attachment_filename
+          ? { filename: m.attachment_filename, mimeType: m.attachment_mime_type! }
+          : undefined,
+      }));
+      // If this chat has an active stream the user switched away from, restore
+      // the in-progress model message and keep the loading indicator alive.
+      const liveContent = streamingContentRef.current.get(chatId);
+      if (liveContent !== undefined) {
+        setMessages([
+          ...converted,
+          { role: 'model' as const, content: liveContent, timestamp: new Date() },
+        ]);
+        setIsLoading(true);
+      } else {
+        setMessages(converted);
+      }
     } catch (err) {
       console.error('Failed to load messages:', err);
       setMessages([]);
@@ -147,6 +163,7 @@ export function useChatManager() {
     }]);
     setInput('');
     setIsLoading(true);
+    streamingContentRef.current.set(thisChatId, ''); // register active stream
 
     let wasTruncated = false;
     let receivedRefs: SectionReference[] | undefined;
@@ -161,12 +178,14 @@ export function useChatManager() {
 
     const flushBuffer = () => {
       if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
-      if (isStale()) return;
       const lastNl = buffer.lastIndexOf('\n');
       if (lastNl === -1) return;
       revealed += buffer.slice(0, lastNl + 1);
       buffer = buffer.slice(lastNl + 1);
       const snapshot = revealed;
+      // Always keep the content cache current so switching back restores progress
+      streamingContentRef.current.set(thisChatId, snapshot + buffer);
+      if (isStale()) return;
       setMessages(prev => {
         const updated = [...prev];
         updated[updated.length - 1] = { ...updated[updated.length - 1], content: snapshot };
@@ -176,10 +195,11 @@ export function useChatManager() {
 
     const flushAll = () => {
       if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
-      if (isStale()) return;
       revealed += buffer;
       buffer = '';
       const snapshot = revealed;
+      streamingContentRef.current.set(thisChatId, snapshot);
+      if (isStale()) return;
       setMessages(prev => {
         const updated = [...prev];
         updated[updated.length - 1] = { ...updated[updated.length - 1], content: snapshot };
@@ -192,8 +212,10 @@ export function useChatManager() {
         chatId,
         messageText,
         (text) => {
-          if (isStale()) return;
           buffer += text;
+          // Keep cache current even when the user has switched to another chat
+          streamingContentRef.current.set(thisChatId, revealed + buffer);
+          if (isStale()) return;
           if (buffer.includes('\n')) {
             flushBuffer();
           } else {
@@ -259,6 +281,7 @@ export function useChatManager() {
         }
       }
     } finally {
+      streamingContentRef.current.delete(thisChatId); // stream complete
       if (!isStale()) setIsLoading(false);
     }
   }, [isLoading, input, currentChatId, activeDocuments, referencedProfile, createNewChat, loadChatList]);

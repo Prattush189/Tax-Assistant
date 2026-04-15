@@ -1,28 +1,5 @@
 import OpenAI from 'openai';
 
-// ── Grok (xAI) — chat + notices ──
-// The OpenAI SDK constructor throws synchronously when no key is available,
-// which would crash the entire Express process at import time and break even
-// non-AI endpoints (auth, calculators, usage). Fall back to a dummy key so
-// the server stays up — actual API calls will then fail cleanly at request
-// time with a normal error response.
-const XAI_API_KEY = process.env.XAI_API_KEY ?? '';
-if (!XAI_API_KEY) {
-  console.warn('[grok] XAI_API_KEY is not set. Chat and notice drafting will fail until you add it to .env.');
-}
-export const grok = new OpenAI({
-  apiKey: XAI_API_KEY || 'missing-xai-key-placeholder',
-  baseURL: 'https://api.x.ai/v1',
-});
-export const grokConfigured = !!XAI_API_KEY;
-
-export const GROK_MODEL = 'grok-4-1-fast-reasoning';
-
-// Pricing per token (Grok 4.1 Fast — Tier 3 fallback)
-export const INPUT_COST_PER_TOKEN = 0.20 / 1_000_000;
-export const OUTPUT_COST_PER_TOKEN = 0.50 / 1_000_000;
-export const WEB_SEARCH_COST = 0.005; // $5 per 1000 calls
-
 // ── Gemini chat models ─────────────────────────────────────────────
 // Fast mode:  Gemini 2.5 Flash-Lite → Gemini 3.1 Flash-Lite fallback
 // Think mode: Gemini 2.5 Flash      → Gemini 3 Flash fallback

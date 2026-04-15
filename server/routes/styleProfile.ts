@@ -9,7 +9,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import mammoth from 'mammoth';
-import { grok, GROK_MODEL, gemini, GEMINI_MODEL } from '../lib/grok.js';
+import { gemini, GEMINI_MODEL } from '../lib/grok.js';
 import { styleProfileRepo } from '../db/repositories/styleProfileRepo.js';
 import { AuthRequest } from '../types.js';
 
@@ -75,21 +75,15 @@ async function extractStyleFromText(text: string): Promise<Record<string, unknow
     content: `${STYLE_EXTRACTION_PROMPT}\n\n--- DOCUMENT START ---\n${text.slice(0, 15000)}\n--- DOCUMENT END ---`,
   }];
 
-  // Use Grok (xAI) for text analysis — same model as notice generation.
-  // Gemini is only for vision/document extraction; Grok handles text tasks.
-  try {
-    const response = await grok.chat.completions.create({
-      model: GROK_MODEL,
-      max_tokens: 2048,
-      messages,
-    });
-    const raw = response.choices[0]?.message?.content ?? '{}';
-    const parsed = safeParseJson(raw);
-    if (parsed && parsed.tone) return parsed;
-    throw new Error('LLM returned invalid style profile JSON');
-  } catch (err) {
-    throw err;
-  }
+  const response = await gemini.chat.completions.create({
+    model: GEMINI_MODEL,
+    max_tokens: 2048,
+    messages,
+  });
+  const raw = response.choices[0]?.message?.content ?? '{}';
+  const parsed = safeParseJson(raw);
+  if (parsed && parsed.tone) return parsed;
+  throw new Error('LLM returned invalid style profile JSON');
 }
 
 // ── Multer setup — accepts PDF and DOCX ───────────────────────────────────

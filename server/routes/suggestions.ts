@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
-import { grok, GROK_MODEL } from '../lib/grok.js';
+import { gemini, GEMINI_MODEL, GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST } from '../lib/grok.js';
 import { userRepo } from '../db/repositories/userRepo.js';
+import { usageRepo } from '../db/repositories/usageRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { getBillingUser } from '../lib/billing.js';
 import { AuthRequest } from '../types.js';
@@ -57,6 +58,8 @@ router.post('/optimize', async (req: AuthRequest, res: Response) => {
     return;
   }
 
+  const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
+
   try {
     const userPrompt = `Income Profile:
 - Gross Annual Income: ₹${grossIncome.toLocaleString('en-IN')}
@@ -68,8 +71,8 @@ router.post('/optimize', async (req: AuthRequest, res: Response) => {
 
 Suggest 5 personalized tax-saving strategies.`;
 
-    const response = await grok.chat.completions.create({
-      model: GROK_MODEL,
+    const response = await gemini.chat.completions.create({
+      model: GEMINI_MODEL, // gemini-2.5-flash-lite
       messages: [
         { role: 'system', content: SUGGESTION_PROMPT },
         { role: 'user', content: userPrompt },
@@ -83,6 +86,12 @@ Suggest 5 personalized tax-saving strategies.`;
 
     // Log successful usage toward monthly cap (actor + billing owner)
     featureUsageRepo.logWithBilling(req.user.id, billingUserId, 'ai_suggestions');
+
+    // Log to api_usage for admin dashboard visibility
+    const inputTok = response.usage?.prompt_tokens ?? 0;
+    const outputTok = response.usage?.completion_tokens ?? 0;
+    const cost = inputTok * GEMINI_T2_INPUT_COST + outputTok * GEMINI_T2_OUTPUT_COST;
+    usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, inputTok, outputTok, cost, false, GEMINI_MODEL, false, 'suggestion');
 
     res.json({
       suggestions,

@@ -28,16 +28,14 @@ const MODEL_COLORS: Record<string, string> = {
   'gemini-3.1-flash-lite-preview': 'bg-violet-400',
   'gemini-2.5-flash-lite': 'bg-blue-500',
   'gemini-2.5-flash': 'bg-sky-400',
-  'grok-4-1-fast-reasoning': 'bg-amber-500',
   'unknown': 'bg-gray-400',
 };
 
 const MODEL_LABELS: Record<string, string> = {
-  'gemini-3-flash-preview': 'Gemini 3 Flash (Think Fallback)',
+  'gemini-3-flash-preview': 'Gemini 3 Flash (Notices + Think FB)',
   'gemini-3.1-flash-lite-preview': 'Gemini 3.1 Flash-Lite (Fast Fallback)',
-  'gemini-2.5-flash-lite': 'Gemini 2.5 Flash-Lite (Fast Primary)',
+  'gemini-2.5-flash-lite': 'Gemini 2.5 Flash-Lite (Fast + Suggestions)',
   'gemini-2.5-flash': 'Gemini 2.5 Flash (Think Primary)',
-  'grok-4-1-fast-reasoning': 'Grok 4.1 Fast (Legacy)',
 };
 
 interface ModelEntry {

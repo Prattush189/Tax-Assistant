@@ -24,7 +24,7 @@
 import { GEMINI_API_KEYS } from './grok.js';
 import db from '../db/index.js';
 
-export type ModelTier = 'gemini-3' | 'gemini-2.5' | 'grok';
+export type ModelTier = 'gemini-3' | 'gemini-2.5';
 
 // Free tier search grounding limits (per API key) — immutable ceiling.
 const DEFAULT_T1_LIMIT = 5000;   // 5,000/month per key (Gemini 3 family — shared across 3.x models)
@@ -163,8 +163,9 @@ export function selectTier(searchEnabled: boolean): TierSelection {
     }
   }
 
-  // All free quotas exhausted — fall to paid Grok
-  return { tier: 'grok', keyIndex: -1, keyLabel: 'N/A (Grok)' };
+  // All free quotas exhausted — best-effort: use active key with Gemini 3 (over-quota will fail gracefully)
+  console.warn('[searchQuota] All free search quotas exhausted — routing to active key over-quota');
+  return { tier: 'gemini-3', keyIndex: activeKeyIndex, keyLabel: keys[activeKeyIndex]?.label ?? 'Key 1 (Primary)' };
 }
 
 /**
@@ -179,7 +180,7 @@ export function confirmUsed(tier: ModelTier, keyIndex: number, searchEnabled: bo
 
   if (tier === 'gemini-3') k.t1Count++;
   else if (tier === 'gemini-2.5') k.t2Count++;
-  else return; // don't persist if nothing changed
+  else return;
   persist(keyIndex);
 }
 

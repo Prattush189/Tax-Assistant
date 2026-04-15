@@ -201,6 +201,7 @@ router.get('/recent-calls', (req: AuthRequest, res: Response) => {
     ...r,
     search_used: !!r.search_used,
     is_plugin: !!r.is_plugin,
+    category: r.category ?? null,
     cost_inr: Math.round(r.cost * usdToInr * 10000) / 10000,
   }));
   const total = usageRepo.countRecentRequests();

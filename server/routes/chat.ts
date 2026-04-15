@@ -1,6 +1,6 @@
 // server/routes/chat.ts
 import { Router, Response } from 'express';
-import { grok, GROK_MODEL, INPUT_COST_PER_TOKEN, OUTPUT_COST_PER_TOKEN, WEB_SEARCH_COST, GEMINI_T1_INPUT_COST, GEMINI_T1_OUTPUT_COST, GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST, GEMINI_THINK_INPUT_COST, GEMINI_THINK_OUTPUT_COST, GEMINI_THINK_FB_INPUT_COST, GEMINI_THINK_FB_OUTPUT_COST, GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, GEMINI_CHAT_MODEL_THINK, GEMINI_CHAT_MODEL_THINK_FB, GEMINI_API_KEYS } from '../lib/grok.js';
+import { GEMINI_T1_INPUT_COST, GEMINI_T1_OUTPUT_COST, GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST, GEMINI_THINK_INPUT_COST, GEMINI_THINK_OUTPUT_COST, GEMINI_THINK_FB_INPUT_COST, GEMINI_THINK_FB_OUTPUT_COST, GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, GEMINI_CHAT_MODEL_THINK, GEMINI_CHAT_MODEL_THINK_FB, GEMINI_API_KEYS } from '../lib/grok.js';
 import { selectTier, confirmUsed, getActiveKeyIndex, type ModelTier } from '../lib/searchQuota.js';
 import { streamGeminiChat } from '../lib/geminiChat.js';
 import { chatRepo } from '../db/repositories/chatRepo.js';
@@ -18,11 +18,10 @@ const router = Router();
 const MAX_TOKENS = 4096;
 
 // ── Selective web search ──────────────────────────────────────────────────
-// When any of these patterns match the user's query, Grok is given the web
-// search tool so it can fetch live CBDT/CBIC notifications, Budget updates,
-// and case-law mentions. The local RAG reference is still injected into the
-// same request as supporting context — so web search is the primary source
-// for time-sensitive / comparative queries, and RAG acts as a fallback.
+// When any of these patterns match the user's query, Google Search grounding
+// is enabled so Gemini can fetch live CBDT/CBIC notifications, Budget updates,
+// and case-law mentions. The local RAG reference is still injected as
+// supplementary context.
 const WEB_SEARCH_PATTERNS = [
   // Recent / latest info
   /\b(latest|recent|updated?|current|upcoming)\s+(change|circular|notification|amendment|rule|budget|reform|rate|threshold)/i,
@@ -71,68 +70,6 @@ function shouldEnableWebSearch(query: string): boolean {
   return WEB_SEARCH_PATTERNS.some(p => p.test(query));
 }
 
-// ── Web search via xAI Responses API ──
-async function* streamWithWebSearch(
-  systemPrompt: string,
-  history: { role: string; content: string }[],
-  userContent: string,
-  maxOutputTokens: number = MAX_TOKENS,
-): AsyncGenerator<{ type: 'text'; text: string } | { type: 'usage'; input: number; output: number } | { type: 'done'; reason: string }> {
-  const input = [
-    { role: 'system', content: systemPrompt },
-    ...history,
-    { role: 'user', content: userContent },
-  ];
-
-  const response = await fetch('https://api.x.ai/v1/responses', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${process.env.XAI_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: GROK_MODEL,
-      input,
-      tools: [{ type: 'web_search' }],
-      max_output_tokens: maxOutputTokens,
-      stream: true,
-    }),
-  });
-
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`${response.status} ${errText.slice(0, 200)}`);
-  }
-
-  const reader = response.body!.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() ?? '';
-
-    for (const line of lines) {
-      if (!line.startsWith('data: ') || line === 'data: [DONE]') continue;
-      try {
-        const event = JSON.parse(line.slice(6));
-        // Response API streams different event types
-        if (event.type === 'response.output_text.delta' && event.delta) {
-          yield { type: 'text', text: event.delta };
-        } else if (event.type === 'response.completed' && event.response?.usage) {
-          const u = event.response.usage;
-          yield { type: 'usage', input: u.input_tokens ?? 0, output: u.output_tokens ?? 0 };
-          yield { type: 'done', reason: 'end_turn' };
-        }
-      } catch { /* skip unparseable lines */ }
-    }
-  }
-}
-
 // ── Plan-based message limits ──
 // Counts messages against the BILLING user (inviter for shared-pool members,
 // self for standalone users). Pairs with usageRepo.logWithBilling below.
@@ -161,7 +98,7 @@ RULES:
 - NEVER fabricate section numbers, rates, or policy changes. Say "I'm not certain" if unsure.
 - Lead with the answer. No filler, no tangential sections, no padding.
 - If question is vague/incomplete, ask a clarifying question instead of guessing.
-- If reference text is injected, use it silently — NEVER mention "the reference" or "provided context".
+- If reference text is injected, use it silently as additional context — NEVER mention "the reference", "provided context", or "provided text". Always answer from your full knowledge; the reference is supplementary, never a limitation.
 - Cite section numbers (both old and new Act). Mention consulting a CA for official filing.
 - GST slabs (post 56th Council): 0% essentials, 5% daily needs, 18% standard, 40% demerit, 3% gold.
 - NEW REGIME FY 2025-26: 0-4L nil, 4-8L 5%, 8-12L 10%, 12-16L 15%, 16-20L 20%, 20-24L 25%, 24L+ 30%. Std deduction ₹75K, rebate 87A ≤₹12L (max ₹60K).
@@ -321,7 +258,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
   let ragReferences: SectionReference[] = [];
   const ragResult = retrieveContextWithRefs(userContent);
   if (ragResult) {
-    userContent = `[Official Act text for reference verification]:\n${ragResult.context}\n\n---\n\n${userContent}`;
+    userContent = `[Supplementary Act reference — use alongside your knowledge, not instead of it]:\n${ragResult.context}\n\n---\n\n${userContent}`;
     ragReferences = ragResult.references;
   }
 
@@ -456,16 +393,15 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
           [GEMINI_CHAT_MODEL_THINK]: [GEMINI_THINK_INPUT_COST, GEMINI_THINK_OUTPUT_COST],
           [GEMINI_CHAT_MODEL_THINK_FB]: [GEMINI_THINK_FB_INPUT_COST, GEMINI_THINK_FB_OUTPUT_COST],
         };
-        const [inputCost, outputCost] = costMap[usedModel] ?? [INPUT_COST_PER_TOKEN, OUTPUT_COST_PER_TOKEN];
-        const searchCost = usedModel in costMap ? 0 : (searchEnabled ? WEB_SEARCH_COST : 0);
+        const [inputCost, outputCost] = costMap[usedModel] ?? [GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST];
         const actualSearchUsed = searchEnabled;
-        const cost = (inputTok * inputCost) + (outputTok * outputCost) + searchCost;
-        usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, inputTok, outputTok, cost, false, usedModel || undefined, actualSearchUsed);
+        const cost = (inputTok * inputCost) + (outputTok * outputCost);
+        usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, inputTok, outputTok, cost, false, usedModel || undefined, actualSearchUsed, 'chat');
         // Thinking mode costs 2 credits — log extra zero-cost rows to consume them.
         // Only do this if the primary call actually succeeded.
         if (isThinking) {
           for (let c = 1; c < creditCost; c++) {
-            usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, 0, 0, 0, false, usedModel || undefined, false);
+            usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, 0, 0, 0, false, usedModel || undefined, false, 'chat');
           }
         }
       } else {
