@@ -2,17 +2,21 @@
  * Search quota tracker for dual-mode Gemini cascade with dual API key rotation.
  *
  * Gemini 3.x family: 5,000 free searches/month (shared across all 3.x models)
- *   - gemini-3-flash-preview       (Think primary)
+ *   - gemini-3-flash-preview       (Think fallback)
  *   - gemini-3.1-flash-lite-preview (Fast fallback)
  *
  * Gemini 2.5 family: 1,500 free searches/day (shared across all 2.5 models)
  *   - gemini-2.5-flash-lite  (Fast primary)
- *   - gemini-2.5-flash       (Think fallback)
+ *   - gemini-2.5-flash       (Think primary)
  *
  * Each API key gets its own set of counters.
  * Counters only increment on SUCCESS (not on attempt).
  *
- * Admin-adjustable state (in-memory, resets on server restart):
+ * Counters are PERSISTED to the `search_quota` SQLite table on every
+ * increment / reset so state survives server restarts. The monthly reset
+ * uses `year*12 + month` (year-safe) rather than just `getMonth()`.
+ *
+ * Admin-adjustable runtime state (in-memory, not persisted):
  *   - t1Limit / t2Limit: can be LOWERED below the free-tier defaults, never raised above.
  *   - activeKeyIndex:    which API key is preferred as the primary for chat routing.
  */

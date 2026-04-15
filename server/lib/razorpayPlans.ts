@@ -35,10 +35,16 @@ const PLAN_NAMES: Record<PlanKey, string> = {
   enterprise_yearly:  'Smartbiz AI Enterprise — Yearly',
 };
 
-/** Number of billing cycles = 100 years */
+/**
+ * Number of billing cycles per subscription.
+ * Monthly: 12 charges (1 year). User can cancel any time before cycle 12.
+ * Yearly:  1 charge (1 year). Subscription completes after the year ends.
+ * In both cases, subscription.completed fires when done — our webhook
+ * sets status to 'completed' and the auto-downgrade middleware handles the rest.
+ */
 export const TOTAL_COUNT: Record<BillingCycle, number> = {
-  monthly: 1200, // 100 × 12
-  yearly:  100,
+  monthly: 12,
+  yearly:   1,
 };
 
 const cacheGet = db.prepare('SELECT razorpay_plan_id FROM razorpay_plan_cache WHERE key = ?');
