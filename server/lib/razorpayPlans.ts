@@ -15,24 +15,35 @@
 import Razorpay from 'razorpay';
 import db from '../db/index.js';
 
-export type PlanKey = 'pro_monthly' | 'pro_yearly' | 'enterprise_monthly' | 'enterprise_yearly';
+export type PlanKey = 'pro_monthly_v2' | 'pro_yearly_v2' | 'enterprise_monthly_v2' | 'enterprise_yearly_v2';
 export type BillingCycle = 'monthly' | 'yearly';
 export type PaidPlan = 'pro' | 'enterprise';
 
-/** Amount in paise for each plan key */
+/** GST rate applied on top of base plan prices (18% as per Indian GST for SaaS) */
+export const GST_RATE = 0.18;
+
+/** Returns amount in paise inclusive of 18% GST */
+function withGst(basePaise: number): number {
+  return Math.round(basePaise * (1 + GST_RATE));
+}
+
+/**
+ * Amount in paise for each plan key — inclusive of 18% GST.
+ * Base prices: Pro ₹400/mo, ₹3,600/yr · Enterprise ₹700/mo, ₹6,000/yr
+ */
 export const PLAN_AMOUNTS: Record<PlanKey, number> = {
-  pro_monthly:        40_000,   // ₹400
-  pro_yearly:        3_60_000,  // ₹3,600
-  enterprise_monthly: 70_000,   // ₹700
-  enterprise_yearly: 6_00_000,  // ₹6,000
+  pro_monthly_v2:         withGst(40_000),   // ₹400 + 18% GST = ₹472
+  pro_yearly_v2:         withGst(3_60_000),  // ₹3,600 + 18% GST = ₹4,248
+  enterprise_monthly_v2:  withGst(70_000),   // ₹700 + 18% GST = ₹826
+  enterprise_yearly_v2:  withGst(6_00_000),  // ₹6,000 + 18% GST = ₹7,080
 };
 
 /** Human-readable plan names for Razorpay dashboard */
 const PLAN_NAMES: Record<PlanKey, string> = {
-  pro_monthly:        'Smartbiz AI Pro — Monthly',
-  pro_yearly:         'Smartbiz AI Pro — Yearly',
-  enterprise_monthly: 'Smartbiz AI Enterprise — Monthly',
-  enterprise_yearly:  'Smartbiz AI Enterprise — Yearly',
+  pro_monthly_v2:         'Smartbiz AI Pro — Monthly',
+  pro_yearly_v2:          'Smartbiz AI Pro — Yearly',
+  enterprise_monthly_v2:  'Smartbiz AI Enterprise — Monthly',
+  enterprise_yearly_v2:   'Smartbiz AI Enterprise — Yearly',
 };
 
 /**
@@ -60,7 +71,7 @@ function getRazorpay(): Razorpay {
 }
 
 export function planKey(plan: PaidPlan, billing: BillingCycle): PlanKey {
-  return `${plan}_${billing}` as PlanKey;
+  return `${plan}_${billing}_v2` as PlanKey;
 }
 
 /**

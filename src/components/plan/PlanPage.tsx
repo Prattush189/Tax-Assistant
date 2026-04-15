@@ -36,6 +36,17 @@ const PRICES = {
   enterprise: { monthly: 700,  yearly: 6000  },
 } as const;
 
+const GST_PCT = 18;
+const GST_RATE = GST_PCT / 100;
+
+function gstAmount(basePrice: number): number {
+  return Math.round(basePrice * GST_RATE);
+}
+
+function totalWithGst(basePrice: number): number {
+  return basePrice + gstAmount(basePrice);
+}
+
 function yearlySaving(plan: 'pro' | 'enterprise'): number {
   return PRICES[plan].monthly * 12 - PRICES[plan].yearly;
 }
@@ -262,11 +273,16 @@ export function PlanPage() {
 
       const sub = await createSubscription(planId, billing);
 
+      const basePrice = PRICES[planId][billing];
+      const gst       = gstAmount(basePrice);
+      const total     = totalWithGst(basePrice);
+      const period    = billing === 'monthly' ? 'month' : 'year';
+
       const options = {
         key: sub.keyId,
         subscription_id: sub.subscriptionId,
         name: 'Smartbiz AI',
-        description: `${planId === 'pro' ? 'Pro' : 'Enterprise'} · ₹${PRICES[planId][billing].toLocaleString('en-IN')}/${billing === 'monthly' ? 'month' : 'year'} · Auto-renews · Cancel any time`,
+        description: `${planId === 'pro' ? 'Pro' : 'Enterprise'} · ₹${basePrice.toLocaleString('en-IN')} + ₹${gst.toLocaleString('en-IN')} GST (${GST_PCT}%) = ₹${total.toLocaleString('en-IN')}/${period}`,
         prefill: {
           name: user?.name ?? '',
           email: user?.email ?? '',
@@ -380,6 +396,11 @@ export function PlanPage() {
           </button>
         </div>
 
+        {/* Tax note */}
+        <p className="text-xs text-center text-gray-400 dark:text-gray-500 -mt-5 mb-8">
+          All prices are exclusive of {GST_PCT}% GST
+        </p>
+
         {/* Payment Error */}
         {payError && (
           <div className="flex items-center gap-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-2xl px-5 py-4 mb-6">
@@ -436,12 +457,17 @@ export function PlanPage() {
                 {isPaid ? (
                   <div className="mb-4">
                     {billing === 'monthly' ? (
-                      <div className="flex items-baseline gap-1">
-                        <span className="text-3xl font-bold text-gray-800 dark:text-white">
-                          ₹{monthlyPrice.toLocaleString('en-IN')}
-                        </span>
-                        <span className="text-sm text-gray-500 dark:text-gray-400">/month</span>
-                      </div>
+                      <>
+                        <div className="flex items-baseline gap-1">
+                          <span className="text-3xl font-bold text-gray-800 dark:text-white">
+                            ₹{monthlyPrice.toLocaleString('en-IN')}
+                          </span>
+                          <span className="text-sm text-gray-500 dark:text-gray-400">/month</span>
+                        </div>
+                        <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                          Excl. {GST_PCT}% GST · Total ₹{totalWithGst(monthlyPrice).toLocaleString('en-IN')}/month
+                        </p>
+                      </>
                     ) : (
                       <>
                         <div className="flex items-baseline gap-1">
@@ -458,6 +484,9 @@ export function PlanPage() {
                             Save ₹{saving.toLocaleString('en-IN')} ({discountPct}% off)
                           </span>
                         </div>
+                        <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                          Excl. {GST_PCT}% GST · Total ₹{totalWithGst(yearlyPrice).toLocaleString('en-IN')}/year
+                        </p>
                       </>
                     )}
                   </div>
