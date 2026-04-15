@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Cpu, Zap, TrendingUp, Shield } from 'lucide-react';
+import { Cpu, Zap, Shield, Key, Save, RotateCcw } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { cn } from '../../lib/utils';
-import { fetchApiCosts, ApiCostData } from '../../services/api';
+import {
+  fetchApiCosts, ApiCostData,
+  adminFetchGeminiConfig, adminSetGeminiLimits, adminSetActiveKey, GeminiConfig,
+} from '../../services/api';
 
 const PERIODS = [
   { value: 'day', label: 'Today' },
@@ -49,18 +53,88 @@ interface ModelEntry {
 
 export function ModelUsageDashboard() {
   const [data, setData] = useState<ApiCostData | null>(null);
+  const [config, setConfig] = useState<GeminiConfig | null>(null);
   const [period, setPeriod] = useState('month');
   const [loading, setLoading] = useState(true);
+  const [t1Input, setT1Input] = useState<string>('');
+  const [t2Input, setT2Input] = useState<string>('');
+  const [savingLimits, setSavingLimits] = useState(false);
+  const [switchingKey, setSwitchingKey] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setData(await fetchApiCosts(period));
+      const [costs, cfg] = await Promise.all([
+        fetchApiCosts(period),
+        adminFetchGeminiConfig(),
+      ]);
+      setData(costs);
+      setConfig(cfg);
+      setT1Input(String(cfg.t1Limit));
+      setT2Input(String(cfg.t2Limit));
     } catch { /* silent */ }
     finally { setLoading(false); }
   }, [period]);
 
   useEffect(() => { load(); }, [load]);
+
+  const saveLimits = async () => {
+    if (!config) return;
+    const t1 = parseInt(t1Input, 10);
+    const t2 = parseInt(t2Input, 10);
+    if (!Number.isFinite(t1) || !Number.isFinite(t2) || t1 < 0 || t2 < 0) {
+      toast.error('Limits must be non-negative numbers');
+      return;
+    }
+    setSavingLimits(true);
+    try {
+      const next = await adminSetGeminiLimits({ t1Limit: t1, t2Limit: t2 });
+      setConfig(next);
+      setT1Input(String(next.t1Limit));
+      setT2Input(String(next.t2Limit));
+      if (next.t1Limit !== t1 || next.t2Limit !== t2) {
+        toast.success(`Limits clamped to free tier (${next.t1Limit} / ${next.t2Limit})`);
+      } else {
+        toast.success('Gemini limits updated');
+      }
+    } catch {
+      toast.error('Failed to update limits');
+    } finally {
+      setSavingLimits(false);
+    }
+  };
+
+  const resetLimits = async () => {
+    if (!config) return;
+    setSavingLimits(true);
+    try {
+      const next = await adminSetGeminiLimits({ t1Limit: config.defaults.t1, t2Limit: config.defaults.t2 });
+      setConfig(next);
+      setT1Input(String(next.t1Limit));
+      setT2Input(String(next.t2Limit));
+      toast.success('Limits reset to free-tier defaults');
+    } catch {
+      toast.error('Failed to reset limits');
+    } finally {
+      setSavingLimits(false);
+    }
+  };
+
+  const switchKey = async (idx: number) => {
+    if (!config || idx === config.activeKeyIndex) return;
+    setSwitchingKey(true);
+    try {
+      const next = await adminSetActiveKey(idx);
+      setConfig(next);
+      toast.success(`Switched to ${next.keys[next.activeKeyIndex]?.label ?? `Key ${idx + 1}`}`);
+      // reload usage data so quota cards reflect the new active marker
+      load();
+    } catch {
+      toast.error('Failed to switch key');
+    } finally {
+      setSwitchingKey(false);
+    }
+  };
 
   if (loading && !data) return <p className="text-sm text-gray-400 text-center py-8">Loading model data...</p>;
   if (!data) return null;
@@ -130,6 +204,133 @@ export function ModelUsageDashboard() {
         </div>
         <p className="text-[10px] text-gray-400 text-center mt-3">Search grounding: 2.5 family shares 1,500 RPD | 3.x family shares 5,000/month | All free tier, per API key</p>
       </div>
+
+      {/* Free-tier limit overrides (admin can LOWER only) */}
+      {config && (
+        <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5">
+          <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+            <div>
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+                <Shield className="w-4 h-4 text-emerald-500" />
+                Free-Tier Limit Overrides
+              </h3>
+              <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
+                Lower the Gemini search-grounding limits below the free-tier maximum. Values above the default are clamped — admin cannot raise limits above free tier.
+              </p>
+            </div>
+            <button
+              onClick={resetLimits}
+              disabled={savingLimits}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
+              title="Reset to free-tier defaults"
+            >
+              <RotateCcw className="w-3.5 h-3.5" /> Reset
+            </button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="rounded-xl border border-purple-200 dark:border-purple-800 bg-purple-50 dark:bg-purple-900/10 p-3">
+              <label className="block">
+                <span className="text-[10px] font-bold uppercase text-purple-600 dark:text-purple-400">3.x Pool — Monthly</span>
+                <div className="flex items-center gap-2 mt-1">
+                  <input
+                    type="number"
+                    min={0}
+                    max={config.defaults.t1}
+                    value={t1Input}
+                    onChange={e => setT1Input(e.target.value)}
+                    className="flex-1 px-2 py-1.5 text-sm bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-gray-100"
+                  />
+                  <span className="text-[10px] text-gray-400 whitespace-nowrap">/ mo</span>
+                </div>
+                <div className="flex items-center justify-between mt-1.5">
+                  <span className="text-[10px] text-gray-400">Current: <span className="font-semibold text-gray-600 dark:text-gray-300">{config.t1Limit.toLocaleString()}</span></span>
+                  <span className="text-[10px] text-gray-400">Default: {config.defaults.t1.toLocaleString()}</span>
+                </div>
+              </label>
+            </div>
+            <div className="rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/10 p-3">
+              <label className="block">
+                <span className="text-[10px] font-bold uppercase text-blue-600 dark:text-blue-400">2.5 Pool — Daily</span>
+                <div className="flex items-center gap-2 mt-1">
+                  <input
+                    type="number"
+                    min={0}
+                    max={config.defaults.t2}
+                    value={t2Input}
+                    onChange={e => setT2Input(e.target.value)}
+                    className="flex-1 px-2 py-1.5 text-sm bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-gray-100"
+                  />
+                  <span className="text-[10px] text-gray-400 whitespace-nowrap">/ day</span>
+                </div>
+                <div className="flex items-center justify-between mt-1.5">
+                  <span className="text-[10px] text-gray-400">Current: <span className="font-semibold text-gray-600 dark:text-gray-300">{config.t2Limit.toLocaleString()}</span></span>
+                  <span className="text-[10px] text-gray-400">Default: {config.defaults.t2.toLocaleString()}</span>
+                </div>
+              </label>
+            </div>
+          </div>
+          <div className="flex justify-end mt-3">
+            <button
+              onClick={saveLimits}
+              disabled={savingLimits}
+              className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors disabled:opacity-50"
+            >
+              <Save className="w-3.5 h-3.5" /> {savingLimits ? 'Saving...' : 'Save Limits'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Active API Key selector */}
+      {config && (
+        <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5">
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2 mb-1">
+            <Key className="w-4 h-4 text-amber-500" />
+            Active API Key
+          </h3>
+          <p className="text-[11px] text-gray-500 dark:text-gray-400 mb-3">
+            Chooses which Gemini API key is used as the primary for chat requests. Fallback rotation still considers all keys.
+          </p>
+          <div className="space-y-2">
+            {config.keys.map(k => {
+              const isActive = k.index === config.activeKeyIndex;
+              const disabled = !k.hasKey || switchingKey;
+              return (
+                <label
+                  key={k.index}
+                  className={cn(
+                    'flex items-center justify-between gap-3 rounded-xl border p-3 transition-colors',
+                    isActive
+                      ? 'border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/10'
+                      : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900',
+                    disabled && !isActive ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800',
+                  )}
+                >
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="radio"
+                      name="active-key"
+                      checked={isActive}
+                      disabled={disabled}
+                      onChange={() => switchKey(k.index)}
+                      className="accent-emerald-500"
+                    />
+                    <div>
+                      <div className="text-sm font-medium text-gray-900 dark:text-gray-100">{k.label}</div>
+                      <div className="text-[10px] text-gray-400">
+                        {k.hasKey ? `Index ${k.index}` : 'Not configured (env var missing)'}
+                      </div>
+                    </div>
+                  </div>
+                  {isActive && (
+                    <span className="text-[10px] font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/30 px-2 py-0.5 rounded">ACTIVE</span>
+                  )}
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Search quota status — per API key */}
       <div className="space-y-3">

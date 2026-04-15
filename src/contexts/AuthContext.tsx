@@ -8,6 +8,10 @@ interface User {
   plan: 'free' | 'pro' | 'enterprise';
   /** Grants ITR tab access independently of admin role. */
   itr_enabled?: boolean;
+  /** ISO timestamp when the free-plan trial expires (always present). */
+  trial_ends_at?: string;
+  /** ISO timestamp when the current paid plan expires; null if no active sub. */
+  plan_expires_at?: string | null;
 }
 
 export interface SignupResult {

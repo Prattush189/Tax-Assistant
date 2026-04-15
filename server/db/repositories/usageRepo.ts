@@ -135,6 +135,21 @@ const analyticsStmts = {
     ORDER BY a.created_at DESC
     LIMIT ?
   `),
+  recentRequestsPaginated: db.prepare(`
+    SELECT
+      a.id, a.user_id, a.input_tokens, a.output_tokens, a.cost, a.created_at,
+      a.model, a.search_used, a.is_plugin,
+      COALESCE(u.name, 'Guest') AS user_name,
+      COALESCE(u.email, '') AS user_email,
+      COALESCE(u.plan, 'free') AS user_plan
+    FROM api_usage a
+    LEFT JOIN users u ON a.user_id = u.id
+    ORDER BY a.created_at DESC
+    LIMIT ? OFFSET ?
+  `),
+  recentRequestsCount: db.prepare(`
+    SELECT COUNT(*) AS count FROM api_usage
+  `),
   byModel: db.prepare(`
     SELECT
       COALESCE(model, 'unknown') AS model,
@@ -248,5 +263,18 @@ export const usageRepo = {
     cost: number; created_at: string; user_name: string;
   }> {
     return analyticsStmts.recentRequests.all(limit) as any[];
+  },
+
+  getRecentRequestsPaginated(limit: number, offset: number): Array<{
+    id: number; user_id: string | null; input_tokens: number; output_tokens: number;
+    cost: number; created_at: string; model: string | null; search_used: number; is_plugin: number;
+    user_name: string; user_email: string; user_plan: string;
+  }> {
+    return analyticsStmts.recentRequestsPaginated.all(limit, offset) as any[];
+  },
+
+  countRecentRequests(): number {
+    const row = analyticsStmts.recentRequestsCount.get() as { count: number };
+    return row.count;
   },
 };

@@ -23,6 +23,7 @@ import { CalculatorView, CalculatorTab } from './components/calculator/Calculato
 import { DashboardView } from './components/dashboard/DashboardView';
 import { AdminDashboard } from './components/admin/AdminDashboard';
 import { PlanPage } from './components/plan/PlanPage';
+import { TrialExpiredWall } from './components/plan/TrialExpiredWall';
 import { SettingsPage } from './components/settings/SettingsPage';
 import { NoticeDrafterPage } from './components/notices/NoticeDrafterPage';
 import { ItrView } from './components/itr/ItrView';
@@ -81,12 +82,20 @@ function AppContent() {
 
   const chatManager = useChatManager();
   const noticeDrafter = useNoticeDrafter();
-  // ITR + Board Resolutions: enterprise plan OR admin OR explicit itr_enabled.
+  // ITR: enterprise plan OR admin OR explicit itr_enabled.
   const isEnterprise = user?.plan === 'enterprise';
   const canAccessItr = user?.role === 'admin' || isEnterprise || user?.itr_enabled === true;
   const itrManager = useItrManager(canAccessItr);
-  const canAccessBoardResolutions = user?.role === 'admin' || isEnterprise;
+  // Board Resolutions: open to all authenticated users (plan limits enforced server-side).
+  const canAccessBoardResolutions = !!user;
   const boardResolutionManager = useBoardResolutionManager(canAccessBoardResolutions);
+
+  // Trial expiry: free-plan users are locked out after 30 days.
+  const isTrialExpired =
+    user?.role !== 'admin' &&
+    user?.plan === 'free' &&
+    !!user?.trial_ends_at &&
+    new Date() > new Date(user.trial_ends_at);
   const profileManager = useProfileManager(!!user);
 
   return (
@@ -173,6 +182,7 @@ function AppContent() {
               {activeView === 'board_resolutions' && canAccessBoardResolutions && (
                 <BoardResolutionView manager={boardResolutionManager} />
               )}
+              {isTrialExpired && <TrialExpiredWall />}
               {activeView === 'profile' && <ProfileView manager={profileManager} />}
               {activeView === 'settings' && <SettingsPage />}
             </motion.div>

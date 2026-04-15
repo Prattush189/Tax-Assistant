@@ -4,11 +4,16 @@ import {
   BoardResolutionTemplateId,
 } from '../db/repositories/boardResolutionRepo.js';
 import { boardResolutionAccessMiddleware } from '../middleware/auth.js';
+import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
+import { userRepo } from '../db/repositories/userRepo.js';
+import { getUserLimits } from '../lib/planLimits.js';
+import { getBillingUser } from '../lib/billing.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
 
-// Enterprise plan required. authMiddleware runs at /api mount in server/index.ts.
+// All authenticated users may access board resolutions.
+// Plan limits (monthly cap) are enforced at the POST route below.
 router.use(boardResolutionAccessMiddleware);
 
 const TEMPLATE_IDS: readonly BoardResolutionTemplateId[] = [
@@ -49,6 +54,24 @@ router.get('/drafts', (req: AuthRequest, res: Response) => {
 // POST /api/board-resolutions/drafts
 router.post('/drafts', (req: AuthRequest, res: Response) => {
   if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+
+  // Enforce monthly board resolution limit
+  const user = userRepo.findById(req.user.id);
+  if (!user) { res.status(401).json({ error: 'User not found' }); return; }
+
+  const billingUser = getBillingUser(user);
+  const limits = getUserLimits(billingUser);
+  const usedThisMonth = featureUsageRepo.countThisMonthByBillingUser(billingUser.id, 'board_resolution');
+
+  if (usedThisMonth >= limits.boardResolutions) {
+    res.status(429).json({
+      error: `Board resolution limit reached (${limits.boardResolutions}/month). Upgrade your plan for more.`,
+      used: usedThisMonth,
+      limit: limits.boardResolutions,
+    });
+    return;
+  }
+
   const { template_id, name, ui_payload } = req.body ?? {};
 
   if (!isValidTemplateId(template_id)) {
@@ -71,6 +94,10 @@ router.post('/drafts', (req: AuthRequest, res: Response) => {
     name.trim(),
     payloadStr,
   );
+
+  // Log usage for limit tracking
+  featureUsageRepo.logWithBilling(req.user.id, billingUser.id, 'board_resolution');
+
   res.status(201).json({
     ...draft,
     ui_payload: parseUiPayload(draft),

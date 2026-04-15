@@ -5,7 +5,7 @@ import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { noticeRepo } from '../db/repositories/noticeRepo.js';
 import { profileRepoV2 } from '../db/repositories/profileRepoV2.js';
 import { AuthRequest } from '../types.js';
-import { getUserLimits, getEffectivePlan } from '../lib/planLimits.js';
+import { getUserLimits, getEffectivePlan, getTrialEndsAt, isTrialExpired, TRIAL_DAYS } from '../lib/planLimits.js';
 import { getBillingUser, countSeats, SEAT_CAP } from '../lib/billing.js';
 
 const router = Router();
@@ -36,9 +36,6 @@ router.get('/', (req: AuthRequest, res: Response) => {
     return;
   }
 
-  // Usage counters always reflect the POOL owner (inviter or self).
-  // This means an invitee sees the combined "3,200 of 10,000 used" number
-  // — consistent with the plan text — rather than their personal slice.
   const billingUser = getBillingUser(user);
   const plan = getEffectivePlan(billingUser);
   const limits = getUserLimits(billingUser);
@@ -75,6 +72,14 @@ router.get('/', (req: AuthRequest, res: Response) => {
     console.error('[usage] notices count failed', err);
   }
 
+  // Board resolutions (monthly)
+  let boardResolutionsUsed = 0;
+  try {
+    boardResolutionsUsed = featureUsageRepo.countThisMonthByBillingUser(billingUser.id, 'board_resolution');
+  } catch (err) {
+    console.error('[usage] board resolutions count failed', err);
+  }
+
   // Saved profiles (count — not period based)
   let profilesUsed = 0;
   try {
@@ -83,19 +88,31 @@ router.get('/', (req: AuthRequest, res: Response) => {
     console.error('[usage] profiles count failed', err);
   }
 
+  // Trial info (only relevant for free-plan users)
+  const trialEndsAt = getTrialEndsAt(user.created_at);
+  const trialExpired = user.plan === 'free' ? isTrialExpired(user.created_at) : false;
+  const trialDaysLeft = user.plan === 'free'
+    ? Math.max(0, Math.ceil((new Date(trialEndsAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
+    : null;
+
   // Surface "shared with" info for invited users
   const isSharedMember = !!user.inviter_id && user.inviter_id !== user.id;
   const sharedWith = isSharedMember
     ? {
         inviterId: billingUser.id,
         inviterName: billingUser.name,
-        memberCount: countSeats(billingUser.id).accepted, // incl. inviter
+        memberCount: countSeats(billingUser.id).accepted,
         seatCap: SEAT_CAP,
       }
     : undefined;
 
   res.json({
     plan,
+    planExpiresAt: user.plan_expires_at ?? null,
+    trialEndsAt,
+    trialExpired,
+    trialDaysLeft,
+    trialDays: TRIAL_DAYS,
     pluginRole: user.plugin_role ?? undefined,
     consultantId: user.plugin_consultant_id ?? undefined,
     sharedWith,
@@ -123,6 +140,12 @@ router.get('/', (req: AuthRequest, res: Response) => {
         limit: limits.notices,
         period: 'month',
         label: 'Notice Drafts This Month',
+      },
+      boardResolutions: {
+        used: boardResolutionsUsed,
+        limit: limits.boardResolutions,
+        period: 'month',
+        label: 'Board Resolutions This Month',
       },
       profiles: {
         used: profilesUsed,

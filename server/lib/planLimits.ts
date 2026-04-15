@@ -16,6 +16,9 @@ import type { UserRow } from '../db/repositories/userRepo.js';
 
 export type PlanId = 'free' | 'pro' | 'enterprise' | 'enterprise-shared';
 
+/** Number of days a free-plan trial lasts before the account is locked. */
+export const TRIAL_DAYS = 30;
+
 export interface MessageLimit {
   limit: number;
   period: 'day' | 'month';
@@ -23,10 +26,11 @@ export interface MessageLimit {
 
 export interface UserLimits {
   messages: MessageLimit;
-  attachments: number;   // monthly
-  suggestions: number;   // monthly
-  notices: number;       // monthly
-  profiles: number;      // total
+  attachments: number;       // monthly
+  suggestions: number;       // monthly
+  notices: number;           // monthly
+  profiles: number;          // total
+  boardResolutions: number;  // monthly
 }
 
 /** Baseline defaults for each plan tier. */
@@ -37,13 +41,15 @@ export const PLAN_DEFAULTS: Record<PlanId, UserLimits> = {
     suggestions: 20,
     notices: 3,
     profiles: 1,
+    boardResolutions: 3,
   },
   pro: {
-    messages: { limit: 300, period: 'month' },
+    messages: { limit: 1500, period: 'month' },
     attachments: 30,
     suggestions: 100,
     notices: 15,
     profiles: 5,
+    boardResolutions: 15,
   },
   enterprise: {
     messages: { limit: 3000, period: 'month' },
@@ -51,6 +57,7 @@ export const PLAN_DEFAULTS: Record<PlanId, UserLimits> = {
     suggestions: 500,
     notices: 50,
     profiles: 25,
+    boardResolutions: 50,
   },
   /**
    * enterprise-shared defaults are intentionally generous — the consultant's
@@ -64,6 +71,7 @@ export const PLAN_DEFAULTS: Record<PlanId, UserLimits> = {
     suggestions: 1000,
     notices: 100,
     profiles: 50,
+    boardResolutions: 100,
   },
 };
 
@@ -110,6 +118,7 @@ export function getUserLimits(user: LimitUserInput): UserLimits {
     suggestions: overrides.suggestions ?? base.suggestions,
     notices: overrides.notices ?? base.notices,
     profiles: overrides.profiles ?? base.profiles,
+    boardResolutions: overrides.boardResolutions ?? base.boardResolutions,
   };
 }
 
@@ -136,6 +145,7 @@ export function sanitizePluginLimits(raw: unknown): UserLimits | null {
   const suggestions = numeric(r.suggestions);
   const notices = numeric(r.notices);
   const profiles = numeric(r.profiles);
+  const boardResolutions = numeric(r.boardResolutions);
 
   // Require at least one field to be set
   if (
@@ -143,7 +153,8 @@ export function sanitizePluginLimits(raw: unknown): UserLimits | null {
     attachments === undefined &&
     suggestions === undefined &&
     notices === undefined &&
-    profiles === undefined
+    profiles === undefined &&
+    boardResolutions === undefined
   ) {
     return null;
   }
@@ -155,5 +166,28 @@ export function sanitizePluginLimits(raw: unknown): UserLimits | null {
     suggestions: suggestions ?? 0,
     notices: notices ?? 0,
     profiles: profiles ?? 0,
+    boardResolutions: boardResolutions ?? 0,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Trial helpers (free-plan 30-day trial)
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute the ISO timestamp when a free-plan user's trial expires.
+ * Always based on the user's `created_at` — no DB column needed.
+ */
+export function getTrialEndsAt(createdAt: string): string {
+  const d = new Date(createdAt);
+  d.setDate(d.getDate() + TRIAL_DAYS);
+  return d.toISOString();
+}
+
+/**
+ * Returns true if the free-plan trial has expired.
+ * Always returns false for paid plans (caller should gate on plan === 'free').
+ */
+export function isTrialExpired(createdAt: string): boolean {
+  return new Date() > new Date(getTrialEndsAt(createdAt));
 }

@@ -2,8 +2,20 @@ import { Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { AuthRequest, AuthUser } from '../types.js';
 import { userRepo } from '../db/repositories/userRepo.js';
+import { isTrialExpired, getTrialEndsAt } from '../lib/planLimits.js';
 
 const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-secret-change-me';
+
+/**
+ * Paths (relative to /api mount) that bypass the trial-expiry gate.
+ * Users need access to auth, usage (plan page), and payments even when
+ * their trial has expired so they can still see their status and upgrade.
+ */
+const TRIAL_EXEMPT_PREFIXES = [
+  '/api/auth',
+  '/api/usage',
+  '/api/payments',
+];
 
 // Strict auth — rejects if no valid token
 export function authMiddleware(req: AuthRequest, res: Response, next: NextFunction): void {
@@ -18,30 +30,37 @@ export function authMiddleware(req: AuthRequest, res: Response, next: NextFuncti
 
   try {
     const payload = jwt.verify(token, JWT_SECRET) as AuthUser & { sessionToken?: string };
-    // Check suspension
     const user = userRepo.findById(payload.id);
-    if (user?.suspended_until) {
-      const until = new Date(user.suspended_until + '+05:30');
+
+    // Auto-downgrade expired paid plans before any other check
+    if (user && user.plan !== 'free') {
+      userRepo.downgradePlanIfExpired(payload.id);
+    }
+
+    // Re-fetch after potential downgrade
+    const freshUser = userRepo.findById(payload.id);
+
+    // Check suspension
+    if (freshUser?.suspended_until) {
+      const until = new Date(freshUser.suspended_until + '+05:30');
       if (until > new Date()) {
-        res.status(403).json({ error: `Account suspended until ${user.suspended_until} IST` });
+        res.status(403).json({ error: `Account suspended until ${freshUser.suspended_until} IST` });
         return;
       }
-      // Suspension expired — clear it
       userRepo.suspend(payload.id, null);
     }
-    // Single-session enforcement: if the JWT's sessionToken doesn't match
-    // the DB's session_token, the user logged in elsewhere and this session
-    // is stale. Tokens minted before the session_token column existed have
-    // no sessionToken field — allow them through (backwards compat).
+
+    // Single-session enforcement
     if (
-      user?.session_token &&
+      freshUser?.session_token &&
       payload.sessionToken &&
-      user.session_token !== payload.sessionToken
+      freshUser.session_token !== payload.sessionToken
     ) {
       res.status(401).json({ error: 'Session expired — you logged in on another device' });
       return;
     }
-    req.user = { id: payload.id, email: payload.email, role: user?.role ?? 'user' };
+
+    req.user = { id: payload.id, email: payload.email, role: freshUser?.role ?? 'user' };
     next();
   } catch {
     res.status(401).json({ error: 'Invalid or expired token' });
@@ -59,19 +78,24 @@ export function optionalAuthMiddleware(req: AuthRequest, res: Response, next: Ne
     try {
       const payload = jwt.verify(token, JWT_SECRET) as AuthUser & { sessionToken?: string };
       const user = userRepo.findById(payload.id);
-      if (user?.suspended_until) {
-        const until = new Date(user.suspended_until + '+05:30');
+
+      if (user && user.plan !== 'free') {
+        userRepo.downgradePlanIfExpired(payload.id);
+      }
+      const freshUser = userRepo.findById(payload.id);
+
+      if (freshUser?.suspended_until) {
+        const until = new Date(freshUser.suspended_until + '+05:30');
         if (until > new Date()) {
-          res.status(403).json({ error: `Account suspended until ${user.suspended_until} IST` });
+          res.status(403).json({ error: `Account suspended until ${freshUser.suspended_until} IST` });
           return;
         }
         userRepo.suspend(payload.id, null);
       }
-      // Session check — stale sessions are treated as guest (not 401 in optional mode)
-      if (user?.session_token && payload.sessionToken && user.session_token !== payload.sessionToken) {
-        // Treat as guest — don't attach user
+      if (freshUser?.session_token && payload.sessionToken && freshUser.session_token !== payload.sessionToken) {
+        // Treat as guest
       } else {
-        req.user = { id: payload.id, email: payload.email, role: user?.role ?? 'user' };
+        req.user = { id: payload.id, email: payload.email, role: freshUser?.role ?? 'user' };
       }
     } catch {
       // Invalid token — treat as guest
@@ -80,7 +104,6 @@ export function optionalAuthMiddleware(req: AuthRequest, res: Response, next: Ne
     return;
   }
 
-  // Plugin key validation
   if (pluginKey && PLUGIN_API_KEY && pluginKey !== PLUGIN_API_KEY) {
     res.status(403).json({ error: 'Invalid plugin key' });
     return;
@@ -98,8 +121,40 @@ export function adminMiddleware(req: AuthRequest, res: Response, next: NextFunct
   next();
 }
 
+/**
+ * Trial-expiry gate — blocks free-plan users whose 30-day trial has ended.
+ * Must run AFTER authMiddleware. Exempt routes (auth, usage, payments) pass through.
+ * Admins and paid-plan users always pass through.
+ */
+export function trialCheckMiddleware(req: AuthRequest, res: Response, next: NextFunction): void {
+  if (!req.user) { next(); return; }
+
+  // Admins are never blocked
+  if (req.user.role === 'admin') { next(); return; }
+
+  // Exempt specific API paths so users can still log in, see status, and pay
+  const fullPath = req.originalUrl.split('?')[0];
+  if (TRIAL_EXEMPT_PREFIXES.some(p => fullPath.startsWith(p))) { next(); return; }
+
+  const user = userRepo.findById(req.user.id);
+  if (!user) { next(); return; }
+
+  // Only free-plan users are subject to the trial gate
+  if (user.plan !== 'free') { next(); return; }
+
+  if (isTrialExpired(user.created_at)) {
+    res.status(403).json({
+      error: 'trial_expired',
+      trialEnded: true,
+      trialEndsAt: getTrialEndsAt(user.created_at),
+    });
+    return;
+  }
+
+  next();
+}
+
 // ITR access — enterprise plan required (admin always has access).
-// Used for /api/itr/* and /api/board-resolutions/* routes.
 export function itrAccessMiddleware(req: AuthRequest, res: Response, next: NextFunction): void {
   if (!req.user) {
     res.status(401).json({ error: 'Authentication required' });
@@ -110,7 +165,6 @@ export function itrAccessMiddleware(req: AuthRequest, res: Response, next: NextF
     return;
   }
   const user = userRepo.findById(req.user.id);
-  // Enterprise plan OR explicit itr_enabled flag
   const plan = user?.plan ?? 'free';
   if (plan === 'enterprise' || (user && user.itr_enabled === 1)) {
     next();
@@ -119,21 +173,15 @@ export function itrAccessMiddleware(req: AuthRequest, res: Response, next: NextF
   res.status(403).json({ error: 'Enterprise plan required for ITR filing' });
 }
 
-// Board Resolutions — enterprise plan required (admin always has access).
+/**
+ * Board Resolutions — open to all authenticated users (plan limits enforced
+ * at the route level, not here). Admins always have access.
+ */
 export function boardResolutionAccessMiddleware(req: AuthRequest, res: Response, next: NextFunction): void {
   if (!req.user) {
     res.status(401).json({ error: 'Authentication required' });
     return;
   }
-  if (req.user.role === 'admin') {
-    next();
-    return;
-  }
-  const user = userRepo.findById(req.user.id);
-  const plan = user?.plan ?? 'free';
-  if (plan === 'enterprise') {
-    next();
-    return;
-  }
-  res.status(403).json({ error: 'Enterprise plan required for Board Resolutions' });
+  // All authenticated users may access board resolutions — limits enforced in the route
+  next();
 }

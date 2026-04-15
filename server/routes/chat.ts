@@ -1,7 +1,7 @@
 // server/routes/chat.ts
 import { Router, Response } from 'express';
 import { grok, GROK_MODEL, INPUT_COST_PER_TOKEN, OUTPUT_COST_PER_TOKEN, WEB_SEARCH_COST, GEMINI_T1_INPUT_COST, GEMINI_T1_OUTPUT_COST, GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST, GEMINI_THINK_INPUT_COST, GEMINI_THINK_OUTPUT_COST, GEMINI_THINK_FB_INPUT_COST, GEMINI_THINK_FB_OUTPUT_COST, GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, GEMINI_CHAT_MODEL_THINK, GEMINI_CHAT_MODEL_THINK_FB, GEMINI_API_KEYS } from '../lib/grok.js';
-import { selectTier, confirmUsed, type ModelTier } from '../lib/searchQuota.js';
+import { selectTier, confirmUsed, getActiveKeyIndex, type ModelTier } from '../lib/searchQuota.js';
 import { streamGeminiChat } from '../lib/geminiChat.js';
 import { chatRepo } from '../db/repositories/chatRepo.js';
 import { messageRepo } from '../db/repositories/messageRepo.js';
@@ -377,7 +377,8 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
 
         // Gemini 2.5 Flash fallback for thinking
         if (!fullResponse) {
-          const fbApiKey = GEMINI_API_KEYS[0] ?? '';
+          const activeIdx = getActiveKeyIndex();
+          const fbApiKey = GEMINI_API_KEYS[activeIdx] ?? '';
           if (fbApiKey) {
             usedModel = GEMINI_CHAT_MODEL_THINK_FB;
             try {
@@ -385,7 +386,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
                 if (chunk.text) { fullResponse += chunk.text; res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`); }
                 if (chunk.done) { inputTok = chunk.inputTokens ?? 0; outputTok = chunk.outputTokens ?? 0; stopReason = 'end_turn'; }
               }
-              confirmUsed('gemini-2.5', 0, true);
+              confirmUsed('gemini-2.5', activeIdx, true);
             } catch (err) {
               console.warn('[chat] Think fallback: Gemini 2.5 Flash also failed:', (err as Error).message?.slice(0, 120));
               fullResponse = ''; usedModel = '';
@@ -394,7 +395,8 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
         }
       } else {
         // ── FAST: Gemini 2.5 Flash-Lite primary ──
-        const fastApiKey = GEMINI_API_KEYS[0] ?? '';
+        const activeIdx = getActiveKeyIndex();
+        const fastApiKey = GEMINI_API_KEYS[activeIdx] ?? '';
         if (fastApiKey) {
           usedModel = GEMINI_CHAT_MODEL_T2;
           try {
@@ -402,7 +404,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
               if (chunk.text) { fullResponse += chunk.text; res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`); }
               if (chunk.done) { inputTok = chunk.inputTokens ?? 0; outputTok = chunk.outputTokens ?? 0; stopReason = 'end_turn'; }
             }
-            confirmUsed('gemini-2.5', 0, searchEnabled);
+            confirmUsed('gemini-2.5', activeIdx, searchEnabled);
           } catch (err) {
             console.warn('[chat] Fast: Gemini 2.5 Flash-Lite failed, falling back to 3.1 Flash-Lite:', (err as Error).message?.slice(0, 120));
             fullResponse = ''; usedModel = '';

@@ -283,17 +283,57 @@ export interface UsageMetric {
 
 export interface UserUsageResponse {
   plan: 'free' | 'pro' | 'enterprise';
+  planExpiresAt: string | null;
+  trialEndsAt: string;
+  trialExpired: boolean;
+  trialDaysLeft: number | null;
+  trialDays: number;
   usage: {
     messages: UsageMetric;
     attachments: UsageMetric;
     suggestions: UsageMetric;
     notices: UsageMetric;
+    boardResolutions: UsageMetric;
     profiles: UsageMetric;
   };
 }
 
 export async function fetchUserUsage(): Promise<UserUsageResponse> {
   return authFetch('/api/usage');
+}
+
+// ── Payments API ─────────────────────────────────────────────────────────
+
+export interface CreateOrderResponse {
+  orderId: string;
+  amount: number;
+  currency: string;
+  keyId: string;
+}
+
+export async function createPaymentOrder(
+  plan: 'pro' | 'enterprise',
+  billing: 'monthly' | 'yearly',
+): Promise<CreateOrderResponse> {
+  return authFetch('/api/payments/create-order', {
+    method: 'POST',
+    body: JSON.stringify({ plan, billing }),
+  });
+}
+
+export async function verifyPayment(payload: {
+  razorpay_order_id: string;
+  razorpay_payment_id: string;
+  razorpay_signature: string;
+}): Promise<{ success: boolean; plan: string; planExpiresAt: string }> {
+  return authFetch('/api/payments/verify', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchPaymentHistory() {
+  return authFetch('/api/payments/history');
 }
 
 // ── Account Settings API ────────────────────────────────────────────────
@@ -937,6 +977,63 @@ export interface ApiCostData {
 
 export async function fetchApiCosts(period: string = 'month'): Promise<ApiCostData> {
   return authFetch(`/api/admin/api-costs?period=${period}`);
+}
+
+// ── Admin recent API calls (paginated) ───────────────────────────────────
+
+export interface RecentApiCall {
+  id: number;
+  user_id: string | null;
+  user_name: string;
+  user_email: string;
+  user_plan: string;
+  model: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  cost: number;
+  cost_inr: number;
+  search_used: boolean;
+  is_plugin: boolean;
+  created_at: string;
+}
+
+export interface RecentApiCallsResponse {
+  total: number;
+  limit: number;
+  offset: number;
+  calls: RecentApiCall[];
+}
+
+export async function adminFetchRecentCalls(limit = 100, offset = 0): Promise<RecentApiCallsResponse> {
+  return authFetch(`/api/admin/recent-calls?limit=${limit}&offset=${offset}`);
+}
+
+// ── Admin Gemini config (limits + active key) ────────────────────────────
+
+export interface GeminiConfig {
+  activeKeyIndex: number;
+  t1Limit: number;
+  t2Limit: number;
+  defaults: { t1: number; t2: number };
+  keys: Array<{ index: number; label: string; hasKey: boolean }>;
+}
+
+export async function adminFetchGeminiConfig(): Promise<GeminiConfig> {
+  return authFetch('/api/admin/gemini-config');
+}
+
+export async function adminSetGeminiLimits(input: { t1Limit?: number; t2Limit?: number }): Promise<GeminiConfig> {
+  return authFetch('/api/admin/gemini-limits', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function adminSetActiveKey(keyIndex: number): Promise<GeminiConfig> {
+  return authFetch('/api/admin/active-key', {
+    method: 'POST',
+    body: JSON.stringify({ keyIndex }),
+  });
 }
 
 // ── Income Tax portal import ────────────────────────────────────────────

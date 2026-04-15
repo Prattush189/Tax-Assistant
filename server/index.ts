@@ -19,12 +19,13 @@ import genericProfilesRouter from './routes/genericProfiles.js';
 import usageRouter from './routes/usage.js';
 import itrRouter from './routes/itr.js';
 import boardResolutionsRouter from './routes/boardResolutions.js';
+import paymentsRouter from './routes/payments.js';
 import itPortalImportRouter from './routes/itPortalImport.js';
 import styleProfileRouter from './routes/styleProfile.js';
 import form16ImportRouter from './routes/form16Import.js';
 import clientsRouter from './routes/clients.js';
 import invitationsRouter, { publicInvitationRouter } from './routes/invitations.js';
-import { authMiddleware, adminMiddleware } from './middleware/auth.js';
+import { authMiddleware, adminMiddleware, trialCheckMiddleware } from './middleware/auth.js';
 import { authLimiter, chatLimiter, uploadLimiter } from './middleware/rateLimiter.js';
 import helmet from 'helmet';
 import cors from 'cors';
@@ -94,6 +95,8 @@ app.use('/api/invitations', publicInvitationRouter);
 
 // All remaining API routes require auth
 app.use('/api', authMiddleware);
+// Trial gate — free-plan users blocked after 30 days (exempt: auth, usage, payments)
+app.use('/api', trialCheckMiddleware);
 app.use('/api/chat', chatLimiter);
 app.use('/api/upload', uploadLimiter);
 app.use('/api', chatRouter);
@@ -112,6 +115,7 @@ app.use('/api/style-profile', styleProfileRouter);
 app.use('/api/form16-import', form16ImportRouter);
 app.use('/api/clients', clientsRouter);
 app.use('/api/invitations', invitationsRouter);
+app.use('/api/payments', paymentsRouter);
 
 // Admin — requires auth + admin role
 app.use('/api/admin', authMiddleware, adminMiddleware, adminRouter);

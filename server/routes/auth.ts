@@ -7,7 +7,7 @@ import { userRepo, normalizePhone } from '../db/repositories/userRepo.js';
 import { verificationRepo } from '../db/repositories/verificationRepo.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { AuthRequest } from '../types.js';
-import { sanitizePluginLimits, getEffectivePlan } from '../lib/planLimits.js';
+import { sanitizePluginLimits, getEffectivePlan, getTrialEndsAt } from '../lib/planLimits.js';
 import { mailerConfigured, sendOtpEmail, sendPasswordResetEmail } from '../lib/mailer.js';
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ?? process.env.VITE_GOOGLE_CLIENT_ID ?? '';
@@ -70,7 +70,10 @@ export function toUserResponse(u: {
   role?: 'user' | 'admin' | null;
   plan?: string | null;
   itr_enabled?: number | null;
+  created_at?: string | null;
+  plan_expires_at?: string | null;
 }) {
+  const createdAt = u.created_at ?? new Date().toISOString();
   return {
     id: u.id,
     email: u.email,
@@ -78,6 +81,8 @@ export function toUserResponse(u: {
     role: u.role ?? 'user',
     plan: u.plan ?? 'free',
     itr_enabled: u.itr_enabled === 1,
+    trial_ends_at: getTrialEndsAt(createdAt),
+    plan_expires_at: u.plan_expires_at ?? null,
   };
 }
 

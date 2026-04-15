@@ -1,14 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Users, Activity, DollarSign, Shield, CheckCircle, RefreshCw, ShieldOff, BarChart3, Cpu } from 'lucide-react';
+import { Users, Activity, DollarSign, Shield, CheckCircle, RefreshCw, ShieldOff, BarChart3, Cpu, Clock } from 'lucide-react';
 import { ApiCostDashboard } from './ApiCostDashboard';
 import { ModelUsageDashboard } from './ModelUsageDashboard';
+import { RecentApiCallsDashboard } from './RecentApiCallsDashboard';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import { adminFetchStats, adminFetchUsers, adminSuspendUser, adminUnsuspendUser, adminChangePlan, adminFetchTrend, adminFetchPlans } from '../../services/api';
 import { LoadingAnimation } from '../ui/LoadingAnimation';
 import toast from 'react-hot-toast';
 import { cn } from '../../lib/utils';
 
-type AdminTab = 'overview' | 'users' | 'api-costs' | 'model-usage';
+type AdminTab = 'overview' | 'users' | 'api-costs' | 'recent-calls' | 'model-usage';
 
 interface Stats {
   total_requests: number;
@@ -143,6 +144,7 @@ export function AdminDashboard() {
     { id: 'overview', label: 'Overview', icon: BarChart3 },
     { id: 'users', label: 'Users', icon: Users },
     { id: 'api-costs', label: 'API Costs', icon: DollarSign },
+    { id: 'recent-calls', label: 'Recent Calls', icon: Clock },
     { id: 'model-usage', label: 'Model Usage', icon: Cpu },
   ];
 
@@ -196,11 +198,14 @@ export function AdminDashboard() {
         {/* API Costs tab */}
         {adminTab === 'api-costs' && <ApiCostDashboard />}
 
+        {/* Recent Calls tab */}
+        {adminTab === 'recent-calls' && <RecentApiCallsDashboard />}
+
         {/* Model Usage tab */}
         {adminTab === 'model-usage' && <ModelUsageDashboard />}
 
         {/* Overview + Users tabs use existing content below */}
-        {adminTab !== 'api-costs' && adminTab !== 'model-usage' && (
+        {adminTab !== 'api-costs' && adminTab !== 'recent-calls' && adminTab !== 'model-usage' && (
         <>
 
         {/* Stats Cards */}

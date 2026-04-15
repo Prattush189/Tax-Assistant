@@ -185,6 +185,30 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_profiles_updated_at ON profiles(updated_
   }
 }
 
+// plan_expires_at — set when a paid subscription is activated; auto-downgrade
+// to free when this timestamp passes. NULL means no active paid subscription.
+if (!colNames.includes('plan_expires_at')) {
+  db.exec("ALTER TABLE users ADD COLUMN plan_expires_at TEXT");
+}
+
+// Payments — full audit trail of every Razorpay order attempt.
+db.exec(`CREATE TABLE IF NOT EXISTS payments (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  razorpay_order_id TEXT NOT NULL UNIQUE,
+  razorpay_payment_id TEXT UNIQUE,
+  plan TEXT NOT NULL,
+  billing TEXT NOT NULL,
+  amount INTEGER NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'INR',
+  status TEXT NOT NULL DEFAULT 'created',
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
+  paid_at TEXT,
+  expires_at TEXT
+)`);
+db.exec("CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments(user_id)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_payments_order_id ON payments(razorpay_order_id)");
+
 // Style profiles — one per user, stores LLM-extracted writing style rules
 db.exec(`CREATE TABLE IF NOT EXISTS style_profiles (
   id TEXT PRIMARY KEY,

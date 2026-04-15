@@ -121,7 +121,7 @@ router.get('/stats/plans', (_req: AuthRequest, res: Response) => {
   res.json({ plans: rows });
 });
 
-import { getQuotaStatus } from '../lib/searchQuota.js';
+import { getQuotaStatus, getGeminiConfig, setGeminiLimits, setActiveKey } from '../lib/searchQuota.js';
 
 // ── API Cost Analytics Dashboard ──────────────────────────────────────────
 
@@ -185,6 +185,60 @@ router.get('/api-costs', (req: AuthRequest, res: Response) => {
       avg_cost_inr: Math.round(m.avg_cost * usdToInr * 1000) / 1000,
     })),
   });
+});
+
+// ── Recent API Calls (paginated, full history) ─────────────────────────────
+
+// GET /api/admin/recent-calls?limit=100&offset=0
+router.get('/recent-calls', (req: AuthRequest, res: Response) => {
+  const usdToInr = 85;
+  const limitRaw = parseInt((req.query.limit as string) ?? '100', 10);
+  const offsetRaw = parseInt((req.query.offset as string) ?? '0', 10);
+  const limit = Math.max(1, Math.min(500, Number.isFinite(limitRaw) ? limitRaw : 100));
+  const offset = Math.max(0, Number.isFinite(offsetRaw) ? offsetRaw : 0);
+
+  const calls = usageRepo.getRecentRequestsPaginated(limit, offset).map(r => ({
+    ...r,
+    search_used: !!r.search_used,
+    is_plugin: !!r.is_plugin,
+    cost_inr: Math.round(r.cost * usdToInr * 10000) / 10000,
+  }));
+  const total = usageRepo.countRecentRequests();
+
+  res.json({ total, limit, offset, calls });
+});
+
+// ── Gemini config (mutable limits + active key) ────────────────────────────
+
+// GET /api/admin/gemini-config
+router.get('/gemini-config', (_req: AuthRequest, res: Response) => {
+  res.json(getGeminiConfig());
+});
+
+// POST /api/admin/gemini-limits — body: { t1Limit?, t2Limit? }
+// Server clamps each value to [0, DEFAULT_*_LIMIT]; admin cannot raise above free tier.
+router.post('/gemini-limits', (req: AuthRequest, res: Response) => {
+  const { t1Limit, t2Limit } = req.body ?? {};
+  if (t1Limit !== undefined && (typeof t1Limit !== 'number' || !Number.isFinite(t1Limit) || t1Limit < 0)) {
+    res.status(400).json({ error: 't1Limit must be a non-negative number' });
+    return;
+  }
+  if (t2Limit !== undefined && (typeof t2Limit !== 'number' || !Number.isFinite(t2Limit) || t2Limit < 0)) {
+    res.status(400).json({ error: 't2Limit must be a non-negative number' });
+    return;
+  }
+  setGeminiLimits({ t1Limit, t2Limit });
+  res.json(getGeminiConfig());
+});
+
+// POST /api/admin/active-key — body: { keyIndex: number }
+router.post('/active-key', (req: AuthRequest, res: Response) => {
+  const { keyIndex } = req.body ?? {};
+  if (!setActiveKey(keyIndex)) {
+    res.status(400).json({ error: 'Invalid keyIndex' });
+    return;
+  }
+  res.json(getGeminiConfig());
 });
 
 export default router;

@@ -20,6 +20,7 @@ export interface UserRow {
   inviter_id: string | null;          // pool owner for shared-plan members
   itr_enabled: number;                // 0 | 1 — grants ITR tab without admin role
   session_token: string | null;       // random token per login — single-session enforcement
+  plan_expires_at: string | null;     // ISO timestamp — paid plan expiry; NULL = no paid sub
   created_at: string;
   updated_at: string;
 }
@@ -43,6 +44,12 @@ const stmts = {
   ),
   updatePlan: db.prepare(
     "UPDATE users SET plan = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
+  ),
+  updatePlanWithExpiry: db.prepare(
+    "UPDATE users SET plan = ?, plan_expires_at = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
+  ),
+  downgradePlanIfExpired: db.prepare(
+    "UPDATE users SET plan = 'free', plan_expires_at = NULL, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ? AND plan != 'free' AND plan_expires_at IS NOT NULL AND plan_expires_at < datetime('now', '+5 hours', '+30 minutes')"
   ),
   updateRole: db.prepare(
     "UPDATE users SET role = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
@@ -127,6 +134,21 @@ export const userRepo = {
 
   updatePlan(id: string, plan: 'free' | 'pro' | 'enterprise'): void {
     stmts.updatePlan.run(plan, id);
+  },
+
+  /** Upgrade plan and set when it expires (used after Razorpay payment verified). */
+  updatePlanWithExpiry(id: string, plan: 'pro' | 'enterprise', expiresAt: string): void {
+    stmts.updatePlanWithExpiry.run(plan, expiresAt, id);
+  },
+
+  /**
+   * Auto-downgrade user back to free if their paid plan has expired.
+   * Safe to call on every request — only fires if truly expired.
+   * Returns true if a downgrade actually happened.
+   */
+  downgradePlanIfExpired(id: string): boolean {
+    const result = stmts.downgradePlanIfExpired.run(id);
+    return result.changes > 0;
   },
 
   updateRole(id: string, role: 'user' | 'admin'): void {
