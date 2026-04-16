@@ -29,7 +29,6 @@ import {
   sendSubscriptionHaltedEmail,
   sendInvoiceEmail,
 } from '../lib/mailer.js';
-import { buildReceiptBuffer, buildInvoiceBuffer } from '../lib/serverPdf.js';
 
 const router = Router();
 
@@ -135,6 +134,7 @@ function handleEvent(eventType: string, event: Record<string, unknown>): void {
               id: payRec.id, plan: payRec.plan, billing: payRec.billing,
               amount: payRec.amount, paidAt: payRec.paid_at, expiresAt: payRec.expires_at,
             };
+            const { buildReceiptBuffer, buildInvoiceBuffer } = await import('../lib/serverPdf.js');
             const rcpt = buildReceiptBuffer(pdfData, buyer);
             const inv  = buildInvoiceBuffer(pdfData, buyer);
             await sendInvoiceEmail(user.email, user.name, effectivePlan, rcpt, inv, payRec.id);

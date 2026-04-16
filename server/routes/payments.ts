@@ -25,7 +25,6 @@ import { getRazorpayPlanId, TOTAL_COUNT, PLAN_AMOUNTS, planKey } from '../lib/ra
 import { rateLimit } from 'express-rate-limit';
 import type { BillingCycle, PaidPlan } from '../lib/razorpayPlans.js';
 import { sendPlanWelcomeEmail, sendInvoiceEmail } from '../lib/mailer.js';
-import { buildReceiptBuffer, buildInvoiceBuffer } from '../lib/serverPdf.js';
 
 const router = Router();
 
@@ -199,6 +198,7 @@ router.post('/verify', verifyLimiter, (req: AuthRequest, res: Response) => {
           id: payRec.id, plan: payRec.plan, billing: payRec.billing,
           amount: payRec.amount, paidAt: payRec.paid_at, expiresAt: payRec.expires_at,
         };
+        const { buildReceiptBuffer, buildInvoiceBuffer } = await import('../lib/serverPdf.js');
         const [rcpt, inv] = [buildReceiptBuffer(pdfData, buyer), buildInvoiceBuffer(pdfData, buyer)];
         await sendPlanWelcomeEmail(buyer.email, buyer.name, plan as string, billing as string, expiresAt);
         await sendInvoiceEmail(buyer.email, buyer.name, plan as string, rcpt, inv, payRec.id);
