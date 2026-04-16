@@ -84,13 +84,13 @@ export async function sendMail(opts: SendMailInput): Promise<SendMailResult> {
       console.error('[mailer]', msg);
       return { ok: false, error: msg };
     }
-    const body = (await res.json().catch(() => null)) as
+    const result = (await res.json().catch(() => null)) as
       | { data?: { succeeded?: number; failed?: number; error?: string } }
       | null;
-    const succeeded = body?.data?.succeeded ?? 0;
-    const failed = body?.data?.failed ?? 0;
+    const succeeded = result?.data?.succeeded ?? 0;
+    const failed = result?.data?.failed ?? 0;
     if (succeeded === 0 || failed > 0) {
-      const msg = body?.data?.error ?? `SMTP2GO reported ${failed} failure(s) / ${succeeded} success`;
+      const msg = result?.data?.error ?? `SMTP2GO reported ${failed} failure(s) / ${succeeded} success`;
       console.error('[mailer]', msg);
       return { ok: false, error: msg };
     }
