@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Upload, FileText, Send, Image as ImageIcon, X, AlertCircle } from 'lucide-react';
 import { useFileUpload } from '../../hooks/useFileUpload';
 import { NoticeGenerateInput } from '../../services/api';
@@ -50,6 +50,7 @@ interface NoticeFormProps {
   usage: { used: number; limit: number };
   letterhead: LetterheadConfig;
   onLetterheadChange: (config: LetterheadConfig) => void;
+  currentNoticeId: string | null;
 }
 
 const MAX_IMAGE_SIZE_BYTES = 500 * 1024; // 500KB cap to keep localStorage sane
@@ -63,7 +64,7 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
-export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLetterheadChange }: NoticeFormProps) {
+export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLetterheadChange, currentNoticeId }: NoticeFormProps) {
   const [noticeType, setNoticeType] = useState('income-tax');
   const [subType, setSubType] = useState('');
   const [senderName, setSenderName] = useState('');
@@ -83,6 +84,28 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
   const watermarkImgRef = useRef<HTMLInputElement>(null);
 
   const fileUpload = useFileUpload();
+
+  // Clear per-notice fields when a new notice is successfully generated so old
+  // data doesn't contaminate the next draft (extracted text is the most dangerous).
+  const prevNoticeIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (currentNoticeId && currentNoticeId !== prevNoticeIdRef.current) {
+      prevNoticeIdRef.current = currentNoticeId;
+      setKeyPoints('');
+      setExtractedText('');
+      setSubType('');
+      setNoticeNumber('');
+      setNoticeDate('');
+      setSection('');
+      setAssessmentYear('');
+      setRecipientOfficer('');
+      setRecipientOffice('');
+      setRecipientAddress('');
+      fileUpload.reset();
+      if (noticeFileRef.current) noticeFileRef.current.value = '';
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentNoticeId]);
 
   const updateHeader = (patch: Partial<LetterheadConfig['header']>) => {
     onLetterheadChange({ ...letterhead, header: { ...letterhead.header, ...patch } });
