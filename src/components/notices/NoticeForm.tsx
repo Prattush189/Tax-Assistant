@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { Upload, FileText, Send, Image as ImageIcon, X } from 'lucide-react';
+import { Upload, FileText, Send, Image as ImageIcon, X, AlertCircle } from 'lucide-react';
 import { useFileUpload } from '../../hooks/useFileUpload';
 import { NoticeGenerateInput } from '../../services/api';
 import { LoadingAnimation } from '../ui/LoadingAnimation';
@@ -117,13 +117,23 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
     e.target.value = '';
   };
 
+  const noticeFileRef = useRef<HTMLInputElement>(null);
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    // Reset input value so the same file can be re-selected after an error
+    e.target.value = '';
     const doc = await fileUpload.handleFile(file);
     if (doc?.extractedData?.summary) {
       setExtractedText(doc.extractedData.summary);
     }
+  };
+
+  const handleClearUpload = () => {
+    setExtractedText('');
+    fileUpload.reset();
+    if (noticeFileRef.current) noticeFileRef.current.value = '';
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -192,19 +202,45 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
       {/* Upload notice document */}
       <div>
         <label className={labelClass}>Upload Notice (optional)</label>
-        <label className="flex items-center gap-2 px-3 py-2.5 border-2 border-dashed border-gray-200 dark:border-gray-700 rounded-lg cursor-pointer hover:border-[#059669] transition-colors">
-          {fileUpload.uploadPhase === 'uploading' || fileUpload.uploadPhase === 'analyzing' ? (
-            <LoadingAnimation size="xs" />
-          ) : extractedText ? (
-            <FileText className="w-4 h-4 text-green-500" />
-          ) : (
-            <Upload className="w-4 h-4 text-gray-400" />
-          )}
-          <span className="text-sm text-gray-500 dark:text-gray-400">
-            {extractedText ? 'Document uploaded' : 'PDF, JPEG, PNG'}
-          </span>
-          <input type="file" accept=".pdf,image/jpeg,image/png,image/webp" onChange={handleFileUpload} className="hidden" />
-        </label>
+        {fileUpload.uploadPhase === 'error' ? (
+          <div className="flex items-start gap-2 px-3 py-2.5 border-2 border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 rounded-lg">
+            <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+            <p className="text-sm text-red-600 dark:text-red-400 flex-1">
+              {fileUpload.errorMessage || 'Upload failed. Please try again.'}
+            </p>
+            <button type="button" onClick={handleClearUpload} className="text-red-400 hover:text-red-600 shrink-0">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        ) : extractedText ? (
+          <div className="flex items-center gap-2 px-3 py-2.5 border-2 border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20 rounded-lg">
+            <FileText className="w-4 h-4 text-green-500 shrink-0" />
+            <span className="text-sm text-green-700 dark:text-green-400 flex-1">Document uploaded</span>
+            <button type="button" onClick={handleClearUpload} className="text-green-400 hover:text-green-600 shrink-0">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        ) : (
+          <label className="flex items-center gap-2 px-3 py-2.5 border-2 border-dashed border-gray-200 dark:border-gray-700 rounded-lg cursor-pointer hover:border-[#059669] transition-colors">
+            {fileUpload.uploadPhase === 'uploading' || fileUpload.uploadPhase === 'analyzing' ? (
+              <LoadingAnimation size="xs" />
+            ) : (
+              <Upload className="w-4 h-4 text-gray-400" />
+            )}
+            <span className="text-sm text-gray-500 dark:text-gray-400">
+              {fileUpload.uploadPhase === 'uploading' || fileUpload.uploadPhase === 'analyzing'
+                ? 'Uploading…'
+                : 'PDF, JPEG, PNG'}
+            </span>
+            <input
+              ref={noticeFileRef}
+              type="file"
+              accept=".pdf,image/jpeg,image/png,image/webp"
+              onChange={handleFileUpload}
+              className="hidden"
+            />
+          </label>
+        )}
       </div>
 
       {/* Profile prefill */}

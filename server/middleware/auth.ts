@@ -15,6 +15,7 @@ const TRIAL_EXEMPT_PREFIXES = [
   '/api/auth',
   '/api/usage',
   '/api/payments',
+  '/api/billing-details', // needed so trial-expired users can save billing details before paying
 ];
 
 // Strict auth — rejects if no valid token
