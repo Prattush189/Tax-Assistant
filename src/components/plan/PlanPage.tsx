@@ -8,7 +8,9 @@ import {
   createSubscription,
   verifySubscriptionPayment,
   cancelSubscription,
+  type BillingDetails,
 } from '../../services/api';
+import { BillingDetailsDialog } from './BillingDetailsDialog';
 import {
   Check,
   Crown,
@@ -150,11 +152,13 @@ function PaymentSuccessDialog({
   payment,
   userName,
   userEmail,
+  billingDetails,
   onClose,
 }: {
   payment: PaymentData;
   userName: string;
   userEmail: string;
+  billingDetails: BillingDetails | null;
   onClose: () => void;
 }) {
   const total    = payment.amount / 100;
@@ -164,10 +168,12 @@ function PaymentSuccessDialog({
   const cycle    = payment.billing === 'monthly' ? 'Monthly' : 'Yearly';
   const receiptNo = 'AI-' + payment.id.slice(0, 10).toUpperCase();
 
-  const handleReceipt = () =>
-    generatePaymentReceipt(payment, { name: userName, email: userEmail });
-  const handleInvoice = () =>
-    generatePaymentInvoice(payment, { name: userName, email: userEmail });
+  const userInfo = {
+    name: userName, email: userEmail,
+    ...(billingDetails ?? {}),
+  };
+  const handleReceipt = () => generatePaymentReceipt(payment, userInfo);
+  const handleInvoice = () => generatePaymentInvoice(payment, userInfo);
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -291,6 +297,8 @@ export function PlanPage() {
   const [cancelling, setCancelling] = useState(false);
   const [cancelMsg, setCancelMsg] = useState<string | null>(null);
   const [successPayment, setSuccessPayment] = useState<PaymentData | null>(null);
+  const [showBillingDialog, setShowBillingDialog] = useState<'pro' | 'enterprise' | null>(null);
+  const [lastBillingDetails, setLastBillingDetails] = useState<BillingDetails | null>(null);
 
   useEffect(() => {
     fetchUserUsage()
@@ -396,12 +404,27 @@ export function PlanPage() {
 
   return (
     <div className="flex-1 overflow-y-auto">
+      {/* Billing details dialog — shown before Razorpay opens */}
+      {showBillingDialog && (
+        <BillingDetailsDialog
+          planName={showBillingDialog === 'pro' ? 'Pro' : 'Enterprise'}
+          userEmail={user?.email ?? ''}
+          onConfirm={(details) => {
+            setLastBillingDetails(details);
+            setShowBillingDialog(null);
+            void handlePay(showBillingDialog);
+          }}
+          onCancel={() => setShowBillingDialog(null)}
+        />
+      )}
+
       {/* Payment success dialog */}
       {successPayment && (
         <PaymentSuccessDialog
           payment={successPayment}
           userName={user?.name ?? ''}
           userEmail={user?.email ?? ''}
+          billingDetails={lastBillingDetails}
           onClose={() => setSuccessPayment(null)}
         />
       )}
@@ -581,7 +604,7 @@ export function PlanPage() {
                   </div>
                 ) : isPaid ? (
                   <button
-                    onClick={() => handlePay(plan.id as 'pro' | 'enterprise')}
+                    onClick={() => setShowBillingDialog(plan.id as 'pro' | 'enterprise')}
                     disabled={!!paying}
                     className={cn(
                       'w-full py-3 text-center text-sm font-semibold text-white rounded-xl transition-all flex items-center justify-center gap-2',

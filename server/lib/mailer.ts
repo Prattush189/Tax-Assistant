@@ -33,11 +33,18 @@ if (!mailerConfigured) {
   console.log(`[mailer] SMTP2GO API configured (from: ${SMTP2GO_FROM})`);
 }
 
+export interface MailAttachment {
+  filename: string;
+  fileblob: string;  // base64-encoded content
+  mimetype: string;
+}
+
 export interface SendMailInput {
   to: string;
   subject: string;
   html: string;
   text: string;
+  attachments?: MailAttachment[];
 }
 
 export interface SendMailResult {
@@ -54,17 +61,20 @@ export async function sendMail(opts: SendMailInput): Promise<SendMailResult> {
     return { ok: false, error: 'Email service not configured' };
   }
   try {
+    const body: Record<string, unknown> = {
+      api_key:   SMTP2GO_API_KEY,
+      to:        [opts.to],
+      sender:    SMTP2GO_FROM,
+      subject:   opts.subject,
+      html_body: opts.html,
+      text_body: opts.text,
+    };
+    if (opts.attachments?.length) body['attachments'] = opts.attachments;
+
     const res = await fetch(API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        api_key: SMTP2GO_API_KEY,
-        to: [opts.to],
-        sender: SMTP2GO_FROM,
-        subject: opts.subject,
-        html_body: opts.html,
-        text_body: opts.text,
-      }),
+      body: JSON.stringify(body),
     });
     // v3 returns 200 with { data: { succeeded, failed, ... } } — check both.
     // Any 4xx/5xx or `failed > 0` counts as failure.
@@ -310,6 +320,113 @@ export async function sendPaymentConfirmationEmail(
   </p>
 </body></html>`.trim();
   return sendMail({ to, subject, html, text });
+}
+
+/**
+ * Email 1 — sent immediately after first payment to welcome the user to their
+ * new plan. No attachments; a follow-up email carries the PDF documents.
+ */
+export async function sendPlanWelcomeEmail(
+  to: string,
+  name: string,
+  plan: string,
+  billing: string,
+  expiresAt: string,
+): Promise<SendMailResult> {
+  const planLabel   = plan.charAt(0).toUpperCase() + plan.slice(1);
+  const cycleLabel  = billing === 'yearly' ? 'Yearly' : 'Monthly';
+  const renewalDate = new Date(expiresAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
+  const subject     = `Welcome to Smartbiz AI ${planLabel}!`;
+  const text =
+    `Hi ${name},\n\n` +
+    `Your ${planLabel} (${cycleLabel}) plan is now active. Welcome aboard!\n\n` +
+    `Your subscription renews on ${renewalDate}. You can manage or cancel it anytime from Settings → Billing.\n\n` +
+    `A separate email with your tax invoice and receipt is on its way.\n\n` +
+    `Smartbiz AI Team`;
+  const html = `
+<!doctype html><html><body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 32px 24px; color: #111827;">
+  <div style="text-align:center;margin-bottom:28px;">
+    <div style="display:inline-block;background:#0D9668;color:#fff;font-weight:700;font-size:16px;padding:8px 18px;border-radius:10px;">Smartbiz AI</div>
+  </div>
+  <h2 style="font-size:22px;font-weight:700;margin:0 0 8px;">Welcome to ${escapeHtml(planLabel)}! 🎉</h2>
+  <p style="font-size:14px;line-height:1.6;color:#4b5563;margin:0 0 16px;">Hi ${escapeHtml(name)},</p>
+  <p style="font-size:14px;line-height:1.6;color:#4b5563;margin:0 0 20px;">
+    Your <strong>${escapeHtml(planLabel)} (${escapeHtml(cycleLabel)})</strong> plan is now active. You have full access to all features.
+  </p>
+  <div style="background:#ecfdf5;border-radius:12px;padding:16px 20px;margin:0 0 24px;">
+    <p style="margin:0 0 6px;font-size:13px;font-weight:600;color:#065f46;">Subscription details</p>
+    <p style="margin:0;font-size:13px;color:#059669;">Plan: <strong>${escapeHtml(planLabel)}</strong> &nbsp;·&nbsp; Billing: <strong>${escapeHtml(cycleLabel)}</strong></p>
+    <p style="margin:4px 0 0;font-size:13px;color:#059669;">Next renewal: <strong>${escapeHtml(renewalDate)}</strong></p>
+  </div>
+  <p style="font-size:13px;color:#6b7280;margin:0 0 8px;">Your tax invoice and payment receipt are attached to the next email.</p>
+  <p style="font-size:12px;color:#9ca3af;margin:0;">
+    Manage your subscription anytime from <strong>Settings → Billing</strong>.
+  </p>
+  <div style="margin-top:28px;padding-top:20px;border-top:1px solid #e5e7eb;">
+    <p style="font-size:11px;color:#9ca3af;margin:0;">Smartbiz Technologies Private Limited &nbsp;·&nbsp; GSTIN: 03AAUCS1499L1ZM</p>
+  </div>
+</body></html>`.trim();
+  return sendMail({ to, subject, html, text });
+}
+
+/**
+ * Email 2 — sent immediately after first payment with PDF receipt and tax
+ * invoice attached. Also used for renewals (via webhook).
+ */
+export async function sendInvoiceEmail(
+  to: string,
+  name: string,
+  plan: string,
+  receiptBuffer: Buffer,
+  invoiceBuffer: Buffer,
+  docId: string,
+): Promise<SendMailResult> {
+  const planLabel = plan.charAt(0).toUpperCase() + plan.slice(1);
+  const rcptNo    = 'AI-' + docId.slice(0, 10).toUpperCase();
+  const subject   = `Your Smartbiz AI invoice — ${rcptNo}`;
+  const text =
+    `Hi ${name},\n\n` +
+    `Please find attached your payment receipt and GST tax invoice for your Smartbiz AI ${planLabel} subscription.\n\n` +
+    `Receipt No: ${rcptNo}\n\n` +
+    `Keep these for your records. You can also download them anytime from Settings → Billing.\n\n` +
+    `Smartbiz AI Team`;
+  const html = `
+<!doctype html><html><body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 32px 24px; color: #111827;">
+  <div style="text-align:center;margin-bottom:28px;">
+    <div style="display:inline-block;background:#0D9668;color:#fff;font-weight:700;font-size:16px;padding:8px 18px;border-radius:10px;">Smartbiz AI</div>
+  </div>
+  <h2 style="font-size:20px;font-weight:700;margin:0 0 8px;">Your invoice is attached</h2>
+  <p style="font-size:14px;line-height:1.6;color:#4b5563;margin:0 0 16px;">Hi ${escapeHtml(name)},</p>
+  <p style="font-size:14px;line-height:1.6;color:#4b5563;margin:0 0 20px;">
+    Your payment receipt and GST tax invoice for the <strong>${escapeHtml(planLabel)}</strong> plan are attached to this email.
+  </p>
+  <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;padding:16px 20px;margin:0 0 24px;">
+    <p style="margin:0 0 4px;font-size:13px;font-weight:600;color:#374151;">📎 Attachments</p>
+    <p style="margin:2px 0;font-size:13px;color:#6b7280;">${escapeHtml(rcptNo)}_Receipt.pdf</p>
+    <p style="margin:2px 0;font-size:13px;color:#6b7280;">${escapeHtml(rcptNo)}_Invoice.pdf</p>
+  </div>
+  <p style="font-size:13px;color:#6b7280;margin:0 0 8px;">
+    You can also download these at any time from <strong>Settings → Billing</strong>.
+  </p>
+  <div style="margin-top:28px;padding-top:20px;border-top:1px solid #e5e7eb;">
+    <p style="font-size:11px;color:#9ca3af;margin:0;">Smartbiz Technologies Private Limited &nbsp;·&nbsp; GSTIN: 03AAUCS1499L1ZM</p>
+  </div>
+</body></html>`.trim();
+
+  const attachments: MailAttachment[] = [
+    {
+      filename: `${rcptNo}_Receipt.pdf`,
+      fileblob: receiptBuffer.toString('base64'),
+      mimetype: 'application/pdf',
+    },
+    {
+      filename: `${rcptNo}_Invoice.pdf`,
+      fileblob: invoiceBuffer.toString('base64'),
+      mimetype: 'application/pdf',
+    },
+  ];
+
+  return sendMail({ to, subject, html, text, attachments });
 }
 
 function escapeHtml(s: string): string {

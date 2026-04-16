@@ -23,6 +23,12 @@ export interface PaymentData {
 export interface UserInfo {
   name: string;
   email: string;
+  addressLine1?: string;
+  addressLine2?: string;
+  city?: string;
+  state?: string;
+  pincode?: string;
+  gstin?: string;
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -118,26 +124,40 @@ export function generatePaymentReceipt(payment: PaymentData, user: UserInfo): vo
   doc.text('BILLED TO', mid, y);
   y += 5;
 
+  // ── BILLED BY (left) ─────────────────────────────────────────────────────
+  let byY = y;
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9.5);
   doc.setTextColor(30, 30, 30);
-  doc.text(COMPANY_BRAND, L, y);
-  doc.text(user.name, mid, y);
-  y += 5;
-
+  doc.text(COMPANY_BRAND, L, byY); byY += 5;
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.setTextColor(70, 70, 70);
-  doc.text(COMPANY_NAME, L, y);
-  doc.text(user.email, mid, y);
-  y += 5;
+  doc.text(COMPANY_NAME, L, byY); byY += 4.5;
+  doc.text('GSTIN: ' + COMPANY_GSTIN, L, byY); byY += 4;
+  doc.text(COMPANY_ADDR1, L, byY); byY += 4;
+  doc.text(COMPANY_ADDR2, L, byY); byY += 4;
 
-  doc.text('GSTIN: ' + COMPANY_GSTIN, L, y);
-  y += 4;
-  doc.text(COMPANY_ADDR1, L, y);
-  y += 4;
-  doc.text(COMPANY_ADDR2, L, y);
-  y += 12;
+  // ── BILLED TO (right) ─────────────────────────────────────────────────────
+  let toY = y;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9.5);
+  doc.setTextColor(30, 30, 30);
+  doc.text(user.name, mid, toY); toY += 5;
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(70, 70, 70);
+  doc.text(user.email, mid, toY); toY += 4.5;
+  if (user.addressLine1) { doc.text(user.addressLine1, mid, toY); toY += 4; }
+  if (user.addressLine2) { doc.text(user.addressLine2, mid, toY); toY += 4; }
+  const rcptCityState = [user.city, user.state].filter(Boolean).join(', ');
+  if (rcptCityState) {
+    doc.text(user.pincode ? rcptCityState + ' \u2013 ' + user.pincode : rcptCityState, mid, toY);
+    toY += 4;
+  }
+  if (user.gstin) { doc.text('GSTIN: ' + user.gstin, mid, toY); toY += 4; }
+
+  y = Math.max(byY, toY) + 6;
 
   doc.setDrawColor(220, 220, 220);
   doc.line(L, y, R, y);
@@ -255,26 +275,40 @@ export function generatePaymentInvoice(payment: PaymentData, user: UserInfo): vo
   doc.text('BILLED TO', mid, y);
   y += 5;
 
+  // ── BILLED BY (left) ─────────────────────────────────────────────────────
+  let invByY = y;
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9.5);
   doc.setTextColor(30, 30, 30);
-  doc.text(COMPANY_BRAND, L, y);
-  doc.text(user.name, mid, y);
-  y += 5;
-
+  doc.text(COMPANY_BRAND, L, invByY); invByY += 5;
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.setTextColor(70, 70, 70);
-  doc.text(COMPANY_NAME, L, y);
-  doc.text(user.email, mid, y);
-  y += 4.5;
+  doc.text(COMPANY_NAME, L, invByY); invByY += 4.5;
+  doc.text('GSTIN: ' + COMPANY_GSTIN, L, invByY); invByY += 4.5;
+  doc.text(COMPANY_ADDR1, L, invByY); invByY += 4.5;
+  doc.text(COMPANY_ADDR2, L, invByY); invByY += 4.5;
 
-  doc.text('GSTIN: ' + COMPANY_GSTIN, L, y);
-  y += 4.5;
-  doc.text(COMPANY_ADDR1, L, y);
-  y += 4.5;
-  doc.text(COMPANY_ADDR2, L, y);
-  y += 12;
+  // ── BILLED TO (right) ─────────────────────────────────────────────────────
+  let invToY = y;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9.5);
+  doc.setTextColor(30, 30, 30);
+  doc.text(user.name, mid, invToY); invToY += 5;
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(70, 70, 70);
+  doc.text(user.email, mid, invToY); invToY += 4.5;
+  if (user.addressLine1) { doc.text(user.addressLine1, mid, invToY); invToY += 4; }
+  if (user.addressLine2) { doc.text(user.addressLine2, mid, invToY); invToY += 4; }
+  const invCityState = [user.city, user.state].filter(Boolean).join(', ');
+  if (invCityState) {
+    doc.text(user.pincode ? invCityState + ' \u2013 ' + user.pincode : invCityState, mid, invToY);
+    invToY += 4;
+  }
+  if (user.gstin) { doc.text('GSTIN: ' + user.gstin, mid, invToY); invToY += 4; }
+
+  y = Math.max(invByY, invToY) + 6;
 
   doc.setDrawColor(220, 220, 220);
   doc.line(L, y, R, y);

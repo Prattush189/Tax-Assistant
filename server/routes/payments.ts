@@ -24,6 +24,8 @@ import { paymentRepo } from '../db/repositories/paymentRepo.js';
 import { getRazorpayPlanId, TOTAL_COUNT, PLAN_AMOUNTS, planKey } from '../lib/razorpayPlans.js';
 import { rateLimit } from 'express-rate-limit';
 import type { BillingCycle, PaidPlan } from '../lib/razorpayPlans.js';
+import { sendPlanWelcomeEmail, sendInvoiceEmail } from '../lib/mailer.js';
+import { buildReceiptBuffer, buildInvoiceBuffer } from '../lib/serverPdf.js';
 
 const router = Router();
 
@@ -185,6 +187,27 @@ router.post('/verify', verifyLimiter, (req: AuthRequest, res: Response) => {
 
   console.log(`[payments/verify] Plan activated: user=${req.user.id} plan=${plan}/${billing}`);
   const fresh = userRepo.findById(req.user.id);
+
+  // Fire-and-forget: welcome email + invoice email with PDF attachments
+  void (async () => {
+    try {
+      const billingDetails = userRepo.getBillingDetails(req.user!.id);
+      const buyer = { name: fresh?.name ?? '', email: fresh?.email ?? '', billingDetails };
+      const payRec = paymentRepo.findByOrderId(razorpay_subscription_id);
+      if (payRec) {
+        const pdfData = {
+          id: payRec.id, plan: payRec.plan, billing: payRec.billing,
+          amount: payRec.amount, paidAt: payRec.paid_at, expiresAt: payRec.expires_at,
+        };
+        const [rcpt, inv] = [buildReceiptBuffer(pdfData, buyer), buildInvoiceBuffer(pdfData, buyer)];
+        await sendPlanWelcomeEmail(buyer.email, buyer.name, plan as string, billing as string, expiresAt);
+        await sendInvoiceEmail(buyer.email, buyer.name, plan as string, rcpt, inv, payRec.id);
+      }
+    } catch (err) {
+      console.error('[payments/verify] post-payment emails failed:', err);
+    }
+  })();
+
   res.json({ success: true, plan: fresh?.plan, planExpiresAt: fresh?.plan_expires_at });
 });
 

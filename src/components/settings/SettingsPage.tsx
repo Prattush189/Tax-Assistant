@@ -3,6 +3,7 @@ import {
   User, Mail, Lock, Trash2, AlertTriangle, Check, Sliders, PenTool,
   CreditCard, MessageSquare, Paperclip, Lightbulb, FileText, FileSignature,
   Users, TrendingUp, Clock, Download, CheckCircle2, XCircle, Hourglass,
+  MapPin, Pencil, Building2, Loader2,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import {
@@ -12,8 +13,11 @@ import {
   deleteAccount,
   fetchUserUsage,
   fetchPaymentHistory,
+  fetchBillingDetails,
+  saveBillingDetails,
   type UserUsageResponse,
   type PaymentHistoryResponse,
+  type BillingDetails,
 } from '../../services/api';
 import { usePreferences } from '../../hooks/usePreferences';
 import { cn } from '../../lib/utils';
@@ -160,24 +164,237 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-// ── BillingTab ────────────────────────────────────────────────────────────────
+// ── INDIAN_STATES (for billing details form) ──────────────────────────────────
 
-function BillingTab({ userName, userEmail }: { userName: string; userEmail: string }) {
-  const [usage,   setUsage]   = useState<UserUsageResponse | null>(null);
-  const [history, setHistory] = useState<PaymentHistoryResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+const INDIAN_STATES = [
+  'Andhra Pradesh','Arunachal Pradesh','Assam','Bihar','Chhattisgarh','Goa','Gujarat',
+  'Haryana','Himachal Pradesh','Jharkhand','Karnataka','Kerala','Madhya Pradesh',
+  'Maharashtra','Manipur','Meghalaya','Mizoram','Nagaland','Odisha','Punjab','Rajasthan',
+  'Sikkim','Tamil Nadu','Telangana','Tripura','Uttar Pradesh','Uttarakhand','West Bengal',
+  'Andaman & Nicobar Islands','Chandigarh','Dadra & Nagar Haveli and Daman & Diu',
+  'Delhi','Jammu & Kashmir','Ladakh','Lakshadweep','Puducherry',
+];
+
+const billingInputCls = "w-full px-3 py-2 bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 text-gray-800 dark:text-gray-100 text-sm placeholder:text-gray-400";
+const billingLabelCls = "block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1";
+
+// ── BillingDetailsSection ─────────────────────────────────────────────────────
+
+function BillingDetailsSection() {
+  const [details, setDetails]   = useState<BillingDetails | null>(null);
+  const [editing, setEditing]   = useState(false);
+  const [saving,  setSaving]    = useState(false);
+  const [loading, setLoading]   = useState(true);
+  const [form, setForm]         = useState<BillingDetails>({
+    name: '', addressLine1: '', addressLine2: '', city: '', state: '', pincode: '', gstin: '',
+  });
+  const [errors, setErrors]     = useState<Partial<Record<keyof BillingDetails, string>>>({});
 
   useEffect(() => {
-    Promise.all([fetchUserUsage(), fetchPaymentHistory()])
-      .then(([u, h]) => { setUsage(u); setHistory(h); })
+    fetchBillingDetails()
+      .then(({ billingDetails }) => {
+        if (billingDetails) {
+          setDetails(billingDetails);
+          setForm({
+            name:         billingDetails.name         ?? '',
+            addressLine1: billingDetails.addressLine1 ?? '',
+            addressLine2: billingDetails.addressLine2 ?? '',
+            city:         billingDetails.city         ?? '',
+            state:        billingDetails.state        ?? '',
+            pincode:      billingDetails.pincode      ?? '',
+            gstin:        billingDetails.gstin        ?? '',
+          });
+        }
+      })
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
 
+  const setField = (field: keyof BillingDetails) =>
+    (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+      setForm(f => ({ ...f, [field]: e.target.value }));
+      if (errors[field]) setErrors(e => ({ ...e, [field]: undefined }));
+    };
+
+  const validate = (): boolean => {
+    const errs: Partial<Record<keyof BillingDetails, string>> = {};
+    if (!form.name.trim())         errs.name         = 'Required';
+    if (!form.addressLine1.trim()) errs.addressLine1 = 'Required';
+    if (!form.city.trim())         errs.city         = 'Required';
+    if (!form.state.trim())        errs.state        = 'Required';
+    if (!form.pincode.trim())      errs.pincode      = 'Required';
+    else if (!/^\d{6}$/.test(form.pincode.trim())) errs.pincode = '6-digit pincode required';
+    if (form.gstin?.trim() && !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(form.gstin.trim().toUpperCase())) {
+      errs.gstin = 'Invalid GSTIN format';
+    }
+    setErrors(errs);
+    return Object.keys(errs).length === 0;
+  };
+
+  const handleSave = async () => {
+    if (!validate()) return;
+    setSaving(true);
+    try {
+      const updated: BillingDetails = {
+        name:         form.name.trim(),
+        addressLine1: form.addressLine1.trim(),
+        addressLine2: form.addressLine2?.trim() || undefined,
+        city:         form.city.trim(),
+        state:        form.state.trim(),
+        pincode:      form.pincode.trim(),
+        gstin:        form.gstin?.trim().toUpperCase() || undefined,
+      };
+      await saveBillingDetails(updated);
+      setDetails(updated);
+      setEditing(false);
+      toast.success('Billing details saved');
+    } catch {
+      toast.error('Failed to save billing details');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) return (
+    <div className="flex justify-center py-6">
+      <Loader2 className="w-5 h-5 animate-spin text-emerald-500" />
+    </div>
+  );
+
+  return (
+    <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-6">
+      <div className="flex items-center justify-between mb-5">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-900/20 flex items-center justify-center shrink-0">
+            <MapPin className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+          </div>
+          <div>
+            <h3 className="text-base font-semibold text-gray-900 dark:text-white">Billing Details</h3>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Appears on your receipts and tax invoices</p>
+          </div>
+        </div>
+        {!editing && (
+          <button
+            onClick={() => setEditing(true)}
+            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 transition-colors"
+          >
+            <Pencil className="w-3.5 h-3.5" /> {details ? 'Edit' : 'Add'}
+          </button>
+        )}
+      </div>
+
+      {!editing ? (
+        details ? (
+          <div className="space-y-1.5 text-sm text-gray-700 dark:text-gray-300">
+            <p className="font-semibold text-gray-900 dark:text-white">{details.name}</p>
+            <p>{details.addressLine1}</p>
+            {details.addressLine2 && <p>{details.addressLine2}</p>}
+            <p>{[details.city, details.state].filter(Boolean).join(', ')}{details.pincode ? ' \u2013 ' + details.pincode : ''}</p>
+            {details.gstin && (
+              <p className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 mt-1">
+                <Building2 className="w-3.5 h-3.5" /> GSTIN: {details.gstin}
+              </p>
+            )}
+          </div>
+        ) : (
+          <p className="text-sm text-gray-400 dark:text-gray-500">
+            No billing details saved yet. Click Add to set them up for your invoices.
+          </p>
+        )
+      ) : (
+        <div className="space-y-3">
+          <div>
+            <label className={billingLabelCls}>Full Name / Business Name <span className="text-red-500">*</span></label>
+            <input type="text" value={form.name} onChange={setField('name')}
+              placeholder="As it should appear on invoice" className={billingInputCls} maxLength={100} />
+            {errors.name && <p className="text-xs text-red-500 mt-1">{errors.name}</p>}
+          </div>
+          <div>
+            <label className={billingLabelCls}>Address Line 1 <span className="text-red-500">*</span></label>
+            <input type="text" value={form.addressLine1} onChange={setField('addressLine1')}
+              placeholder="Street address, flat/house no." className={billingInputCls} maxLength={120} />
+            {errors.addressLine1 && <p className="text-xs text-red-500 mt-1">{errors.addressLine1}</p>}
+          </div>
+          <div>
+            <label className={billingLabelCls}>Address Line 2 <span className="text-gray-400">(optional)</span></label>
+            <input type="text" value={form.addressLine2} onChange={setField('addressLine2')}
+              placeholder="Area, landmark" className={billingInputCls} maxLength={120} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={billingLabelCls}>City <span className="text-red-500">*</span></label>
+              <input type="text" value={form.city} onChange={setField('city')}
+                placeholder="City" className={billingInputCls} maxLength={60} />
+              {errors.city && <p className="text-xs text-red-500 mt-1">{errors.city}</p>}
+            </div>
+            <div>
+              <label className={billingLabelCls}>State <span className="text-red-500">*</span></label>
+              <select value={form.state} onChange={setField('state')} className={billingInputCls}>
+                <option value="">Select state</option>
+                {INDIAN_STATES.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+              {errors.state && <p className="text-xs text-red-500 mt-1">{errors.state}</p>}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={billingLabelCls}>Pincode <span className="text-red-500">*</span></label>
+              <input type="text" value={form.pincode} onChange={setField('pincode')}
+                placeholder="6-digit pincode" className={billingInputCls} maxLength={6} />
+              {errors.pincode && <p className="text-xs text-red-500 mt-1">{errors.pincode}</p>}
+            </div>
+            <div>
+              <label className={billingLabelCls}>
+                <span className="flex items-center gap-1">
+                  <Building2 className="w-3 h-3" /> GSTIN <span className="text-gray-400">(optional)</span>
+                </span>
+              </label>
+              <input type="text" value={form.gstin} onChange={setField('gstin')}
+                placeholder="For businesses claiming ITC"
+                className={cn(billingInputCls, 'uppercase')} maxLength={15} />
+              {errors.gstin && <p className="text-xs text-red-500 mt-1">{errors.gstin}</p>}
+            </div>
+          </div>
+          <div className="flex gap-3 pt-1">
+            <button onClick={() => { setEditing(false); setErrors({}); }}
+              className="flex-1 py-2 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 text-sm font-medium rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
+              Cancel
+            </button>
+            <button onClick={handleSave} disabled={saving}
+              className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-xl transition-colors disabled:opacity-60 flex items-center justify-center gap-2">
+              {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</> : 'Save Details'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── BillingTab ────────────────────────────────────────────────────────────────
+
+function BillingTab({ userName, userEmail }: { userName: string; userEmail: string }) {
+  const [usage,          setUsage]          = useState<UserUsageResponse | null>(null);
+  const [history,        setHistory]        = useState<PaymentHistoryResponse | null>(null);
+  const [billingDetails, setBillingDetails] = useState<BillingDetails | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    Promise.all([fetchUserUsage(), fetchPaymentHistory(), fetchBillingDetails()])
+      .then(([u, h, b]) => { setUsage(u); setHistory(h); setBillingDetails(b.billingDetails); })
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, []);
+
+  const makeUserInfo = () => ({
+    name: userName, email: userEmail,
+    ...(billingDetails ?? {}),
+  });
+
   const handleReceipt = (p: PaymentData) =>
-    generatePaymentReceipt(p, { name: userName, email: userEmail });
+    generatePaymentReceipt(p, makeUserInfo());
   const handleInvoice = (p: PaymentData) =>
-    generatePaymentInvoice(p, { name: userName, email: userEmail });
+    generatePaymentInvoice(p, makeUserInfo());
 
   if (loading) {
     return (
@@ -223,6 +440,9 @@ function BillingTab({ userName, userEmail }: { userName: string; userEmail: stri
           </div>
         </div>
       )}
+
+      {/* Billing Details */}
+      <BillingDetailsSection />
 
       {/* Payment History */}
       <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-6">

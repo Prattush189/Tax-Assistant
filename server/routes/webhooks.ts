@@ -27,7 +27,9 @@ import type { BillingCycle, PaidPlan } from '../lib/razorpayPlans.js';
 import {
   sendPaymentConfirmationEmail,
   sendSubscriptionHaltedEmail,
+  sendInvoiceEmail,
 } from '../lib/mailer.js';
+import { buildReceiptBuffer, buildInvoiceBuffer } from '../lib/serverPdf.js';
 
 const router = Router();
 
@@ -116,13 +118,31 @@ function handleEvent(eventType: string, event: Record<string, unknown>): void {
         console.error('[webhook] Failed to log payment record:', err);
       }
 
-      // Send payment confirmation email (fire-and-forget)
-      const amountInr  = Math.round(amountPaise / 100);
-      const nextRenewal = new Date(expiresAt).toLocaleDateString('en-IN', {
-        day: 'numeric', month: 'long', year: 'numeric',
-      });
+      // Send confirmation + invoice emails (fire-and-forget)
+      const amountInr   = Math.round(amountPaise / 100);
+      const nextRenewal = new Date(expiresAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
       void sendPaymentConfirmationEmail(user.email, user.name, effectivePlan, amountInr, nextRenewal)
         .catch(err => console.error('[webhook] confirmation email failed:', err));
+
+      // Also send invoice PDF email on renewal
+      void (async () => {
+        try {
+          const payRec = paymentRepo.findByOrderId(subId);
+          if (payRec) {
+            const billingDetails = userRepo.getBillingDetails(user.id);
+            const buyer = { name: user.name, email: user.email, billingDetails };
+            const pdfData = {
+              id: payRec.id, plan: payRec.plan, billing: payRec.billing,
+              amount: payRec.amount, paidAt: payRec.paid_at, expiresAt: payRec.expires_at,
+            };
+            const rcpt = buildReceiptBuffer(pdfData, buyer);
+            const inv  = buildInvoiceBuffer(pdfData, buyer);
+            await sendInvoiceEmail(user.email, user.name, effectivePlan, rcpt, inv, payRec.id);
+          }
+        } catch (err) {
+          console.error('[webhook] invoice email failed:', err);
+        }
+      })();
 
       console.log(`[webhook] subscription.charged: user=${user.id} plan=${effectivePlan}/${effectiveBilling} expires=${expiresAt}`);
       break;

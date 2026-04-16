@@ -205,6 +205,10 @@ if (!colNames.includes('subscription_status')) {
 if (!colNames.includes('renewal_reminder_sent_at')) {
   db.exec("ALTER TABLE users ADD COLUMN renewal_reminder_sent_at TEXT");
 }
+if (!colNames.includes('billing_details')) {
+  db.exec("ALTER TABLE users ADD COLUMN billing_details TEXT");
+  // JSON: { name, addressLine1, addressLine2?, city, state, pincode, gstin? }
+}
 
 // razorpay_plan_cache — stores the 4 Razorpay Plan IDs so we only create them once.
 // Key: e.g. 'pro_monthly' | 'pro_yearly' | 'enterprise_monthly' | 'enterprise_yearly'

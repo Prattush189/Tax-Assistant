@@ -359,6 +359,29 @@ export async function cancelSubscription(): Promise<{ success: boolean; message:
   return authFetch('/api/payments/subscription', { method: 'DELETE' });
 }
 
+// ── Billing Details API ───────────────────────────────────────────────────
+
+export interface BillingDetails {
+  name: string;
+  addressLine1: string;
+  addressLine2?: string;
+  city: string;
+  state: string;
+  pincode: string;
+  gstin?: string;
+}
+
+export async function fetchBillingDetails(): Promise<{ billingDetails: BillingDetails | null }> {
+  return authFetch('/api/billing-details');
+}
+
+export async function saveBillingDetails(details: BillingDetails): Promise<{ ok: boolean; billingDetails: BillingDetails }> {
+  return authFetch('/api/billing-details', {
+    method: 'PUT',
+    body: JSON.stringify(details),
+  });
+}
+
 // ── Account Settings API ────────────────────────────────────────────────
 
 export async function updateAccountName(name: string) {
