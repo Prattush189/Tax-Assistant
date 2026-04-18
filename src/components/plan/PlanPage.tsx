@@ -31,8 +31,8 @@ import { generatePaymentReceipt, generatePaymentInvoice, type PaymentData } from
 // ── Pricing ──────────────────────────────────────────────────────────────────
 
 const PRICES = {
-  pro:        { monthly: 400,  yearly: 3600  },
-  enterprise: { monthly: 700,  yearly: 6000  },
+  pro:        { monthly: 500,  yearly: 3600  },
+  enterprise: { monthly: 750,  yearly: 6000  },
 } as const;
 
 const GST_PCT = 18;

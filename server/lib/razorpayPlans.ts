@@ -15,7 +15,7 @@
 import Razorpay from 'razorpay';
 import db from '../db/index.js';
 
-export type PlanKey = 'pro_monthly_v2' | 'pro_yearly_v2' | 'enterprise_monthly_v2' | 'enterprise_yearly_v2';
+export type PlanKey = 'pro_monthly_v3' | 'pro_yearly_v3' | 'enterprise_monthly_v3' | 'enterprise_yearly_v3';
 export type BillingCycle = 'monthly' | 'yearly';
 export type PaidPlan = 'pro' | 'enterprise';
 
@@ -29,21 +29,21 @@ function withGst(basePaise: number): number {
 
 /**
  * Amount in paise for each plan key — inclusive of 18% GST.
- * Base prices: Pro ₹400/mo, ₹3,600/yr · Enterprise ₹700/mo, ₹6,000/yr
+ * Base prices: Pro ₹500/mo, ₹3,600/yr · Enterprise ₹750/mo, ₹6,000/yr
  */
 export const PLAN_AMOUNTS: Record<PlanKey, number> = {
-  pro_monthly_v2:         withGst(40_000),   // ₹400 + 18% GST = ₹472
-  pro_yearly_v2:         withGst(3_60_000),  // ₹3,600 + 18% GST = ₹4,248
-  enterprise_monthly_v2:  withGst(70_000),   // ₹700 + 18% GST = ₹826
-  enterprise_yearly_v2:  withGst(6_00_000),  // ₹6,000 + 18% GST = ₹7,080
+  pro_monthly_v3:         withGst(50_000),   // ₹500 + 18% GST = ₹590
+  pro_yearly_v3:         withGst(3_60_000),  // ₹3,600 + 18% GST = ₹4,248
+  enterprise_monthly_v3:  withGst(75_000),   // ₹750 + 18% GST = ₹885
+  enterprise_yearly_v3:  withGst(6_00_000),  // ₹6,000 + 18% GST = ₹7,080
 };
 
 /** Human-readable plan names for Razorpay dashboard */
 const PLAN_NAMES: Record<PlanKey, string> = {
-  pro_monthly_v2:         'Smartbiz AI Pro — Monthly',
-  pro_yearly_v2:          'Smartbiz AI Pro — Yearly',
-  enterprise_monthly_v2:  'Smartbiz AI Enterprise — Monthly',
-  enterprise_yearly_v2:   'Smartbiz AI Enterprise — Yearly',
+  pro_monthly_v3:         'Smartbiz AI Pro — Monthly',
+  pro_yearly_v3:          'Smartbiz AI Pro — Yearly',
+  enterprise_monthly_v3:  'Smartbiz AI Enterprise — Monthly',
+  enterprise_yearly_v3:   'Smartbiz AI Enterprise — Yearly',
 };
 
 /**
@@ -71,7 +71,7 @@ function getRazorpay(): Razorpay {
 }
 
 export function planKey(plan: PaidPlan, billing: BillingCycle): PlanKey {
-  return `${plan}_${billing}_v2` as PlanKey;
+  return `${plan}_${billing}_v3` as PlanKey;
 }
 
 /**
