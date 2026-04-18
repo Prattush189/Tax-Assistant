@@ -473,7 +473,7 @@ export function PlanPage() {
                 ? 'bg-white/20 text-white'
                 : 'bg-[#0D9668]/10 text-[#0D9668] dark:bg-[#0D9668]/20 dark:text-[#2DD4A0]'
             )}>
-              Save up to 29%
+              Save 5%
             </span>
           </button>
         </div>
