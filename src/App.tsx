@@ -12,6 +12,7 @@ import { useNoticeDrafter } from './hooks/useNoticeDrafter';
 import { useItrManager } from './hooks/useItrManager';
 import { useBoardResolutionManager } from './hooks/useBoardResolutionManager';
 import { useProfileManager } from './hooks/useProfileManager';
+import { useBankStatementManager } from './hooks/useBankStatementManager';
 import { useAuth } from './contexts/AuthContext';
 import { AuthGuard } from './components/auth/AuthGuard';
 import { AcceptInvitePage } from './components/auth/AcceptInvitePage';
@@ -28,12 +29,13 @@ import { SettingsPage } from './components/settings/SettingsPage';
 import { NoticeDrafterPage } from './components/notices/NoticeDrafterPage';
 import { ItrView } from './components/itr/ItrView';
 import { BoardResolutionView } from './components/board-resolutions/BoardResolutionView';
+import { BankStatementView } from './components/bank-statements/BankStatementView';
 import { ProfileView } from './components/profile/ProfileView';
 import { TaxCalculatorProvider } from './contexts/TaxCalculatorContext';
 import type { ParentToIframeMessage } from './lib/pluginProtocol';
 import { cn } from './lib/utils';
 
-type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions';
+type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions' | 'bank_statements';
 
 /**
  * Dispatches SET_VIEW / SET_CALCULATOR_TAB / LOGOUT into local state.
@@ -77,7 +79,7 @@ function AppContent() {
   const { isPluginMode } = usePluginMode(setIsDarkMode);
   const [activeView, setActiveView] = useState<ActiveView>(() => {
     const saved = localStorage.getItem('activeView') as ActiveView | null;
-    const valid: ActiveView[] = ['chat', 'calculator', 'dashboard', 'admin', 'plan', 'notices', 'settings', 'itr', 'profile', 'board_resolutions'];
+    const valid: ActiveView[] = ['chat', 'calculator', 'dashboard', 'admin', 'plan', 'notices', 'settings', 'itr', 'profile', 'board_resolutions', 'bank_statements'];
     return saved && valid.includes(saved) ? saved : 'chat';
   });
   const [calculatorTab, setCalculatorTab] = useState<CalculatorTab>('income');
@@ -98,6 +100,8 @@ function AppContent() {
   // Board Resolutions: open to all authenticated users (plan limits enforced server-side).
   const canAccessBoardResolutions = !!user;
   const boardResolutionManager = useBoardResolutionManager(canAccessBoardResolutions);
+  // Bank statement analyzer: open to all authenticated users.
+  const bankStatementManager = useBankStatementManager(!!user);
 
   // Trial expiry: free-plan users are locked out after 30 days.
   const isTrialExpired =
@@ -146,6 +150,11 @@ function AppContent() {
           onNewProfile={profileManager.clearCurrent}
           onSwitchProfile={profileManager.loadProfile}
           onDeleteProfile={profileManager.removeProfile}
+          bankStatementList={bankStatementManager.statements}
+          currentBankStatementId={bankStatementManager.currentId}
+          onNewBankStatement={bankStatementManager.clear}
+          onSwitchBankStatement={bankStatementManager.load}
+          onDeleteBankStatement={bankStatementManager.remove}
           user={user}
           onLogout={logout}
           activeView={activeView}
@@ -191,6 +200,7 @@ function AppContent() {
               {activeView === 'board_resolutions' && canAccessBoardResolutions && (
                 <BoardResolutionView manager={boardResolutionManager} />
               )}
+              {activeView === 'bank_statements' && <BankStatementView manager={bankStatementManager} />}
               {isTrialExpired && <TrialExpiredWall />}
               {activeView === 'profile' && <ProfileView manager={profileManager} />}
               {activeView === 'settings' && <SettingsPage />}

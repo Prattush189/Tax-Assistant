@@ -163,6 +163,25 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_clients_filing_status ON clients(filing_
 db.exec("CREATE INDEX IF NOT EXISTS idx_profiles_user_id ON profiles(user_id)");
 db.exec("CREATE INDEX IF NOT EXISTS idx_profiles_updated_at ON profiles(updated_at DESC)");
 
+// Indexes for bank_statements / bank_transactions (AI statement analyzer)
+db.exec("CREATE INDEX IF NOT EXISTS idx_bank_statements_user_id ON bank_statements(user_id)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_bank_statements_updated_at ON bank_statements(updated_at DESC)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_bank_statements_billing ON bank_statements(billing_user_id)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_bank_tx_statement_id ON bank_transactions(statement_id, sort_index)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_bank_tx_category ON bank_transactions(category)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_bank_rules_user_id ON bank_statement_rules(user_id)");
+
+// Add counterparty/reference columns if upgrading from an earlier feature-branch build.
+{
+  const txCols = (db.prepare("PRAGMA table_info(bank_transactions)").all() as { name: string }[]).map(c => c.name);
+  if (!txCols.includes('counterparty')) {
+    db.exec("ALTER TABLE bank_transactions ADD COLUMN counterparty TEXT");
+  }
+  if (!txCols.includes('reference')) {
+    db.exec("ALTER TABLE bank_transactions ADD COLUMN reference TEXT");
+  }
+}
+
 // Add model + search tracking columns to api_usage
 {
   const usageCols = (db.prepare("PRAGMA table_info(api_usage)").all() as { name: string }[]).map(c => c.name);

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   User, Mail, Lock, Trash2, AlertTriangle, Check, Sliders, PenTool,
   CreditCard, MessageSquare, Paperclip, Lightbulb, FileText, FileSignature,
-  Users, TrendingUp, Clock, Download, CheckCircle2, XCircle, Hourglass,
+  Landmark, Users, TrendingUp, Clock, Download, CheckCircle2, XCircle, Hourglass,
   MapPin, Pencil, Building2, Loader2,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
@@ -436,6 +436,7 @@ function BillingTab({ userName, userEmail }: { userName: string; userEmail: stri
             <UsageBar icon={Lightbulb}     label={usage.usage.suggestions.label}     used={usage.usage.suggestions.used}     limit={usage.usage.suggestions.limit}     period={usage.usage.suggestions.period} />
             <UsageBar icon={FileText}      label={usage.usage.notices.label}         used={usage.usage.notices.used}         limit={usage.usage.notices.limit}         period={usage.usage.notices.period} />
             <UsageBar icon={FileSignature} label={usage.usage.boardResolutions.label} used={usage.usage.boardResolutions.used} limit={usage.usage.boardResolutions.limit} period={usage.usage.boardResolutions.period} />
+            <UsageBar icon={Landmark}      label={usage.usage.bankStatements.label}  used={usage.usage.bankStatements.used}  limit={usage.usage.bankStatements.limit}  period={usage.usage.bankStatements.period} />
             <UsageBar icon={User}          label={usage.usage.profiles.label}        used={usage.usage.profiles.used}        limit={usage.usage.profiles.limit}        period={usage.usage.profiles.period} />
           </div>
         </div>
