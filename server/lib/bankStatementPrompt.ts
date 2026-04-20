@@ -54,10 +54,22 @@ Schema (all fields required, use null where unknown):
       "balance": number or null,
       "category": one of ${BANK_STATEMENT_CATEGORIES.map(c => `"${c}"`).join(' | ')},
       "subcategory": string or null,
+      "counterparty": "string or null (merchant name, UPI handle, payee/payer — see rules)",
+      "reference": "string or null (UTR / transaction ref / cheque number if present)",
       "isRecurring": boolean
     }
   ]
 }
+
+Counterparty extraction rules (populate counterparty with the cleanest human-readable label):
+- UPI pattern "UPI/<refno>/<note>/<vpa>/..." → use the VPA (e.g. "merchant@okhdfcbank") OR the payee name if clearly after the VPA.
+- NEFT / IMPS / RTGS "NEFT-<IFSC>-<NAME>-<REF>" → use the NAME segment.
+- Cheque / cash / self — use "Cheque", "Cash deposit", "Self transfer" accordingly.
+- POS / merchant payments → use the merchant name (e.g. "SWIGGY", "AMAZON", "ZOMATO").
+- Bank-initiated charges/interest ("SB INT", "ATM WDL CHG") → use the charge type as the label.
+- If nothing identifiable, leave as null. Never copy the entire narration verbatim.
+
+Reference extraction: pull UTR / cheque number / reference number (usually a 10–16 digit alphanumeric token) into the reference field. If none, null.
 
 Categorization rules (apply the FIRST match):
 - Narration contains "SALARY" / "SAL CREDIT" → Salary

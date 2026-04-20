@@ -5,7 +5,9 @@ import { BankStatementManager } from '../../hooks/useBankStatementManager';
 import { BankStatementUploader } from './BankStatementUploader';
 import { BankStatementSummary } from './BankStatementSummary';
 import { CategoryBreakdown } from './CategoryBreakdown';
+import { CounterpartySummary } from './CounterpartySummary';
 import { TransactionTable } from './TransactionTable';
+import { BankStatementRules } from './BankStatementRules';
 
 interface Props {
   manager: BankStatementManager;
@@ -55,6 +57,8 @@ export function BankStatementView({ manager }: Props) {
 
           <BankStatementUploader manager={manager} />
 
+          <BankStatementRules manager={manager} />
+
           {manager.statements.length > 0 && (
             <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900/40 p-5">
               <h3 className="font-semibold text-gray-900 dark:text-gray-100 mb-3">Recent statements</h3>
@@ -93,7 +97,10 @@ export function BankStatementView({ manager }: Props) {
     >
       <div className="max-w-5xl mx-auto p-6 space-y-5">
         <BankStatementSummary detail={manager.current} onDelete={handleDelete} />
-        <CategoryBreakdown transactions={manager.current.transactions} />
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          <CategoryBreakdown transactions={manager.current.transactions} />
+          <CounterpartySummary transactions={manager.current.transactions} />
+        </div>
         <TransactionTable transactions={manager.current.transactions} manager={manager} />
       </div>
     </motion.div>

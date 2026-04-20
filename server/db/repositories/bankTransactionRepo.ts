@@ -10,6 +10,8 @@ export interface BankTransactionRow {
   balance: number | null;
   category: string;
   subcategory: string | null;
+  counterparty: string | null;
+  reference: string | null;
   is_recurring: number;
   user_override: number;
   sort_index: number;
@@ -22,6 +24,8 @@ export interface BankTransactionInput {
   balance: number | null;
   category: string;
   subcategory: string | null;
+  counterparty: string | null;
+  reference: string | null;
   isRecurring: boolean;
 }
 
@@ -32,8 +36,8 @@ const stmts = {
   insert: db.prepare(
     `INSERT INTO bank_transactions (
       id, statement_id, tx_date, narration, amount, balance,
-      category, subcategory, is_recurring, user_override, sort_index
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`
+      category, subcategory, counterparty, reference, is_recurring, user_override, sort_index
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`
   ),
   deleteByStatement: db.prepare(
     'DELETE FROM bank_transactions WHERE statement_id = ?'
@@ -60,6 +64,8 @@ const insertMany = db.transaction((stmtId: string, txs: BankTransactionInput[]) 
       tx.balance,
       tx.category,
       tx.subcategory,
+      tx.counterparty,
+      tx.reference,
       tx.isRecurring ? 1 : 0,
       i,
     );

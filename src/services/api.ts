@@ -1309,8 +1309,18 @@ export interface BankTransaction {
   balance: number | null;
   category: string;
   subcategory: string | null;
+  counterparty: string | null;
+  reference: string | null;
   isRecurring: boolean;
   userOverride: boolean;
+}
+
+export interface BankStatementRule {
+  id: string;
+  matchText: string;
+  category: string | null;
+  counterpartyLabel: string | null;
+  createdAt: string;
 }
 
 export async function fetchBankStatements(): Promise<{ statements: BankStatementSummary[] }> {
@@ -1376,4 +1386,23 @@ export async function updateBankTransaction(
 
 export function bankStatementCsvUrl(id: string): string {
   return `/api/bank-statements/${id}/export.csv`;
+}
+
+export async function fetchBankStatementRules(): Promise<{ rules: BankStatementRule[] }> {
+  return authFetch('/api/bank-statements/rules');
+}
+
+export async function createBankStatementRule(input: {
+  matchText: string;
+  category?: string | null;
+  counterpartyLabel?: string | null;
+}): Promise<{ rule: BankStatementRule }> {
+  return authFetch('/api/bank-statements/rules', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function deleteBankStatementRule(id: string): Promise<void> {
+  await authFetch(`/api/bank-statements/rules/${id}`, { method: 'DELETE' });
 }

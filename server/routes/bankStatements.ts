@@ -6,6 +6,7 @@ import { extractWithRetry } from '../lib/documentExtract.js';
 import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_CATEGORIES } from '../lib/bankStatementPrompt.js';
 import { bankStatementRepo } from '../db/repositories/bankStatementRepo.js';
 import { bankTransactionRepo, BankTransactionInput } from '../db/repositories/bankTransactionRepo.js';
+import { bankStatementRuleRepo, BankStatementRuleRow } from '../db/repositories/bankStatementRuleRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { getBillingUser } from '../lib/billing.js';
@@ -87,8 +88,34 @@ function normalizeTransactions(raw: unknown[]): BankTransactionInput[] {
       balance,
       category: normalizeCategory(obj.category),
       subcategory: typeof obj.subcategory === 'string' ? obj.subcategory : null,
+      counterparty: typeof obj.counterparty === 'string' ? obj.counterparty.slice(0, 200) : null,
+      reference: typeof obj.reference === 'string' ? obj.reference.slice(0, 100) : null,
       isRecurring: obj.isRecurring === true,
     };
+  });
+}
+
+/**
+ * Apply user-defined rules: if a rule's match_text appears (case-insensitive)
+ * inside the narration, override category and/or stamp counterparty_label.
+ * Mutates a shallow copy — leaves originals alone. Rules are tried in order,
+ * first match wins.
+ */
+function applyUserRules(txs: BankTransactionInput[], rules: BankStatementRuleRow[]): BankTransactionInput[] {
+  if (!rules.length) return txs;
+  return txs.map((tx) => {
+    const hay = (tx.narration ?? '').toLowerCase();
+    for (const rule of rules) {
+      if (!rule.match_text) continue;
+      if (hay.includes(rule.match_text.toLowerCase())) {
+        return {
+          ...tx,
+          category: rule.category ? normalizeCategory(rule.category) : tx.category,
+          counterparty: rule.counterparty_label ?? tx.counterparty,
+        };
+      }
+    }
+    return tx;
   });
 }
 
@@ -131,7 +158,9 @@ function persistStatement(
   data: ExtractedStatement,
   meta: { filename: string | null; mimeType: string | null; fallbackName: string },
 ) {
-  const txs = normalizeTransactions(data.transactions ?? []);
+  const rawTxs = normalizeTransactions(data.transactions ?? []);
+  const rules = bankStatementRuleRepo.listByUser(userId);
+  const txs = applyUserRules(rawTxs, rules);
   const { inflow, outflow } = computeTotals(txs);
   const periodLabel = data.periodFrom && data.periodTo
     ? `${data.periodFrom} – ${data.periodTo}`
@@ -181,8 +210,20 @@ function serializeTransaction(row: ReturnType<typeof bankTransactionRepo.listByS
     balance: row.balance,
     category: row.category,
     subcategory: row.subcategory,
+    counterparty: row.counterparty,
+    reference: row.reference,
     isRecurring: row.is_recurring === 1,
     userOverride: row.user_override === 1,
+  };
+}
+
+function serializeRule(row: BankStatementRuleRow) {
+  return {
+    id: row.id,
+    matchText: row.match_text,
+    category: row.category,
+    counterpartyLabel: row.counterparty_label,
+    createdAt: row.created_at,
   };
 }
 
@@ -193,6 +234,38 @@ router.get('/', (req: AuthRequest, res: Response) => {
   if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
   const rows = bankStatementRepo.findByUserId(req.user.id);
   res.json({ statements: rows.map(serializeStatement) });
+});
+
+// GET /api/bank-statements/rules — list user-defined categorization rules.
+router.get('/rules', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const rules = bankStatementRuleRepo.listByUser(req.user.id).map(serializeRule);
+  res.json({ rules });
+});
+
+// POST /api/bank-statements/rules — create a new rule.
+router.post('/rules', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const matchText = typeof req.body?.matchText === 'string' ? req.body.matchText.trim() : '';
+  if (!matchText) { res.status(400).json({ error: 'matchText is required' }); return; }
+  const category = typeof req.body?.category === 'string' ? normalizeCategory(req.body.category) : null;
+  const counterpartyLabel = typeof req.body?.counterpartyLabel === 'string' && req.body.counterpartyLabel.trim()
+    ? req.body.counterpartyLabel.trim().slice(0, 200)
+    : null;
+  if (!category && !counterpartyLabel) {
+    res.status(400).json({ error: 'Provide at least a category or counterpartyLabel' });
+    return;
+  }
+  const row = bankStatementRuleRepo.create(req.user.id, matchText.slice(0, 200), category, counterpartyLabel);
+  res.status(201).json({ rule: serializeRule(row) });
+});
+
+// DELETE /api/bank-statements/rules/:ruleId
+router.delete('/rules/:ruleId', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const ok = bankStatementRuleRepo.delete(req.user.id, req.params.ruleId);
+  if (!ok) { res.status(404).json({ error: 'Rule not found' }); return; }
+  res.json({ success: true });
 });
 
 // GET /api/bank-statements/:id — detail + transactions
@@ -339,10 +412,12 @@ router.get('/:id/export.csv', (req: AuthRequest, res: Response) => {
   if (!row) { res.status(404).json({ error: 'Statement not found' }); return; }
   const txs = bankTransactionRepo.listByStatement(row.id);
   const csv = Papa.unparse({
-    fields: ['Date', 'Narration', 'Type', 'Amount', 'Balance', 'Category', 'Subcategory', 'Recurring', 'UserOverride'],
+    fields: ['Date', 'Narration', 'Counterparty', 'Reference', 'Type', 'Amount', 'Balance', 'Category', 'Subcategory', 'Recurring', 'UserOverride'],
     data: txs.map((t) => [
       t.tx_date ?? '',
       t.narration ?? '',
+      t.counterparty ?? '',
+      t.reference ?? '',
       t.amount >= 0 ? 'Credit' : 'Debit',
       Math.abs(t.amount),
       t.balance ?? '',

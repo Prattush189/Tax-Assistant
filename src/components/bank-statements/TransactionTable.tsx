@@ -56,6 +56,13 @@ export function TransactionTable({ transactions, manager }: Props) {
                       {t.isRecurring && <Repeat className="w-3.5 h-3.5 text-violet-500 flex-none" aria-label="Recurring" />}
                       {t.userOverride && <CheckCircle2 className="w-3.5 h-3.5 text-blue-500 flex-none" aria-label="Manually categorised" />}
                     </div>
+                    {(t.counterparty || t.reference) && (
+                      <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-gray-400 truncate">
+                        {t.counterparty && <span className="truncate" title={t.counterparty}>{t.counterparty}</span>}
+                        {t.counterparty && t.reference && <span className="text-gray-300 dark:text-gray-600">·</span>}
+                        {t.reference && <span className="truncate font-mono" title={t.reference}>ref {t.reference}</span>}
+                      </div>
+                    )}
                   </td>
                   <td className={`px-4 py-2.5 whitespace-nowrap text-right font-medium ${isCredit ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
                     {isCredit ? '+' : '−'}{formatINR(Math.abs(t.amount))}

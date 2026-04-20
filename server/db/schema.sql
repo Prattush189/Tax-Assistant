@@ -247,7 +247,21 @@ CREATE TABLE IF NOT EXISTS bank_transactions (
   balance REAL,
   category TEXT NOT NULL,
   subcategory TEXT,
+  counterparty TEXT,
+  reference TEXT,
   is_recurring INTEGER NOT NULL DEFAULT 0,
   user_override INTEGER NOT NULL DEFAULT 0,
   sort_index INTEGER NOT NULL DEFAULT 0
+);
+
+-- User-defined rules: if a narration contains `match_text` (case-insensitive),
+-- override the AI category and/or stamp a custom counterparty label. Applied
+-- during /analyze before bulk insert.
+CREATE TABLE IF NOT EXISTS bank_statement_rules (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  match_text TEXT NOT NULL,
+  category TEXT,
+  counterparty_label TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
 );

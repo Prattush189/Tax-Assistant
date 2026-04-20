@@ -7,8 +7,12 @@ import {
   renameBankStatement,
   deleteBankStatement,
   updateBankTransaction,
+  fetchBankStatementRules,
+  createBankStatementRule,
+  deleteBankStatementRule,
   BankStatementSummary,
   BankTransaction,
+  BankStatementRule,
 } from '../services/api';
 
 export type BankStatementDetail = {
@@ -28,14 +32,16 @@ export function useBankStatementManager(enabled: boolean) {
   const [isLoading, setIsLoading] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [rules, setRules] = useState<BankStatementRule[]>([]);
 
   useEffect(() => {
     if (!enabled) return;
     (async () => {
       setIsLoading(true);
       try {
-        const data = await fetchBankStatements();
-        setStatements(data.statements);
+        const [list, ruleList] = await Promise.all([fetchBankStatements(), fetchBankStatementRules()]);
+        setStatements(list.statements);
+        setRules(ruleList.rules);
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to load statements');
       } finally {
@@ -138,6 +144,21 @@ export function useBankStatementManager(enabled: boolean) {
     [current],
   );
 
+  const addRule = useCallback(async (input: {
+    matchText: string;
+    category?: string | null;
+    counterpartyLabel?: string | null;
+  }): Promise<BankStatementRule> => {
+    const { rule } = await createBankStatementRule(input);
+    setRules((prev) => [rule, ...prev]);
+    return rule;
+  }, []);
+
+  const removeRule = useCallback(async (id: string) => {
+    await deleteBankStatementRule(id);
+    setRules((prev) => prev.filter((r) => r.id !== id));
+  }, []);
+
   return {
     statements,
     currentId,
@@ -145,6 +166,7 @@ export function useBankStatementManager(enabled: boolean) {
     isLoading,
     isAnalyzing,
     error,
+    rules,
     refresh,
     clear,
     load,
@@ -153,6 +175,8 @@ export function useBankStatementManager(enabled: boolean) {
     rename,
     remove,
     reassignCategory,
+    addRule,
+    removeRule,
   };
 }
 
