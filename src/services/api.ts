@@ -294,6 +294,7 @@ export interface UserUsageResponse {
     suggestions: UsageMetric;
     notices: UsageMetric;
     boardResolutions: UsageMetric;
+    bankStatements: UsageMetric;
     profiles: UsageMetric;
   };
 }

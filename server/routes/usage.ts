@@ -80,6 +80,14 @@ router.get('/', (req: AuthRequest, res: Response) => {
     console.error('[usage] board resolutions count failed', err);
   }
 
+  // Bank statement analyses (monthly)
+  let bankStatementsUsed = 0;
+  try {
+    bankStatementsUsed = featureUsageRepo.countThisMonthByBillingUser(billingUser.id, 'bank_statement_analyze');
+  } catch (err) {
+    console.error('[usage] bank statements count failed', err);
+  }
+
   // Saved profiles (count — not period based)
   let profilesUsed = 0;
   try {
@@ -146,6 +154,12 @@ router.get('/', (req: AuthRequest, res: Response) => {
         limit: limits.boardResolutions,
         period: 'month',
         label: 'Board Resolutions',
+      },
+      bankStatements: {
+        used: bankStatementsUsed,
+        limit: limits.bankStatements,
+        period: 'month',
+        label: 'Bank Statements',
       },
       profiles: {
         used: profilesUsed,

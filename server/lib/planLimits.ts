@@ -31,6 +31,7 @@ export interface UserLimits {
   notices: number;           // monthly
   profiles: number;          // total
   boardResolutions: number;  // monthly
+  bankStatements: number;    // monthly
 }
 
 /** Baseline defaults for each plan tier. */
@@ -42,6 +43,7 @@ export const PLAN_DEFAULTS: Record<PlanId, UserLimits> = {
     notices: 3,
     profiles: 1,
     boardResolutions: 3,
+    bankStatements: 3,
   },
   pro: {
     messages: { limit: 1500, period: 'month' },
@@ -50,6 +52,7 @@ export const PLAN_DEFAULTS: Record<PlanId, UserLimits> = {
     notices: 15,
     profiles: 5,
     boardResolutions: 15,
+    bankStatements: 30,
   },
   enterprise: {
     messages: { limit: 3000, period: 'month' },
@@ -58,6 +61,7 @@ export const PLAN_DEFAULTS: Record<PlanId, UserLimits> = {
     notices: 50,
     profiles: 25,
     boardResolutions: 50,
+    bankStatements: 200,
   },
   /**
    * enterprise-shared defaults are intentionally generous — the consultant's
@@ -72,6 +76,7 @@ export const PLAN_DEFAULTS: Record<PlanId, UserLimits> = {
     notices: 100,
     profiles: 50,
     boardResolutions: 100,
+    bankStatements: 500,
   },
 };
 
@@ -119,6 +124,7 @@ export function getUserLimits(user: LimitUserInput): UserLimits {
     notices: overrides.notices ?? base.notices,
     profiles: overrides.profiles ?? base.profiles,
     boardResolutions: overrides.boardResolutions ?? base.boardResolutions,
+    bankStatements: overrides.bankStatements ?? base.bankStatements,
   };
 }
 
@@ -146,6 +152,7 @@ export function sanitizePluginLimits(raw: unknown): UserLimits | null {
   const notices = numeric(r.notices);
   const profiles = numeric(r.profiles);
   const boardResolutions = numeric(r.boardResolutions);
+  const bankStatements = numeric(r.bankStatements);
 
   // Require at least one field to be set
   if (
@@ -154,7 +161,8 @@ export function sanitizePluginLimits(raw: unknown): UserLimits | null {
     suggestions === undefined &&
     notices === undefined &&
     profiles === undefined &&
-    boardResolutions === undefined
+    boardResolutions === undefined &&
+    bankStatements === undefined
   ) {
     return null;
   }
@@ -167,6 +175,7 @@ export function sanitizePluginLimits(raw: unknown): UserLimits | null {
     notices: notices ?? 0,
     profiles: profiles ?? 0,
     boardResolutions: boardResolutions ?? 0,
+    bankStatements: bankStatements ?? 0,
   };
 }
 

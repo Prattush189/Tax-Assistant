@@ -10,18 +10,10 @@ import { bankStatementRuleRepo, BankStatementRuleRow } from '../db/repositories/
 import { userRepo } from '../db/repositories/userRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { getBillingUser } from '../lib/billing.js';
+import { getUserLimits } from '../lib/planLimits.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
-
-// Monthly bank statement analysis cap per plan. Separate from the generic
-// attachment-upload cap because statement extraction uses more tokens.
-const MONTHLY_ANALYZE_LIMITS: Record<string, number> = {
-  free: 3,
-  pro: 30,
-  enterprise: 200,
-  'enterprise-shared': 200,
-};
 
 const ALLOWED_MIME_TYPES = [
   'application/pdf',
@@ -134,7 +126,8 @@ function enforceQuota(req: AuthRequest, res: Response): { ok: true; billingUserI
   const billingUser = actor ? getBillingUser(actor) : undefined;
   const billingUserId = billingUser?.id ?? req.user!.id;
   const plan = billingUser?.plan ?? actor?.plan ?? 'free';
-  const limit = MONTHLY_ANALYZE_LIMITS[plan] ?? MONTHLY_ANALYZE_LIMITS.free;
+  const limitSource = billingUser ?? actor;
+  const limit = limitSource ? getUserLimits(limitSource).bankStatements : 3;
   let used = 0;
   try {
     used = featureUsageRepo.countThisMonthByBillingUser(billingUserId, 'bank_statement_analyze');
