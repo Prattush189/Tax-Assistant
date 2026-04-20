@@ -213,3 +213,41 @@ CREATE TABLE IF NOT EXISTS clients (
   created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
 );
+
+-- Bank statement analyzer: one row per uploaded statement.
+-- Indexes are created in server/db/index.ts migration block.
+CREATE TABLE IF NOT EXISTS bank_statements (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  billing_user_id TEXT,
+  name TEXT NOT NULL,
+  bank_name TEXT,
+  account_number_masked TEXT,
+  period_from TEXT,
+  period_to TEXT,
+  source_filename TEXT,
+  source_mime TEXT,
+  total_inflow REAL NOT NULL DEFAULT 0,
+  total_outflow REAL NOT NULL DEFAULT 0,
+  tx_count INTEGER NOT NULL DEFAULT 0,
+  raw_extracted TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+);
+
+-- Bank transactions: one row per parsed transaction. amount is signed
+-- (positive = credit / inflow, negative = debit / outflow). user_override = 1
+-- when a human has reassigned the category away from the AI-inferred one.
+CREATE TABLE IF NOT EXISTS bank_transactions (
+  id TEXT PRIMARY KEY,
+  statement_id TEXT NOT NULL REFERENCES bank_statements(id) ON DELETE CASCADE,
+  tx_date TEXT,
+  narration TEXT,
+  amount REAL NOT NULL,
+  balance REAL,
+  category TEXT NOT NULL,
+  subcategory TEXT,
+  is_recurring INTEGER NOT NULL DEFAULT 0,
+  user_override INTEGER NOT NULL DEFAULT 0,
+  sort_index INTEGER NOT NULL DEFAULT 0
+);

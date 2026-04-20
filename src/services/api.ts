@@ -1282,3 +1282,98 @@ export async function acceptInvitation(input: {
   if (!res.ok) throw new Error(data.error || 'Failed to accept invitation');
   return data;
 }
+
+// ── Bank Statement Analyzer API ───────────────────────────────────────────
+
+export interface BankStatementSummary {
+  id: string;
+  name: string;
+  bankName: string | null;
+  accountNumberMasked: string | null;
+  periodFrom: string | null;
+  periodTo: string | null;
+  sourceFilename: string | null;
+  sourceMime: string | null;
+  totalInflow: number;
+  totalOutflow: number;
+  txCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BankTransaction {
+  id: string;
+  date: string | null;
+  narration: string | null;
+  amount: number;          // signed: positive=credit, negative=debit
+  balance: number | null;
+  category: string;
+  subcategory: string | null;
+  isRecurring: boolean;
+  userOverride: boolean;
+}
+
+export async function fetchBankStatements(): Promise<{ statements: BankStatementSummary[] }> {
+  return authFetch('/api/bank-statements');
+}
+
+export async function fetchBankStatement(id: string): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[] }> {
+  return authFetch(`/api/bank-statements/${id}`);
+}
+
+export async function analyzeBankStatementFile(file: File): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[] }> {
+  const formData = new FormData();
+  formData.append('file', file);
+  let res = await fetch('/api/bank-statements/analyze', {
+    method: 'POST',
+    headers: { ...getAuthHeaders() },
+    body: formData,
+  });
+  if (res.status === 401) {
+    const refreshed = await tryRefreshToken();
+    if (refreshed) {
+      res = await fetch('/api/bank-statements/analyze', {
+        method: 'POST',
+        headers: { ...getAuthHeaders() },
+        body: formData,
+      });
+    }
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Failed to analyze statement');
+  return data;
+}
+
+export async function analyzeBankStatementCsv(csvText: string, filename?: string): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[] }> {
+  return authFetch('/api/bank-statements/analyze', {
+    method: 'POST',
+    body: JSON.stringify({ csvText, filename }),
+  });
+}
+
+export async function renameBankStatement(id: string, name: string): Promise<{ statement: BankStatementSummary }> {
+  return authFetch(`/api/bank-statements/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function deleteBankStatement(id: string): Promise<void> {
+  await authFetch(`/api/bank-statements/${id}`, { method: 'DELETE' });
+}
+
+export async function updateBankTransaction(
+  statementId: string,
+  txId: string,
+  category: string,
+  subcategory?: string | null,
+): Promise<void> {
+  await authFetch(`/api/bank-statements/${statementId}/transactions/${txId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ category, subcategory: subcategory ?? null }),
+  });
+}
+
+export function bankStatementCsvUrl(id: string): string {
+  return `/api/bank-statements/${id}/export.csv`;
+}
