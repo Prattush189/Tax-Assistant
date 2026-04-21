@@ -8,6 +8,16 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { withBreaker } from './circuitBreaker.js';
+import { registerBucket, tryAcquire } from './rateLimiter.js';
+
+// Anthropic Tier 1 rate limits — see https://docs.anthropic.com/en/api/rate-limits.
+// Tier 1 caps Haiku at ~50 RPM; we register a slightly conservative bucket so
+// a burst of notice generations queues / fails fast inside our process
+// instead of producing a wave of 429s. Adjust upward (via env in future) if
+// the project moves to a higher tier.
+const ANTHROPIC_RPM_LIMIT = Number(process.env.ANTHROPIC_RPM_LIMIT ?? 45);
+registerBucket({ provider: 'anthropic', dimension: 'rpm', label: 'global', limit: ANTHROPIC_RPM_LIMIT, period: 'minute' });
 
 export const CLAUDE_HAIKU_MODEL = 'claude-haiku-4-5';
 
@@ -101,37 +111,51 @@ export async function streamClaudeChatWithRetry(
 ): Promise<Required<Pick<ClaudeChatChunk, 'inputTokens' | 'outputTokens' | 'cacheCreationTokens' | 'cacheReadTokens'>>> {
   const MAX_ATTEMPTS = 3;
   const RETRYABLE = new Set([429, 500, 502, 503, 504, 529]);
-  let lastErr: unknown;
 
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    let started = false;
-    try {
-      const stream = streamClaudeChat(systemPrompt, userMessage, maxOutputTokens);
-      for await (const chunk of stream) {
-        if (chunk.text) {
-          started = true;
-          onText(chunk.text);
-        }
-        if (chunk.done) {
-          return {
-            inputTokens: chunk.inputTokens ?? 0,
-            outputTokens: chunk.outputTokens ?? 0,
-            cacheCreationTokens: chunk.cacheCreationTokens ?? 0,
-            cacheReadTokens: chunk.cacheReadTokens ?? 0,
-          };
-        }
-      }
-      // Stream ended without a `done` chunk — treat as success with zero usage.
-      return { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 };
-    } catch (err) {
-      lastErr = err;
-      const status = (err as { status?: number })?.status ?? 0;
-      if (started || !RETRYABLE.has(status) || attempt === MAX_ATTEMPTS - 1) break;
-      console.warn(`[anthropic] retry ${attempt + 1}/${MAX_ATTEMPTS} after status ${status}`);
-      await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
-    }
+  // Pre-flight rate-limit check: if we've hit our self-imposed RPM ceiling,
+  // fail fast with a clear error before even calling Anthropic. This keeps
+  // burst traffic from producing a wave of upstream 429s.
+  if (!tryAcquire('anthropic', 'rpm', 'global')) {
+    const err = new Error('Anthropic RPM limit reached. Please retry in a minute.') as Error & { status: number };
+    err.status = 429;
+    throw err;
   }
-  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+  // Circuit-breaker wraps the retry ladder so a real Anthropic outage opens
+  // the breaker and the next 60s of requests fail fast with BreakerOpenError.
+  return withBreaker('anthropic', async () => {
+    let lastErr: unknown;
+
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      let started = false;
+      try {
+        const stream = streamClaudeChat(systemPrompt, userMessage, maxOutputTokens);
+        for await (const chunk of stream) {
+          if (chunk.text) {
+            started = true;
+            onText(chunk.text);
+          }
+          if (chunk.done) {
+            return {
+              inputTokens: chunk.inputTokens ?? 0,
+              outputTokens: chunk.outputTokens ?? 0,
+              cacheCreationTokens: chunk.cacheCreationTokens ?? 0,
+              cacheReadTokens: chunk.cacheReadTokens ?? 0,
+            };
+          }
+        }
+        // Stream ended without a `done` chunk — treat as success with zero usage.
+        return { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 };
+      } catch (err) {
+        lastErr = err;
+        const status = (err as { status?: number })?.status ?? 0;
+        if (started || !RETRYABLE.has(status) || attempt === MAX_ATTEMPTS - 1) break;
+        console.warn(`[anthropic] retry ${attempt + 1}/${MAX_ATTEMPTS} after status ${status}`);
+        await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  });
 }
 
 /** Compute the USD cost for a Claude Haiku call, factoring in prompt caching. */

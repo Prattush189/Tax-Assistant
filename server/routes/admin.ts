@@ -122,6 +122,8 @@ router.get('/stats/plans', (_req: AuthRequest, res: Response) => {
 });
 
 import { getQuotaStatus, getGeminiConfig, setGeminiLimits, setActiveKey } from '../lib/searchQuota.js';
+import { getRateLimiterStatus } from '../lib/rateLimiter.js';
+import { getBreakerStatus } from '../lib/circuitBreaker.js';
 
 // ── API Cost Analytics Dashboard ──────────────────────────────────────────
 
@@ -153,6 +155,8 @@ router.get('/api-costs', (req: AuthRequest, res: Response) => {
   res.json({
     period,
     searchQuota: quota,
+    rateLimits: getRateLimiterStatus(),
+    circuitBreakers: getBreakerStatus(),
     summary: {
       totalRequests: stats.total_requests,
       totalInputTokens: stats.total_input_tokens,

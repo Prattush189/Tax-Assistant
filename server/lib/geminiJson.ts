@@ -5,6 +5,7 @@
  * loop and the defensive JSON parser so each call site stays a 3-line wrapper.
  */
 import { gemini, GEMINI_MODEL, GEMINI_FALLBACK_MODEL } from './gemini.js';
+import { withBreaker, BreakerOpenError } from './circuitBreaker.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 
 export interface GeminiJsonOptions {
@@ -111,28 +112,37 @@ export async function callGeminiJson<T = unknown>(
   const primary = opts.primaryModel ?? GEMINI_MODEL;
   const fallback = opts.fallbackModel ?? GEMINI_FALLBACK_MODEL;
   const responseFormat = opts.responseFormat;
-  let lastErr: unknown;
 
-  for (let attempt = 0; attempt < MAX_PRIMARY_ATTEMPTS; attempt++) {
-    try {
-      return await callOnce<T>(messages, primary, maxTokens, responseFormat);
-    } catch (err) {
-      lastErr = err;
-      const status = (err as { status?: number })?.status ?? 0;
-      if (!RETRYABLE_STATUSES.has(status)) break;
-      if (attempt < MAX_PRIMARY_ATTEMPTS - 1) {
-        console.warn(`[geminiJson] ${primary} retry ${attempt + 1}/${MAX_PRIMARY_ATTEMPTS} after status ${status}`);
-        await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)));
+  // Circuit-breaker wraps the WHOLE retry-and-fallback ladder for this provider.
+  // If Gemini is genuinely down, the breaker opens after a handful of failures
+  // and the next 60s of requests get a fast `BreakerOpenError` instead of each
+  // burning 6+ seconds of backoff time.
+  return withBreaker('gemini', async () => {
+    let lastErr: unknown;
+
+    for (let attempt = 0; attempt < MAX_PRIMARY_ATTEMPTS; attempt++) {
+      try {
+        return await callOnce<T>(messages, primary, maxTokens, responseFormat);
+      } catch (err) {
+        lastErr = err;
+        const status = (err as { status?: number })?.status ?? 0;
+        if (!RETRYABLE_STATUSES.has(status)) break;
+        if (attempt < MAX_PRIMARY_ATTEMPTS - 1) {
+          console.warn(`[geminiJson] ${primary} retry ${attempt + 1}/${MAX_PRIMARY_ATTEMPTS} after status ${status}`);
+          await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)));
+        }
       }
     }
-  }
 
-  console.warn(`[geminiJson] ${primary} exhausted, falling back to ${fallback}`);
-  try {
-    return await callOnce<T>(messages, fallback, maxTokens, responseFormat);
-  } catch (err) {
-    lastErr = err;
-  }
+    console.warn(`[geminiJson] ${primary} exhausted, falling back to ${fallback}`);
+    try {
+      return await callOnce<T>(messages, fallback, maxTokens, responseFormat);
+    } catch (err) {
+      lastErr = err;
+    }
 
-  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  });
 }
+
+export { BreakerOpenError };
