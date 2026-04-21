@@ -1333,6 +1333,23 @@ export async function fetchBankStatement(id: string): Promise<{ statement: BankS
 }
 
 export async function analyzeBankStatementFile(file: File): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[] }> {
+  // Fast path: if this is a digitally-generated PDF, extract the text layer
+  // in the browser and send text-only to the server. The server skips the
+  // Gemini vision pass and completes in ~10-15s instead of 30-60s. Scanned
+  // PDFs (no text layer) fall through to the multipart/vision path below.
+  if (file.type === 'application/pdf') {
+    try {
+      const { extractPdfTextClient } = await import('../lib/pdfText');
+      const text = await extractPdfTextClient(file);
+      if (text) {
+        return analyzeBankStatementPdfText(text, file.name);
+      }
+    } catch (err) {
+      // Text extraction is best-effort — fall back to vision on any failure.
+      console.warn('[analyzeBankStatementFile] text extract failed, falling back to vision:', err);
+    }
+  }
+
   const formData = new FormData();
   formData.append('file', file);
   const controller = new AbortController();
@@ -1355,6 +1372,34 @@ export async function analyzeBankStatementFile(file: File): Promise<{ statement:
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error('Analysis timed out — the file may be too large or complex. Try a CSV export instead.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function analyzeBankStatementPdfText(pdfText: string, filename: string): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[] }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 90_000);
+  const doFetch = () => fetch('/api/bank-statements/analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    body: JSON.stringify({ pdfText, filename }),
+    signal: controller.signal,
+  });
+  try {
+    let res = await doFetch();
+    if (res.status === 401) {
+      const refreshed = await tryRefreshToken();
+      if (refreshed) res = await doFetch();
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Failed to analyze statement');
+    return data;
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('Analysis timed out — the statement may be unusually large.');
     }
     throw err;
   } finally {

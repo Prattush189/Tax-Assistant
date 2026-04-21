@@ -3,6 +3,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
 import Papa from 'papaparse';
 import { extractWithRetry } from '../lib/documentExtract.js';
+import { callGeminiJson } from '../lib/geminiJson.js';
 import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_CATEGORIES } from '../lib/bankStatementPrompt.js';
 import { bankStatementRepo } from '../db/repositories/bankStatementRepo.js';
 import { bankTransactionRepo, BankTransactionInput } from '../db/repositories/bankTransactionRepo.js';
@@ -293,10 +294,11 @@ router.post(
     const quota = enforceQuota(req, res);
     if (!quota.ok) return;
 
-    const isCsv = !req.file && typeof req.body?.csvText === 'string';
+    const isPdfText = !req.file && typeof req.body?.pdfText === 'string' && req.body.pdfText.length > 0;
+    const isCsv = !req.file && !isPdfText && typeof req.body?.csvText === 'string';
 
-    if (!req.file && !isCsv) {
-      res.status(400).json({ error: 'Provide a PDF/image file or csvText body.' });
+    if (!req.file && !isPdfText && !isCsv) {
+      res.status(400).json({ error: 'Provide a PDF/image file, pdfText body, or csvText body.' });
       return;
     }
 
@@ -310,8 +312,22 @@ router.post(
         mimeType = req.file.mimetype;
         const base64Data = req.file.buffer.toString('base64');
         const dataUrl = `data:${mimeType};base64,${base64Data}`;
-        // Statements can be long — bump max_tokens.
+        // Vision fallback path — used only for scanned/image PDFs or direct
+        // image uploads. Digital PDFs get pre-extracted client-side and hit
+        // the faster `pdfText` branch below.
         extracted = await extractWithRetry(dataUrl, BANK_STATEMENT_PROMPT, { maxTokens: 8192 });
+      } else if (isPdfText) {
+        // Fast path: the frontend extracted the PDF text layer via pdfjs-dist
+        // and sent it here. Gemini parses plain text ~3-5× faster than vision
+        // because there's no OCR / layout analysis phase. Prompt explicitly
+        // tells the model this is pre-extracted text so it doesn't try to
+        // interpret page-break markers as part of the content.
+        filename = typeof req.body?.filename === 'string' ? req.body.filename : 'statement.pdf';
+        mimeType = 'application/pdf';
+        const text = String(req.body.pdfText).slice(0, 200_000);
+        const prompt = `${BANK_STATEMENT_PROMPT}\n\nThe input below is the raw text layer extracted from a bank statement PDF (client-side via pdfjs). Lines beginning with "--- PAGE BREAK ---" mark page boundaries. Parse EVERY transaction row you can identify and return the schema above. Do NOT invent transactions that aren't in the text.\n\nINPUT_TEXT:\n${text}`;
+        const result = await callGeminiJson<ExtractedStatement>([{ role: 'user', content: prompt }], { maxTokens: 8192 });
+        extracted = result.data;
       } else {
         // CSV path: parse client-provided CSV to a compact text block and ask
         // Gemini to categorize (structure already known, only categorization
