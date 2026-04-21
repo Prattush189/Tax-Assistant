@@ -317,7 +317,13 @@ router.post(
         // Vision fallback path — used only for scanned/image PDFs or direct
         // image uploads. Digital PDFs get pre-extracted client-side and hit
         // the faster `pdfText` branch below.
-        extracted = await extractWithRetry(dataUrl, BANK_STATEMENT_PROMPT, { maxTokens: 8192 });
+        const visionResult = await extractWithRetry<ExtractedStatement>(dataUrl, BANK_STATEMENT_PROMPT, { maxTokens: 8192 });
+        extracted = visionResult.data;
+        (res.locals as Record<string, unknown>).geminiUsages = [{
+          inputTokens: visionResult.inputTokens,
+          outputTokens: visionResult.outputTokens,
+          modelUsed: visionResult.modelUsed,
+        }];
       } else if (isPdfText) {
         // Fast path: the frontend extracted the PDF text layer via pdfjs-dist
         // and sent it here. Gemini parses plain text ~3-5× faster than vision
@@ -410,7 +416,13 @@ router.post(
         const csvPrompt = `${BANK_STATEMENT_PROMPT}\n\nThe transactions array has already been extracted and is given below as JSON. Return the same schema, filling bankName/period from context if obvious (else null) and adding category / subcategory / isRecurring to each row. Preserve the given amount signs.\n\nINPUT_ROWS:\n${csvSnippet}`;
         // Send as a tiny data URL with plain text — reuse the pipeline.
         const dataUrl = `data:text/plain;base64,${Buffer.from(csvPrompt).toString('base64')}`;
-        extracted = await extractWithRetry(dataUrl, csvPrompt, { maxTokens: 8192 });
+        const csvResult = await extractWithRetry<ExtractedStatement>(dataUrl, csvPrompt, { maxTokens: 8192 });
+        extracted = csvResult.data;
+        (res.locals as Record<string, unknown>).geminiUsages = [{
+          inputTokens: csvResult.inputTokens,
+          outputTokens: csvResult.outputTokens,
+          modelUsed: csvResult.modelUsed,
+        }];
       }
 
       const { statement, txCount } = persistStatement(req.user.id, quota.billingUserId, extracted, {
@@ -425,10 +437,8 @@ router.post(
         console.error('[bank-statements] Failed to log usage:', err);
       }
 
-      // Log the Gemini-side cost so the admin API-cost dashboard reflects this
-      // feature. For the pdfText path we aggregate across all chunks; the
-      // vision path (extractWithRetry) doesn't return usage yet, so we record
-      // a single zero-cost row tagged with the model for traceability.
+      // Log Gemini-side cost — aggregated across vision or pdfText-chunk
+      // calls — so this feature appears in the admin API-cost dashboard.
       try {
         const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
         const usages = (res.locals as Record<string, unknown>).geminiUsages as
@@ -437,11 +447,7 @@ router.post(
           const inputTok = usages.reduce((a, u) => a + u.inputTokens, 0);
           const outputTok = usages.reduce((a, u) => a + u.outputTokens, 0);
           const cost = inputTok * GEMINI_T2_INPUT_COST + outputTok * GEMINI_T2_OUTPUT_COST;
-          usageRepo.logWithBilling(clientIp, req.user.id, quota.billingUserId, inputTok, outputTok, cost, false, usages[0]?.modelUsed, false, 'bank_statement');
-        } else {
-          // Vision path: we don't have usage numbers, but record the call so
-          // it appears in "recent requests" with the right feature tag.
-          usageRepo.logWithBilling(clientIp, req.user.id, quota.billingUserId, 0, 0, 0, false, 'gemini-2.5-flash-lite', false, 'bank_statement');
+          usageRepo.logWithBilling(clientIp, req.user.id, quota.billingUserId, inputTok, outputTok, cost, false, usages[0].modelUsed, false, 'bank_statement');
         }
       } catch (err) {
         console.error('[bank-statements] Failed to log cost:', err);
