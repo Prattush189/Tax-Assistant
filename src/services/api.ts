@@ -1353,7 +1353,7 @@ export async function analyzeBankStatementFile(file: File): Promise<{ statement:
   const formData = new FormData();
   formData.append('file', file);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 120_000);
+  const timer = setTimeout(() => controller.abort(), 180_000);
   const doFetch = () => fetch('/api/bank-statements/analyze', {
     method: 'POST',
     headers: { ...getAuthHeaders() },
@@ -1367,7 +1367,12 @@ export async function analyzeBankStatementFile(file: File): Promise<{ statement:
       if (refreshed) res = await doFetch();
     }
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || 'Failed to analyze statement');
+    if (!res.ok) {
+      const parts = [data.error ?? 'Failed to analyze statement'];
+      if (data.hint) parts.push(data.hint);
+      if (data.detail) parts.push(`(${data.detail})`);
+      throw new Error(parts.join(' — '));
+    }
     return data;
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
@@ -1379,9 +1384,13 @@ export async function analyzeBankStatementFile(file: File): Promise<{ statement:
   }
 }
 
-async function analyzeBankStatementPdfText(pdfText: string, filename: string): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[] }> {
+async function analyzeBankStatementPdfText(pdfText: string, filename: string): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[]; warning?: string }> {
+  // Large multi-chunk statements (40+ pages) can take 2-3 minutes of parallel
+  // Gemini calls. We bump the abort well past that so the server gets a
+  // chance to return a partial result with a warning rather than the client
+  // killing the request.
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 90_000);
+  const timer = setTimeout(() => controller.abort(), 240_000);
   const doFetch = () => fetch('/api/bank-statements/analyze', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
@@ -1395,11 +1404,18 @@ async function analyzeBankStatementPdfText(pdfText: string, filename: string): P
       if (refreshed) res = await doFetch();
     }
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || 'Failed to analyze statement');
+    if (!res.ok) {
+      // Server returns `{error, detail?, hint?}` — fold them into one message
+      // so the user actually sees what went wrong and how to recover.
+      const parts = [data.error ?? 'Failed to analyze statement'];
+      if (data.hint) parts.push(data.hint);
+      if (data.detail) parts.push(`(${data.detail})`);
+      throw new Error(parts.join(' — '));
+    }
     return data;
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error('Analysis timed out — the statement may be unusually large.');
+      throw new Error('Analysis timed out. Very large statements (>80 pages) may exceed our time budget — try a CSV export instead.');
     }
     throw err;
   } finally {
