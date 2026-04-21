@@ -9,6 +9,15 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { withBreaker } from './circuitBreaker.js';
+import { registerBucket, tryAcquire } from './rateLimiter.js';
+
+// Anthropic Tier 1 rate limits — see https://docs.anthropic.com/en/api/rate-limits.
+// Tier 1 caps Haiku at ~50 RPM; we register a slightly conservative bucket so
+// a burst of notice generations queues / fails fast inside our process
+// instead of producing a wave of 429s. Adjust upward (via env in future) if
+// the project moves to a higher tier.
+const ANTHROPIC_RPM_LIMIT = Number(process.env.ANTHROPIC_RPM_LIMIT ?? 45);
+registerBucket({ provider: 'anthropic', dimension: 'rpm', label: 'global', limit: ANTHROPIC_RPM_LIMIT, period: 'minute' });
 
 export const CLAUDE_HAIKU_MODEL = 'claude-haiku-4-5';
 
@@ -102,6 +111,15 @@ export async function streamClaudeChatWithRetry(
 ): Promise<Required<Pick<ClaudeChatChunk, 'inputTokens' | 'outputTokens' | 'cacheCreationTokens' | 'cacheReadTokens'>>> {
   const MAX_ATTEMPTS = 3;
   const RETRYABLE = new Set([429, 500, 502, 503, 504, 529]);
+
+  // Pre-flight rate-limit check: if we've hit our self-imposed RPM ceiling,
+  // fail fast with a clear error before even calling Anthropic. This keeps
+  // burst traffic from producing a wave of upstream 429s.
+  if (!tryAcquire('anthropic', 'rpm', 'global')) {
+    const err = new Error('Anthropic RPM limit reached. Please retry in a minute.') as Error & { status: number };
+    err.status = 429;
+    throw err;
+  }
 
   // Circuit-breaker wraps the retry ladder so a real Anthropic outage opens
   // the breaker and the next 60s of requests fail fast with BreakerOpenError.
