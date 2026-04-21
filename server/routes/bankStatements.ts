@@ -4,7 +4,9 @@ import multer, { MulterError } from 'multer';
 import Papa from 'papaparse';
 import { extractWithRetry } from '../lib/documentExtract.js';
 import { callGeminiJson } from '../lib/geminiJson.js';
-import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_CATEGORIES } from '../lib/bankStatementPrompt.js';
+import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_TSV_PROMPT, BANK_STATEMENT_CATEGORIES } from '../lib/bankStatementPrompt.js';
+import { gemini } from '../lib/gemini.js';
+import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { bankStatementRepo } from '../db/repositories/bankStatementRepo.js';
 import { bankTransactionRepo, BankTransactionInput } from '../db/repositories/bankTransactionRepo.js';
 import { bankStatementRuleRepo, BankStatementRuleRow } from '../db/repositories/bankStatementRuleRepo.js';
@@ -45,6 +47,186 @@ type ExtractedStatement = {
   currency: string | null;
   transactions: unknown[];
 };
+
+// ── TSV extraction helper for pre-extracted PDF text ──────────────────────
+// See BANK_STATEMENT_TSV_PROMPT. We send one raw text chunk per call, get
+// back a header line + N transaction lines + trailer `---END:<N>---`, and
+// verify the trailer count matches the parsed row count so we never
+// silently drop transactions.
+
+interface TsvExtractResult {
+  bankName: string | null;
+  accountNumberMasked: string | null;
+  periodFrom: string | null;
+  periodTo: string | null;
+  transactions: unknown[];
+  inputTokens: number;
+  outputTokens: number;
+  modelUsed: string;
+  declaredCount: number;
+  actualCount: number;
+}
+
+function cleanTsvCell(s: string): string {
+  const t = s.trim();
+  if (t === '' || t.toLowerCase() === 'null') return '';
+  return t;
+}
+
+function parseTsvResponse(raw: string): Omit<TsvExtractResult, 'inputTokens' | 'outputTokens' | 'modelUsed'> {
+  // Strip accidental code fences — the prompt forbids them but models slip.
+  const text = raw.replace(/^```[a-z]*\n?/im, '').replace(/\n?```\s*$/m, '').trim();
+  const lines = text.split(/\r?\n/);
+
+  let bankName: string | null = null;
+  let accountNumberMasked: string | null = null;
+  let periodFrom: string | null = null;
+  let periodTo: string | null = null;
+  const rows: unknown[] = [];
+  let declaredCount = -1;
+
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    if (line.startsWith('HEADER\t')) {
+      const h = line.split('\t');
+      bankName = cleanTsvCell(h[1] ?? '') || null;
+      accountNumberMasked = cleanTsvCell(h[2] ?? '') || null;
+      periodFrom = cleanTsvCell(h[3] ?? '') || null;
+      periodTo = cleanTsvCell(h[4] ?? '') || null;
+      continue;
+    }
+    const endMatch = /^---END:(\d+)---$/.exec(line.trim());
+    if (endMatch) {
+      declaredCount = parseInt(endMatch[1], 10);
+      break; // trailer — ignore anything after
+    }
+    const parts = line.split('\t');
+    // Expect exactly 10 fields. Skip stray blank/short lines defensively —
+    // they almost always indicate an incomplete line, which the trailer
+    // check below will catch anyway.
+    if (parts.length < 10) continue;
+    const amount = Number(parts[2].replace(/[,\s]/g, ''));
+    if (!Number.isFinite(amount)) continue;
+    const balanceStr = cleanTsvCell(parts[4]);
+    const balance = balanceStr === '' ? null : Number(balanceStr.replace(/[,\s]/g, ''));
+    rows.push({
+      date: cleanTsvCell(parts[0]),
+      narration: cleanTsvCell(parts[1]),
+      amount,
+      type: cleanTsvCell(parts[3]).toLowerCase() === 'credit' ? 'credit' : 'debit',
+      balance: Number.isFinite(balance as number) ? balance : null,
+      category: cleanTsvCell(parts[5]) || 'Other',
+      subcategory: cleanTsvCell(parts[6]) || null,
+      counterparty: cleanTsvCell(parts[7]) || null,
+      reference: cleanTsvCell(parts[8]) || null,
+      isRecurring: cleanTsvCell(parts[9]) === '1',
+    });
+  }
+
+  return {
+    bankName,
+    accountNumberMasked,
+    periodFrom,
+    periodTo,
+    transactions: rows,
+    declaredCount,
+    actualCount: rows.length,
+  };
+}
+
+async function extractBankStatementTsvOnce(
+  chunkText: string,
+  model: string,
+  maxTokens: number,
+): Promise<TsvExtractResult> {
+  const messages: ChatCompletionMessageParam[] = [{
+    role: 'user',
+    content: `${BANK_STATEMENT_TSV_PROMPT}\n\nINPUT_TEXT:\n${chunkText}`,
+  }];
+  const response = await gemini.chat.completions.create({
+    model,
+    max_tokens: maxTokens,
+    messages,
+    stream: false,
+  });
+  const raw = response.choices[0]?.message?.content ?? '';
+  const parsed = parseTsvResponse(raw);
+
+  // Integrity check #1: trailer MUST be present. Its absence means the
+  // model's output was truncated mid-stream and we have no idea how many
+  // rows were dropped.
+  if (parsed.declaredCount < 0) {
+    throw new Error(`TSV response was truncated: missing ---END:N--- trailer (got ${parsed.actualCount} rows before truncation)`);
+  }
+
+  // Integrity check #2: parsed rows MUST match trailer count. A mismatch
+  // means some lines were malformed (wrong field count) or Gemini's trailer
+  // number is wrong — either way we can't trust the extraction.
+  if (parsed.declaredCount !== parsed.actualCount) {
+    throw new Error(`TSV row-count mismatch: trailer claims ${parsed.declaredCount}, parsed ${parsed.actualCount}`);
+  }
+
+  return {
+    ...parsed,
+    inputTokens: response.usage?.prompt_tokens ?? 0,
+    outputTokens: response.usage?.completion_tokens ?? 0,
+    modelUsed: model,
+  };
+}
+
+/**
+ * Retry + fallback wrapper around the TSV extraction. Retries transient
+ * upstream errors (429/5xx) and TSV validation failures (truncated or
+ * mismatched trailer — often a one-shot issue where the model over-shoots
+ * max_tokens). After 2 attempts on flash-lite we escalate to the larger
+ * flash model, which has higher throughput for long outputs.
+ */
+async function extractBankStatementTsv(chunkText: string, maxTokens: number): Promise<TsvExtractResult> {
+  const MAX_PRIMARY_ATTEMPTS = 2;
+  let lastErr: unknown;
+
+  for (let attempt = 0; attempt < MAX_PRIMARY_ATTEMPTS; attempt++) {
+    try {
+      return await extractBankStatementTsvOnce(chunkText, 'gemini-2.5-flash-lite', maxTokens);
+    } catch (err) {
+      lastErr = err;
+      const status = (err as { status?: number })?.status ?? 0;
+      const validationFailure = /trailer|mismatch|truncated/i.test((err as Error).message ?? '');
+      const retryable = status === 429 || status === 500 || status === 502 || status === 503 || status === 504 || validationFailure;
+      if (!retryable) break;
+      if (attempt < MAX_PRIMARY_ATTEMPTS - 1) {
+        await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)));
+      }
+    }
+  }
+
+  // One escalated attempt on the larger model — it has more headroom for
+  // statements with unusually dense pages.
+  try {
+    return await extractBankStatementTsvOnce(chunkText, 'gemini-2.5-flash', maxTokens);
+  } catch (err) {
+    lastErr = err;
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
+/** Rough lower-bound on transaction count by counting dates in the raw text.
+ *  Used as a cross-check to catch cases where the model skipped rows despite
+ *  a valid trailer. Conservative — we only fail if the delta is large. */
+function countLikelyDates(text: string): number {
+  const patterns = [
+    /\b\d{2}\/\d{2}\/\d{4}\b/g,
+    /\b\d{2}-\d{2}-\d{4}\b/g,
+    /\b\d{4}-\d{2}-\d{2}\b/g,
+    /\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+\d{2,4}\b/gi,
+  ];
+  const seen = new Set<string>();
+  for (const re of patterns) {
+    const matches = text.match(re);
+    if (matches) for (const m of matches) seen.add(m.toLowerCase() + '@' + (text.indexOf(m)));
+  }
+  return seen.size;
+}
 
 function toNumber(v: unknown): number {
   if (typeof v === 'number' && Number.isFinite(v)) return v;
@@ -329,65 +511,107 @@ router.post(
         // and sent it here. Gemini parses plain text ~3-5× faster than vision
         // because there's no OCR / layout analysis phase.
         //
-        // Chunking: a single 8192-token output can hold roughly 80-120
-        // transactions. A 46-page statement with ~900 transactions would
-        // truncate mid-JSON and fail. So we split on the page-break markers
-        // the client inserts, group ~5 pages per chunk (≈100 tx per chunk),
-        // parse each chunk in parallel (bounded concurrency), then merge.
+        // Strategy (correctness > speed, but both matter):
+        //   1. Compact TSV output — each tx is one tab-separated line (~70
+        //      chars) instead of JSON (~250 chars). Fits ~3-4× more rows per
+        //      response.
+        //   2. max_tokens = 16384 — Gemini 2.5 Flash-Lite supports this
+        //      ceiling and it comfortably holds ~700-900 TSV rows.
+        //   3. A 46-page statement with ~900 tx now fits a SINGLE call.
+        //      Larger statements get parallel chunks of ≤700 tx each.
+        //   4. Every response carries a `---END:N---` trailer. We verify the
+        //      trailer count matches the parsed row count — if it doesn't,
+        //      the output was truncated or malformed and we FAIL LOUDLY
+        //      rather than persist a silently-incomplete extraction.
+        //   5. A cross-check against the raw input's date count catches the
+        //      rare case where Gemini emits a valid trailer but skipped rows.
         filename = typeof req.body?.filename === 'string' ? req.body.filename : 'statement.pdf';
         mimeType = 'application/pdf';
         const rawText = String(req.body.pdfText);
         const pages = rawText.split(/\n?---\s*PAGE BREAK\s*---\n?/).map(p => p.trim()).filter(Boolean);
-        const PAGES_PER_CHUNK = 5;
-        const MAX_CHUNKS = 24;                                   // cap at ~120 pages
-        const MAX_INPUT_CHARS_PER_CHUNK = 80_000;                // 5 typical pages fit easily
-        const CONCURRENCY = 4;                                   // parallel Gemini calls
+        // ~40k input chars ≈ 12-14 typical pages ≈ 350-500 transactions.
+        // With 16K output tokens each chunk has headroom even for unusually
+        // dense statements (60+ tx/page). 6 chunks in parallel handles up to
+        // ~80 pages which covers every realistic statement we've seen.
+        const MAX_CHARS_PER_CHUNK = 40_000;
+        const MAX_OUTPUT_TOKENS = 16384;
+        const MAX_CHUNKS = 6;
+
+        // Build chunks by packing pages until we approach the char budget.
+        // This means a 10-page statement is ONE call; 46 pages → 3 calls.
         const chunks: string[] = [];
-        for (let i = 0; i < pages.length && chunks.length < MAX_CHUNKS; i += PAGES_PER_CHUNK) {
-          chunks.push(pages.slice(i, i + PAGES_PER_CHUNK).join('\n\n').slice(0, MAX_INPUT_CHARS_PER_CHUNK));
-        }
-        if (chunks.length === 0) chunks.push(rawText.slice(0, MAX_INPUT_CHARS_PER_CHUNK));
-        console.log(`[bank-statements] pdfText: ${pages.length} pages → ${chunks.length} chunks`);
-
-        const buildPrompt = (chunkText: string, idx: number, total: number): string => {
-          const partLine = total > 1
-            ? `\n\nThis is PART ${idx + 1} OF ${total} of a multi-page bank statement. For parts 2+, it is OK to leave bankName / accountNumberMasked / periodFrom / periodTo as null — they will be merged from part 1.`
-            : '';
-          return `${BANK_STATEMENT_PROMPT}\n\nThe input below is the raw text layer extracted from a bank statement PDF (client-side via pdfjs). Parse EVERY transaction row you can identify and return the schema above. Do NOT invent transactions that aren't in the text.${partLine}\n\nINPUT_TEXT:\n${chunkText}`;
-        };
-
-        // Process chunks in bounded-concurrency batches so we don't blast
-        // Gemini's per-minute rate limit on a 100-page statement.
-        const results: ExtractedStatement[] = new Array(chunks.length);
-        const usages: Array<{ inputTokens: number; outputTokens: number; modelUsed: string }> = [];
-        for (let start = 0; start < chunks.length; start += CONCURRENCY) {
-          const batch = chunks.slice(start, start + CONCURRENCY);
-          const batchResults = await Promise.all(batch.map(async (chunk, j) => {
-            const idx = start + j;
-            const prompt = buildPrompt(chunk, idx, chunks.length);
-            const r = await callGeminiJson<ExtractedStatement>([{ role: 'user', content: prompt }], { maxTokens: 8192 });
-            return { idx, data: r.data, inputTokens: r.inputTokens, outputTokens: r.outputTokens, modelUsed: r.modelUsed };
-          }));
-          for (const b of batchResults) {
-            results[b.idx] = b.data;
-            usages.push({ inputTokens: b.inputTokens, outputTokens: b.outputTokens, modelUsed: b.modelUsed });
+        const chunkPageRanges: Array<[number, number]> = [];
+        {
+          let buf: string[] = [];
+          let bufLen = 0;
+          let firstPage = 1;
+          for (let i = 0; i < pages.length; i++) {
+            const p = pages[i];
+            if (buf.length > 0 && bufLen + p.length > MAX_CHARS_PER_CHUNK) {
+              chunks.push(buf.join('\n\n'));
+              chunkPageRanges.push([firstPage, i]);
+              buf = [];
+              bufLen = 0;
+              firstPage = i + 1;
+              if (chunks.length >= MAX_CHUNKS) break;
+            }
+            buf.push(p);
+            bufLen += p.length + 2;
+          }
+          if (buf.length > 0 && chunks.length < MAX_CHUNKS) {
+            chunks.push(buf.join('\n\n'));
+            chunkPageRanges.push([firstPage, pages.length]);
+          }
+          if (chunks.length === 0) {
+            chunks.push(rawText.slice(0, MAX_CHARS_PER_CHUNK));
+            chunkPageRanges.push([1, 1]);
           }
         }
+        const dateCount = countLikelyDates(rawText);
+        console.log(`[bank-statements] pdfText: ${pages.length} pages → ${chunks.length} chunk(s), ~${dateCount} candidate dates`);
 
-        // Merge: take header metadata from the first chunk that supplies it;
-        // concat every chunk's transactions in page order.
+        // All chunks in parallel. We DO need all of them — silently dropping
+        // a section would mean missing transactions, which is unacceptable
+        // for a tax/accounting feature. Promise.all rejects on first error;
+        // we surface the error and bail.
+        const chunkResults = await Promise.all(
+          chunks.map(async (chunk, idx) => {
+            const t0 = Date.now();
+            try {
+              const r = await extractBankStatementTsv(chunk, MAX_OUTPUT_TOKENS);
+              console.log(`[bank-statements] chunk ${idx + 1}/${chunks.length} (pages ${chunkPageRanges[idx][0]}-${chunkPageRanges[idx][1]}) ✓ ${r.actualCount} tx in ${Date.now() - t0}ms`);
+              return r;
+            } catch (e) {
+              const msg = (e as Error).message ?? String(e);
+              console.error(`[bank-statements] chunk ${idx + 1}/${chunks.length} (pages ${chunkPageRanges[idx][0]}-${chunkPageRanges[idx][1]}) ✗ ${msg}`);
+              throw new Error(`Section ${idx + 1}/${chunks.length} (pages ${chunkPageRanges[idx][0]}-${chunkPageRanges[idx][1]}): ${msg}`);
+            }
+          }),
+        );
+
+        const merged = chunkResults.flatMap(r => r.transactions);
         extracted = {
-          bankName: results.map(r => r?.bankName).find(v => !!v) ?? null,
-          accountNumberMasked: results.map(r => r?.accountNumberMasked).find(v => !!v) ?? null,
-          periodFrom: results.map(r => r?.periodFrom).find(v => !!v) ?? null,
-          periodTo: results.map(r => r?.periodTo).find(v => !!v) ?? null,
-          currency: results.map(r => r?.currency).find(v => !!v) ?? 'INR',
-          transactions: results.flatMap(r => Array.isArray(r?.transactions) ? r.transactions : []),
+          bankName: chunkResults.map(r => r.bankName).find(v => !!v) ?? null,
+          accountNumberMasked: chunkResults.map(r => r.accountNumberMasked).find(v => !!v) ?? null,
+          periodFrom: chunkResults.map(r => r.periodFrom).find(v => !!v) ?? null,
+          periodTo: chunkResults.map(r => r.periodTo).find(v => !!v) ?? null,
+          currency: 'INR',
+          transactions: merged,
         };
 
-        // Stash usage for post-persist logging. Aggregated across all chunks
-        // so the admin dashboard sees the true cost of the analysis.
-        (res.locals as Record<string, unknown>).geminiUsages = usages;
+        // Cross-check: candidate-date count vs extracted transaction count.
+        // We only fail when the delta is big enough to be meaningful — small
+        // differences are normal (header dates, page footers, summary rows).
+        if (dateCount > 0 && merged.length < dateCount * 0.65) {
+          throw new Error(
+            `Transaction count sanity check failed: extracted ${merged.length} rows but found ~${dateCount} date-like markers in the PDF text. ` +
+            `Rather than persist a likely-incomplete analysis, we're bailing. Retry, or use a CSV export if available.`,
+          );
+        }
+
+        (res.locals as Record<string, unknown>).geminiUsages = chunkResults.map(r => ({
+          inputTokens: r.inputTokens, outputTokens: r.outputTokens, modelUsed: r.modelUsed,
+        }));
       } else {
         // CSV path: parse client-provided CSV to a compact text block and ask
         // Gemini to categorize (structure already known, only categorization
@@ -454,14 +678,21 @@ router.post(
       }
 
       const transactions = bankTransactionRepo.listByStatement(statement.id).map(serializeTransaction);
+      const warning = (res.locals as Record<string, unknown>).analyzerWarning as string | undefined;
       res.status(200).json({
         statement: serializeStatement(bankStatementRepo.findByIdForUser(statement.id, req.user.id)),
         transactions,
         txCount,
+        ...(warning ? { warning } : {}),
       });
     } catch (err) {
-      console.error('[bank-statements] analyze error:', err);
-      res.status(500).json({ error: 'Failed to analyze statement. Please try a clearer file or CSV.' });
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error('[bank-statements] analyze error:', errMsg);
+      res.status(500).json({
+        error: 'Failed to analyze statement.',
+        detail: errMsg.slice(0, 400),
+        hint: 'If this is a large statement (40+ pages), try a CSV export instead. Scanned / image PDFs may also fail — re-save as a digital PDF and retry.',
+      });
     }
   },
 );
