@@ -3,7 +3,7 @@
 // Shared Gemini document-extraction helpers. Used by the generic /api/upload
 // route and by the bank statement analyzer route. Both routes call Gemini with
 // a JSON schema prompt and need the same retry-with-fallback-model behavior.
-import { gemini, GEMINI_MODEL, GEMINI_FALLBACK_MODEL } from './grok.js';
+import { gemini, GEMINI_MODEL, GEMINI_FALLBACK_MODEL } from './gemini.js';
 
 export interface ExtractOptions {
   /** Gemini max_tokens cap. Defaults to 4096. Bank statements bump this to 8192. */

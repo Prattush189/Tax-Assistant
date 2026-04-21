@@ -1,7 +1,7 @@
 // server/routes/form16Import.ts
 import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
-import { gemini, GEMINI_MODEL, GEMINI_FALLBACK_MODEL } from '../lib/grok.js';
+import { gemini, GEMINI_MODEL, GEMINI_FALLBACK_MODEL } from '../lib/gemini.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();

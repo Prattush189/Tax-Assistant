@@ -1,5 +1,5 @@
 /**
- * SMTP2GO REST API mailer — load-safe, follows the grok.ts pattern.
+ * SMTP2GO REST API mailer — load-safe, follows the gemini.ts pattern.
  *
  * Uses the v3 email send endpoint rather than SMTP so the only config we
  * need is an API key + a from address. The endpoint accepts JSON with the

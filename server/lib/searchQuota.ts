@@ -21,7 +21,7 @@
  *   - activeKeyIndex:    which API key is preferred as the primary for chat routing.
  */
 
-import { GEMINI_API_KEYS } from './grok.js';
+import { GEMINI_API_KEYS } from './gemini.js';
 import db from '../db/index.js';
 
 export type ModelTier = 'gemini-3' | 'gemini-2.5';
@@ -214,7 +214,7 @@ export function getQuotaStatus() {
 /**
  * Admin-facing config (mutable limits + active key + per-key availability).
  * `hasKey` reflects whether the env var for that slot is actually populated —
- * imported lazily here to avoid a circular dep with grok.ts at module load.
+ * imported lazily here to avoid a circular dep with gemini.ts at module load.
  */
 export function getGeminiConfig() {
   return {

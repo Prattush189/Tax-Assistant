@@ -1,5 +1,5 @@
 import { Router, Response } from 'express';
-import { gemini, GEMINI_MODEL, GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST } from '../lib/grok.js';
+import { gemini, GEMINI_MODEL, GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST } from '../lib/gemini.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';

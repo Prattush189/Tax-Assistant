@@ -9,7 +9,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import mammoth from 'mammoth';
-import { gemini, GEMINI_MODEL } from '../lib/grok.js';
+import { gemini, GEMINI_MODEL } from '../lib/gemini.js';
 import { styleProfileRepo } from '../db/repositories/styleProfileRepo.js';
 import { AuthRequest } from '../types.js';
 

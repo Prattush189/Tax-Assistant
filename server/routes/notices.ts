@@ -4,7 +4,7 @@ import {
   GEMINI_THINK_FB_INPUT_COST,
   GEMINI_THINK_FB_OUTPUT_COST,
   GEMINI_API_KEYS,
-} from '../lib/grok.js';
+} from '../lib/gemini.js';
 import { streamGeminiChat } from '../lib/geminiChat.js';
 import { noticeRepo } from '../db/repositories/noticeRepo.js';
 import { styleProfileRepo } from '../db/repositories/styleProfileRepo.js';

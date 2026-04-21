@@ -4,7 +4,7 @@
  * Schemas are loaded + compiled once at module import time and cached.
  * Module-load is safe: if a schema file is missing we log a warning and
  * return a no-op validator so the rest of the server still boots (matches
- * the pattern used for grok.ts after the 2026-04-11 load-crash fix).
+ * the pattern used for gemini.ts after the 2026-04-11 load-crash fix).
  */
 import Ajv, { ErrorObject, ValidateFunction } from 'ajv-draft-04';
 import fs from 'fs';
