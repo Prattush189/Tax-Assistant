@@ -10,9 +10,12 @@ const CATEGORY_COLORS: Record<string, string> = {
   chat: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400',
   notice: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400',
   suggestion: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400',
+  bank_statement: 'bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-400',
+  style_profile: 'bg-pink-100 text-pink-700 dark:bg-pink-900/40 dark:text-pink-400',
 };
 
 const MODEL_COLORS: Record<string, string> = {
+  'claude-haiku-4-5': 'bg-orange-500',
   'gemini-3-flash-preview': 'bg-purple-500',
   'gemini-3.1-flash-lite-preview': 'bg-violet-400',
   'gemini-2.5-flash-lite': 'bg-blue-500',
@@ -21,6 +24,7 @@ const MODEL_COLORS: Record<string, string> = {
 };
 
 const MODEL_LABELS: Record<string, string> = {
+  'claude-haiku-4-5': 'Claude Haiku 4.5',
   'gemini-3-flash-preview': 'Gemini 3 Flash',
   'gemini-3.1-flash-lite-preview': 'Gemini 3.1 Flash-Lite',
   'gemini-2.5-flash-lite': 'Gemini 2.5 Flash-Lite',

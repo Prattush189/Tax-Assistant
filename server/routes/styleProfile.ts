@@ -9,9 +9,12 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import mammoth from 'mammoth';
-import { gemini, GEMINI_MODEL } from '../lib/gemini.js';
+import { gemini, GEMINI_MODEL, GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST } from '../lib/gemini.js';
 import { callGeminiJson } from '../lib/geminiJson.js';
 import { styleProfileRepo } from '../db/repositories/styleProfileRepo.js';
+import { usageRepo } from '../db/repositories/usageRepo.js';
+import { getBillingUser } from '../lib/billing.js';
+import { userRepo } from '../db/repositories/userRepo.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
@@ -42,7 +45,10 @@ RULES:
 
 // ── Gemini call with retry + fallback ─────────────────────────────────────
 
-async function extractStyleFromText(text: string): Promise<Record<string, unknown>> {
+async function extractStyleFromText(
+  text: string,
+  ctx: { userId: string; billingUserId: string; clientIp: string },
+): Promise<Record<string, unknown>> {
   const result = await callGeminiJson<Record<string, unknown>>(
     [{
       role: 'user' as const,
@@ -50,6 +56,12 @@ async function extractStyleFromText(text: string): Promise<Record<string, unknow
     }],
     { maxTokens: 2048 },
   );
+  try {
+    const cost = result.inputTokens * GEMINI_T2_INPUT_COST + result.outputTokens * GEMINI_T2_OUTPUT_COST;
+    usageRepo.logWithBilling(ctx.clientIp, ctx.userId, ctx.billingUserId, result.inputTokens, result.outputTokens, cost, false, result.modelUsed, false, 'style_profile');
+  } catch (err) {
+    console.error('[style-profile] Failed to log cost:', err);
+  }
   if (!result.data?.tone) throw new Error('LLM returned invalid style profile JSON');
   return result.data;
 }
@@ -168,7 +180,11 @@ router.post(
     }
 
     try {
-      const styleRules = await extractStyleFromText(sampleText);
+      const actor = userRepo.findById(req.user.id);
+      const billingUser = actor ? getBillingUser(actor) : undefined;
+      const billingUserId = billingUser?.id ?? req.user.id;
+      const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
+      const styleRules = await extractStyleFromText(sampleText, { userId: req.user.id, billingUserId, clientIp });
       const name = req.body?.name || sourceFilename.replace(/\.[^.]+$/, '') || 'My Style';
 
       const row = styleProfileRepo.upsert(
