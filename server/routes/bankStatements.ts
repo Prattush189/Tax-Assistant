@@ -10,6 +10,8 @@ import { bankTransactionRepo, BankTransactionInput } from '../db/repositories/ba
 import { bankStatementRuleRepo, BankStatementRuleRow } from '../db/repositories/bankStatementRuleRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
+import { usageRepo } from '../db/repositories/usageRepo.js';
+import { GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST } from '../lib/gemini.js';
 import { getBillingUser } from '../lib/billing.js';
 import { getUserLimits } from '../lib/planLimits.js';
 import { AuthRequest } from '../types.js';
@@ -319,15 +321,67 @@ router.post(
       } else if (isPdfText) {
         // Fast path: the frontend extracted the PDF text layer via pdfjs-dist
         // and sent it here. Gemini parses plain text ~3-5× faster than vision
-        // because there's no OCR / layout analysis phase. Prompt explicitly
-        // tells the model this is pre-extracted text so it doesn't try to
-        // interpret page-break markers as part of the content.
+        // because there's no OCR / layout analysis phase.
+        //
+        // Chunking: a single 8192-token output can hold roughly 80-120
+        // transactions. A 46-page statement with ~900 transactions would
+        // truncate mid-JSON and fail. So we split on the page-break markers
+        // the client inserts, group ~5 pages per chunk (≈100 tx per chunk),
+        // parse each chunk in parallel (bounded concurrency), then merge.
         filename = typeof req.body?.filename === 'string' ? req.body.filename : 'statement.pdf';
         mimeType = 'application/pdf';
-        const text = String(req.body.pdfText).slice(0, 200_000);
-        const prompt = `${BANK_STATEMENT_PROMPT}\n\nThe input below is the raw text layer extracted from a bank statement PDF (client-side via pdfjs). Lines beginning with "--- PAGE BREAK ---" mark page boundaries. Parse EVERY transaction row you can identify and return the schema above. Do NOT invent transactions that aren't in the text.\n\nINPUT_TEXT:\n${text}`;
-        const result = await callGeminiJson<ExtractedStatement>([{ role: 'user', content: prompt }], { maxTokens: 8192 });
-        extracted = result.data;
+        const rawText = String(req.body.pdfText);
+        const pages = rawText.split(/\n?---\s*PAGE BREAK\s*---\n?/).map(p => p.trim()).filter(Boolean);
+        const PAGES_PER_CHUNK = 5;
+        const MAX_CHUNKS = 24;                                   // cap at ~120 pages
+        const MAX_INPUT_CHARS_PER_CHUNK = 80_000;                // 5 typical pages fit easily
+        const CONCURRENCY = 4;                                   // parallel Gemini calls
+        const chunks: string[] = [];
+        for (let i = 0; i < pages.length && chunks.length < MAX_CHUNKS; i += PAGES_PER_CHUNK) {
+          chunks.push(pages.slice(i, i + PAGES_PER_CHUNK).join('\n\n').slice(0, MAX_INPUT_CHARS_PER_CHUNK));
+        }
+        if (chunks.length === 0) chunks.push(rawText.slice(0, MAX_INPUT_CHARS_PER_CHUNK));
+        console.log(`[bank-statements] pdfText: ${pages.length} pages → ${chunks.length} chunks`);
+
+        const buildPrompt = (chunkText: string, idx: number, total: number): string => {
+          const partLine = total > 1
+            ? `\n\nThis is PART ${idx + 1} OF ${total} of a multi-page bank statement. For parts 2+, it is OK to leave bankName / accountNumberMasked / periodFrom / periodTo as null — they will be merged from part 1.`
+            : '';
+          return `${BANK_STATEMENT_PROMPT}\n\nThe input below is the raw text layer extracted from a bank statement PDF (client-side via pdfjs). Parse EVERY transaction row you can identify and return the schema above. Do NOT invent transactions that aren't in the text.${partLine}\n\nINPUT_TEXT:\n${chunkText}`;
+        };
+
+        // Process chunks in bounded-concurrency batches so we don't blast
+        // Gemini's per-minute rate limit on a 100-page statement.
+        const results: ExtractedStatement[] = new Array(chunks.length);
+        const usages: Array<{ inputTokens: number; outputTokens: number; modelUsed: string }> = [];
+        for (let start = 0; start < chunks.length; start += CONCURRENCY) {
+          const batch = chunks.slice(start, start + CONCURRENCY);
+          const batchResults = await Promise.all(batch.map(async (chunk, j) => {
+            const idx = start + j;
+            const prompt = buildPrompt(chunk, idx, chunks.length);
+            const r = await callGeminiJson<ExtractedStatement>([{ role: 'user', content: prompt }], { maxTokens: 8192 });
+            return { idx, data: r.data, inputTokens: r.inputTokens, outputTokens: r.outputTokens, modelUsed: r.modelUsed };
+          }));
+          for (const b of batchResults) {
+            results[b.idx] = b.data;
+            usages.push({ inputTokens: b.inputTokens, outputTokens: b.outputTokens, modelUsed: b.modelUsed });
+          }
+        }
+
+        // Merge: take header metadata from the first chunk that supplies it;
+        // concat every chunk's transactions in page order.
+        extracted = {
+          bankName: results.map(r => r?.bankName).find(v => !!v) ?? null,
+          accountNumberMasked: results.map(r => r?.accountNumberMasked).find(v => !!v) ?? null,
+          periodFrom: results.map(r => r?.periodFrom).find(v => !!v) ?? null,
+          periodTo: results.map(r => r?.periodTo).find(v => !!v) ?? null,
+          currency: results.map(r => r?.currency).find(v => !!v) ?? 'INR',
+          transactions: results.flatMap(r => Array.isArray(r?.transactions) ? r.transactions : []),
+        };
+
+        // Stash usage for post-persist logging. Aggregated across all chunks
+        // so the admin dashboard sees the true cost of the analysis.
+        (res.locals as Record<string, unknown>).geminiUsages = usages;
       } else {
         // CSV path: parse client-provided CSV to a compact text block and ask
         // Gemini to categorize (structure already known, only categorization
@@ -369,6 +423,28 @@ router.post(
         featureUsageRepo.logWithBilling(req.user.id, quota.billingUserId, 'bank_statement_analyze');
       } catch (err) {
         console.error('[bank-statements] Failed to log usage:', err);
+      }
+
+      // Log the Gemini-side cost so the admin API-cost dashboard reflects this
+      // feature. For the pdfText path we aggregate across all chunks; the
+      // vision path (extractWithRetry) doesn't return usage yet, so we record
+      // a single zero-cost row tagged with the model for traceability.
+      try {
+        const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
+        const usages = (res.locals as Record<string, unknown>).geminiUsages as
+          Array<{ inputTokens: number; outputTokens: number; modelUsed: string }> | undefined;
+        if (usages && usages.length > 0) {
+          const inputTok = usages.reduce((a, u) => a + u.inputTokens, 0);
+          const outputTok = usages.reduce((a, u) => a + u.outputTokens, 0);
+          const cost = inputTok * GEMINI_T2_INPUT_COST + outputTok * GEMINI_T2_OUTPUT_COST;
+          usageRepo.logWithBilling(clientIp, req.user.id, quota.billingUserId, inputTok, outputTok, cost, false, usages[0]?.modelUsed, false, 'bank_statement');
+        } else {
+          // Vision path: we don't have usage numbers, but record the call so
+          // it appears in "recent requests" with the right feature tag.
+          usageRepo.logWithBilling(clientIp, req.user.id, quota.billingUserId, 0, 0, 0, false, 'gemini-2.5-flash-lite', false, 'bank_statement');
+        }
+      } catch (err) {
+        console.error('[bank-statements] Failed to log cost:', err);
       }
 
       const transactions = bankTransactionRepo.listByStatement(statement.id).map(serializeTransaction);
