@@ -38,7 +38,12 @@ if (!GEMINI_API_KEY) {
 export const gemini = new OpenAI({
   apiKey: GEMINI_API_KEY || 'missing-gemini-key-placeholder',
   baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
-  timeout: 55_000,
+  // 90s covers the longest expected call: a bank-statement chunk that
+  // escalates to gemini-2.5-flash with 16K output tokens. Typical chat /
+  // extract calls finish in well under 15s — this is the ceiling, not the
+  // target. Too-tight a ceiling was making long chunks abort mid-stream,
+  // turning a recoverable slowness into a hard failure.
+  timeout: 90_000,
 });
 export const geminiConfigured = !!GEMINI_API_KEY;
 

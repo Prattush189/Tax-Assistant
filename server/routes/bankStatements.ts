@@ -175,11 +175,13 @@ async function extractBankStatementTsvOnce(
 }
 
 /**
- * Retry + fallback wrapper around the TSV extraction. Retries transient
- * upstream errors (429/5xx) and TSV validation failures (truncated or
- * mismatched trailer — often a one-shot issue where the model over-shoots
- * max_tokens). After 2 attempts on flash-lite we escalate to the larger
- * flash model, which has higher throughput for long outputs.
+ * Retry + fallback wrapper around the TSV extraction.
+ *
+ * Transient upstream errors (429/5xx) are retried on the same model with
+ * exponential backoff. Validation failures (missing trailer / row-count
+ * mismatch) mean the model's output ran off the end of max_tokens — retrying
+ * the same (model, maxTokens) pair is guaranteed to fail the same way, so we
+ * escalate straight to the larger flash model with a doubled token budget.
  */
 async function extractBankStatementTsv(chunkText: string, maxTokens: number): Promise<TsvExtractResult> {
   const MAX_PRIMARY_ATTEMPTS = 2;
@@ -192,7 +194,10 @@ async function extractBankStatementTsv(chunkText: string, maxTokens: number): Pr
       lastErr = err;
       const status = (err as { status?: number })?.status ?? 0;
       const validationFailure = /trailer|mismatch|truncated/i.test((err as Error).message ?? '');
-      const retryable = status === 429 || status === 500 || status === 502 || status === 503 || status === 504 || validationFailure;
+      // Truncation is deterministic — escalate rather than waste another 30-50s
+      // getting the same failure. 429/5xx can be transient so those still retry.
+      if (validationFailure) break;
+      const retryable = status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
       if (!retryable) break;
       if (attempt < MAX_PRIMARY_ATTEMPTS - 1) {
         await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)));
@@ -200,14 +205,36 @@ async function extractBankStatementTsv(chunkText: string, maxTokens: number): Pr
     }
   }
 
-  // One escalated attempt on the larger model — it has more headroom for
-  // statements with unusually dense pages.
+  // Escalation: larger model with double the output ceiling. Flash has higher
+  // throughput for long outputs; doubling max_tokens gives enough headroom
+  // that chunks which truncated flash-lite's 8K ceiling finish cleanly here.
   try {
-    return await extractBankStatementTsvOnce(chunkText, 'gemini-2.5-flash', maxTokens);
+    return await extractBankStatementTsvOnce(chunkText, 'gemini-2.5-flash', maxTokens * 2);
   } catch (err) {
     lastErr = err;
   }
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
+/** Run async tasks in bounded-concurrency batches. Lets us parallelize chunk
+ *  extraction without hammering Gemini with 6+ concurrent requests per key,
+ *  which routinely trips rate limits on dense statements. */
+async function mapWithConcurrency<T, U>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, idx: number) => Promise<U>,
+): Promise<U[]> {
+  const results: U[] = new Array(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (true) {
+      const idx = cursor++;
+      if (idx >= items.length) return;
+      results[idx] = await fn(items[idx], idx);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 /** Rough lower-bound on transaction count by counting dates in the raw text.
@@ -515,10 +542,13 @@ router.post(
         //   1. Compact TSV output — each tx is one tab-separated line (~70
         //      chars) instead of JSON (~250 chars). Fits ~3-4× more rows per
         //      response.
-        //   2. max_tokens = 16384 — Gemini 2.5 Flash-Lite supports this
-        //      ceiling and it comfortably holds ~700-900 TSV rows.
-        //   3. A 46-page statement with ~900 tx now fits a SINGLE call.
-        //      Larger statements get parallel chunks of ≤700 tx each.
+        //   2. max_tokens = 8192 with ~20K-char input chunks — sized to sit
+        //      well inside flash-lite's practical reliable output ceiling so
+        //      chunks don't truncate. On truncation we escalate to flash
+        //      (16K tokens) rather than retry flash-lite with the same params.
+        //   3. Chunks run with bounded concurrency (4 in flight) to avoid
+        //      tripping per-key rate limits — unbounded parallelism on 6+
+        //      chunks was producing 429s that compounded with retries.
         //   4. Every response carries a `---END:N---` trailer. We verify the
         //      trailer count matches the parsed row count — if it doesn't,
         //      the output was truncated or malformed and we FAIL LOUDLY
@@ -529,13 +559,20 @@ router.post(
         mimeType = 'application/pdf';
         const rawText = String(req.body.pdfText);
         const pages = rawText.split(/\n?---\s*PAGE BREAK\s*---\n?/).map(p => p.trim()).filter(Boolean);
-        // ~40k input chars ≈ 12-14 typical pages ≈ 350-500 transactions.
-        // With 16K output tokens each chunk has headroom even for unusually
-        // dense statements (60+ tx/page). 6 chunks in parallel handles up to
-        // ~80 pages which covers every realistic statement we've seen.
-        const MAX_CHARS_PER_CHUNK = 40_000;
-        const MAX_OUTPUT_TOKENS = 16384;
-        const MAX_CHUNKS = 6;
+        // Sizing: aim for chunks that reliably finish on flash-lite within
+        // its practical output ceiling (~8K tokens / ~400 TSV rows). 40K char
+        // chunks with 16K max_tokens routinely truncated — each failure cost
+        // ~50s and then we'd retry identical params. Halving the input and
+        // the output budget means a chunk takes 10-15s typical, leaves
+        // headroom against truncation, and the concurrency cap below keeps
+        // per-key rate limits from turning parallel calls into 429s.
+        //
+        //   ~20K chars ≈ 6-8 typical pages ≈ 180-250 transactions.
+        //   12 chunks covers statements up to ~100 pages (every realistic case).
+        const MAX_CHARS_PER_CHUNK = 20_000;
+        const MAX_OUTPUT_TOKENS = 8192;
+        const MAX_CHUNKS = 12;
+        const CHUNK_CONCURRENCY = 4;
 
         // Build chunks by packing pages until we approach the char budget.
         // This means a 10-page statement is ONE call; 46 pages → 3 calls.
@@ -570,12 +607,15 @@ router.post(
         const dateCount = countLikelyDates(rawText);
         console.log(`[bank-statements] pdfText: ${pages.length} pages → ${chunks.length} chunk(s), ~${dateCount} candidate dates`);
 
-        // All chunks in parallel. We DO need all of them — silently dropping
-        // a section would mean missing transactions, which is unacceptable
-        // for a tax/accounting feature. Promise.all rejects on first error;
-        // we surface the error and bail.
-        const chunkResults = await Promise.all(
-          chunks.map(async (chunk, idx) => {
+        // Bounded-concurrency: we still need every chunk to succeed (silently
+        // dropping transactions is unacceptable for a tax feature) but firing
+        // all 12 chunks at Gemini simultaneously produces 429s on a single
+        // API key. Four concurrent calls keeps us well under the per-key RPM
+        // cap while still completing a 10-chunk statement in roughly 3 waves.
+        const chunkResults = await mapWithConcurrency(
+          chunks,
+          CHUNK_CONCURRENCY,
+          async (chunk, idx) => {
             const t0 = Date.now();
             try {
               const r = await extractBankStatementTsv(chunk, MAX_OUTPUT_TOKENS);
@@ -586,7 +626,7 @@ router.post(
               console.error(`[bank-statements] chunk ${idx + 1}/${chunks.length} (pages ${chunkPageRanges[idx][0]}-${chunkPageRanges[idx][1]}) ✗ ${msg}`);
               throw new Error(`Section ${idx + 1}/${chunks.length} (pages ${chunkPageRanges[idx][0]}-${chunkPageRanges[idx][1]}): ${msg}`);
             }
-          }),
+          },
         );
 
         const merged = chunkResults.flatMap(r => r.transactions);
@@ -600,9 +640,12 @@ router.post(
         };
 
         // Cross-check: candidate-date count vs extracted transaction count.
-        // We only fail when the delta is big enough to be meaningful — small
-        // differences are normal (header dates, page footers, summary rows).
-        if (dateCount > 0 && merged.length < dateCount * 0.65) {
+        // dateCount is noisy — repeated period headers on every page, "As on"
+        // footers, summary rows and running-balance headers all look like
+        // dates to a regex. Anchor the floor at 50% so we catch genuinely
+        // broken extractions (a whole chunk's worth dropped) without false-
+        // failing on legitimate statements that happen to repeat dates.
+        if (dateCount > 0 && merged.length < dateCount * 0.5) {
           throw new Error(
             `Transaction count sanity check failed: extracted ${merged.length} rows but found ~${dateCount} date-like markers in the PDF text. ` +
             `Rather than persist a likely-incomplete analysis, we're bailing. Retry, or use a CSV export if available.`,
