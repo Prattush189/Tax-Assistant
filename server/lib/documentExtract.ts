@@ -4,7 +4,7 @@
 // for a PDF/image data URL and delegates to `callGeminiJson` for the actual
 // retry-with-fallback loop. Used by /api/upload, /api/form-16-import, and
 // /api/bank-statements.
-import { callGeminiJson } from './geminiJson.js';
+import { callGeminiJson, type GeminiJsonResult } from './geminiJson.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 
 export { safeParseJson } from './geminiJson.js'; // re-export for backward compat
@@ -19,18 +19,19 @@ export interface ExtractOptions {
 }
 
 /**
- * Extract structured data from a PDF/image data URL by calling Gemini with the
- * provided prompt. Retries the primary model up to 3 times on transient
- * errors, then falls back to the larger model once before giving up.
+ * Extract structured data from a PDF/image data URL. Returns both the parsed
+ * value AND the token-usage envelope so the caller can log cost to
+ * usageRepo. Retries the primary model up to 3 times on transient errors,
+ * then falls back to the larger model once before giving up.
  *
- * Generic over the expected JSON shape so callers can declare what they expect
- * without casting:  `await extractWithRetry<MyDoc>(dataUrl, prompt)`.
+ * Generic over the expected JSON shape:
+ *   `const { data, inputTokens, outputTokens } = await extractWithRetry<MyDoc>(url, prompt)`
  */
 export async function extractWithRetry<T = Record<string, unknown>>(
   dataUrl: string,
   prompt: string,
   opts: ExtractOptions = {},
-): Promise<T> {
+): Promise<GeminiJsonResult<T>> {
   const messages: ChatCompletionMessageParam[] = [{
     role: 'user',
     content: [
@@ -38,6 +39,5 @@ export async function extractWithRetry<T = Record<string, unknown>>(
       { type: 'text', text: prompt },
     ],
   }];
-  const result = await callGeminiJson<T>(messages, opts);
-  return result.data;
+  return callGeminiJson<T>(messages, opts);
 }
