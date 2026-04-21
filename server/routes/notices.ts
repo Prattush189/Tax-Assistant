@@ -6,6 +6,12 @@ import {
   GEMINI_API_KEYS,
 } from '../lib/gemini.js';
 import { streamGeminiChat } from '../lib/geminiChat.js';
+import {
+  CLAUDE_HAIKU_MODEL,
+  anthropicConfigured,
+  claudeHaikuCost,
+  streamClaudeChat,
+} from '../lib/anthropic.js';
 import { noticeRepo } from '../db/repositories/noticeRepo.js';
 import { styleProfileRepo } from '../db/repositories/styleProfileRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
@@ -25,132 +31,67 @@ const NOTICE_LIMITS: Record<string, number> = {
   enterprise: 100,
 };
 
-// ── Build letter header server-side ──────────────────────────────────────────
-// Pre-filling all known fields eliminates unfilled [PLACEHOLDER] variables in
-// the AI output. The model only writes the body (paragraphs + case laws).
-function buildLetterHeader(
-  senderDetails: Record<string, string> | undefined,
-  recipientDetails: Record<string, string> | undefined,
-  noticeDetails: Record<string, string> | undefined,
-  noticeType: string,
-  subType: string | undefined,
-): string {
-  const today = new Date(Date.now() + 5.5 * 60 * 60 * 1000); // IST
-  const dateStr = `${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')}/${today.getFullYear()}`;
-
-  const lines: string[] = [];
-
-  // Sender block
-  if (senderDetails?.name) lines.push(senderDetails.name);
-  if (senderDetails?.address) lines.push(senderDetails.address);
-  if (senderDetails?.pan) lines.push(`PAN: ${senderDetails.pan}`);
-  if (senderDetails?.gstin) lines.push(`GSTIN: ${senderDetails.gstin}`);
-
-  lines.push('');
-  lines.push(`Date: ${dateStr}`);
-  lines.push('');
-
-  // Recipient block
-  lines.push('To,');
-  if (recipientDetails?.officer) {
-    lines.push(`The ${recipientDetails.officer},`);
-  } else {
-    // Sensible defaults by notice type
-    const defaultOfficers: Record<string, string> = {
-      'income-tax': 'The Income Tax Officer / Assessing Officer,',
-      'gst': 'The Deputy Commissioner of Central Tax,',
-    };
-    const typeKey = noticeType.toLowerCase().includes('gst') ? 'gst' : 'income-tax';
-    lines.push(defaultOfficers[typeKey] ?? 'The Competent Authority,');
-  }
-  if (recipientDetails?.office) lines.push(`${recipientDetails.office},`);
-  if (recipientDetails?.address) lines.push(recipientDetails.address);
-
-  lines.push('');
-
-  // Subject line
-  const section = noticeDetails?.section ?? noticeType;
-  const noticeNum = noticeDetails?.noticeNumber ?? '[Notice No. to be filled]';
-  const noticeDate = noticeDetails?.noticeDate ?? '[Notice Date]';
-  const ay = noticeDetails?.assessmentYear ?? '';
-  const actName = noticeType.toLowerCase().includes('gst')
-    ? 'the CGST Act, 2017'
-    : 'the Income Tax Act, 1961';
-  const subjectAy = ay ? ` for ${ay}` : '';
-  const subjectSub = subType ? ` — ${subType}` : '';
-  lines.push(`Subject: Reply to Notice / Intimation No. ${noticeNum} dated ${noticeDate} u/s ${section} of ${actName}${subjectAy}${subjectSub}`);
-
-  lines.push('');
-
-  // DIN / Reference line (only if provided)
-  if (noticeDetails?.din) {
-    lines.push(`Reference: DIN ${noticeDetails.din}`);
-    lines.push('');
-  }
-
-  lines.push('Respected Sir/Madam,');
-  lines.push('');
-
-  return lines.join('\n');
-}
-
-function buildLetterClosing(
-  senderDetails: Record<string, string> | undefined,
-): string {
+function istDateString(): string {
   const today = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
-  const dateStr = `${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')}/${today.getFullYear()}`;
-
-  // Only build the signing block — the model writes the final submission
-  // paragraph. We provide known values; model fills in designation from context.
-  const lines: string[] = [
-    'Yours faithfully,',
-    '',
-    senderDetails?.name ?? '[Signatory Name]',
-    '[Appropriate designation — Director / Proprietor / Partner / Authorised Signatory]',
-  ];
-
-  if (senderDetails?.pan) lines.push(`PAN: ${senderDetails.pan}`);
-  if (senderDetails?.gstin) lines.push(`GSTIN: ${senderDetails.gstin}`);
-  lines.push(`Date: ${dateStr}`);
-
-  return lines.join('\n');
+  return `${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')}/${today.getFullYear()}`;
 }
 
-const NOTICE_SYSTEM_PROMPT = `You are a senior Indian tax litigation advocate with 20+ years of experience drafting replies to Income Tax Department, GST, and other regulatory notices. You have deep knowledge of the Income Tax Act 1961 (and its 2025 recodification), CGST Act 2017, IGST Act, and associated rules.
+// ── System prompt ────────────────────────────────────────────────────────────
+// Claude Haiku 4.5 produces the full reply as structured GitHub-Flavoured
+// Markdown. The client renders this via react-markdown in the preview pane
+// and via a markdown-aware jsPDF renderer for download. The structure mirrors
+// how a practising senior advocate actually files a reply / rectification.
+const NOTICE_SYSTEM_PROMPT = `You are a senior Indian tax litigation advocate with 20+ years of experience drafting replies to Income Tax, GST, TDS, and other regulatory notices at the quality expected for representation before ITAT, High Courts, and first-appellate authorities. You have deep knowledge of the Income Tax Act, 1961 (and the parallel Income Tax Act, 2025 recodification), the CGST / IGST Acts, 2017, and all associated rules and procedural law.
 
-SEARCH FIRST, THEN WRITE:
-Before writing the letter body, use your search capability to:
-1. Verify the exact current section numbers and sub-sections applicable to this notice type
-2. Find 2-3 relevant judgments from ITAT, High Courts, or Supreme Court that directly support the taxpayer's position — verify they exist before citing
-3. Confirm whether the IT Act 2025 has renumbered any sections cited here
+YOUR TASK
+Draft a complete, ready-to-file reply letter in GitHub-Flavoured Markdown. The output must be structured, precisely formatted, and contain NO placeholder brackets in the final letter. You will be given: sender details, recipient details, notice details, the key points to address, and (optionally) the raw text of the notice. Use the exact values supplied — do not invent facts, amounts, or citations.
 
-YOUR TASK:
-You will be given a pre-filled letter header and closing. Your job is to write ONLY the numbered body paragraphs that go between them — starting at paragraph 1 and ending at the Enclosures list.
+DOCUMENT STRUCTURE (produce every section that applies, in this order)
 
-Do NOT rewrite the header. Do NOT rewrite the closing. Output ONLY the body starting from paragraph 1.
+(0) Summary header — a 2-column GFM table (no heading above it) with rows for: PAN, Assessment Year, DIN / Ref. No., Ack. No., Demand Ref. No., Demand Amount. Omit rows where no value is available.
 
-BODY STRUCTURE (write in this order):
-1. Opening paragraph — identify the assessee, the notice, and the assessment year
-2. Facts paragraph — state the relevant facts specific to this notice
-3. Legal position paragraph — cite exact sections with subsections from the applicable Act
-4. Case law paragraph — cite 2-3 real judgments with full citation: Party Name v. Party Name, (Year) Volume ITR/GST Page (Court)
-5. Submission paragraph — state what relief is being sought
-6. Enclosures — list 4-6 specific, realistic documents appropriate for this notice type
+(1) Subject line — one line: \`**Subject:** Reply / Rectification Request u/s <section> of the <Act> against Notice / Intimation No. <num> dated <date> — Assessment Year <AY>\`.
 
-STRICT FORMATTING RULES — READ CAREFULLY:
-- Output PLAIN TEXT ONLY — absolutely no markdown, no asterisks (**), no hash (#), no underscores, no bullets (-)
-- Do NOT bold anything. The words "Enclosures:" and "Subject:" and "Respected Sir/Madam," must appear as plain text, NOT bold
-- NEVER use the Rs. symbol as the Unicode character Rs. — write "Rs." in plain ASCII always (the PDF renderer cannot display special currency characters)
-- Keep all sentences and amounts written in plain ASCII characters only
-- Number ALL paragraphs sequentially (1, 2, 3...) — never use bold or formatting on the numbers
-- Write "Enclosures:" as a plain line, then list items as "1." "2." etc.
-- Do NOT truncate mid-sentence — complete every sentence fully
-- Write amounts as: Rs. 55,380 (not Rs.55,380 and never the Unicode Rs. symbol)
+(2) Salutation and opening — \`Respected Sir / Madam,\` followed by a short paragraph referencing the notice, the demand (if any), and what is being requested (reply, rectification u/s 154, DRC-03 response, etc.).
 
-CITATION FORMAT FOR CASE LAWS (use exactly this format):
-As held by the Hon'ble [Court name] in [Assessee] v. [Department/ITO/AO], (Year) Volume ITR/GST Page (Court abbreviation), it was held that [brief principle].
+(3) \`## 1. FACTS OF THE CASE\` — state the facts. Where a financial snapshot helps (return figures, tax computation, etc.), render it as a GFM table with two columns: "Particulars" and "As per Return Filed" (or similar).
 
-NEVER fabricate case names, citations, or section numbers. Only cite cases and sections you have verified via search.`;
+(4) \`## 2. GRIEVANCE AGAINST THE INTIMATION\` — identify the specific action being challenged. Where the department's wording matters, quote it verbatim using a blockquote: \`> "exact quoted text"\`. Follow with a one-sentence statement that the conclusion is factually incorrect and legally untenable.
+
+(5) \`## 3. LEGAL SUBMISSIONS\` — the heart of the reply. Break into lettered sub-parts \`### A. <heading>\`, \`### B. <heading>\`, etc. Each sub-part states one discrete legal point with the exact section cited and sub-section where applicable. Quote statutory text inside \`> "..."\` blockquotes so it stands out.
+
+(6) \`## 4. SUPPORTING CASE LAWS / LEGAL PRECEDENTS\` — a numbered list using \`**(i)** <heading>:\`, \`**(ii)** <heading>:\` etc. Under each, a short paragraph stating the principle and the citation in this exact form: \`[Assessee] v. [Department], (Year) Volume ITR/GSTL Page (Court abbreviation)\`. Cite 2–4 precedents. Only use real judgments — never fabricate a citation; if unsure, state the principle as a "well-settled rule" without a fake citation.
+
+(7) \`## 5. RELIEF SOUGHT\` — a numbered list \`(1) (2) (3) ...\` of the exact prayers. Include precise rupee amounts wherever the notice has quantified figures (e.g. refund, interest withdrawal, demand rectification).
+
+(8) \`## 6. DOCUMENTS ENCLOSED\` — a numbered list of 4–6 realistic enclosures appropriate to the notice type (copy of intimation, copy of ITR, Form 10-ID / Form 3CEB / Form 3CB-3CD, TDS/TCS certificates, bank proofs, etc.).
+
+(9) Closing block — on separate lines, in this order:
+\`Thanking you,\`
+\`For <Sender Name>\`
+\`Authorised Signatory\`
+\`Name:\`
+\`Designation:\` (infer: Director / Managing Director for companies, Proprietor for sole-prop, Partner for firms)
+\`Place:\`
+\`Date:\`
+Use the values from the provided sender details; do NOT output bracketed placeholders.
+
+(10) (Optional) \`## HOW TO FILE THIS <RECTIFICATION|REPLY>\` — only when the notice is amenable to an online remedy (e.g. intimation u/s 143(1), DRC-01, DRC-03). Render a GFM table with columns "Step" and "Action" listing 4–6 concrete portal steps, followed by a single \`**Deadline:** ...\` line stating the statutory time limit.
+
+FORMATTING RULES (strict)
+- Output GitHub-Flavoured Markdown only — no HTML, no front-matter, no fenced code blocks except when quoting machine output.
+- Use \`**...**\` for labels and emphasis on key phrases (\`**PAN**\`, \`**Subject:**\`, \`**Section 115JB(5A)**\`, \`**Rs. 55,380/-**\`). DO NOT bold whole paragraphs.
+- Rupee amounts: always in plain ASCII — \`Rs. 55,380/-\` or \`Rs. 3,52,881\`. NEVER use the Unicode \`Rs.\` character (U+20B9). The PDF renderer cannot display it.
+- Section numbers: always cite precisely, with sub-section where applicable: "Section 115JB(5A)", "Section 143(1)(a)", "Rule 8D(2)(iii)".
+- Statutory quotations: use \`> "..."\` blockquotes so they render as call-out boxes.
+- Never leave square-bracket placeholders ([NAME], [DATE], [TBD]) in the final letter. If a value is genuinely missing, write a sensible plain-language fallback ("the Assessing Officer", "the undersigned").
+- Numbered section headings \`## 1. ...\` through \`## 6. ...\` must appear in that exact sequence; skip a section only if truly not applicable.
+
+QUALITY BAR
+- Be precise about section numbers and sub-sections — a wrong citation sinks the reply.
+- Only cite judgments you are confident exist with the citation you provide. A plain principle is better than a fabricated citation.
+- Write in the voice of a practising senior advocate: precise, assertive, respectful. No marketing language, no emojis, no hedging about being AI-generated.
+- Complete every sentence — never truncate mid-argument.`;
 
 // ── Generate notice draft (streaming) ──
 router.post('/generate', async (req: AuthRequest, res: Response) => {
@@ -187,78 +128,56 @@ router.post('/generate', async (req: AuthRequest, res: Response) => {
   const title = `${noticeType.toUpperCase()} - ${subType || 'Reply'} - ${noticeDetails?.noticeNumber || 'Draft'}`;
   const noticeId = noticeRepo.create(req.user.id, noticeType, subType, title, inputData, billingUserId);
 
-  // ── Build pre-filled letter header (server-side substitution) ──────────────
-  // This eliminates [PLACEHOLDER] variables in the AI output: we give the model
-  // a ready-to-use header and closing; it only writes the numbered body.
-  const letterHeader = buildLetterHeader(senderDetails, recipientDetails, noticeDetails, noticeType, subType);
-  const letterClosing = buildLetterClosing(senderDetails);
-
   // ── Build the user prompt ────────────────────────────────────────────────
-  // Clearly separate "data to use" from "notice text to extract missing fields from".
+  const actName = noticeType.toLowerCase().includes('gst')
+    ? 'the CGST Act, 2017'
+    : 'the Income Tax Act, 1961';
+
   let userPrompt = '';
 
-  // 1. Known data block — model uses these exact values, highest priority
-  userPrompt += `=== LETTER DATA (use these values exactly) ===\n`;
+  userPrompt += `=== LETTER DATA (use these values exactly; do not invent or modify them) ===\n`;
+  userPrompt += `Today's Date (IST): ${istDateString()}\n`;
   userPrompt += `Notice Type: ${noticeType}\n`;
   if (subType) userPrompt += `Sub-type: ${subType}\n`;
+  userPrompt += `Governing Statute: ${actName}\n`;
 
-  // Sender fields — mark missing ones so the model knows to look in the notice text
   userPrompt += `\nSender / Assessee:\n`;
-  userPrompt += `  Name: ${senderDetails?.name || '[EXTRACT FROM NOTICE BELOW]'}\n`;
-  userPrompt += `  Address: ${senderDetails?.address || '[EXTRACT FROM NOTICE BELOW]'}\n`;
-  userPrompt += `  PAN: ${senderDetails?.pan || '[EXTRACT FROM NOTICE BELOW]'}\n`;
+  userPrompt += `  Name: ${senderDetails?.name || '[extract from notice text below]'}\n`;
+  userPrompt += `  Address: ${senderDetails?.address || '[extract from notice text below]'}\n`;
+  userPrompt += `  PAN: ${senderDetails?.pan || '[extract from notice text below]'}\n`;
   if (senderDetails?.gstin || noticeType.toLowerCase().includes('gst')) {
-    userPrompt += `  GSTIN: ${senderDetails?.gstin || '[EXTRACT FROM NOTICE BELOW]'}\n`;
-  }
-  if (senderDetails?.designation) {
-    userPrompt += `  Signatory Designation: ${senderDetails.designation}\n`;
+    userPrompt += `  GSTIN: ${senderDetails?.gstin || '[extract from notice text below]'}\n`;
   }
 
   userPrompt += `\nRecipient (Officer / Authority):\n`;
-  userPrompt += `  Officer: ${recipientDetails?.officer || '[EXTRACT FROM NOTICE BELOW or use standard designation]'}\n`;
-  userPrompt += `  Office / Ward: ${recipientDetails?.office || '[EXTRACT FROM NOTICE BELOW]'}\n`;
-  userPrompt += `  Address: ${recipientDetails?.address || '[EXTRACT FROM NOTICE BELOW or use standard CPC/office address]'}\n`;
+  userPrompt += `  Officer: ${recipientDetails?.officer || 'The Deputy / Assistant Commissioner of Income Tax'}\n`;
+  userPrompt += `  Office / Ward: ${recipientDetails?.office || 'Centralized Processing Centre, Income Tax Department'}\n`;
+  userPrompt += `  Address: ${recipientDetails?.address || 'Bengaluru'}\n`;
 
   userPrompt += `\nNotice Details:\n`;
-  userPrompt += `  Notice / Intimation No.: ${noticeDetails?.noticeNumber || '[EXTRACT FROM NOTICE BELOW]'}\n`;
-  userPrompt += `  Notice Date: ${noticeDetails?.noticeDate || '[EXTRACT FROM NOTICE BELOW]'}\n`;
-  userPrompt += `  Section: ${noticeDetails?.section || '[EXTRACT FROM NOTICE BELOW]'}\n`;
-  userPrompt += `  Assessment Year / Period: ${noticeDetails?.assessmentYear || '[EXTRACT FROM NOTICE BELOW]'}\n`;
+  userPrompt += `  Notice / Intimation No.: ${noticeDetails?.noticeNumber || '[extract from notice text below]'}\n`;
+  userPrompt += `  Notice Date: ${noticeDetails?.noticeDate || '[extract from notice text below]'}\n`;
+  userPrompt += `  Section: ${noticeDetails?.section || '[extract from notice text below]'}\n`;
+  userPrompt += `  Assessment Year / Period: ${noticeDetails?.assessmentYear || '[extract from notice text below]'}\n`;
   if (noticeDetails?.din) userPrompt += `  DIN: ${noticeDetails.din}\n`;
 
-  userPrompt += `\nKey points the reply must address:\n${keyPoints}\n`;
+  userPrompt += `\nKey points the reply must address (from the taxpayer):\n${keyPoints}\n`;
 
-  // 2. Uploaded notice text — used to extract any missing fields above
   if (extractedText) {
-    userPrompt += `\n=== UPLOADED NOTICE TEXT (extract any [EXTRACT FROM NOTICE BELOW] fields from this) ===\n`;
-    userPrompt += extractedText.slice(0, 6000);
+    userPrompt += `\n=== UPLOADED NOTICE TEXT (use this to fill any "[extract from notice text below]" fields above, and to pull exact figures / department wording for quotations) ===\n`;
+    userPrompt += extractedText.slice(0, 8000);
     userPrompt += `\n=== END OF NOTICE TEXT ===\n`;
   }
 
-  // 3. RAG context for accurate section references
   const ragQuery = `${noticeType} ${subType || ''} section ${noticeDetails?.section || ''} notice reply`;
   const ragContext = retrieveContext(ragQuery);
   if (ragContext) {
-    userPrompt += `\n=== SUPPLEMENTARY ACT REFERENCE (use for accurate section numbers) ===\n${ragContext}\n`;
+    userPrompt += `\n=== SUPPLEMENTARY ACT REFERENCE (use for accurate section numbers / sub-section text) ===\n${ragContext}\n`;
   }
 
-  // 4. Pre-filled header and closing — model copies these verbatim
-  userPrompt += `\n=== PRE-FILLED LETTER HEADER (copy this VERBATIM as the start of your response) ===\n`;
-  userPrompt += letterHeader;
-  userPrompt += `\n=== END OF HEADER ===\n`;
-
-  userPrompt += `\n=== PRE-FILLED LETTER CLOSING (copy this VERBATIM as the end of your response, after the Enclosures list) ===\n`;
-  userPrompt += letterClosing;
-  userPrompt += `\n=== END OF CLOSING ===\n`;
-
   userPrompt += `\n=== YOUR TASK ===\n`;
-  userPrompt += `Output the COMPLETE letter in this order:\n`;
-  userPrompt += `1. Copy the PRE-FILLED LETTER HEADER verbatim\n`;
-  userPrompt += `2. Write numbered paragraphs 1 through N as the body\n`;
-  userPrompt += `3. Write the Enclosures list (plain numbered lines — "Enclosures:" as plain text, no bold)\n`;
-  userPrompt += `4. Copy the PRE-FILLED LETTER CLOSING verbatim, replacing "[Appropriate designation...]" with the correct designation inferred from the assessee type (Director for companies, Proprietor for sole-prop, Partner for firms, etc.)\n`;
-  userPrompt += `\nFor any field marked [EXTRACT FROM NOTICE BELOW]: scan the uploaded notice text and use the real value you find there. If genuinely not found anywhere, write a brief descriptive placeholder in plain words (e.g., "Income Tax Ward 1, Delhi") — NEVER output [bracket] variables in the final letter.\n`;
-  userPrompt += `REMEMBER: Write all rupee amounts as "Rs. X,XX,XXX" in plain ASCII — never use the Unicode rupee symbol (Rs.) as it breaks PDF font rendering and appears as a garbled character.\n`;
+  userPrompt += `Produce the COMPLETE reply letter in GitHub-Flavoured Markdown per the structure in the system prompt. Start with the 2-column summary header table, then the \`**Subject:**\` line, then the salutation and body sections 1–6, then the closing block, and (if applicable) section "HOW TO FILE THIS RECTIFICATION" as a final appendix.\n`;
+  userPrompt += `Do NOT output any bracketed placeholders like [NAME] or [TBD] in the final letter — use the supplied values or a sensible plain-language fallback.\n`;
 
   // SSE headers
   res.setHeader('Content-Type', 'text/event-stream');
@@ -290,34 +209,54 @@ The user prefers the following writing style. Match it closely while keeping the
   const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
   let fullResponse = '';
 
-  // Pick a Gemini API key (round-robin across available keys)
-  const apiKey = GEMINI_API_KEYS[Math.floor(Math.random() * Math.max(1, GEMINI_API_KEYS.length))] ?? '';
-
   try {
-    const stream = streamGeminiChat(
-      GEMINI_CHAT_MODEL_THINK_FB,
-      systemPrompt,
-      [], // no prior history for notice generation
-      userPrompt,
-      apiKey,
-      MAX_TOKENS,
-      true, // always enable Google Search so section numbers and case laws are accurate
-    );
+    if (anthropicConfigured) {
+      // Primary path: Claude Haiku 4.5 with prompt caching on the system prompt.
+      const stream = streamClaudeChat(systemPrompt, userPrompt, MAX_TOKENS);
 
-    for await (const chunk of stream) {
-      if (chunk.text) {
-        fullResponse += chunk.text;
-        res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`);
+      for await (const chunk of stream) {
+        if (chunk.text) {
+          fullResponse += chunk.text;
+          res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`);
+        }
+        if (chunk.done) {
+          const cost = claudeHaikuCost(
+            chunk.inputTokens ?? 0,
+            chunk.outputTokens ?? 0,
+            chunk.cacheCreationTokens ?? 0,
+            chunk.cacheReadTokens ?? 0,
+          );
+          const totalInput = (chunk.inputTokens ?? 0) + (chunk.cacheReadTokens ?? 0) + (chunk.cacheCreationTokens ?? 0);
+          usageRepo.logWithBilling(clientIp, req.user!.id, billingUserId, totalInput, chunk.outputTokens ?? 0, cost, false, CLAUDE_HAIKU_MODEL, true, 'notice');
+        }
       }
-      if (chunk.done) {
-        const inputTok = chunk.inputTokens ?? 0;
-        const outputTok = chunk.outputTokens ?? 0;
-        const cost = inputTok * GEMINI_THINK_FB_INPUT_COST + outputTok * GEMINI_THINK_FB_OUTPUT_COST;
-        usageRepo.logWithBilling(clientIp, req.user!.id, billingUserId, inputTok, outputTok, cost, false, GEMINI_CHAT_MODEL_THINK_FB, true, 'notice');
+    } else {
+      // Fallback: Gemini 3 Flash Preview with Google Search grounding.
+      const apiKey = GEMINI_API_KEYS[Math.floor(Math.random() * Math.max(1, GEMINI_API_KEYS.length))] ?? '';
+      const stream = streamGeminiChat(
+        GEMINI_CHAT_MODEL_THINK_FB,
+        systemPrompt,
+        [],
+        userPrompt,
+        apiKey,
+        MAX_TOKENS,
+        true,
+      );
+
+      for await (const chunk of stream) {
+        if (chunk.text) {
+          fullResponse += chunk.text;
+          res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`);
+        }
+        if (chunk.done) {
+          const inputTok = chunk.inputTokens ?? 0;
+          const outputTok = chunk.outputTokens ?? 0;
+          const cost = inputTok * GEMINI_THINK_FB_INPUT_COST + outputTok * GEMINI_THINK_FB_OUTPUT_COST;
+          usageRepo.logWithBilling(clientIp, req.user!.id, billingUserId, inputTok, outputTok, cost, false, GEMINI_CHAT_MODEL_THINK_FB, true, 'notice');
+        }
       }
     }
 
-    // Save generated content
     if (fullResponse) {
       noticeRepo.updateContent(noticeId, fullResponse);
     }
