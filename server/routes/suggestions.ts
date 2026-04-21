@@ -1,5 +1,6 @@
 import { Router, Response } from 'express';
-import { gemini, GEMINI_MODEL, GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST } from '../lib/gemini.js';
+import { GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST } from '../lib/gemini.js';
+import { callGeminiJson } from '../lib/geminiJson.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
@@ -71,27 +72,26 @@ router.post('/optimize', async (req: AuthRequest, res: Response) => {
 
 Suggest 5 personalized tax-saving strategies.`;
 
-    const response = await gemini.chat.completions.create({
-      model: GEMINI_MODEL, // gemini-2.5-flash-lite
-      messages: [
+    // Suggestions JSON is wrapped in an object so JSON mode is happy: the
+    // schema asks for `{ "suggestions": [...] }` and we unwrap on the client.
+    // (Gemini's OpenAI-compat layer rejects bare JSON arrays from json_object.)
+    const result = await callGeminiJson<{ suggestions?: unknown[] } | unknown[]>(
+      [
         { role: 'system', content: SUGGESTION_PROMPT },
         { role: 'user', content: userPrompt },
       ],
-      max_tokens: 1024,
-    });
-
-    const raw = response.choices[0]?.message?.content ?? '[]';
-    const cleaned = raw.replace(/^```json\n?/m, '').replace(/\n?```$/m, '').trim();
-    const suggestions = JSON.parse(cleaned);
+      { maxTokens: 1024 },
+    );
+    const suggestions = Array.isArray(result.data)
+      ? result.data
+      : (result.data as { suggestions?: unknown[] }).suggestions ?? [];
 
     // Log successful usage toward monthly cap (actor + billing owner)
     featureUsageRepo.logWithBilling(req.user.id, billingUserId, 'ai_suggestions');
 
     // Log to api_usage for admin dashboard visibility
-    const inputTok = response.usage?.prompt_tokens ?? 0;
-    const outputTok = response.usage?.completion_tokens ?? 0;
-    const cost = inputTok * GEMINI_T2_INPUT_COST + outputTok * GEMINI_T2_OUTPUT_COST;
-    usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, inputTok, outputTok, cost, false, GEMINI_MODEL, false, 'suggestion');
+    const cost = result.inputTokens * GEMINI_T2_INPUT_COST + result.outputTokens * GEMINI_T2_OUTPUT_COST;
+    usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, result.inputTokens, result.outputTokens, cost, false, result.modelUsed, false, 'suggestion');
 
     res.json({
       suggestions,

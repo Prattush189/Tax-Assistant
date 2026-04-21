@@ -10,8 +10,10 @@ import {
   CLAUDE_HAIKU_MODEL,
   anthropicConfigured,
   claudeHaikuCost,
-  streamClaudeChat,
+  streamClaudeChatWithRetry,
 } from '../lib/anthropic.js';
+import { selectTier, confirmUsed } from '../lib/searchQuota.js';
+import { SseWriter } from '../lib/sseStream.js';
 import { noticeRepo } from '../db/repositories/noticeRepo.js';
 import { styleProfileRepo } from '../db/repositories/styleProfileRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
@@ -175,67 +177,56 @@ router.post('/generate', async (req: AuthRequest, res: Response) => {
     userPrompt += `\n=== SUPPLEMENTARY ACT REFERENCE (use for accurate section numbers / sub-section text) ===\n${ragContext}\n`;
   }
 
+  // Inject user's writing style as a USER-message block (not in the system
+  // prompt). Putting per-user data in the system text would invalidate the
+  // 5-minute Anthropic ephemeral cache on every call — keep the system
+  // prompt literally constant per server boot.
+  const styleRow = styleProfileRepo.findByUserId(req.user.id);
+  if (styleRow) {
+    const rules = JSON.parse(styleRow.style_rules);
+    userPrompt += `\n=== USER WRITING STYLE (match this voice while keeping the letter structure) ===\n`;
+    userPrompt += `Tone: ${rules.tone ?? 'formal'}\n`;
+    userPrompt += `Formality: ${rules.formalityLevel ?? 7}/10\n`;
+    userPrompt += `Paragraph style: ${rules.paragraphStyle ?? 'moderate'}\n`;
+    userPrompt += `Opening pattern: ${rules.openingStyle ?? 'standard'}\n`;
+    userPrompt += `Closing pattern: ${rules.closingStyle ?? 'standard'}\n`;
+    userPrompt += `Citation style: ${rules.citationStyle ?? 'standard section references'}\n`;
+    userPrompt += `Key phrases to use: ${(rules.typicalPhrases ?? []).join(', ') || 'none specified'}\n`;
+    userPrompt += `Style description: ${rules.overallDescription ?? ''}\n`;
+  }
+
   userPrompt += `\n=== YOUR TASK ===\n`;
   userPrompt += `Produce the COMPLETE reply letter in GitHub-Flavoured Markdown per the structure in the system prompt. Start with the 2-column summary header table, then the \`**Subject:**\` line, then the salutation and body sections 1–6, then the closing block, and (if applicable) section "HOW TO FILE THIS RECTIFICATION" as a final appendix.\n`;
   userPrompt += `Do NOT output any bracketed placeholders like [NAME] or [TBD] in the final letter — use the supplied values or a sensible plain-language fallback.\n`;
 
-  // SSE headers
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('X-Accel-Buffering', 'no');
-
-  // Inject user's writing style if they've set one up via Settings
-  let systemPrompt = NOTICE_SYSTEM_PROMPT;
-  try {
-    const styleRow = styleProfileRepo.findByUserId(req.user.id);
-    if (styleRow) {
-      const rules = JSON.parse(styleRow.style_rules);
-      systemPrompt += `\n\nWRITING STYLE PREFERENCE:
-The user prefers the following writing style. Match it closely while keeping the letter structure:
-- Tone: ${rules.tone ?? 'formal'}
-- Formality: ${rules.formalityLevel ?? 7}/10
-- Paragraph style: ${rules.paragraphStyle ?? 'moderate'}
-- Opening pattern: ${rules.openingStyle ?? 'standard'}
-- Closing pattern: ${rules.closingStyle ?? 'standard'}
-- Citation style: ${rules.citationStyle ?? 'standard section references'}
-- Key phrases to use: ${(rules.typicalPhrases ?? []).join(', ') || 'none specified'}
-- Style description: ${rules.overallDescription ?? ''}`;
-    }
-  } catch {
-    // Style lookup failure should never block notice generation
-  }
-
+  const sse = new SseWriter(res);
   const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
   let fullResponse = '';
 
   try {
     if (anthropicConfigured) {
-      // Primary path: Claude Haiku 4.5 with prompt caching on the system prompt.
-      const stream = streamClaudeChat(systemPrompt, userPrompt, MAX_TOKENS);
-
-      for await (const chunk of stream) {
-        if (chunk.text) {
-          fullResponse += chunk.text;
-          res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`);
-        }
-        if (chunk.done) {
-          const cost = claudeHaikuCost(
-            chunk.inputTokens ?? 0,
-            chunk.outputTokens ?? 0,
-            chunk.cacheCreationTokens ?? 0,
-            chunk.cacheReadTokens ?? 0,
-          );
-          const totalInput = (chunk.inputTokens ?? 0) + (chunk.cacheReadTokens ?? 0) + (chunk.cacheCreationTokens ?? 0);
-          usageRepo.logWithBilling(clientIp, req.user!.id, billingUserId, totalInput, chunk.outputTokens ?? 0, cost, false, CLAUDE_HAIKU_MODEL, true, 'notice');
-        }
-      }
+      // Primary path: Claude Haiku 4.5 with prompt caching on the (now constant) system prompt + 3× retry on transient errors.
+      const usage = await streamClaudeChatWithRetry(
+        NOTICE_SYSTEM_PROMPT,
+        userPrompt,
+        (text) => { fullResponse += text; sse.writeText(text); },
+        MAX_TOKENS,
+      );
+      const cost = claudeHaikuCost(usage.inputTokens, usage.outputTokens, usage.cacheCreationTokens, usage.cacheReadTokens);
+      // Log TOTAL input tokens consumed (fresh + cache reads + cache writes) so
+      // the admin dashboard reflects true model context size, not just the
+      // billed-fresh subset Anthropic returns in `input_tokens`.
+      const totalInput = usage.inputTokens + usage.cacheReadTokens + usage.cacheCreationTokens;
+      usageRepo.logWithBilling(clientIp, req.user!.id, billingUserId, totalInput, usage.outputTokens, cost, false, CLAUDE_HAIKU_MODEL, true, 'notice');
     } else {
       // Fallback: Gemini 3 Flash Preview with Google Search grounding.
-      const apiKey = GEMINI_API_KEYS[Math.floor(Math.random() * Math.max(1, GEMINI_API_KEYS.length))] ?? '';
+      // Pick the best key via the shared search-quota broker so monthly counts
+      // increment on the actual key used (no random round-robin).
+      const selection = selectTier(true);
+      const apiKey = GEMINI_API_KEYS[selection.keyIndex] ?? '';
       const stream = streamGeminiChat(
         GEMINI_CHAT_MODEL_THINK_FB,
-        systemPrompt,
+        NOTICE_SYSTEM_PROMPT,
         [],
         userPrompt,
         apiKey,
@@ -246,13 +237,14 @@ The user prefers the following writing style. Match it closely while keeping the
       for await (const chunk of stream) {
         if (chunk.text) {
           fullResponse += chunk.text;
-          res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`);
+          sse.writeText(chunk.text);
         }
         if (chunk.done) {
           const inputTok = chunk.inputTokens ?? 0;
           const outputTok = chunk.outputTokens ?? 0;
           const cost = inputTok * GEMINI_THINK_FB_INPUT_COST + outputTok * GEMINI_THINK_FB_OUTPUT_COST;
           usageRepo.logWithBilling(clientIp, req.user!.id, billingUserId, inputTok, outputTok, cost, false, GEMINI_CHAT_MODEL_THINK_FB, true, 'notice');
+          confirmUsed('gemini-3', selection.keyIndex, true);
         }
       }
     }
@@ -261,14 +253,14 @@ The user prefers the following writing style. Match it closely while keeping the
       noticeRepo.updateContent(noticeId, fullResponse);
     }
 
-    res.write(`data: ${JSON.stringify({ done: true, noticeId })}\n\n`);
+    sse.writeDone({ noticeId });
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
     console.error(`[notices] Generation error: ${errMsg.slice(0, 200)}`);
-    res.write(`data: ${JSON.stringify({ error: true, message: 'Failed to generate notice draft. Please try again.' })}\n\n`);
+    sse.writeError('Failed to generate notice draft. Please try again.');
   }
 
-  res.end();
+  sse.end();
 });
 
 // ── List user's notices ──
