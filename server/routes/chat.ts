@@ -299,7 +299,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
         if (thinkApiKey) {
           usedModel = GEMINI_CHAT_MODEL_THINK;
           try {
-            for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_THINK, SYSTEM_INSTRUCTION, historyPlain, userContent, thinkApiKey, modeMaxTokens, true)) {
+            for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_THINK, SYSTEM_INSTRUCTION, historyPlain, userContent, thinkApiKey, modeMaxTokens, true, true)) {
               if (chunk.text) { fullResponse += chunk.text; sse.writeText(chunk.text); }
               if (chunk.done) { inputTok = chunk.inputTokens ?? 0; outputTok = chunk.outputTokens ?? 0; stopReason = 'end_turn'; }
             }
@@ -317,7 +317,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
           if (fbApiKey) {
             usedModel = GEMINI_CHAT_MODEL_THINK_FB;
             try {
-              for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_THINK_FB, SYSTEM_INSTRUCTION, historyPlain, userContent, fbApiKey, modeMaxTokens, true)) {
+              for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_THINK_FB, SYSTEM_INSTRUCTION, historyPlain, userContent, fbApiKey, modeMaxTokens, true, true)) {
                 if (chunk.text) { fullResponse += chunk.text; sse.writeText(chunk.text); }
                 if (chunk.done) { inputTok = chunk.inputTokens ?? 0; outputTok = chunk.outputTokens ?? 0; stopReason = 'end_turn'; }
               }
@@ -335,7 +335,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
         if (fastApiKey) {
           usedModel = GEMINI_CHAT_MODEL_T2;
           try {
-            for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_T2, SYSTEM_INSTRUCTION, historyPlain, userContent, fastApiKey, modeMaxTokens, searchEnabled)) {
+            for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_T2, SYSTEM_INSTRUCTION, historyPlain, userContent, fastApiKey, modeMaxTokens, searchEnabled, true)) {
               if (chunk.text) { fullResponse += chunk.text; sse.writeText(chunk.text); }
               if (chunk.done) { inputTok = chunk.inputTokens ?? 0; outputTok = chunk.outputTokens ?? 0; stopReason = 'end_turn'; }
             }
@@ -353,7 +353,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
           if (fbApiKey) {
             usedModel = GEMINI_CHAT_MODEL_T1;
             try {
-              for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_T1, SYSTEM_INSTRUCTION, historyPlain, userContent, fbApiKey, modeMaxTokens, searchEnabled)) {
+              for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_T1, SYSTEM_INSTRUCTION, historyPlain, userContent, fbApiKey, modeMaxTokens, searchEnabled, true)) {
                 if (chunk.text) { fullResponse += chunk.text; sse.writeText(chunk.text); }
                 if (chunk.done) { inputTok = chunk.inputTokens ?? 0; outputTok = chunk.outputTokens ?? 0; stopReason = 'end_turn'; }
               }

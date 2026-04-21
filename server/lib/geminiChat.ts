@@ -5,7 +5,14 @@
  * grounding with Google Search is only available via the native endpoint.
  *
  * Endpoint: POST /v1beta/models/{model}:streamGenerateContent?alt=sse&key={key}
+ *
+ * Optional context caching (useCache=true): the system prompt is uploaded to
+ * Gemini's cachedContents API once per (model, key, prompt-hash) and
+ * referenced by name on subsequent calls. Cache reads bill at ~25% of fresh
+ * input and shave 50–150ms off first-token latency.
  */
+
+import { getOrCreateCachedContent, invalidateCache } from './geminiCache.js';
 
 const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
 
@@ -36,6 +43,7 @@ export async function* streamGeminiChat(
   apiKey: string,
   maxOutputTokens: number = 4096,
   enableSearch: boolean = false,
+  useCache: boolean = false,
 ): AsyncGenerator<GeminiChatChunk> {
   // Build Gemini contents array
   const contents: GeminiContent[] = [];
@@ -54,15 +62,20 @@ export async function* streamGeminiChat(
     parts: [{ text: userMessage }],
   });
 
-  const body: Record<string, unknown> = {
-    systemInstruction: {
-      parts: [{ text: systemPrompt }],
-    },
-    contents,
-    generationConfig: {
-      maxOutputTokens,
-    },
-  };
+  // Optional context cache: if the caller opts in and the prompt is large
+  // enough to qualify, send `cachedContent: cachedContents/...` instead of
+  // the inline systemInstruction. Falls back to inline on any cache failure.
+  let cachedContentName: string | null = null;
+  if (useCache) {
+    cachedContentName = await getOrCreateCachedContent(model, systemPrompt, apiKey);
+  }
+
+  const body: Record<string, unknown> = { contents, generationConfig: { maxOutputTokens } };
+  if (cachedContentName) {
+    body.cachedContent = cachedContentName;
+  } else {
+    body.systemInstruction = { parts: [{ text: systemPrompt }] };
+  }
 
   // Only enable Google Search grounding when needed — preserves free quota
   if (enableSearch) {
@@ -79,6 +92,11 @@ export async function* streamGeminiChat(
 
   if (!response.ok) {
     const errText = await response.text();
+    // If the cache reference was rejected (TTL expired server-side, or other
+    // NOT_FOUND), invalidate our local entry so the next call recreates it.
+    if (cachedContentName && (response.status === 404 || /not.?found/i.test(errText))) {
+      invalidateCache(model, systemPrompt, apiKey);
+    }
     throw new Error(`Gemini ${model} error ${response.status}: ${errText.slice(0, 300)}`);
   }
 
