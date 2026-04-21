@@ -1,18 +1,5 @@
 import { Router, Response } from 'express';
-import {
-  GEMINI_CHAT_MODEL_THINK_FB,
-  GEMINI_THINK_FB_INPUT_COST,
-  GEMINI_THINK_FB_OUTPUT_COST,
-  GEMINI_API_KEYS,
-} from '../lib/gemini.js';
-import { streamGeminiChat } from '../lib/geminiChat.js';
-import {
-  CLAUDE_HAIKU_MODEL,
-  anthropicConfigured,
-  claudeHaikuCost,
-  streamClaudeChatWithRetry,
-} from '../lib/anthropic.js';
-import { selectTier, confirmUsed } from '../lib/searchQuota.js';
+import { pickChatProvider } from '../lib/chatProvider.js';
 import { SseWriter } from '../lib/sseStream.js';
 import { BreakerOpenError } from '../lib/circuitBreaker.js';
 import { noticeRepo } from '../db/repositories/noticeRepo.js';
@@ -205,50 +192,16 @@ router.post('/generate', async (req: AuthRequest, res: Response) => {
   let fullResponse = '';
 
   try {
-    if (anthropicConfigured) {
-      // Primary path: Claude Haiku 4.5 with prompt caching on the (now constant) system prompt + 3× retry on transient errors.
-      const usage = await streamClaudeChatWithRetry(
-        NOTICE_SYSTEM_PROMPT,
-        userPrompt,
-        (text) => { fullResponse += text; sse.writeText(text); },
-        MAX_TOKENS,
-      );
-      const cost = claudeHaikuCost(usage.inputTokens, usage.outputTokens, usage.cacheCreationTokens, usage.cacheReadTokens);
-      // Log TOTAL input tokens consumed (fresh + cache reads + cache writes) so
-      // the admin dashboard reflects true model context size, not just the
-      // billed-fresh subset Anthropic returns in `input_tokens`.
-      const totalInput = usage.inputTokens + usage.cacheReadTokens + usage.cacheCreationTokens;
-      usageRepo.logWithBilling(clientIp, req.user!.id, billingUserId, totalInput, usage.outputTokens, cost, false, CLAUDE_HAIKU_MODEL, true, 'notice');
-    } else {
-      // Fallback: Gemini 3 Flash Preview with Google Search grounding.
-      // Pick the best key via the shared search-quota broker so monthly counts
-      // increment on the actual key used (no random round-robin).
-      const selection = selectTier(true);
-      const apiKey = GEMINI_API_KEYS[selection.keyIndex] ?? '';
-      const stream = streamGeminiChat(
-        GEMINI_CHAT_MODEL_THINK_FB,
-        NOTICE_SYSTEM_PROMPT,
-        [],
-        userPrompt,
-        apiKey,
-        MAX_TOKENS,
-        true,
-      );
-
-      for await (const chunk of stream) {
-        if (chunk.text) {
-          fullResponse += chunk.text;
-          sse.writeText(chunk.text);
-        }
-        if (chunk.done) {
-          const inputTok = chunk.inputTokens ?? 0;
-          const outputTok = chunk.outputTokens ?? 0;
-          const cost = inputTok * GEMINI_THINK_FB_INPUT_COST + outputTok * GEMINI_THINK_FB_OUTPUT_COST;
-          usageRepo.logWithBilling(clientIp, req.user!.id, billingUserId, inputTok, outputTok, cost, false, GEMINI_CHAT_MODEL_THINK_FB, true, 'notice');
-          confirmUsed('gemini-3', selection.keyIndex, true);
-        }
-      }
-    }
+    const provider = pickChatProvider();
+    const usage = await provider.streamChat(
+      { systemPrompt: NOTICE_SYSTEM_PROMPT, userMessage: userPrompt, maxTokens: MAX_TOKENS },
+      (text) => { fullResponse += text; sse.writeText(text); },
+    );
+    // Log TOTAL input tokens consumed (fresh + cache reads + cache writes) so
+    // the admin dashboard reflects true model context size, not just the
+    // billed-fresh subset Anthropic returns in `input_tokens`.
+    const totalInput = usage.inputTokens + usage.cacheReadTokens + usage.cacheCreationTokens;
+    usageRepo.logWithBilling(clientIp, req.user!.id, billingUserId, totalInput, usage.outputTokens, usage.costUsd, false, usage.modelUsed, usage.withSearch, 'notice');
 
     if (fullResponse) {
       noticeRepo.updateContent(noticeId, fullResponse);
