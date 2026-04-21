@@ -38,6 +38,7 @@ if (!GEMINI_API_KEY) {
 export const gemini = new OpenAI({
   apiKey: GEMINI_API_KEY || 'missing-gemini-key-placeholder',
   baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+  timeout: 55_000,
 });
 export const geminiConfigured = !!GEMINI_API_KEY;
 

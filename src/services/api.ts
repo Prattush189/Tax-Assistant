@@ -1335,31 +1335,59 @@ export async function fetchBankStatement(id: string): Promise<{ statement: BankS
 export async function analyzeBankStatementFile(file: File): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[] }> {
   const formData = new FormData();
   formData.append('file', file);
-  let res = await fetch('/api/bank-statements/analyze', {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 120_000);
+  const doFetch = () => fetch('/api/bank-statements/analyze', {
     method: 'POST',
     headers: { ...getAuthHeaders() },
     body: formData,
+    signal: controller.signal,
   });
-  if (res.status === 401) {
-    const refreshed = await tryRefreshToken();
-    if (refreshed) {
-      res = await fetch('/api/bank-statements/analyze', {
-        method: 'POST',
-        headers: { ...getAuthHeaders() },
-        body: formData,
-      });
+  try {
+    let res = await doFetch();
+    if (res.status === 401) {
+      const refreshed = await tryRefreshToken();
+      if (refreshed) res = await doFetch();
     }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Failed to analyze statement');
+    return data;
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('Analysis timed out — the file may be too large or complex. Try a CSV export instead.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
   }
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'Failed to analyze statement');
-  return data;
 }
 
 export async function analyzeBankStatementCsv(csvText: string, filename?: string): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[] }> {
-  return authFetch('/api/bank-statements/analyze', {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 120_000);
+  const doFetch = () => fetch('/api/bank-statements/analyze', {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
     body: JSON.stringify({ csvText, filename }),
+    signal: controller.signal,
   });
+  try {
+    let res = await doFetch();
+    if (res.status === 401) {
+      const refreshed = await tryRefreshToken();
+      if (refreshed) res = await doFetch();
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Failed to analyze CSV');
+    return data;
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('Analysis timed out — please try again with a smaller file.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function renameBankStatement(id: string, name: string): Promise<{ statement: BankStatementSummary }> {

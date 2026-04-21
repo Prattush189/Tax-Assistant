@@ -79,7 +79,7 @@ export function useBankStatementManager(enabled: boolean) {
     }
   }, []);
 
-  const analyzeFile = useCallback(async (file: File): Promise<BankStatementDetail | null> => {
+  const analyzeFile = useCallback(async (file: File): Promise<BankStatementDetail> => {
     setIsAnalyzing(true);
     setError(null);
     try {
@@ -90,13 +90,13 @@ export function useBankStatementManager(enabled: boolean) {
       return result;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Analysis failed');
-      return null;
+      throw e;
     } finally {
       setIsAnalyzing(false);
     }
   }, []);
 
-  const analyzeCsv = useCallback(async (csvText: string, filename?: string): Promise<BankStatementDetail | null> => {
+  const analyzeCsv = useCallback(async (csvText: string, filename?: string): Promise<BankStatementDetail> => {
     setIsAnalyzing(true);
     setError(null);
     try {
@@ -107,7 +107,7 @@ export function useBankStatementManager(enabled: boolean) {
       return result;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Analysis failed');
-      return null;
+      throw e;
     } finally {
       setIsAnalyzing(false);
     }

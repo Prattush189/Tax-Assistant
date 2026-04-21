@@ -27,15 +27,21 @@ export function BankStatementUploader({ manager }: Props) {
         toast.error('CSV appears empty or has no header row.');
         return;
       }
-      const result = await manager.analyzeCsv(text, file.name);
-      if (result) toast.success(`Analyzed ${result.transactions.length} transactions`);
-      else if (manager.error) toast.error(manager.error);
+      try {
+        const result = await manager.analyzeCsv(text, file.name);
+        toast.success(`Analyzed ${result.transactions.length} transactions`);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Analysis failed');
+      }
       return;
     }
 
-    const result = await manager.analyzeFile(file);
-    if (result) toast.success(`Analyzed ${result.transactions.length} transactions`);
-    else if (manager.error) toast.error(manager.error);
+    try {
+      const result = await manager.analyzeFile(file);
+      toast.success(`Analyzed ${result.transactions.length} transactions`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Analysis failed');
+    }
   };
 
   return (
