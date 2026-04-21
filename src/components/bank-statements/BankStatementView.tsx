@@ -50,7 +50,7 @@ export function BankStatementView({ manager }: Props) {
             <div>
               <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-50">Statement Analyzer</h1>
               <p className="text-sm text-gray-500 dark:text-gray-400">
-                Upload a bank statement — Gemini will extract and tax-categorise every transaction.
+                Upload a bank statement — AI will extract and tax-categorise every transaction.
               </p>
             </div>
           </div>

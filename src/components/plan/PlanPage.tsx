@@ -65,6 +65,7 @@ const plans = [
     features: [
       '50 chat messages (trial)',
       '5 document uploads',
+      'Bank Statement Analyzer (PDF, image & CSV)',
       'All AI features included',
       'All tax calculators (Income Tax, CG, GST, TDS)',
       'Rent receipt & Challan 280 generator',
@@ -88,6 +89,7 @@ const plans = [
       '1,500 chat messages/month',
       '30 document uploads/month',
       'Everything in Free, plus:',
+      'Bank Statement Analyzer – 30 statements/month',
       'Salary Structure Optimizer',
       'Tax Planning PDF report',
       'PDF export of computations',
@@ -112,6 +114,7 @@ const plans = [
       '3,000 chat messages/month',
       '200 document uploads/month',
       'Everything in Pro, plus:',
+      'Bank Statement Analyzer – 200 statements/month',
       'Board resolution generator',
       'IT portal profile import',
       '500 AI suggestions/month',

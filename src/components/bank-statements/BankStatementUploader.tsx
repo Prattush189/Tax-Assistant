@@ -61,7 +61,7 @@ export function BankStatementUploader({ manager }: Props) {
       </div>
       <div className="text-center">
         <p className="font-semibold text-gray-800 dark:text-gray-100">
-          {manager.isAnalyzing ? 'Analyzing with Gemini…' : 'Drop your bank statement here'}
+          {manager.isAnalyzing ? 'Analyzing your statement…' : 'Drop your bank statement here'}
         </p>
         <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
           PDF, JPG, PNG, WebP up to 10 MB — or a CSV export from your bank
