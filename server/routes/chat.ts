@@ -10,6 +10,7 @@ import { userRepo } from '../db/repositories/userRepo.js';
 import { getUserLimits, getEffectivePlan } from '../lib/planLimits.js';
 import { getBillingUserId, getBillingUser } from '../lib/billing.js';
 import { retrieveContextWithRefs, SectionReference } from '../rag/index.js';
+import { SseWriter } from '../lib/sseStream.js';
 import { AuthRequest } from '../types.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 
@@ -262,11 +263,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
     ragReferences = ragResult.references;
   }
 
-  // SSE headers
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('X-Accel-Buffering', 'no');
+  const sse = new SseWriter(res);
 
   let fullResponse = '';
 
@@ -303,7 +300,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
           usedModel = GEMINI_CHAT_MODEL_THINK;
           try {
             for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_THINK, SYSTEM_INSTRUCTION, historyPlain, userContent, thinkApiKey, modeMaxTokens, true)) {
-              if (chunk.text) { fullResponse += chunk.text; res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`); }
+              if (chunk.text) { fullResponse += chunk.text; sse.writeText(chunk.text); }
               if (chunk.done) { inputTok = chunk.inputTokens ?? 0; outputTok = chunk.outputTokens ?? 0; stopReason = 'end_turn'; }
             }
             confirmUsed('gemini-2.5', primaryIdx, true);
@@ -321,7 +318,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
             usedModel = GEMINI_CHAT_MODEL_THINK_FB;
             try {
               for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_THINK_FB, SYSTEM_INSTRUCTION, historyPlain, userContent, fbApiKey, modeMaxTokens, true)) {
-                if (chunk.text) { fullResponse += chunk.text; res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`); }
+                if (chunk.text) { fullResponse += chunk.text; sse.writeText(chunk.text); }
                 if (chunk.done) { inputTok = chunk.inputTokens ?? 0; outputTok = chunk.outputTokens ?? 0; stopReason = 'end_turn'; }
               }
               confirmUsed('gemini-3', selection.keyIndex, true);
@@ -339,7 +336,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
           usedModel = GEMINI_CHAT_MODEL_T2;
           try {
             for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_T2, SYSTEM_INSTRUCTION, historyPlain, userContent, fastApiKey, modeMaxTokens, searchEnabled)) {
-              if (chunk.text) { fullResponse += chunk.text; res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`); }
+              if (chunk.text) { fullResponse += chunk.text; sse.writeText(chunk.text); }
               if (chunk.done) { inputTok = chunk.inputTokens ?? 0; outputTok = chunk.outputTokens ?? 0; stopReason = 'end_turn'; }
             }
             confirmUsed('gemini-2.5', activeIdx, searchEnabled);
@@ -357,7 +354,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
             usedModel = GEMINI_CHAT_MODEL_T1;
             try {
               for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_T1, SYSTEM_INSTRUCTION, historyPlain, userContent, fbApiKey, modeMaxTokens, searchEnabled)) {
-                if (chunk.text) { fullResponse += chunk.text; res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`); }
+                if (chunk.text) { fullResponse += chunk.text; sse.writeText(chunk.text); }
                 if (chunk.done) { inputTok = chunk.inputTokens ?? 0; outputTok = chunk.outputTokens ?? 0; stopReason = 'end_turn'; }
               }
               confirmUsed('gemini-3', selection.keyIndex, searchEnabled);
@@ -408,7 +405,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
         console.warn('[chat] skipping usage log — no tokens and empty response (likely upstream failure)');
       }
 
-      res.write(`data: ${JSON.stringify({ done: true, stop_reason: stopReason })}\n\n`);
+      sse.writeDone({ stop_reason: stopReason });
       success = true;
       break;
     } catch (err) {
@@ -422,7 +419,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
         const clientMessage = isRateLimit
           ? 'Too many requests. Please wait a moment and try again.'
           : "I'm having trouble connecting. Please try again in a moment.";
-        res.write(`data: ${JSON.stringify({ error: true, message: clientMessage })}\n\n`);
+        sse.writeError(clientMessage);
         break;
       }
 
@@ -431,7 +428,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
     }
   }
 
-  res.end();
+  sse.end();
 });
 
 export default router;

@@ -10,6 +10,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import mammoth from 'mammoth';
 import { gemini, GEMINI_MODEL } from '../lib/gemini.js';
+import { callGeminiJson } from '../lib/geminiJson.js';
 import { styleProfileRepo } from '../db/repositories/styleProfileRepo.js';
 import { AuthRequest } from '../types.js';
 
@@ -39,51 +40,18 @@ RULES:
 - Keep each string value concise (under 200 chars).
 - Output MUST be valid JSON, nothing else.`;
 
-// ── JSON parsing (reused from upload.ts pattern) ──────────────────────────
-
-function safeParseJson(raw: string): Record<string, unknown> | null {
-  let cleaned = raw
-    .replace(/^```(?:json)?\n?/m, '')
-    .replace(/\n?```\s*$/m, '')
-    .trim();
-  try { return JSON.parse(cleaned); } catch { /* continue */ }
-  // Attempt recovery — close unclosed strings/objects
-  try {
-    let inString = false;
-    let escape = false;
-    let braceDepth = 0;
-    for (let i = 0; i < cleaned.length; i++) {
-      const ch = cleaned[i];
-      if (escape) { escape = false; continue; }
-      if (ch === '\\') { escape = true; continue; }
-      if (ch === '"') { inString = !inString; continue; }
-      if (inString) continue;
-      if (ch === '{') braceDepth++;
-      else if (ch === '}') braceDepth--;
-    }
-    if (inString) cleaned += '"';
-    while (braceDepth > 0) { cleaned += '}'; braceDepth--; }
-    return JSON.parse(cleaned);
-  } catch { return null; }
-}
-
 // ── Gemini call with retry + fallback ─────────────────────────────────────
 
 async function extractStyleFromText(text: string): Promise<Record<string, unknown>> {
-  const messages = [{
-    role: 'user' as const,
-    content: `${STYLE_EXTRACTION_PROMPT}\n\n--- DOCUMENT START ---\n${text.slice(0, 15000)}\n--- DOCUMENT END ---`,
-  }];
-
-  const response = await gemini.chat.completions.create({
-    model: GEMINI_MODEL,
-    max_tokens: 2048,
-    messages,
-  });
-  const raw = response.choices[0]?.message?.content ?? '{}';
-  const parsed = safeParseJson(raw);
-  if (parsed && parsed.tone) return parsed;
-  throw new Error('LLM returned invalid style profile JSON');
+  const result = await callGeminiJson<Record<string, unknown>>(
+    [{
+      role: 'user' as const,
+      content: `${STYLE_EXTRACTION_PROMPT}\n\n--- DOCUMENT START ---\n${text.slice(0, 15000)}\n--- DOCUMENT END ---`,
+    }],
+    { maxTokens: 2048 },
+  );
+  if (!result.data?.tone) throw new Error('LLM returned invalid style profile JSON');
+  return result.data;
 }
 
 // ── Multer setup — accepts PDF and DOCX ───────────────────────────────────
