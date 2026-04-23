@@ -8,33 +8,43 @@ import {
   createSubscription,
   verifySubscriptionPayment,
   cancelSubscription,
+  type BillingDetails,
 } from '../../services/api';
+import { BillingDetailsDialog } from './BillingDetailsDialog';
 import {
   Check,
   Crown,
   Building2,
   Sparkles,
-  MessageSquare,
-  Paperclip,
-  Lightbulb,
-  FileText,
-  User,
-  TrendingUp,
   Shield,
   Loader2,
   AlertCircle,
   Clock,
   BadgeCheck,
-  FileSignature,
+  Download,
+  X,
+  CheckCircle2,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { generatePaymentReceipt, generatePaymentInvoice, type PaymentData } from '../../lib/paymentPdf';
 
 // ── Pricing ──────────────────────────────────────────────────────────────────
 
 const PRICES = {
-  pro:        { monthly: 400,  yearly: 3600  },
-  enterprise: { monthly: 700,  yearly: 6000  },
+  pro:        { monthly: 500,  yearly: 5700  },
+  enterprise: { monthly: 750,  yearly: 8550  },
 } as const;
+
+const GST_PCT = 18;
+const GST_RATE = GST_PCT / 100;
+
+function gstAmount(basePrice: number): number {
+  return Math.round(basePrice * GST_RATE);
+}
+
+function totalWithGst(basePrice: number): number {
+  return basePrice + gstAmount(basePrice);
+}
 
 function yearlySaving(plan: 'pro' | 'enterprise'): number {
   return PRICES[plan].monthly * 12 - PRICES[plan].yearly;
@@ -55,6 +65,7 @@ const plans = [
     features: [
       '50 chat messages (trial)',
       '5 document uploads',
+      'Bank Statement Analyzer (PDF, image & CSV)',
       'All AI features included',
       'All tax calculators (Income Tax, CG, GST, TDS)',
       'Rent receipt & Challan 280 generator',
@@ -78,6 +89,7 @@ const plans = [
       '1,500 chat messages/month',
       '30 document uploads/month',
       'Everything in Free, plus:',
+      'Bank Statement Analyzer – 30 statements/month',
       'Salary Structure Optimizer',
       'Tax Planning PDF report',
       'PDF export of computations',
@@ -102,6 +114,7 @@ const plans = [
       '3,000 chat messages/month',
       '200 document uploads/month',
       'Everything in Pro, plus:',
+      'Bank Statement Analyzer – 200 statements/month',
       'Board resolution generator',
       'IT portal profile import',
       '500 AI suggestions/month',
@@ -134,56 +147,108 @@ function loadRazorpayScript(): Promise<boolean> {
   });
 }
 
-// ── UsageBar ─────────────────────────────────────────────────────────────────
+// ── PaymentSuccessDialog ──────────────────────────────────────────────────────
 
-interface UsageBarProps {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  used: number;
-  limit: number;
-  period?: 'day' | 'month' | 'total';
-}
+const GST_RATE_DIALOG = 0.18;
 
-function UsageBar({ icon: Icon, label, used, limit, period }: UsageBarProps) {
-  const percentage = limit > 0 ? Math.min(100, (used / limit) * 100) : 0;
+function PaymentSuccessDialog({
+  payment,
+  userName,
+  userEmail,
+  billingDetails,
+  onClose,
+}: {
+  payment: PaymentData;
+  userName: string;
+  userEmail: string;
+  billingDetails: BillingDetails | null;
+  onClose: () => void;
+}) {
+  const total    = payment.amount / 100;
+  const base     = Math.round(total / (1 + GST_RATE_DIALOG) * 100) / 100;
+  const gst      = Math.round((total - base) * 100) / 100;
+  const planName = payment.plan === 'pro' ? 'Pro' : 'Enterprise';
+  const cycle    = payment.billing === 'monthly' ? 'Monthly' : 'Yearly';
+  const receiptNo = 'AI-' + payment.id.slice(0, 10).toUpperCase();
 
-  const getColor = (pct: number) => {
-    if (pct >= 90) return 'bg-red-500';
-    if (pct >= 75) return 'bg-amber-500';
-    if (pct >= 50) return 'bg-yellow-500';
-    return 'bg-[#0D9668] dark:bg-[#2DD4A0]';
+  const userInfo = {
+    name: userName, email: userEmail,
+    ...(billingDetails ?? {}),
   };
-
-  // Period label intentionally omitted — context shown in section header instead
-  const periodLabel = period === 'day' ? '/day' : '';
+  const handleReceipt = () => generatePaymentReceipt(payment, userInfo);
+  const handleInvoice = () => generatePaymentInvoice(payment, userInfo);
 
   return (
-    <div className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-4">
-      <div className="flex items-center gap-2 mb-3">
-        <div className="w-8 h-8 rounded-lg bg-[#0D9668]/10 dark:bg-[#0D9668]/20 flex items-center justify-center shrink-0">
-          <Icon className="w-4 h-4 text-[#0D9668] dark:text-[#2DD4A0]" />
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-md p-6 relative">
+        <button
+          onClick={onClose}
+          className="absolute top-4 right-4 p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+        >
+          <X className="w-4 h-4" />
+        </button>
+
+        {/* Success icon */}
+        <div className="flex justify-center mb-4">
+          <div className="w-16 h-16 rounded-full bg-[#0D9668]/10 dark:bg-[#0D9668]/20 flex items-center justify-center">
+            <CheckCircle2 className="w-9 h-9 text-[#0D9668] dark:text-[#2DD4A0]" />
+          </div>
         </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-xs font-medium text-gray-600 dark:text-gray-400 truncate">{label}</p>
-          <p className="text-sm font-bold text-gray-800 dark:text-white">
-            {used.toLocaleString('en-IN')} / {limit.toLocaleString('en-IN')}
-            <span className="text-xs font-normal text-gray-400 ml-1">{periodLabel}</span>
-          </p>
+
+        <h2 className="text-xl font-bold text-center text-gray-800 dark:text-white mb-1">
+          Payment Successful!
+        </h2>
+        <p className="text-sm text-center text-gray-500 dark:text-gray-400 mb-5">
+          Your {planName} plan is now active.
+        </p>
+
+        {/* Receipt card */}
+        <div className="bg-gray-50 dark:bg-gray-800/60 rounded-xl p-4 mb-5 space-y-2.5">
+          <div className="flex justify-between items-center">
+            <span className="text-xs text-gray-500 dark:text-gray-400">Receipt No.</span>
+            <span className="text-xs font-mono font-semibold text-gray-700 dark:text-gray-200">{receiptNo}</span>
+          </div>
+          <div className="flex justify-between items-center">
+            <span className="text-xs text-gray-500 dark:text-gray-400">Plan</span>
+            <span className="text-xs font-medium text-gray-700 dark:text-gray-200">{planName} · {cycle}</span>
+          </div>
+          <div className="border-t border-dashed border-gray-200 dark:border-gray-700 pt-2.5 space-y-1.5">
+            <div className="flex justify-between">
+              <span className="text-xs text-gray-500 dark:text-gray-400">Base amount</span>
+              <span className="text-xs text-gray-700 dark:text-gray-300">₹{base.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-xs text-gray-500 dark:text-gray-400">IGST @ 18%</span>
+              <span className="text-xs text-gray-700 dark:text-gray-300">₹{gst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+            </div>
+            <div className="flex justify-between pt-1 border-t border-gray-200 dark:border-gray-700">
+              <span className="text-sm font-bold text-gray-800 dark:text-white">Total Paid</span>
+              <span className="text-sm font-bold text-[#0D9668] dark:text-[#2DD4A0]">₹{total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+            </div>
+          </div>
         </div>
-        <span className={cn(
-          'text-xs font-bold shrink-0',
-          percentage >= 90 ? 'text-red-600 dark:text-red-400' :
-          percentage >= 75 ? 'text-amber-600 dark:text-amber-400' :
-          'text-gray-500 dark:text-gray-400'
-        )}>
-          {percentage.toFixed(0)}%
-        </span>
-      </div>
-      <div className="h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-        <div
-          className={cn('h-full rounded-full transition-all duration-500 ease-out', getColor(percentage))}
-          style={{ width: `${percentage}%` }}
-        />
+
+        {/* Download buttons */}
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            onClick={handleReceipt}
+            className="flex items-center justify-center gap-2 px-4 py-2.5 bg-[#0D9668]/10 dark:bg-[#0D9668]/20 text-[#0D9668] dark:text-[#2DD4A0] rounded-xl text-sm font-semibold hover:bg-[#0D9668]/20 dark:hover:bg-[#0D9668]/30 transition-colors"
+          >
+            <Download className="w-4 h-4" />
+            Receipt
+          </button>
+          <button
+            onClick={handleInvoice}
+            className="flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 rounded-xl text-sm font-semibold hover:bg-indigo-100 dark:hover:bg-indigo-900/30 transition-colors"
+          >
+            <Download className="w-4 h-4" />
+            Tax Invoice
+          </button>
+        </div>
+
+        <p className="text-xs text-center text-gray-400 dark:text-gray-500 mt-4">
+          You can also download these later from Settings → Billing
+        </p>
       </div>
     </div>
   );
@@ -234,6 +299,9 @@ export function PlanPage() {
   const [payError, setPayError] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [cancelMsg, setCancelMsg] = useState<string | null>(null);
+  const [successPayment, setSuccessPayment] = useState<PaymentData | null>(null);
+  const [showBillingDialog, setShowBillingDialog] = useState<'pro' | 'enterprise' | null>(null);
+  const [lastBillingDetails, setLastBillingDetails] = useState<BillingDetails | null>(null);
 
   useEffect(() => {
     fetchUserUsage()
@@ -262,11 +330,16 @@ export function PlanPage() {
 
       const sub = await createSubscription(planId, billing);
 
+      const basePrice = PRICES[planId][billing];
+      const gst       = gstAmount(basePrice);
+      const total     = totalWithGst(basePrice);
+      const period    = billing === 'monthly' ? 'month' : 'year';
+
       const options = {
         key: sub.keyId,
         subscription_id: sub.subscriptionId,
         name: 'Smartbiz AI',
-        description: `${planId === 'pro' ? 'Pro' : 'Enterprise'} · ₹${PRICES[planId][billing].toLocaleString('en-IN')}/${billing === 'monthly' ? 'month' : 'year'} · Auto-renews · Cancel any time`,
+        description: `${planId === 'pro' ? 'Pro' : 'Enterprise'} · ₹${basePrice.toLocaleString('en-IN')} + ₹${gst.toLocaleString('en-IN')} GST (${GST_PCT}%) = ₹${total.toLocaleString('en-IN')}/${period}`,
         prefill: {
           name: user?.name ?? '',
           email: user?.email ?? '',
@@ -292,6 +365,9 @@ export function PlanPage() {
             const [freshUsage, freshHistory] = await Promise.all([fetchUserUsage(), fetchPaymentHistory()]);
             setUsage(freshUsage);
             setHistory(freshHistory);
+            // Show success dialog with latest paid payment
+            const latest = freshHistory.payments.find(p => p.status === 'paid');
+            if (latest) setSuccessPayment(latest);
           } catch {
             setPayError('Payment was received but activation failed. Please contact support.');
           } finally {
@@ -331,6 +407,31 @@ export function PlanPage() {
 
   return (
     <div className="flex-1 overflow-y-auto">
+      {/* Billing details dialog — shown before Razorpay opens */}
+      {showBillingDialog && (
+        <BillingDetailsDialog
+          planName={showBillingDialog === 'pro' ? 'Pro' : 'Enterprise'}
+          userEmail={user?.email ?? ''}
+          onConfirm={(details) => {
+            setLastBillingDetails(details);
+            setShowBillingDialog(null);
+            void handlePay(showBillingDialog);
+          }}
+          onCancel={() => setShowBillingDialog(null)}
+        />
+      )}
+
+      {/* Payment success dialog */}
+      {successPayment && (
+        <PaymentSuccessDialog
+          payment={successPayment}
+          userName={user?.name ?? ''}
+          userEmail={user?.email ?? ''}
+          billingDetails={lastBillingDetails}
+          onClose={() => setSuccessPayment(null)}
+        />
+      )}
+
       <div className="max-w-5xl mx-auto px-4 py-8">
 
         {/* Header */}
@@ -375,10 +476,15 @@ export function PlanPage() {
                 ? 'bg-white/20 text-white'
                 : 'bg-[#0D9668]/10 text-[#0D9668] dark:bg-[#0D9668]/20 dark:text-[#2DD4A0]'
             )}>
-              Save up to 29%
+              Save 5%
             </span>
           </button>
         </div>
+
+        {/* Tax note */}
+        <p className="text-xs text-center text-gray-400 dark:text-gray-500 -mt-5 mb-8">
+          All prices are exclusive of {GST_PCT}% GST
+        </p>
 
         {/* Payment Error */}
         {payError && (
@@ -436,12 +542,17 @@ export function PlanPage() {
                 {isPaid ? (
                   <div className="mb-4">
                     {billing === 'monthly' ? (
-                      <div className="flex items-baseline gap-1">
-                        <span className="text-3xl font-bold text-gray-800 dark:text-white">
-                          ₹{monthlyPrice.toLocaleString('en-IN')}
-                        </span>
-                        <span className="text-sm text-gray-500 dark:text-gray-400">/month</span>
-                      </div>
+                      <>
+                        <div className="flex items-baseline gap-1">
+                          <span className="text-3xl font-bold text-gray-800 dark:text-white">
+                            ₹{monthlyPrice.toLocaleString('en-IN')}
+                          </span>
+                          <span className="text-sm text-gray-500 dark:text-gray-400">/month</span>
+                        </div>
+                        <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                          Excl. {GST_PCT}% GST · Total ₹{totalWithGst(monthlyPrice).toLocaleString('en-IN')}/month
+                        </p>
+                      </>
                     ) : (
                       <>
                         <div className="flex items-baseline gap-1">
@@ -458,6 +569,9 @@ export function PlanPage() {
                             Save ₹{saving.toLocaleString('en-IN')} ({discountPct}% off)
                           </span>
                         </div>
+                        <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                          Excl. {GST_PCT}% GST · Total ₹{totalWithGst(yearlyPrice).toLocaleString('en-IN')}/year
+                        </p>
                       </>
                     )}
                   </div>
@@ -493,7 +607,7 @@ export function PlanPage() {
                   </div>
                 ) : isPaid ? (
                   <button
-                    onClick={() => handlePay(plan.id as 'pro' | 'enterprise')}
+                    onClick={() => setShowBillingDialog(plan.id as 'pro' | 'enterprise')}
                     disabled={!!paying}
                     className={cn(
                       'w-full py-3 text-center text-sm font-semibold text-white rounded-xl transition-all flex items-center justify-center gap-2',
@@ -528,79 +642,6 @@ export function PlanPage() {
           <Shield className="w-3.5 h-3.5" />
           <span>Payments secured by Razorpay · 256-bit SSL encryption · Auto-renews · Cancel any time</span>
         </div>
-
-        {/* Current Usage */}
-        {usage && (
-          <div className="mb-10 bg-white/80 dark:bg-gray-900/80 backdrop-blur-xl border border-gray-200/50 dark:border-gray-700/50 rounded-2xl p-6">
-            <div className="flex items-center justify-between mb-5">
-              <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h2 className="text-lg font-bold text-gray-800 dark:text-white">Your Usage</h2>
-                  {usage.plan === 'free' && (
-                    <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
-                      <Clock className="w-3 h-3" />
-                      30-day trial
-                    </span>
-                  )}
-                </div>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                  Current plan: <span className="font-semibold text-[#0D9668] dark:text-[#2DD4A0] capitalize">{usage.plan}</span>
-                  {usage.planExpiresAt && (
-                    <span className="ml-2 text-gray-400">
-                      · Renews {new Date(usage.planExpiresAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
-                    </span>
-                  )}
-                </p>
-              </div>
-              <TrendingUp className="w-5 h-5 text-gray-400" />
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              <UsageBar
-                icon={MessageSquare}
-                label={usage.usage.messages.label}
-                used={usage.usage.messages.used}
-                limit={usage.usage.messages.limit}
-                period={usage.usage.messages.period}
-              />
-              <UsageBar
-                icon={Paperclip}
-                label={usage.usage.attachments.label}
-                used={usage.usage.attachments.used}
-                limit={usage.usage.attachments.limit}
-                period={usage.usage.attachments.period}
-              />
-              <UsageBar
-                icon={Lightbulb}
-                label={usage.usage.suggestions.label}
-                used={usage.usage.suggestions.used}
-                limit={usage.usage.suggestions.limit}
-                period={usage.usage.suggestions.period}
-              />
-              <UsageBar
-                icon={FileText}
-                label={usage.usage.notices.label}
-                used={usage.usage.notices.used}
-                limit={usage.usage.notices.limit}
-                period={usage.usage.notices.period}
-              />
-              <UsageBar
-                icon={FileSignature}
-                label={usage.usage.boardResolutions.label}
-                used={usage.usage.boardResolutions.used}
-                limit={usage.usage.boardResolutions.limit}
-                period={usage.usage.boardResolutions.period}
-              />
-              <UsageBar
-                icon={User}
-                label={usage.usage.profiles.label}
-                used={usage.usage.profiles.used}
-                limit={usage.usage.profiles.limit}
-                period={usage.usage.profiles.period}
-              />
-            </div>
-          </div>
-        )}
 
         {/* Account Info */}
         <div className="bg-white/80 dark:bg-gray-900/80 backdrop-blur-xl border border-gray-200/50 dark:border-gray-700/50 rounded-2xl p-6">

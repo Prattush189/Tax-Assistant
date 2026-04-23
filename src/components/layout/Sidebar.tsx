@@ -1,13 +1,13 @@
-import { X, Plus, Moon, Sun, LogOut, Trash2, MessageSquare, MessageCircle, Calculator, LayoutDashboard, Shield, CreditCard, FileText, FileSpreadsheet, Gavel, User, Users, Settings, AlertTriangle, Lock } from 'lucide-react';
+import { X, Plus, Moon, Sun, LogOut, Trash2, MessageSquare, MessageCircle, Calculator, LayoutDashboard, Shield, CreditCard, FileText, FileSpreadsheet, Gavel, Landmark, User, Users, Settings, AlertTriangle, Lock } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { ChatItem, NoticeItem, ItrDraft, BoardResolutionDraft, GenericProfile } from '../../services/api';
+import { ChatItem, NoticeItem, ItrDraft, BoardResolutionDraft, GenericProfile, BankStatementSummary } from '../../services/api';
 import { TEMPLATE_TITLES } from '../board-resolutions/lib/uiModel';
 import { useState } from 'react';
 import { usePreferences } from '../../hooks/usePreferences';
 import { useAuth } from '../../contexts/AuthContext';
 import { CalculatorTab, CALCULATOR_TABS } from '../calculator/CalculatorView';
 
-type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions';
+type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions' | 'bank_statements';
 
 interface SidebarProps {
   isOpen: boolean;
@@ -39,6 +39,11 @@ interface SidebarProps {
   onNewProfile: () => void;
   onSwitchProfile: (profileId: string) => void;
   onDeleteProfile: (profileId: string) => void;
+  bankStatementList: BankStatementSummary[];
+  currentBankStatementId: string | null;
+  onNewBankStatement: () => void;
+  onSwitchBankStatement: (statementId: string) => void;
+  onDeleteBankStatement: (statementId: string) => void;
   user: { id: string; email: string; name: string; role: string; plan?: string; itr_enabled?: boolean } | null;
   onLogout: () => void;
   activeView: ActiveView;
@@ -59,6 +64,7 @@ const baseNavItems: { id: ActiveView; label: string; icon: typeof MessageCircle 
 const adminNavItem = { id: 'admin' as ActiveView, label: 'Admin', icon: Shield };
 const itrNavItem = { id: 'itr' as ActiveView, label: 'ITR', icon: FileSpreadsheet };
 const boardResolutionsNavItem = { id: 'board_resolutions' as ActiveView, label: 'Resolutions', icon: Gavel };
+const bankStatementsNavItem = { id: 'bank_statements' as ActiveView, label: 'Statements', icon: Landmark };
 const profileNavItem = { id: 'profile' as ActiveView, label: 'Profile', icon: User };
 
 function timeAgo(dateStr: string): string {
@@ -101,6 +107,7 @@ export function Sidebar({
   itrDraftList, currentItrDraftId, onNewItrDraft, onSwitchItrDraft, onDeleteItrDraft,
   boardResolutionList, currentBoardResolutionId, onNewBoardResolution, onSwitchBoardResolution, onDeleteBoardResolution,
   profileList, currentProfileId, onNewProfile, onSwitchProfile, onDeleteProfile,
+  bankStatementList, currentBankStatementId, onNewBankStatement, onSwitchBankStatement, onDeleteBankStatement,
   user, onLogout, activeView, onViewChange,
   calculatorTab, onCalculatorTabChange,
 }: SidebarProps) {
@@ -112,6 +119,7 @@ export function Sidebar({
   const [pendingDeleteItr, setPendingDeleteItr] = useState<{ id: string; title: string } | null>(null);
   const [pendingDeleteBoardResolution, setPendingDeleteBoardResolution] = useState<{ id: string; title: string } | null>(null);
   const [pendingDeleteProfile, setPendingDeleteProfile] = useState<{ id: string; title: string } | null>(null);
+  const [pendingDeleteBankStatement, setPendingDeleteBankStatement] = useState<{ id: string; title: string } | null>(null);
   const { prefs } = usePreferences();
 
   const handleDelete = async (e: React.MouseEvent, chatId: string) => {
@@ -219,6 +227,26 @@ export function Sidebar({
     }
   };
 
+  const handleDeleteBankStatement = (e: React.MouseEvent, statementId: string) => {
+    e.stopPropagation();
+    if (prefs.confirmBeforeDeletingChats) {
+      const stmt = bankStatementList.find((s) => s.id === statementId);
+      setPendingDeleteBankStatement({ id: statementId, title: stmt?.name || 'this statement' });
+      return;
+    }
+    performDeleteBankStatement(statementId);
+  };
+
+  const performDeleteBankStatement = async (statementId: string) => {
+    setDeletingId(statementId);
+    try {
+      await onDeleteBankStatement(statementId);
+    } finally {
+      setDeletingId(null);
+      setPendingDeleteBankStatement(null);
+    }
+  };
+
   // ITR: admin-only OR explicit itr_enabled grant (not available to regular enterprise users yet).
   // Board Resolutions: open to all authenticated users (limits enforced server-side).
   // Plan tab always last (rightmost).
@@ -230,6 +258,7 @@ export function Sidebar({
     profileNavItem,
     ...(canAccessItr ? [itrNavItem] : []),
     ...(canAccessBoardResolutions ? [boardResolutionsNavItem] : []),
+    ...(user ? [bankStatementsNavItem] : []),
     ...(user?.role === 'admin' ? [adminNavItem] : []),
     { id: 'plan' as ActiveView, label: 'Plan', icon: CreditCard },
   ];
@@ -329,6 +358,17 @@ export function Sidebar({
           >
             <Plus className="w-4 h-4" />
             New Profile
+          </button>
+        )}
+
+        {/* New Bank Statement Button */}
+        {activeView === 'bank_statements' && (
+          <button
+            onClick={() => { onNewBankStatement(); onClose(); }}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-xl shadow-md shadow-emerald-600/15 transition-all text-sm"
+          >
+            <Plus className="w-4 h-4" />
+            Upload Statement
           </button>
         )}
       </div>
@@ -548,6 +588,53 @@ export function Sidebar({
                       <button
                         onClick={(e) => handleDeleteBoardResolution(e, draft.id)}
                         disabled={deletingId === draft.id}
+                        className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all shrink-0"
+                      >
+                        <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                      </button>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        ) : activeView === 'bank_statements' ? (
+          <>
+            <h2 className="text-[11px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider px-2 py-2">Statements</h2>
+            {bankStatementList.length === 0 ? (
+              <p className="text-sm text-gray-400 dark:text-gray-500 px-3 py-4 text-center">No statements yet. Upload one!</p>
+            ) : (
+              <div className="space-y-0.5">
+                {bankStatementList.map((stmt) => {
+                  const isActive = currentBankStatementId === stmt.id;
+                  return (
+                    <button
+                      key={stmt.id}
+                      onClick={() => { onSwitchBankStatement(stmt.id); onClose(); }}
+                      className={cn(
+                        "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left transition-all group relative",
+                        isActive
+                          ? "bg-emerald-50 dark:bg-emerald-900/15 text-emerald-700 dark:text-emerald-300"
+                          : "text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/60"
+                      )}
+                    >
+                      <Landmark className={cn(
+                        "w-4 h-4 shrink-0",
+                        isActive ? "text-emerald-500" : "text-gray-300 dark:text-gray-600"
+                      )} />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{stmt.name}</p>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] font-medium uppercase text-emerald-600/70 dark:text-emerald-400/70 truncate">
+                            {stmt.txCount} txns
+                          </span>
+                          <span className="text-[11px] text-gray-400 dark:text-gray-500">·</span>
+                          <p className="text-[11px] text-gray-400 dark:text-gray-500">{timeAgo(stmt.updatedAt)}</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={(e) => handleDeleteBankStatement(e, stmt.id)}
+                        disabled={deletingId === stmt.id}
                         className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all shrink-0"
                       >
                         <Trash2 className="w-3.5 h-3.5 text-red-500" />
@@ -805,6 +892,46 @@ export function Sidebar({
                 className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50"
               >
                 {deletingId === pendingDeleteBoardResolution.id ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete bank statement confirmation dialog */}
+      {pendingDeleteBankStatement && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={() => setPendingDeleteBankStatement(null)}
+        >
+          <div
+            className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-6 max-w-sm w-full border border-gray-200 dark:border-gray-700"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-red-100 dark:bg-red-900/30 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-red-600 dark:text-red-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Delete statement?</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400 break-words">
+                  "{pendingDeleteBankStatement.title}" and all its transactions will be permanently deleted.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setPendingDeleteBankStatement(null)}
+                className="px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => performDeleteBankStatement(pendingDeleteBankStatement.id)}
+                disabled={deletingId === pendingDeleteBankStatement.id}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50"
+              >
+                {deletingId === pendingDeleteBankStatement.id ? 'Deleting...' : 'Delete'}
               </button>
             </div>
           </div>

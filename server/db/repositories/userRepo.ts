@@ -24,8 +24,19 @@ export interface UserRow {
   razorpay_subscription_id: string | null;  // active Razorpay subscription ID
   subscription_status: string | null;       // 'active' | 'halted' | 'cancelled' | 'completed' | null
   renewal_reminder_sent_at: string | null;  // last time 48hr reminder email was sent
+  billing_details: string | null;           // JSON — BillingDetails
   created_at: string;
   updated_at: string;
+}
+
+export interface BillingDetails {
+  name: string;
+  addressLine1: string;
+  addressLine2?: string;
+  city: string;
+  state: string;
+  pincode: string;
+  gstin?: string;
 }
 
 const stmts = {
@@ -360,6 +371,19 @@ export const userRepo = {
     const token = crypto.randomBytes(16).toString('hex');
     stmts.updateSessionToken.run(token, userId);
     return token;
+  },
+
+  getBillingDetails(userId: string): BillingDetails | null {
+    const user = this.findById(userId);
+    if (!user?.billing_details) return null;
+    try { return JSON.parse(user.billing_details) as BillingDetails; }
+    catch { return null; }
+  },
+
+  setBillingDetails(userId: string, details: BillingDetails): void {
+    db.prepare(
+      "UPDATE users SET billing_details = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
+    ).run(JSON.stringify(details), userId);
   },
 };
 

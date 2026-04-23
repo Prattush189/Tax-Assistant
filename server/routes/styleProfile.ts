@@ -9,8 +9,12 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import mammoth from 'mammoth';
-import { gemini, GEMINI_MODEL } from '../lib/grok.js';
+import { gemini, GEMINI_MODEL, GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST } from '../lib/gemini.js';
+import { callGeminiJson } from '../lib/geminiJson.js';
 import { styleProfileRepo } from '../db/repositories/styleProfileRepo.js';
+import { usageRepo } from '../db/repositories/usageRepo.js';
+import { getBillingUser } from '../lib/billing.js';
+import { userRepo } from '../db/repositories/userRepo.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
@@ -39,51 +43,27 @@ RULES:
 - Keep each string value concise (under 200 chars).
 - Output MUST be valid JSON, nothing else.`;
 
-// ── JSON parsing (reused from upload.ts pattern) ──────────────────────────
-
-function safeParseJson(raw: string): Record<string, unknown> | null {
-  let cleaned = raw
-    .replace(/^```(?:json)?\n?/m, '')
-    .replace(/\n?```\s*$/m, '')
-    .trim();
-  try { return JSON.parse(cleaned); } catch { /* continue */ }
-  // Attempt recovery — close unclosed strings/objects
-  try {
-    let inString = false;
-    let escape = false;
-    let braceDepth = 0;
-    for (let i = 0; i < cleaned.length; i++) {
-      const ch = cleaned[i];
-      if (escape) { escape = false; continue; }
-      if (ch === '\\') { escape = true; continue; }
-      if (ch === '"') { inString = !inString; continue; }
-      if (inString) continue;
-      if (ch === '{') braceDepth++;
-      else if (ch === '}') braceDepth--;
-    }
-    if (inString) cleaned += '"';
-    while (braceDepth > 0) { cleaned += '}'; braceDepth--; }
-    return JSON.parse(cleaned);
-  } catch { return null; }
-}
-
 // ── Gemini call with retry + fallback ─────────────────────────────────────
 
-async function extractStyleFromText(text: string): Promise<Record<string, unknown>> {
-  const messages = [{
-    role: 'user' as const,
-    content: `${STYLE_EXTRACTION_PROMPT}\n\n--- DOCUMENT START ---\n${text.slice(0, 15000)}\n--- DOCUMENT END ---`,
-  }];
-
-  const response = await gemini.chat.completions.create({
-    model: GEMINI_MODEL,
-    max_tokens: 2048,
-    messages,
-  });
-  const raw = response.choices[0]?.message?.content ?? '{}';
-  const parsed = safeParseJson(raw);
-  if (parsed && parsed.tone) return parsed;
-  throw new Error('LLM returned invalid style profile JSON');
+async function extractStyleFromText(
+  text: string,
+  ctx: { userId: string; billingUserId: string; clientIp: string },
+): Promise<Record<string, unknown>> {
+  const result = await callGeminiJson<Record<string, unknown>>(
+    [{
+      role: 'user' as const,
+      content: `${STYLE_EXTRACTION_PROMPT}\n\n--- DOCUMENT START ---\n${text.slice(0, 15000)}\n--- DOCUMENT END ---`,
+    }],
+    { maxTokens: 2048 },
+  );
+  try {
+    const cost = result.inputTokens * GEMINI_T2_INPUT_COST + result.outputTokens * GEMINI_T2_OUTPUT_COST;
+    usageRepo.logWithBilling(ctx.clientIp, ctx.userId, ctx.billingUserId, result.inputTokens, result.outputTokens, cost, false, result.modelUsed, false, 'style_profile');
+  } catch (err) {
+    console.error('[style-profile] Failed to log cost:', err);
+  }
+  if (!result.data?.tone) throw new Error('LLM returned invalid style profile JSON');
+  return result.data;
 }
 
 // ── Multer setup — accepts PDF and DOCX ───────────────────────────────────
@@ -200,7 +180,11 @@ router.post(
     }
 
     try {
-      const styleRules = await extractStyleFromText(sampleText);
+      const actor = userRepo.findById(req.user.id);
+      const billingUser = actor ? getBillingUser(actor) : undefined;
+      const billingUserId = billingUser?.id ?? req.user.id;
+      const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
+      const styleRules = await extractStyleFromText(sampleText, { userId: req.user.id, billingUserId, clientIp });
       const name = req.body?.name || sourceFilename.replace(/\.[^.]+$/, '') || 'My Style';
 
       const row = styleProfileRepo.upsert(

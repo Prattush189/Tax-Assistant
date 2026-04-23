@@ -31,6 +31,7 @@ export function NoticeDrafterPage({ drafter }: NoticeDrafterPageProps) {
             usage={drafter.usage}
             letterhead={drafter.letterhead}
             onLetterheadChange={drafter.setLetterhead}
+            currentNoticeId={drafter.currentNoticeId}
           />
         </div>
 

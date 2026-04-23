@@ -15,24 +15,35 @@
 import Razorpay from 'razorpay';
 import db from '../db/index.js';
 
-export type PlanKey = 'pro_monthly' | 'pro_yearly' | 'enterprise_monthly' | 'enterprise_yearly';
+export type PlanKey = 'pro_monthly_v3' | 'pro_yearly_v3' | 'enterprise_monthly_v3' | 'enterprise_yearly_v3';
 export type BillingCycle = 'monthly' | 'yearly';
 export type PaidPlan = 'pro' | 'enterprise';
 
-/** Amount in paise for each plan key */
+/** GST rate applied on top of base plan prices (18% as per Indian GST for SaaS) */
+export const GST_RATE = 0.18;
+
+/** Returns amount in paise inclusive of 18% GST */
+function withGst(basePaise: number): number {
+  return Math.round(basePaise * (1 + GST_RATE));
+}
+
+/**
+ * Amount in paise for each plan key — inclusive of 18% GST.
+ * Base prices: Pro ₹500/mo, ₹5,700/yr (5% off) · Enterprise ₹750/mo, ₹8,550/yr (5% off)
+ */
 export const PLAN_AMOUNTS: Record<PlanKey, number> = {
-  pro_monthly:        40_000,   // ₹400
-  pro_yearly:        3_60_000,  // ₹3,600
-  enterprise_monthly: 70_000,   // ₹700
-  enterprise_yearly: 6_00_000,  // ₹6,000
+  pro_monthly_v3:         withGst(50_000),    // ₹500 + 18% GST = ₹590
+  pro_yearly_v3:          withGst(5_70_000),  // ₹5,700 + 18% GST = ₹6,726  (5% off ₹6,000)
+  enterprise_monthly_v3:  withGst(75_000),    // ₹750 + 18% GST = ₹885
+  enterprise_yearly_v3:   withGst(8_55_000),  // ₹8,550 + 18% GST = ₹10,089 (5% off ₹9,000)
 };
 
 /** Human-readable plan names for Razorpay dashboard */
 const PLAN_NAMES: Record<PlanKey, string> = {
-  pro_monthly:        'Smartbiz AI Pro — Monthly',
-  pro_yearly:         'Smartbiz AI Pro — Yearly',
-  enterprise_monthly: 'Smartbiz AI Enterprise — Monthly',
-  enterprise_yearly:  'Smartbiz AI Enterprise — Yearly',
+  pro_monthly_v3:         'Smartbiz AI Pro — Monthly',
+  pro_yearly_v3:          'Smartbiz AI Pro — Yearly',
+  enterprise_monthly_v3:  'Smartbiz AI Enterprise — Monthly',
+  enterprise_yearly_v3:   'Smartbiz AI Enterprise — Yearly',
 };
 
 /**
@@ -60,7 +71,7 @@ function getRazorpay(): Razorpay {
 }
 
 export function planKey(plan: PaidPlan, billing: BillingCycle): PlanKey {
-  return `${plan}_${billing}` as PlanKey;
+  return `${plan}_${billing}_v3` as PlanKey;
 }
 
 /**

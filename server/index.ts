@@ -25,7 +25,9 @@ import itPortalImportRouter from './routes/itPortalImport.js';
 import styleProfileRouter from './routes/styleProfile.js';
 import form16ImportRouter from './routes/form16Import.js';
 import clientsRouter from './routes/clients.js';
+import bankStatementsRouter from './routes/bankStatements.js';
 import invitationsRouter, { publicInvitationRouter } from './routes/invitations.js';
+import billingDetailsRouter from './routes/billingDetails.js';
 import { authMiddleware, adminMiddleware, trialCheckMiddleware } from './middleware/auth.js';
 import { authLimiter, chatLimiter, uploadLimiter } from './middleware/rateLimiter.js';
 import { warmupRazorpayPlans } from './lib/razorpayPlans.js';
@@ -80,7 +82,7 @@ const allowedOrigins = Array.from(new Set([
 app.use(
   cors({
     origin: allowedOrigins,
-    methods: ['GET', 'POST', 'PATCH', 'DELETE'],
+    methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'],
     credentials: false,
   })
 );
@@ -122,8 +124,10 @@ app.use('/api/it-portal', itPortalImportRouter);
 app.use('/api/style-profile', styleProfileRouter);
 app.use('/api/form16-import', form16ImportRouter);
 app.use('/api/clients', clientsRouter);
+app.use('/api/bank-statements', bankStatementsRouter);
 app.use('/api/invitations', invitationsRouter);
 app.use('/api/payments', paymentsRouter);
+app.use('/api/billing-details', billingDetailsRouter);
 
 // Admin — requires auth + admin role
 app.use('/api/admin', authMiddleware, adminMiddleware, adminRouter);

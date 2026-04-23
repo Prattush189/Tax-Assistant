@@ -1,7 +1,10 @@
 import { useRef, useCallback, useState } from 'react';
+import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Download, Copy, Check, Trash2, Edit3 } from 'lucide-react';
 import { LetterheadConfig } from '../../hooks/useNoticeDrafter';
 import { LoadingAnimation } from '../ui/LoadingAnimation';
+import { renderMarkdownToPdf } from './markdownPdf';
 
 interface NoticePreviewProps {
   content: string;
@@ -36,7 +39,6 @@ export function NoticePreview({ content, onContentChange, isGenerating, onClear,
   }, [content]);
 
   const handleDownloadPdf = useCallback(async () => {
-    // Dynamic import to avoid bundle bloat
     const { default: jsPDF } = await import('jspdf');
     const doc = new jsPDF({ unit: 'mm', format: 'a4' });
 
@@ -44,7 +46,6 @@ export function NoticePreview({ content, onContentChange, isGenerating, onClear,
     const pageWidthMm = 210;
     const pageHeightMm = 297;
     const usableWidth = pageWidthMm - margin * 2;
-    const lineHeight = 6;
 
     // --- Watermark painter (called per page) ---
     const paintWatermark = async () => {
@@ -94,7 +95,6 @@ export function NoticePreview({ content, onContentChange, isGenerating, onClear,
     };
 
     // --- Header painter (called on first page + after page breaks) ---
-    let headerHeightMm = 0;
     const paintHeader = async () => {
       if (!letterhead.header.enabled) return 0;
       let bottomY = margin;
@@ -110,7 +110,6 @@ export function NoticePreview({ content, onContentChange, isGenerating, onClear,
           doc.text(line, xPos, ty, { align });
           ty += 6;
         }
-        // Divider line
         doc.setDrawColor(180, 180, 180);
         doc.line(margin, ty + 1, pageWidthMm - margin, ty + 1);
         bottomY = ty + 6;
@@ -133,54 +132,23 @@ export function NoticePreview({ content, onContentChange, isGenerating, onClear,
       return bottomY - margin;
     };
 
-    // Paint watermark + header on first page
     await paintWatermark();
-    headerHeightMm = await paintHeader();
+    const headerHeightMm = await paintHeader();
 
-    // Reset font + color for body
-    doc.setFont('times', 'normal');
-    doc.setFontSize(12);
-    doc.setTextColor(0, 0, 0);
-
-    let y = margin + headerHeightMm;
-
-    const lines = content.split('\n');
-    for (const line of lines) {
-      const trimmed = line.trim();
-
-      if (/^(Subject:|Ref:|Enclosures:|Yours faithfully|Respected Sir\/Madam)/i.test(trimmed)) {
-        doc.setFont('times', 'bold');
-      } else {
-        doc.setFont('times', 'normal');
-      }
-
-      const wrapped = doc.splitTextToSize(trimmed || ' ', usableWidth);
-      for (const wLine of wrapped) {
-        if (y > 280) {
-          doc.addPage();
-          await paintWatermark();
-          const hh = await paintHeader();
-          doc.setFont('times', 'normal');
-          doc.setFontSize(12);
-          doc.setTextColor(0, 0, 0);
-          y = margin + hh;
-        }
-        doc.text(wLine, margin, y);
-        y += lineHeight;
-      }
-    }
+    await renderMarkdownToPdf(doc, content, {
+      margin,
+      pageWidthMm,
+      pageHeightMm,
+      startY: margin + headerHeightMm,
+      onPageBreak: async () => {
+        await paintWatermark();
+        const hh = await paintHeader();
+        return margin + hh;
+      },
+    });
 
     doc.save('notice-reply.pdf');
   }, [content, letterhead]);
-
-  const handleEditBlur = useCallback(() => {
-    if (previewRef.current) {
-      // Read only the body text, not the header/watermark overlays
-      const body = previewRef.current.querySelector('[data-notice-body]');
-      if (body) onContentChange((body as HTMLElement).innerText);
-    }
-    setIsEditing(false);
-  }, [onContentChange]);
 
   if (!content && !isGenerating) {
     return (
@@ -306,22 +274,27 @@ export function NoticePreview({ content, onContentChange, isGenerating, onClear,
               </div>
             )}
 
-            {/* Body */}
-            <div
-              data-notice-body
-              contentEditable={isEditing}
-              suppressContentEditableWarning
-              onBlur={handleEditBlur}
-              className={`font-serif text-[12px] leading-[1.8] text-gray-800 dark:text-gray-200 whitespace-pre-wrap outline-none min-h-[200mm] ${
-                isEditing ? 'ring-2 ring-[#059669]/30 ring-inset' : ''
-              }`}
-              style={{ fontFamily: "'Times New Roman', 'Georgia', serif" }}
-            >
-              {content}
-              {isGenerating && (
-                <span className="inline-block w-0.5 h-4 bg-[#059669] animate-pulse ml-0.5 align-middle" />
-              )}
-            </div>
+            {/* Body — editable raw markdown textarea vs. rendered markdown */}
+            {isEditing ? (
+              <textarea
+                value={content}
+                onChange={(e) => onContentChange(e.target.value)}
+                onBlur={() => setIsEditing(false)}
+                autoFocus
+                className="w-full min-h-[200mm] font-serif text-[12px] leading-[1.8] text-gray-800 dark:text-gray-200 bg-transparent outline-none resize-none ring-2 ring-[#059669]/30 ring-inset rounded-sm p-2"
+                style={{ fontFamily: "'Times New Roman', 'Georgia', serif" }}
+              />
+            ) : (
+              <div
+                className="notice-body prose prose-sm max-w-none text-gray-800 dark:text-gray-200 dark:prose-invert prose-headings:font-bold prose-headings:text-[#1e3a8a] prose-h2:text-[13px] prose-h2:uppercase prose-h2:tracking-wide prose-h2:border-b prose-h2:border-gray-300 prose-h2:pb-1 prose-h3:text-[12px] prose-h3:text-gray-900 dark:prose-h3:text-gray-100 prose-p:leading-[1.7] prose-blockquote:border-l-4 prose-blockquote:border-[#1e3a8a]/30 prose-blockquote:bg-blue-50/40 dark:prose-blockquote:bg-blue-900/10 prose-blockquote:py-1 prose-blockquote:not-italic prose-table:text-[11px] prose-th:bg-[#1e3a8a] prose-th:text-white prose-th:py-1.5 prose-th:px-2 prose-td:border prose-td:border-gray-300 prose-td:py-1 prose-td:px-2"
+                style={{ fontFamily: "'Times New Roman', 'Georgia', serif", fontSize: '12px', lineHeight: 1.7 }}
+              >
+                <Markdown remarkPlugins={[remarkGfm]}>{content}</Markdown>
+                {isGenerating && (
+                  <span className="inline-block w-0.5 h-4 bg-[#059669] animate-pulse ml-0.5 align-middle" />
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>

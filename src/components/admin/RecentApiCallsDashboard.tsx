@@ -10,9 +10,24 @@ const CATEGORY_COLORS: Record<string, string> = {
   chat: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400',
   notice: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400',
   suggestion: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400',
+  bank_statement: 'bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-400',
+  style_profile: 'bg-pink-100 text-pink-700 dark:bg-pink-900/40 dark:text-pink-400',
+  document: 'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-400',
+  form16: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-400',
+};
+
+const CATEGORY_LABELS: Record<string, string> = {
+  chat: 'Chat',
+  notice: 'Notice',
+  suggestion: 'Suggestion',
+  bank_statement: 'Bank Statement',
+  style_profile: 'Style Profile',
+  document: 'Document',
+  form16: 'Form 16',
 };
 
 const MODEL_COLORS: Record<string, string> = {
+  'claude-haiku-4-5': 'bg-orange-500',
   'gemini-3-flash-preview': 'bg-purple-500',
   'gemini-3.1-flash-lite-preview': 'bg-violet-400',
   'gemini-2.5-flash-lite': 'bg-blue-500',
@@ -21,6 +36,7 @@ const MODEL_COLORS: Record<string, string> = {
 };
 
 const MODEL_LABELS: Record<string, string> = {
+  'claude-haiku-4-5': 'Claude Haiku 4.5',
   'gemini-3-flash-preview': 'Gemini 3 Flash',
   'gemini-3.1-flash-lite-preview': 'Gemini 3.1 Flash-Lite',
   'gemini-2.5-flash-lite': 'Gemini 2.5 Flash-Lite',
@@ -141,9 +157,9 @@ export function RecentApiCallsDashboard() {
                     </td>
                     <td className="px-3 py-2">
                       {c.category ? (
-                        <span className={cn('inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium capitalize', CATEGORY_COLORS[c.category] ?? 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400')}>
+                        <span className={cn('inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium', CATEGORY_COLORS[c.category] ?? 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400')}>
                           <Tag className="w-2.5 h-2.5" />
-                          {c.category}
+                          {CATEGORY_LABELS[c.category] ?? c.category}
                         </span>
                       ) : (
                         <span className="text-gray-300">—</span>

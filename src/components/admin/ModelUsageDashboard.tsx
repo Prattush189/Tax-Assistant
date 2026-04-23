@@ -24,6 +24,7 @@ function fmtTokens(n: number): string {
 }
 
 const MODEL_COLORS: Record<string, string> = {
+  'claude-haiku-4-5': 'bg-orange-500',
   'gemini-3-flash-preview': 'bg-purple-500',
   'gemini-3.1-flash-lite-preview': 'bg-violet-400',
   'gemini-2.5-flash-lite': 'bg-blue-500',
@@ -32,9 +33,10 @@ const MODEL_COLORS: Record<string, string> = {
 };
 
 const MODEL_LABELS: Record<string, string> = {
-  'gemini-3-flash-preview': 'Gemini 3 Flash (Notices + Think FB)',
+  'claude-haiku-4-5': 'Claude Haiku 4.5 (Notices)',
+  'gemini-3-flash-preview': 'Gemini 3 Flash (Notices FB + Think FB)',
   'gemini-3.1-flash-lite-preview': 'Gemini 3.1 Flash-Lite (Fast Fallback)',
-  'gemini-2.5-flash-lite': 'Gemini 2.5 Flash-Lite (Fast + Suggestions)',
+  'gemini-2.5-flash-lite': 'Gemini 2.5 Flash-Lite (Fast + Suggestions + Bank Statements)',
   'gemini-2.5-flash': 'Gemini 2.5 Flash (Think Primary)',
 };
 
@@ -139,6 +141,8 @@ export function ModelUsageDashboard() {
 
   const models: ModelEntry[] = (data as any).byModel ?? [];
   const quota = (data as any).searchQuota ?? { tier1: { used: 0, limit: 5000 }, tier2: { used: 0, limit: 1500 } };
+  const rateLimits: Array<{ def: { provider: string; dimension: string; label: string; limit: number; period: string }; count: number; remaining: number; resetInSeconds: number }> = (data as any).rateLimits ?? [];
+  const breakers: Array<{ upstream: string; state: 'closed' | 'open' | 'half_open'; failures: number; openedAgoMs: number }> = (data as any).circuitBreakers ?? [];
   const totalRequests = models.reduce((a, m) => a + m.requests, 0) || 1;
 
   return (
@@ -202,6 +206,63 @@ export function ModelUsageDashboard() {
         </div>
         <p className="text-[10px] text-gray-400 text-center mt-3">Search grounding: 2.5 family shares 1,500 RPD | 3.x family shares 5,000/month | All free tier, per API key</p>
       </div>
+
+      {/* Rate limiters (Anthropic RPM etc.) */}
+      {rateLimits.length > 0 && (
+        <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5">
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1 flex items-center gap-2">
+            <Zap className="w-4 h-4 text-emerald-500" /> Provider Rate Limits
+          </h3>
+          <p className="text-[11px] text-gray-500 dark:text-gray-400 mb-3">Per-upstream buckets. tryAcquire() gates new requests so burst traffic fails fast locally instead of producing upstream 429s.</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {rateLimits.map((b, i) => {
+              const pct = Math.min(100, (b.count / Math.max(1, b.def.limit)) * 100);
+              const tint = pct >= 90 ? 'bg-red-500' : pct >= 60 ? 'bg-amber-500' : 'bg-emerald-500';
+              return (
+                <div key={i} className="rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-semibold text-gray-900 dark:text-gray-100">{b.def.provider} · {b.def.dimension}</span>
+                    <span className="text-[10px] text-gray-500 dark:text-gray-400">{b.def.label} · per {b.def.period}</span>
+                  </div>
+                  <div className="h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                    <div className={cn('h-full rounded-full transition-all', tint)} style={{ width: `${pct}%` }} />
+                  </div>
+                  <div className="flex items-center justify-between mt-1.5 text-[10px] text-gray-500 dark:text-gray-400">
+                    <span>{b.count} / {b.def.limit}</span>
+                    <span>resets in {b.resetInSeconds}s</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Circuit breakers */}
+      {breakers.length > 0 && (
+        <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5">
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1 flex items-center gap-2">
+            <Shield className="w-4 h-4 text-emerald-500" /> Circuit Breakers
+          </h3>
+          <p className="text-[11px] text-gray-500 dark:text-gray-400 mb-3">5 consecutive failures opens the breaker for 60s; the next request is then a probe (HALF_OPEN). A success closes it; a failure reopens.</p>
+          <div className="flex flex-wrap gap-2">
+            {breakers.map((b) => {
+              const color =
+                b.state === 'closed' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400'
+                : b.state === 'half_open' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400'
+                : 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400';
+              return (
+                <div key={b.upstream} className={cn('rounded-full px-3 py-1 text-xs font-medium flex items-center gap-2', color)}>
+                  <span className="font-semibold">{b.upstream}</span>
+                  <span className="uppercase text-[10px]">{b.state.replace('_', ' ')}</span>
+                  <span className="text-[10px] opacity-75">· {b.failures} fails</span>
+                  {b.state === 'open' && <span className="text-[10px] opacity-75">· open {Math.round(b.openedAgoMs / 1000)}s</span>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Free-tier limit overrides (admin can LOWER only) */}
       {config && (

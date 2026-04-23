@@ -1,118 +1,15 @@
 // server/routes/upload.ts
 import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
-import { gemini, GEMINI_MODEL, GEMINI_FALLBACK_MODEL } from '../lib/grok.js';
+import { extractWithRetry } from '../lib/documentExtract.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
+import { usageRepo } from '../db/repositories/usageRepo.js';
+import { GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST } from '../lib/gemini.js';
 import { getBillingUser } from '../lib/billing.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
-
-/** Parse JSON safely — strips markdown fences and attempts recovery on truncated strings */
-function safeParseJson(raw: string): any {
-  let cleaned = raw
-    .replace(/^```(?:json)?\n?/m, '')
-    .replace(/\n?```\s*$/m, '')
-    .trim();
-
-  // First try direct parse
-  try {
-    return JSON.parse(cleaned);
-  } catch {
-    // Attempt recovery: the response was likely truncated mid-string
-    // Strategy: find the last balanced closing point and close the JSON manually
-  }
-
-  // Try to recover by closing any open string/array/object
-  try {
-    // Count unclosed brackets
-    let braceDepth = 0;
-    let bracketDepth = 0;
-    let inString = false;
-    let escape = false;
-    let lastValidEnd = -1;
-
-    for (let i = 0; i < cleaned.length; i++) {
-      const ch = cleaned[i];
-      if (escape) { escape = false; continue; }
-      if (ch === '\\') { escape = true; continue; }
-      if (ch === '"') { inString = !inString; continue; }
-      if (inString) continue;
-      if (ch === '{') braceDepth++;
-      else if (ch === '}') { braceDepth--; if (braceDepth === 0 && bracketDepth === 0) lastValidEnd = i; }
-      else if (ch === '[') bracketDepth++;
-      else if (ch === ']') bracketDepth--;
-    }
-
-    // If we ended inside a string, close it
-    if (inString) cleaned += '"';
-    // Close any open arrays
-    while (bracketDepth > 0) { cleaned += ']'; bracketDepth--; }
-    // Close any open objects
-    while (braceDepth > 0) { cleaned += '}'; braceDepth--; }
-
-    return JSON.parse(cleaned);
-  } catch {
-    return null;
-  }
-}
-
-/** Single attempt to call Gemini with a specific model */
-async function callGemini(dataUrl: string, model: string): Promise<any> {
-  const response = await gemini.chat.completions.create({
-    model,
-    max_tokens: 4096,
-    response_format: { type: 'json_object' },
-    messages: [{
-      role: 'user',
-      content: [
-        { type: 'image_url', image_url: { url: dataUrl } },
-        { type: 'text', text: EXTRACTION_PROMPT },
-      ],
-    }],
-  });
-  const raw = response.choices[0]?.message?.content ?? '{}';
-  const parsed = safeParseJson(raw);
-  if (!parsed) throw new Error('Failed to parse extraction JSON');
-  return parsed;
-}
-
-/**
- * Extract with retry and model fallback:
- * 1. Try primary model (gemini-2.5-flash-lite) up to 3 times
- * 2. If all retries fail, try fallback model (gemini-2.5-flash) once
- */
-async function extractWithRetry(dataUrl: string): Promise<any> {
-  const MAX_PRIMARY_ATTEMPTS = 3;
-  let lastErr: any;
-
-  // Phase 1: Primary model with retries
-  for (let attempt = 0; attempt < MAX_PRIMARY_ATTEMPTS; attempt++) {
-    try {
-      return await callGemini(dataUrl, GEMINI_MODEL);
-    } catch (err: any) {
-      lastErr = err;
-      const status = err?.status ?? 0;
-      const retryable = status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
-      if (!retryable) break; // Non-retryable error — skip retries, try fallback model
-      if (attempt < MAX_PRIMARY_ATTEMPTS - 1) {
-        console.warn(`[upload] Gemini ${GEMINI_MODEL} retry ${attempt + 1}/${MAX_PRIMARY_ATTEMPTS} after status ${status}`);
-        await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt))); // 1s, 2s, 4s
-      }
-    }
-  }
-
-  // Phase 2: Fallback to full flash model
-  console.warn(`[upload] ${GEMINI_MODEL} failed, falling back to ${GEMINI_FALLBACK_MODEL}`);
-  try {
-    return await callGemini(dataUrl, GEMINI_FALLBACK_MODEL);
-  } catch (err) {
-    lastErr = err;
-  }
-
-  throw lastErr;
-}
 
 // Monthly attachment upload limits per plan
 const MONTHLY_ATTACHMENT_LIMITS: Record<string, number> = {
@@ -221,7 +118,8 @@ router.post(
       const base64Data = req.file.buffer.toString('base64');
       const dataUrl = `data:${mimetype};base64,${base64Data}`;
 
-      extractedData = await extractWithRetry(dataUrl);
+      const result = await extractWithRetry(dataUrl, EXTRACTION_PROMPT);
+      extractedData = result.data;
 
       // Log successful upload toward monthly cap (non-fatal). Writes both
       // user_id (actor) and billing_user_id (pool owner).
@@ -229,6 +127,16 @@ router.post(
         featureUsageRepo.logWithBilling(req.user.id, billingUserId, 'attachment_upload');
       } catch (logErr) {
         console.error('[upload] Failed to log attachment usage:', logErr);
+      }
+
+      // Log AI cost to usageRepo so this extraction appears in the admin
+      // "recent API calls" / cost-by-model dashboards alongside chat/notice.
+      try {
+        const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
+        const cost = result.inputTokens * GEMINI_T2_INPUT_COST + result.outputTokens * GEMINI_T2_OUTPUT_COST;
+        usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, result.inputTokens, result.outputTokens, cost, false, result.modelUsed, false, 'document');
+      } catch (logErr) {
+        console.error('[upload] Failed to log AI cost:', logErr);
       }
     } catch (err) {
       console.error('[upload] Extraction error:', err);

@@ -1,8 +1,8 @@
-import { Menu, Moon, Sun, LogOut, MessageCircle, Calculator, LayoutDashboard, CreditCard, FileText, FileSpreadsheet, Gavel, User, Shield, Settings, X, Minus } from 'lucide-react';
+import { Menu, Moon, Sun, LogOut, MessageCircle, Calculator, LayoutDashboard, CreditCard, FileText, FileSpreadsheet, Gavel, Landmark, User, Shield, Settings, X, Minus } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { postToParent } from '../../lib/pluginProtocol';
 
-type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions';
+type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions' | 'bank_statements';
 
 interface HeaderProps {
   isPluginMode: boolean;
@@ -47,6 +47,7 @@ export function Header({
     ...(canAccessBoardResolutions
       ? [{ id: 'board_resolutions' as ActiveView, label: 'Resolutions', icon: Gavel }]
       : []),
+    ...(user ? [{ id: 'bank_statements' as ActiveView, label: 'Statements', icon: Landmark }] : []),
     ...(user?.role === 'admin' ? [{ id: 'admin' as ActiveView, label: 'Admin', icon: Shield }] : []),
     { id: 'plan' as ActiveView, label: 'Plan', icon: CreditCard },
   ];

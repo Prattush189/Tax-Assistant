@@ -294,6 +294,7 @@ export interface UserUsageResponse {
     suggestions: UsageMetric;
     notices: UsageMetric;
     boardResolutions: UsageMetric;
+    bankStatements: UsageMetric;
     profiles: UsageMetric;
   };
 }
@@ -357,6 +358,29 @@ export async function fetchPaymentHistory(): Promise<PaymentHistoryResponse> {
 
 export async function cancelSubscription(): Promise<{ success: boolean; message: string }> {
   return authFetch('/api/payments/subscription', { method: 'DELETE' });
+}
+
+// ── Billing Details API ───────────────────────────────────────────────────
+
+export interface BillingDetails {
+  name: string;
+  addressLine1: string;
+  addressLine2?: string;
+  city: string;
+  state: string;
+  pincode: string;
+  gstin?: string;
+}
+
+export async function fetchBillingDetails(): Promise<{ billingDetails: BillingDetails | null }> {
+  return authFetch('/api/billing-details');
+}
+
+export async function saveBillingDetails(details: BillingDetails): Promise<{ ok: boolean; billingDetails: BillingDetails }> {
+  return authFetch('/api/billing-details', {
+    method: 'PUT',
+    body: JSON.stringify(details),
+  });
 }
 
 // ── Account Settings API ────────────────────────────────────────────────
@@ -1258,4 +1282,217 @@ export async function acceptInvitation(input: {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || 'Failed to accept invitation');
   return data;
+}
+
+// ── Bank Statement Analyzer API ───────────────────────────────────────────
+
+export interface BankStatementSummary {
+  id: string;
+  name: string;
+  bankName: string | null;
+  accountNumberMasked: string | null;
+  periodFrom: string | null;
+  periodTo: string | null;
+  sourceFilename: string | null;
+  sourceMime: string | null;
+  totalInflow: number;
+  totalOutflow: number;
+  txCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BankTransaction {
+  id: string;
+  date: string | null;
+  narration: string | null;
+  amount: number;          // signed: positive=credit, negative=debit
+  balance: number | null;
+  category: string;
+  subcategory: string | null;
+  counterparty: string | null;
+  reference: string | null;
+  isRecurring: boolean;
+  userOverride: boolean;
+}
+
+export interface BankStatementRule {
+  id: string;
+  matchText: string;
+  category: string | null;
+  counterpartyLabel: string | null;
+  createdAt: string;
+}
+
+export async function fetchBankStatements(): Promise<{ statements: BankStatementSummary[] }> {
+  return authFetch('/api/bank-statements');
+}
+
+export async function fetchBankStatement(id: string): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[] }> {
+  return authFetch(`/api/bank-statements/${id}`);
+}
+
+export async function analyzeBankStatementFile(file: File): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[] }> {
+  // Fast path: if this is a digitally-generated PDF, extract the text layer
+  // in the browser and send text-only to the server. The server skips the
+  // Gemini vision pass and completes in ~10-15s instead of 30-60s. Scanned
+  // PDFs (no text layer) fall through to the multipart/vision path below.
+  if (file.type === 'application/pdf') {
+    try {
+      const { extractPdfTextClient } = await import('../lib/pdfText');
+      const text = await extractPdfTextClient(file);
+      if (text) {
+        return analyzeBankStatementPdfText(text, file.name);
+      }
+    } catch (err) {
+      // Text extraction is best-effort — fall back to vision on any failure.
+      console.warn('[analyzeBankStatementFile] text extract failed, falling back to vision:', err);
+    }
+  }
+
+  const formData = new FormData();
+  formData.append('file', file);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 180_000);
+  const doFetch = () => fetch('/api/bank-statements/analyze', {
+    method: 'POST',
+    headers: { ...getAuthHeaders() },
+    body: formData,
+    signal: controller.signal,
+  });
+  try {
+    let res = await doFetch();
+    if (res.status === 401) {
+      const refreshed = await tryRefreshToken();
+      if (refreshed) res = await doFetch();
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const parts = [data.error ?? 'Failed to analyze statement'];
+      if (data.hint) parts.push(data.hint);
+      if (data.detail) parts.push(`(${data.detail})`);
+      throw new Error(parts.join(' — '));
+    }
+    return data;
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('Analysis timed out — the file may be too large or complex. Try a CSV export instead.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function analyzeBankStatementPdfText(pdfText: string, filename: string): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[]; warning?: string }> {
+  // Large multi-chunk statements (40+ pages) can take 2-3 minutes of parallel
+  // Gemini calls. We bump the abort well past that so the server gets a
+  // chance to return a partial result with a warning rather than the client
+  // killing the request.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 240_000);
+  const doFetch = () => fetch('/api/bank-statements/analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    body: JSON.stringify({ pdfText, filename }),
+    signal: controller.signal,
+  });
+  try {
+    let res = await doFetch();
+    if (res.status === 401) {
+      const refreshed = await tryRefreshToken();
+      if (refreshed) res = await doFetch();
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      // Server returns `{error, detail?, hint?}` — fold them into one message
+      // so the user actually sees what went wrong and how to recover.
+      const parts = [data.error ?? 'Failed to analyze statement'];
+      if (data.hint) parts.push(data.hint);
+      if (data.detail) parts.push(`(${data.detail})`);
+      throw new Error(parts.join(' — '));
+    }
+    return data;
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('Analysis timed out. Very large statements (>80 pages) may exceed our time budget — try a CSV export instead.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function analyzeBankStatementCsv(csvText: string, filename?: string): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[] }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 120_000);
+  const doFetch = () => fetch('/api/bank-statements/analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    body: JSON.stringify({ csvText, filename }),
+    signal: controller.signal,
+  });
+  try {
+    let res = await doFetch();
+    if (res.status === 401) {
+      const refreshed = await tryRefreshToken();
+      if (refreshed) res = await doFetch();
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Failed to analyze CSV');
+    return data;
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('Analysis timed out — please try again with a smaller file.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function renameBankStatement(id: string, name: string): Promise<{ statement: BankStatementSummary }> {
+  return authFetch(`/api/bank-statements/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function deleteBankStatement(id: string): Promise<void> {
+  await authFetch(`/api/bank-statements/${id}`, { method: 'DELETE' });
+}
+
+export async function updateBankTransaction(
+  statementId: string,
+  txId: string,
+  category: string,
+  subcategory?: string | null,
+): Promise<void> {
+  await authFetch(`/api/bank-statements/${statementId}/transactions/${txId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ category, subcategory: subcategory ?? null }),
+  });
+}
+
+export function bankStatementCsvUrl(id: string): string {
+  return `/api/bank-statements/${id}/export.csv`;
+}
+
+export async function fetchBankStatementRules(): Promise<{ rules: BankStatementRule[] }> {
+  return authFetch('/api/bank-statements/rules');
+}
+
+export async function createBankStatementRule(input: {
+  matchText: string;
+  category?: string | null;
+  counterpartyLabel?: string | null;
+}): Promise<{ rule: BankStatementRule }> {
+  return authFetch('/api/bank-statements/rules', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function deleteBankStatementRule(id: string): Promise<void> {
+  await authFetch(`/api/bank-statements/rules/${id}`, { method: 'DELETE' });
 }

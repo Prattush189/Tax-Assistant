@@ -1,52 +1,14 @@
 // server/routes/form16Import.ts
 import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
-import { gemini, GEMINI_MODEL, GEMINI_FALLBACK_MODEL } from '../lib/grok.js';
+import { extractWithRetry } from '../lib/documentExtract.js';
+import { GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST } from '../lib/gemini.js';
+import { usageRepo } from '../db/repositories/usageRepo.js';
+import { userRepo } from '../db/repositories/userRepo.js';
+import { getBillingUser } from '../lib/billing.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
-
-// ── JSON parsing (mirrors upload.ts safeParseJson) ──────────────────────
-
-function safeParseJson(raw: string): any {
-  let cleaned = raw
-    .replace(/^```(?:json)?\n?/m, '')
-    .replace(/\n?```\s*$/m, '')
-    .trim();
-
-  try {
-    return JSON.parse(cleaned);
-  } catch {
-    // Attempt recovery for truncated JSON
-  }
-
-  try {
-    let braceDepth = 0;
-    let bracketDepth = 0;
-    let inString = false;
-    let escape = false;
-
-    for (let i = 0; i < cleaned.length; i++) {
-      const ch = cleaned[i];
-      if (escape) { escape = false; continue; }
-      if (ch === '\\') { escape = true; continue; }
-      if (ch === '"') { inString = !inString; continue; }
-      if (inString) continue;
-      if (ch === '{') braceDepth++;
-      else if (ch === '}') { braceDepth--; }
-      else if (ch === '[') bracketDepth++;
-      else if (ch === ']') bracketDepth--;
-    }
-
-    if (inString) cleaned += '"';
-    while (bracketDepth > 0) { cleaned += ']'; bracketDepth--; }
-    while (braceDepth > 0) { cleaned += '}'; braceDepth--; }
-
-    return JSON.parse(cleaned);
-  } catch {
-    return null;
-  }
-}
 
 // ── Form 16 extraction prompt ───────────────────────────────────────────
 
@@ -85,56 +47,6 @@ STRICT RULES:
 - For tdsOnSalary, look for "Tax payable / TDS" or total tax deducted.
 - assessmentYear should be in format like "2025-26".
 - Escape quotes in string values with backslash. No literal newlines inside strings.`;
-
-// ── Gemini call + retry (mirrors upload.ts extractWithRetry) ────────────
-
-async function callGeminiForm16(dataUrl: string, model: string): Promise<any> {
-  const response = await gemini.chat.completions.create({
-    model,
-    max_tokens: 4096,
-    response_format: { type: 'json_object' },
-    messages: [{
-      role: 'user',
-      content: [
-        { type: 'image_url', image_url: { url: dataUrl } },
-        { type: 'text', text: FORM16_EXTRACTION_PROMPT },
-      ],
-    }],
-  });
-  const raw = response.choices[0]?.message?.content ?? '{}';
-  const parsed = safeParseJson(raw);
-  if (!parsed) throw new Error('Failed to parse Form 16 extraction JSON');
-  return parsed;
-}
-
-async function extractForm16WithRetry(dataUrl: string): Promise<any> {
-  const MAX_PRIMARY_ATTEMPTS = 3;
-  let lastErr: any;
-
-  for (let attempt = 0; attempt < MAX_PRIMARY_ATTEMPTS; attempt++) {
-    try {
-      return await callGeminiForm16(dataUrl, GEMINI_MODEL);
-    } catch (err: any) {
-      lastErr = err;
-      const status = err?.status ?? 0;
-      const retryable = status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
-      if (!retryable) break;
-      if (attempt < MAX_PRIMARY_ATTEMPTS - 1) {
-        console.warn(`[form16] Gemini ${GEMINI_MODEL} retry ${attempt + 1}/${MAX_PRIMARY_ATTEMPTS} after status ${status}`);
-        await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)));
-      }
-    }
-  }
-
-  console.warn(`[form16] ${GEMINI_MODEL} failed, falling back to ${GEMINI_FALLBACK_MODEL}`);
-  try {
-    return await callGeminiForm16(dataUrl, GEMINI_FALLBACK_MODEL);
-  } catch (err) {
-    lastErr = err;
-  }
-
-  throw lastErr;
-}
 
 // ── Multer — PDF only, 10 MB ────────────────────────────────────────────
 
@@ -178,12 +90,25 @@ router.post(
       const base64Data = req.file.buffer.toString('base64');
       const dataUrl = `data:${mimetype};base64,${base64Data}`;
 
-      const extractedData = await extractForm16WithRetry(dataUrl);
+      const result = await extractWithRetry(dataUrl, FORM16_EXTRACTION_PROMPT);
+
+      // Log AI cost so Form 16 imports show up in the admin API-cost
+      // dashboard alongside chat / notice / document extractions.
+      try {
+        const actor = userRepo.findById(req.user.id);
+        const billingUser = actor ? getBillingUser(actor) : undefined;
+        const billingUserId = billingUser?.id ?? req.user.id;
+        const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
+        const cost = result.inputTokens * GEMINI_T2_INPUT_COST + result.outputTokens * GEMINI_T2_OUTPUT_COST;
+        usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, result.inputTokens, result.outputTokens, cost, false, result.modelUsed, false, 'form16');
+      } catch (logErr) {
+        console.error('[form16] Failed to log AI cost:', logErr);
+      }
 
       res.status(200).json({
         success: true,
         filename: originalname,
-        extractedData,
+        extractedData: result.data,
       });
     } catch (err) {
       console.error('[form16] Extraction error:', err);
