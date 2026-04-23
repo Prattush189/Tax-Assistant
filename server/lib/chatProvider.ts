@@ -130,12 +130,16 @@ export const cascadeChatProvider: ChatProvider = {
       try {
         return await anthropicChatProvider.streamChat(req, onText);
       } catch (err) {
+        const status = (err as { status?: number })?.status ?? 0;
+        const isAuthError = status === 401 || status === 403;
         if (err instanceof BreakerOpenError) {
-          console.warn(`[chatProvider] Anthropic breaker open — falling back to Gemini for this request`);
-          // Fall through to Gemini below
+          console.warn(`[chatProvider] Anthropic breaker open — falling back to Gemini`);
+        } else if (isAuthError) {
+          console.warn(`[chatProvider] Anthropic auth error (${status}) — falling back to Gemini. Check ANTHROPIC_API_KEY.`);
         } else {
           throw err;
         }
+        // Fall through to Gemini
       }
     }
     return geminiChatProvider.streamChat(req, onText);

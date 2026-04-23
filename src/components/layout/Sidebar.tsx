@@ -385,32 +385,33 @@ export function Sidebar({
                 {chatList.map((chat) => {
                   const isActive = currentChatId === chat.id;
                   return (
-                    <button
-                      key={chat.id}
-                      onClick={() => { onSwitchChat(chat.id); onClose(); }}
-                      className={cn(
-                        "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left transition-all group relative",
-                        isActive
-                          ? "bg-emerald-50 dark:bg-emerald-900/15 text-emerald-700 dark:text-emerald-300"
-                          : "text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/60"
-                      )}
-                    >
-                      <MessageSquare className={cn(
-                        "w-4 h-4 shrink-0",
-                        isActive ? "text-emerald-500" : "text-gray-300 dark:text-gray-600"
-                      )} />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{chat.title}</p>
-                        <p className="text-[11px] text-gray-400 dark:text-gray-500">{timeAgo(chat.updated_at)}</p>
-                      </div>
+                    <div key={chat.id} className="relative group">
+                      <button
+                        onClick={() => { onSwitchChat(chat.id); onClose(); }}
+                        className={cn(
+                          "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left transition-all pr-8",
+                          isActive
+                            ? "bg-emerald-50 dark:bg-emerald-900/15 text-emerald-700 dark:text-emerald-300"
+                            : "text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/60"
+                        )}
+                      >
+                        <MessageSquare className={cn(
+                          "w-4 h-4 shrink-0",
+                          isActive ? "text-emerald-500" : "text-gray-300 dark:text-gray-600"
+                        )} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{chat.title}</p>
+                          <p className="text-[11px] text-gray-400 dark:text-gray-500">{timeAgo(chat.updated_at)}</p>
+                        </div>
+                      </button>
                       <button
                         onClick={(e) => handleDelete(e, chat.id)}
                         disabled={deletingId === chat.id}
-                        className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all shrink-0"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all"
                       >
                         <Trash2 className="w-3.5 h-3.5 text-red-500" />
                       </button>
-                    </button>
+                    </div>
                   );
                 })}
               </div>
@@ -426,38 +427,39 @@ export function Sidebar({
                 {noticeList.map((notice) => {
                   const isActive = currentNoticeId === notice.id;
                   return (
-                    <button
-                      key={notice.id}
-                      onClick={() => { onSwitchNotice(notice.id); onClose(); }}
-                      className={cn(
-                        "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left transition-all group relative",
-                        isActive
-                          ? "bg-emerald-50 dark:bg-emerald-900/15 text-emerald-700 dark:text-emerald-300"
-                          : "text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/60"
-                      )}
-                    >
-                      <FileText className={cn(
-                        "w-4 h-4 shrink-0",
-                        isActive ? "text-emerald-500" : "text-gray-300 dark:text-gray-600"
-                      )} />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{notice.title || 'Untitled'}</p>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[10px] font-medium uppercase text-emerald-600/70 dark:text-emerald-400/70">
-                            {notice.notice_type}
-                          </span>
-                          <span className="text-[11px] text-gray-400 dark:text-gray-500">·</span>
-                          <p className="text-[11px] text-gray-400 dark:text-gray-500">{timeAgo(notice.updated_at)}</p>
+                    <div key={notice.id} className="relative group">
+                      <button
+                        onClick={() => { onSwitchNotice(notice.id); onClose(); }}
+                        className={cn(
+                          "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left transition-all pr-8",
+                          isActive
+                            ? "bg-emerald-50 dark:bg-emerald-900/15 text-emerald-700 dark:text-emerald-300"
+                            : "text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/60"
+                        )}
+                      >
+                        <FileText className={cn(
+                          "w-4 h-4 shrink-0",
+                          isActive ? "text-emerald-500" : "text-gray-300 dark:text-gray-600"
+                        )} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{notice.title || 'Untitled'}</p>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-medium uppercase text-emerald-600/70 dark:text-emerald-400/70">
+                              {notice.notice_type}
+                            </span>
+                            <span className="text-[11px] text-gray-400 dark:text-gray-500">·</span>
+                            <p className="text-[11px] text-gray-400 dark:text-gray-500">{timeAgo(notice.updated_at)}</p>
+                          </div>
                         </div>
-                      </div>
+                      </button>
                       <button
                         onClick={(e) => handleDeleteNotice(e, notice.id)}
                         disabled={deletingId === notice.id}
-                        className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all shrink-0"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all"
                       >
                         <Trash2 className="w-3.5 h-3.5 text-red-500" />
                       </button>
-                    </button>
+                    </div>
                   );
                 })}
               </div>
@@ -473,32 +475,33 @@ export function Sidebar({
                 {profileList.map((profile) => {
                   const isActive = currentProfileId === profile.id;
                   return (
-                    <button
-                      key={profile.id}
-                      onClick={() => { onSwitchProfile(profile.id); onClose(); }}
-                      className={cn(
-                        "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left transition-all group relative",
-                        isActive
-                          ? "bg-emerald-50 dark:bg-emerald-900/15 text-emerald-700 dark:text-emerald-300"
-                          : "text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/60"
-                      )}
-                    >
-                      <User className={cn(
-                        "w-4 h-4 shrink-0",
-                        isActive ? "text-emerald-500" : "text-gray-300 dark:text-gray-600"
-                      )} />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{profile.name}</p>
-                        <p className="text-[11px] text-gray-400 dark:text-gray-500">{timeAgo(profile.updated_at)}</p>
-                      </div>
+                    <div key={profile.id} className="relative group">
+                      <button
+                        onClick={() => { onSwitchProfile(profile.id); onClose(); }}
+                        className={cn(
+                          "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left transition-all pr-8",
+                          isActive
+                            ? "bg-emerald-50 dark:bg-emerald-900/15 text-emerald-700 dark:text-emerald-300"
+                            : "text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/60"
+                        )}
+                      >
+                        <User className={cn(
+                          "w-4 h-4 shrink-0",
+                          isActive ? "text-emerald-500" : "text-gray-300 dark:text-gray-600"
+                        )} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{profile.name}</p>
+                          <p className="text-[11px] text-gray-400 dark:text-gray-500">{timeAgo(profile.updated_at)}</p>
+                        </div>
+                      </button>
                       <button
                         onClick={(e) => handleDeleteProfile(e, profile.id)}
                         disabled={deletingId === profile.id}
-                        className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all shrink-0"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all"
                       >
                         <Trash2 className="w-3.5 h-3.5 text-red-500" />
                       </button>
-                    </button>
+                    </div>
                   );
                 })}
               </div>
@@ -514,38 +517,39 @@ export function Sidebar({
                 {itrDraftList.map((draft) => {
                   const isActive = currentItrDraftId === draft.id;
                   return (
-                    <button
-                      key={draft.id}
-                      onClick={() => { onSwitchItrDraft(draft.id); onClose(); }}
-                      className={cn(
-                        "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left transition-all group relative",
-                        isActive
-                          ? "bg-emerald-50 dark:bg-emerald-900/15 text-emerald-700 dark:text-emerald-300"
-                          : "text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/60"
-                      )}
-                    >
-                      <FileSpreadsheet className={cn(
-                        "w-4 h-4 shrink-0",
-                        isActive ? "text-emerald-500" : "text-gray-300 dark:text-gray-600"
-                      )} />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{draft.name}</p>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[10px] font-medium uppercase text-emerald-600/70 dark:text-emerald-400/70">
-                            {draft.form_type} · AY {draft.assessment_year}
-                          </span>
-                          <span className="text-[11px] text-gray-400 dark:text-gray-500">·</span>
-                          <p className="text-[11px] text-gray-400 dark:text-gray-500">{timeAgo(draft.updated_at)}</p>
+                    <div key={draft.id} className="relative group">
+                      <button
+                        onClick={() => { onSwitchItrDraft(draft.id); onClose(); }}
+                        className={cn(
+                          "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left transition-all pr-8",
+                          isActive
+                            ? "bg-emerald-50 dark:bg-emerald-900/15 text-emerald-700 dark:text-emerald-300"
+                            : "text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/60"
+                        )}
+                      >
+                        <FileSpreadsheet className={cn(
+                          "w-4 h-4 shrink-0",
+                          isActive ? "text-emerald-500" : "text-gray-300 dark:text-gray-600"
+                        )} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{draft.name}</p>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-medium uppercase text-emerald-600/70 dark:text-emerald-400/70">
+                              {draft.form_type} · AY {draft.assessment_year}
+                            </span>
+                            <span className="text-[11px] text-gray-400 dark:text-gray-500">·</span>
+                            <p className="text-[11px] text-gray-400 dark:text-gray-500">{timeAgo(draft.updated_at)}</p>
+                          </div>
                         </div>
-                      </div>
+                      </button>
                       <button
                         onClick={(e) => handleDeleteItr(e, draft.id)}
                         disabled={deletingId === draft.id}
-                        className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all shrink-0"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all"
                       >
                         <Trash2 className="w-3.5 h-3.5 text-red-500" />
                       </button>
-                    </button>
+                    </div>
                   );
                 })}
               </div>
@@ -561,38 +565,39 @@ export function Sidebar({
                 {boardResolutionList.map((draft) => {
                   const isActive = currentBoardResolutionId === draft.id;
                   return (
-                    <button
-                      key={draft.id}
-                      onClick={() => { onSwitchBoardResolution(draft.id); onClose(); }}
-                      className={cn(
-                        "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left transition-all group relative",
-                        isActive
-                          ? "bg-emerald-50 dark:bg-emerald-900/15 text-emerald-700 dark:text-emerald-300"
-                          : "text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/60"
-                      )}
-                    >
-                      <Gavel className={cn(
-                        "w-4 h-4 shrink-0",
-                        isActive ? "text-emerald-500" : "text-gray-300 dark:text-gray-600"
-                      )} />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{draft.name}</p>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[10px] font-medium uppercase text-emerald-600/70 dark:text-emerald-400/70 truncate">
-                            {TEMPLATE_TITLES[draft.template_id]}
-                          </span>
-                          <span className="text-[11px] text-gray-400 dark:text-gray-500">·</span>
-                          <p className="text-[11px] text-gray-400 dark:text-gray-500">{timeAgo(draft.updated_at)}</p>
+                    <div key={draft.id} className="relative group">
+                      <button
+                        onClick={() => { onSwitchBoardResolution(draft.id); onClose(); }}
+                        className={cn(
+                          "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left transition-all pr-8",
+                          isActive
+                            ? "bg-emerald-50 dark:bg-emerald-900/15 text-emerald-700 dark:text-emerald-300"
+                            : "text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/60"
+                        )}
+                      >
+                        <Gavel className={cn(
+                          "w-4 h-4 shrink-0",
+                          isActive ? "text-emerald-500" : "text-gray-300 dark:text-gray-600"
+                        )} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{draft.name}</p>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-medium uppercase text-emerald-600/70 dark:text-emerald-400/70 truncate">
+                              {TEMPLATE_TITLES[draft.template_id]}
+                            </span>
+                            <span className="text-[11px] text-gray-400 dark:text-gray-500">·</span>
+                            <p className="text-[11px] text-gray-400 dark:text-gray-500">{timeAgo(draft.updated_at)}</p>
+                          </div>
                         </div>
-                      </div>
+                      </button>
                       <button
                         onClick={(e) => handleDeleteBoardResolution(e, draft.id)}
                         disabled={deletingId === draft.id}
-                        className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all shrink-0"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all"
                       >
                         <Trash2 className="w-3.5 h-3.5 text-red-500" />
                       </button>
-                    </button>
+                    </div>
                   );
                 })}
               </div>
@@ -608,38 +613,39 @@ export function Sidebar({
                 {bankStatementList.map((stmt) => {
                   const isActive = currentBankStatementId === stmt.id;
                   return (
-                    <button
-                      key={stmt.id}
-                      onClick={() => { onSwitchBankStatement(stmt.id); onClose(); }}
-                      className={cn(
-                        "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left transition-all group relative",
-                        isActive
-                          ? "bg-emerald-50 dark:bg-emerald-900/15 text-emerald-700 dark:text-emerald-300"
-                          : "text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/60"
-                      )}
-                    >
-                      <Landmark className={cn(
-                        "w-4 h-4 shrink-0",
-                        isActive ? "text-emerald-500" : "text-gray-300 dark:text-gray-600"
-                      )} />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{stmt.name}</p>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[10px] font-medium uppercase text-emerald-600/70 dark:text-emerald-400/70 truncate">
-                            {stmt.txCount} txns
-                          </span>
-                          <span className="text-[11px] text-gray-400 dark:text-gray-500">·</span>
-                          <p className="text-[11px] text-gray-400 dark:text-gray-500">{timeAgo(stmt.updatedAt)}</p>
+                    <div key={stmt.id} className="relative group">
+                      <button
+                        onClick={() => { onSwitchBankStatement(stmt.id); onClose(); }}
+                        className={cn(
+                          "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left transition-all pr-8",
+                          isActive
+                            ? "bg-emerald-50 dark:bg-emerald-900/15 text-emerald-700 dark:text-emerald-300"
+                            : "text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/60"
+                        )}
+                      >
+                        <Landmark className={cn(
+                          "w-4 h-4 shrink-0",
+                          isActive ? "text-emerald-500" : "text-gray-300 dark:text-gray-600"
+                        )} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{stmt.name}</p>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-medium uppercase text-emerald-600/70 dark:text-emerald-400/70 truncate">
+                              {stmt.txCount} txns
+                            </span>
+                            <span className="text-[11px] text-gray-400 dark:text-gray-500">·</span>
+                            <p className="text-[11px] text-gray-400 dark:text-gray-500">{timeAgo(stmt.updatedAt)}</p>
+                          </div>
                         </div>
-                      </div>
+                      </button>
                       <button
                         onClick={(e) => handleDeleteBankStatement(e, stmt.id)}
                         disabled={deletingId === stmt.id}
-                        className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all shrink-0"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all"
                       >
                         <Trash2 className="w-3.5 h-3.5 text-red-500" />
                       </button>
-                    </button>
+                    </div>
                   );
                 })}
               </div>
