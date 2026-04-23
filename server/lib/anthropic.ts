@@ -19,7 +19,7 @@ import { registerBucket, tryAcquire } from './rateLimiter.js';
 const ANTHROPIC_RPM_LIMIT = Number(process.env.ANTHROPIC_RPM_LIMIT ?? 45);
 registerBucket({ provider: 'anthropic', dimension: 'rpm', label: 'global', limit: ANTHROPIC_RPM_LIMIT, period: 'minute' });
 
-export const CLAUDE_HAIKU_MODEL = 'claude-haiku-4-5';
+export const CLAUDE_HAIKU_MODEL = 'claude-haiku-4-5-20251001';
 
 // Claude Haiku 4.5 pricing (USD per token)
 export const CLAUDE_HAIKU_INPUT_COST = 1.00 / 1_000_000;        // $1.00 / M tokens

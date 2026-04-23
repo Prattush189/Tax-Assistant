@@ -23,6 +23,7 @@ import {
   claudeHaikuCost,
   streamClaudeChatWithRetry,
 } from './anthropic.js';
+import { BreakerOpenError } from './circuitBreaker.js';
 import {
   GEMINI_API_KEYS,
   GEMINI_CHAT_MODEL_THINK_FB,
@@ -117,10 +118,35 @@ export const geminiChatProvider: ChatProvider = {
 };
 
 /**
- * Pick the best available provider. Anthropic is preferred when its API key
- * is configured (better legal-prose quality + prompt caching); falls back to
- * Gemini otherwise.
+ * Cascade provider: tries Anthropic first (when configured), automatically
+ * falls back to Gemini if the Anthropic circuit breaker is open or if no
+ * Anthropic key is present. Non-breaker errors from Anthropic are re-thrown
+ * so the caller can surface them (e.g. auth failures, invalid requests).
+ */
+export const cascadeChatProvider: ChatProvider = {
+  name: 'cascade',
+  async streamChat(req, onText) {
+    if (anthropicConfigured) {
+      try {
+        return await anthropicChatProvider.streamChat(req, onText);
+      } catch (err) {
+        if (err instanceof BreakerOpenError) {
+          console.warn(`[chatProvider] Anthropic breaker open — falling back to Gemini for this request`);
+          // Fall through to Gemini below
+        } else {
+          throw err;
+        }
+      }
+    }
+    return geminiChatProvider.streamChat(req, onText);
+  },
+};
+
+/**
+ * Pick the best available provider. Returns the cascade provider which tries
+ * Anthropic first and automatically falls back to Gemini when the Anthropic
+ * circuit breaker is open.
  */
 export function pickChatProvider(): ChatProvider {
-  return anthropicConfigured ? anthropicChatProvider : geminiChatProvider;
+  return cascadeChatProvider;
 }

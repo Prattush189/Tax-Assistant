@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import { pickChatProvider } from '../lib/chatProvider.js';
 import { SseWriter } from '../lib/sseStream.js';
-import { BreakerOpenError } from '../lib/circuitBreaker.js';
+
 import { noticeRepo } from '../db/repositories/noticeRepo.js';
 import { styleProfileRepo } from '../db/repositories/styleProfileRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
@@ -211,11 +211,7 @@ router.post('/generate', async (req: AuthRequest, res: Response) => {
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
     console.error(`[notices] Generation error: ${errMsg.slice(0, 200)}`);
-    if (err instanceof BreakerOpenError) {
-      sse.writeError(`Notice generation is temporarily unavailable (upstream "${err.upstream}" is degraded). Please retry in ${Math.ceil(err.retryAfterMs / 1000)} seconds.`);
-    } else {
-      sse.writeError('Failed to generate notice draft. Please try again.');
-    }
+    sse.writeError('Failed to generate notice draft. Please try again.');
   }
 
   sse.end();
