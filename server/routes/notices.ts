@@ -56,17 +56,15 @@ DOCUMENT STRUCTURE (produce every section that applies, in this order)
 
 (8) \`## 6. DOCUMENTS ENCLOSED\` — a numbered list of 4–6 realistic enclosures appropriate to the notice type (copy of intimation, copy of ITR, Form 10-ID / Form 3CEB / Form 3CB-3CD, TDS/TCS certificates, bank proofs, etc.).
 
-(9) Closing block — on separate lines, in this order:
-\`Thanking you,\`
-\`For <Sender Name>\`
-\`Authorised Signatory\`
-\`Name:\`
-\`Designation:\` (infer: Director / Managing Director for companies, Proprietor for sole-prop, Partner for firms)
-\`Place:\`
-\`Date:\`
-Use the values from the provided sender details; do NOT output bracketed placeholders.
-
-(10) (Optional) \`## HOW TO FILE THIS <RECTIFICATION|REPLY>\` — only when the notice is amenable to an online remedy (e.g. intimation u/s 143(1), DRC-01, DRC-03). Render a GFM table with columns "Step" and "Action" listing 4–6 concrete portal steps, followed by a single \`**Deadline:** ...\` line stating the statutory time limit.
+(9) Closing block — output each item on its own line using GFM hard line breaks (two trailing spaces before the newline). The exact order is:
+\`Thanking you,  \`
+\`For <Sender Name>  \`
+\`Authorised Signatory  \`
+\`Name: <value>  \`
+\`Designation: <inferred — Director / Managing Director for companies, Proprietor for sole-prop, Partner for firms>  \`
+\`Place: <sender city / address>  \`
+\`Date: <today's IST date>  \`
+Use the values from the provided sender details; do NOT output bracketed placeholders. Do NOT add any section after the closing block.
 
 FORMATTING RULES (strict)
 - Output GitHub-Flavoured Markdown only — no HTML, no front-matter, no fenced code blocks except when quoting machine output.
@@ -113,12 +111,10 @@ router.post('/generate', async (req: AuthRequest, res: Response) => {
     return;
   }
 
-  // Save notice record — stamped with both user_id (actor) and billing_user_id (pool).
-  const inputData = JSON.stringify({ noticeType, subType, senderDetails, recipientDetails, noticeDetails, keyPoints });
-  const title = `${noticeType.toUpperCase()} - ${subType || 'Reply'} - ${noticeDetails?.noticeNumber || 'Draft'}`;
-  const noticeId = noticeRepo.create(req.user.id, noticeType, subType, title, inputData, billingUserId);
-
   // ── Build the user prompt ────────────────────────────────────────────────
+  // NOTE: The notice record is intentionally created AFTER successful generation
+  // (see below) so that failed attempts never count against the usage limit or
+  // appear in the saved drafts list.
   const actName = noticeType.toLowerCase().includes('gst')
     ? 'the CGST Act, 2017'
     : 'the Income Tax Act, 1961';
@@ -184,7 +180,7 @@ router.post('/generate', async (req: AuthRequest, res: Response) => {
   }
 
   userPrompt += `\n=== YOUR TASK ===\n`;
-  userPrompt += `Produce the COMPLETE reply letter in GitHub-Flavoured Markdown per the structure in the system prompt. Start with the 2-column summary header table, then the \`**Subject:**\` line, then the salutation and body sections 1–6, then the closing block, and (if applicable) section "HOW TO FILE THIS RECTIFICATION" as a final appendix.\n`;
+  userPrompt += `Produce the COMPLETE reply letter in GitHub-Flavoured Markdown per the structure in the system prompt. Start with the 2-column summary header table, then the \`**Subject:**\` line, then the salutation and body sections 1–6, then the closing block. End the letter after the closing block — do NOT add any filing instructions or appendix after it.\n`;
   userPrompt += `Do NOT output any bracketed placeholders like [NAME] or [TBD] in the final letter — use the supplied values or a sensible plain-language fallback.\n`;
 
   const sse = new SseWriter(res);
@@ -197,15 +193,21 @@ router.post('/generate', async (req: AuthRequest, res: Response) => {
       { systemPrompt: NOTICE_SYSTEM_PROMPT, userMessage: userPrompt, maxTokens: MAX_TOKENS },
       (text) => { fullResponse += text; sse.writeText(text); },
     );
+
+    // Only create the notice record and log usage after successful generation.
+    // This ensures failed attempts never consume quota or appear in saved drafts.
+    const inputData = JSON.stringify({ noticeType, subType, senderDetails, recipientDetails, noticeDetails, keyPoints });
+    const title = `${noticeType.toUpperCase()} - ${subType || 'Reply'} - ${noticeDetails?.noticeNumber || 'Draft'}`;
+    const noticeId = noticeRepo.create(req.user.id, noticeType, subType, title, inputData, billingUserId);
+    if (fullResponse) {
+      noticeRepo.updateContent(noticeId, fullResponse);
+    }
+
     // Log TOTAL input tokens consumed (fresh + cache reads + cache writes) so
     // the admin dashboard reflects true model context size, not just the
     // billed-fresh subset Anthropic returns in `input_tokens`.
     const totalInput = usage.inputTokens + usage.cacheReadTokens + usage.cacheCreationTokens;
     usageRepo.logWithBilling(clientIp, req.user!.id, billingUserId, totalInput, usage.outputTokens, usage.costUsd, false, usage.modelUsed, usage.withSearch, 'notice');
-
-    if (fullResponse) {
-      noticeRepo.updateContent(noticeId, fullResponse);
-    }
 
     sse.writeDone({ noticeId });
   } catch (err) {
