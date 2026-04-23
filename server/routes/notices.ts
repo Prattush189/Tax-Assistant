@@ -3,6 +3,7 @@ import { pickChatProvider } from '../lib/chatProvider.js';
 import { SseWriter } from '../lib/sseStream.js';
 
 import { noticeRepo } from '../db/repositories/noticeRepo.js';
+import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { styleProfileRepo } from '../db/repositories/styleProfileRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
@@ -101,7 +102,7 @@ router.post('/generate', async (req: AuthRequest, res: Response) => {
   const billingUserId = billingUser?.id ?? req.user.id;
   const plan = billingUser?.plan ?? actor?.plan ?? 'free';
   const limit = NOTICE_LIMITS[plan] ?? NOTICE_LIMITS.free;
-  const used = noticeRepo.countByBillingUserMonth(billingUserId);
+  const used = featureUsageRepo.countThisMonthByBillingUser(billingUserId, 'notice');
 
   if (used >= limit) {
     res.status(429).json({
@@ -209,6 +210,11 @@ router.post('/generate', async (req: AuthRequest, res: Response) => {
     const totalInput = usage.inputTokens + usage.cacheReadTokens + usage.cacheCreationTokens;
     usageRepo.logWithBilling(clientIp, req.user!.id, billingUserId, totalInput, usage.outputTokens, usage.costUsd, false, usage.modelUsed, usage.withSearch, 'notice');
 
+    // Log to the immutable feature_usage table so the monthly quota is
+    // unaffected by notice deletions (same pattern as board resolutions,
+    // bank statements, uploads, and AI suggestions).
+    featureUsageRepo.logWithBilling(req.user!.id, billingUserId, 'notice');
+
     sse.writeDone({ noticeId });
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
@@ -230,7 +236,7 @@ router.get('/', async (req: AuthRequest, res: Response) => {
   const billingUserId = billingUser?.id ?? req.user.id;
   const plan = billingUser?.plan ?? actor?.plan ?? 'free';
   const limit = NOTICE_LIMITS[plan] ?? NOTICE_LIMITS.free;
-  const used = noticeRepo.countByBillingUserMonth(billingUserId);
+  const used = featureUsageRepo.countThisMonthByBillingUser(billingUserId, 'notice');
   res.json({ notices, usage: { used, limit } });
 });
 

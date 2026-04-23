@@ -2,7 +2,7 @@ import { Router, Response } from 'express';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
-import { noticeRepo } from '../db/repositories/noticeRepo.js';
+
 import { profileRepoV2 } from '../db/repositories/profileRepoV2.js';
 import { AuthRequest } from '../types.js';
 import { getUserLimits, getEffectivePlan, getTrialEndsAt, isTrialExpired, TRIAL_DAYS } from '../lib/planLimits.js';
@@ -64,10 +64,11 @@ router.get('/', (req: AuthRequest, res: Response) => {
     console.error('[usage] suggestions count failed', err);
   }
 
-  // Notice drafts (monthly)
+  // Notice drafts (monthly) — read from the immutable feature_usage log so
+  // that deleting a draft does not reduce the quota counter.
   let noticesUsed = 0;
   try {
-    noticesUsed = noticeRepo.countByBillingUserMonth(billingUser.id);
+    noticesUsed = featureUsageRepo.countThisMonthByBillingUser(billingUser.id, 'notice');
   } catch (err) {
     console.error('[usage] notices count failed', err);
   }
