@@ -3,7 +3,8 @@
     "allow": [
       "Bash(npm install:*)",
       "mcp__Claude_Preview__preview_start",
-      "Bash(npx vite:*)"
+      "Bash(npx vite:*)",
+      "Bash(xargs grep:*)"
     ]
   }
 }

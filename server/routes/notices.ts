@@ -1,5 +1,8 @@
 import { Router, Response } from 'express';
 import {
+  GEMINI_CHAT_MODEL_THINK,
+  GEMINI_THINK_INPUT_COST,
+  GEMINI_THINK_OUTPUT_COST,
   GEMINI_CHAT_MODEL_THINK_FB,
   GEMINI_THINK_FB_INPUT_COST,
   GEMINI_THINK_FB_OUTPUT_COST,
@@ -293,40 +296,76 @@ The user prefers the following writing style. Match it closely while keeping the
   // Pick a Gemini API key (round-robin across available keys)
   const apiKey = GEMINI_API_KEYS[Math.floor(Math.random() * Math.max(1, GEMINI_API_KEYS.length))] ?? '';
 
-  try {
-    const stream = streamGeminiChat(
-      GEMINI_CHAT_MODEL_THINK_FB,
-      systemPrompt,
-      [], // no prior history for notice generation
-      userPrompt,
-      apiKey,
-      MAX_TOKENS,
-      true, // always enable Google Search so section numbers and case laws are accurate
-    );
+  // Model cascade: primary (2.5 Flash think) → fallback (3 Flash preview)
+  const modelCascade: Array<{
+    model: string;
+    inputCost: number;
+    outputCost: number;
+  }> = [
+    { model: GEMINI_CHAT_MODEL_THINK,    inputCost: GEMINI_THINK_INPUT_COST,    outputCost: GEMINI_THINK_OUTPUT_COST },
+    { model: GEMINI_CHAT_MODEL_THINK_FB, inputCost: GEMINI_THINK_FB_INPUT_COST, outputCost: GEMINI_THINK_FB_OUTPUT_COST },
+  ];
 
-    for await (const chunk of stream) {
-      if (chunk.text) {
-        fullResponse += chunk.text;
-        res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`);
+  let lastErr = '';
+  let generated = false;
+
+  for (const { model, inputCost, outputCost } of modelCascade) {
+    try {
+      fullResponse = '';
+      const stream = streamGeminiChat(
+        model,
+        systemPrompt,
+        [], // no prior history for notice generation
+        userPrompt,
+        apiKey,
+        MAX_TOKENS,
+        true, // always enable Google Search so section numbers and case laws are accurate
+      );
+
+      for await (const chunk of stream) {
+        if (chunk.text) {
+          fullResponse += chunk.text;
+          res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`);
+        }
+        if (chunk.done) {
+          const inputTok = chunk.inputTokens ?? 0;
+          const outputTok = chunk.outputTokens ?? 0;
+          const cost = inputTok * inputCost + outputTok * outputCost;
+          usageRepo.logWithBilling(clientIp, req.user!.id, billingUserId, inputTok, outputTok, cost, false, model, true, 'notice');
+        }
       }
-      if (chunk.done) {
-        const inputTok = chunk.inputTokens ?? 0;
-        const outputTok = chunk.outputTokens ?? 0;
-        const cost = inputTok * GEMINI_THINK_FB_INPUT_COST + outputTok * GEMINI_THINK_FB_OUTPUT_COST;
-        usageRepo.logWithBilling(clientIp, req.user!.id, billingUserId, inputTok, outputTok, cost, false, GEMINI_CHAT_MODEL_THINK_FB, true, 'notice');
-      }
+
+      generated = true;
+      break; // success — no need to try next model
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      lastErr = errMsg;
+      console.warn(`[notices] Model ${model} failed: ${errMsg.slice(0, 200)}`);
+      // If we already streamed partial content, don't retry — surface the error
+      if (fullResponse.length > 0) break;
     }
+  }
 
+  if (!generated) {
+    // Extract a clean user-facing reason from the last API error if possible.
+    // API error strings look like: "Gemini <model> error 503: <body>"
+    const bodyMatch = lastErr.match(/error \d+: (.+)/s);
+    let userMsg = 'The AI service is temporarily unavailable. Please try again in a moment.';
+    if (bodyMatch) {
+      try {
+        const parsed = JSON.parse(bodyMatch[1]);
+        const apiMsg: string = parsed?.error?.message ?? parsed?.message ?? '';
+        if (apiMsg) userMsg = apiMsg;
+      } catch { /* body wasn't JSON — keep generic message */ }
+    }
+    console.error(`[notices] All models failed. Last error: ${lastErr.slice(0, 300)}`);
+    res.write(`data: ${JSON.stringify({ error: true, message: userMsg })}\n\n`);
+  } else {
     // Save generated content
     if (fullResponse) {
       noticeRepo.updateContent(noticeId, fullResponse);
     }
-
     res.write(`data: ${JSON.stringify({ done: true, noticeId })}\n\n`);
-  } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    console.error(`[notices] Generation error: ${errMsg.slice(0, 200)}`);
-    res.write(`data: ${JSON.stringify({ error: true, message: 'Failed to generate notice draft. Please try again.' })}\n\n`);
   }
 
   res.end();
