@@ -158,6 +158,89 @@ export async function streamClaudeChatWithRetry(
   });
 }
 
+export interface ClaudeTsvResult {
+  text: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+}
+
+/**
+ * Non-streaming Claude call tuned for bank-statement TSV extraction.
+ *
+ * Why non-streaming: the caller parses the whole TSV + `---END:N---` trailer
+ * at once, so there's nothing to gain from streaming here. A single
+ * `messages.create` keeps the parsing path identical to the Gemini-based
+ * path it replaces.
+ *
+ * Why the system prompt is cached: the TSV prompt is ~3KB of static
+ * instructions that we send once per chunk. A 46-page statement produces
+ * 7-8 chunks that fire inside a ~60s window, comfortably inside Anthropic's
+ * 5-minute ephemeral cache. Chunk 1 pays full price on the prompt; chunks
+ * 2-N pay 10% — turning what would be a 13-17× premium over Gemini into
+ * roughly 6-8×, for dramatically better reliability.
+ *
+ * Retries: we reuse the same ladder as the notice drafter (429/5xx/529,
+ * exponential backoff, circuit breaker) so a real Anthropic outage opens
+ * the breaker and the caller can fall through to Gemini.
+ */
+export async function extractTsvWithClaude(
+  systemPrompt: string,
+  userContent: string,
+  maxOutputTokens: number = 16_384,
+): Promise<ClaudeTsvResult> {
+  const MAX_ATTEMPTS = 3;
+  const RETRYABLE = new Set([429, 500, 502, 503, 504, 529]);
+
+  if (!tryAcquire('anthropic', 'rpm', 'global')) {
+    const err = new Error('Anthropic RPM limit reached. Please retry in a minute.') as Error & { status: number };
+    err.status = 429;
+    throw err;
+  }
+
+  return withBreaker('anthropic', async () => {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      try {
+        const msg = await anthropic.messages.create({
+          model: CLAUDE_HAIKU_MODEL,
+          max_tokens: maxOutputTokens,
+          system: [
+            { type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } },
+          ],
+          messages: [{ role: 'user', content: userContent }],
+        });
+
+        // Claude responses are content blocks — for a plain-text extraction we
+        // concatenate any text blocks and ignore tool_use blocks (there won't
+        // be any, but be defensive).
+        const text = msg.content
+          .map((b) => (b.type === 'text' ? b.text : ''))
+          .join('');
+
+        return {
+          text,
+          inputTokens: msg.usage.input_tokens ?? 0,
+          outputTokens: msg.usage.output_tokens ?? 0,
+          cacheCreationTokens: msg.usage.cache_creation_input_tokens ?? 0,
+          cacheReadTokens: msg.usage.cache_read_input_tokens ?? 0,
+        };
+      } catch (err) {
+        lastErr = err;
+        const status = (err as { status?: number })?.status ?? 0;
+        if (!RETRYABLE.has(status) || attempt === MAX_ATTEMPTS - 1) break;
+        console.warn(`[anthropic:tsv] retry ${attempt + 1}/${MAX_ATTEMPTS} after status ${status}`);
+        // 1.5s, 3s — faster than the notice-drafter ladder because TSV
+        // extraction is user-blocking with a progress bar and 2s+4s+6s feels
+        // laggy per chunk. Three attempts still straddle most 5xx blips.
+        await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  });
+}
+
 /** Compute the USD cost for a Claude Haiku call, factoring in prompt caching. */
 export function claudeHaikuCost(
   inputTokens: number,
