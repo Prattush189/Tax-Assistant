@@ -172,11 +172,18 @@ async function extractBankStatementTsvOnce(
     throw new Error(`TSV response was truncated: missing ---END:N--- trailer (got ${parsed.actualCount} rows, finish_reason=${finishReason})`);
   }
 
-  // Integrity check #2: parsed rows MUST match trailer count. A mismatch
-  // means some lines were malformed (wrong field count) or Gemini's trailer
-  // number is wrong — either way we can't trust the extraction.
-  if (parsed.declaredCount !== parsed.actualCount) {
-    throw new Error(`TSV row-count mismatch: trailer claims ${parsed.declaredCount}, parsed ${parsed.actualCount}`);
+  // Integrity check #2: parsed rows MUST NOT be fewer than the trailer count.
+  // If we parsed fewer rows than the model says it emitted, we silently dropped
+  // some (malformed lines, wrong field count) — fail loudly. If we parsed MORE
+  // than declared, the model miscounted its own trailer (an empirically common
+  // Gemini quirk on dense statements); the rows themselves are fine so accept
+  // the parsed count. The statement-level countLikelyDates cross-check still
+  // catches wholesale row loss.
+  if (parsed.actualCount < parsed.declaredCount) {
+    throw new Error(`TSV row-count mismatch: trailer claims ${parsed.declaredCount}, parsed ${parsed.actualCount} (some rows dropped)`);
+  }
+  if (parsed.actualCount > parsed.declaredCount) {
+    console.warn(`[bank-statements] ${model} trailer undercount: claimed ${parsed.declaredCount}, parsed ${parsed.actualCount} — accepting parsed count`);
   }
 
   return {
@@ -676,9 +683,19 @@ router.post(
         //   ~12K chars ≈ 4 typical pages ≈ 120 transactions.
         //   35 chunks covers statements up to ~140 pages. The explicit
         //   ceiling bounds worst-case cost per request.
-        const MAX_CHARS_PER_CHUNK = 12_000;
-        const MAX_OUTPUT_TOKENS = 8192;
-        const MAX_CHUNKS = 35;
+        // Sizing for dense-narration statements (e.g. Canara Bank UPI, where
+        // a single row can run 200-250 chars). 12K-char chunks with 8K output
+        // tokens were producing finish_reason=length at ~61-70 rows on dense
+        // chunks even after disabling thinking-token consumption. Shrinking to
+        // 8K-char input / 16K-token output gives ~4× the headroom: each chunk
+        // now holds ~60-80 rows and fits comfortably inside 16K output tokens
+        // of pure TSV (no thinking), which is ~500+ rows of budget.
+        //
+        //   ~8K chars ≈ 2-3 typical pages ≈ 60-80 transactions.
+        //   50 chunks covers statements up to ~150 pages.
+        const MAX_CHARS_PER_CHUNK = 8_000;
+        const MAX_OUTPUT_TOKENS = 16_384;
+        const MAX_CHUNKS = 50;
         // Concurrency 2 still fits a 46-page statement in ~3 waves but
         // leaves enough headroom that a single upstream blip doesn't tear
         // the whole analysis down. Four per key regularly tripped 503
