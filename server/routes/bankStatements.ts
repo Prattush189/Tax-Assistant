@@ -105,15 +105,28 @@ function parseTsvResponse(raw: string): Omit<TsvExtractResult, 'inputTokens' | '
     // they almost always indicate an incomplete line, which the trailer
     // check below will catch anyway.
     if (parts.length < 10) continue;
-    const amount = Number(parts[2].replace(/[,\s]/g, ''));
-    if (!Number.isFinite(amount)) continue;
+    // debit & credit are separate columns so the model never has to decide
+    // sign — it just copies the numbers it sees. Exactly one should be
+    // populated per row; we compute signed amount server-side. This removes
+    // the ~1-2 sign-flips-per-statement that were making inflow/outflow
+    // vary by ~₹25-50K across otherwise-identical runs.
+    const debitStr = cleanTsvCell(parts[2]);
+    const creditStr = cleanTsvCell(parts[3]);
+    const debit = debitStr === '' ? 0 : Number(debitStr.replace(/[,\s]/g, ''));
+    const credit = creditStr === '' ? 0 : Number(creditStr.replace(/[,\s]/g, ''));
+    if (!Number.isFinite(debit) || !Number.isFinite(credit)) continue;
+    // Reject malformed rows: both empty (not a transaction) or both populated
+    // (model confusion — we can't know the real sign). Skipping here will
+    // fail the trailer-count check loudly rather than persisting bad data.
+    if ((debit === 0 && credit === 0) || (debit > 0 && credit > 0)) continue;
+    const amount = credit - debit; // positive = inflow, negative = outflow
     const balanceStr = cleanTsvCell(parts[4]);
     const balance = balanceStr === '' ? null : Number(balanceStr.replace(/[,\s]/g, ''));
     rows.push({
       date: cleanTsvCell(parts[0]),
       narration: cleanTsvCell(parts[1]),
       amount,
-      type: cleanTsvCell(parts[3]).toLowerCase() === 'credit' ? 'credit' : 'debit',
+      type: amount >= 0 ? 'credit' : 'debit',
       balance: Number.isFinite(balance as number) ? balance : null,
       category: cleanTsvCell(parts[5]) || 'Other',
       subcategory: cleanTsvCell(parts[6]) || null,

@@ -59,13 +59,14 @@ export const BANK_STATEMENT_TSV_PROMPT = `You are parsing an Indian bank stateme
 
 Output format — STRICT. No JSON, no prose, no code fences. Emit ONE transaction per line. Fields separated by a single TAB character. Exactly 10 fields per row:
 
-date<TAB>narration<TAB>amount<TAB>type<TAB>balance<TAB>category<TAB>subcategory<TAB>counterparty<TAB>reference<TAB>isRecurring
+date<TAB>narration<TAB>debit<TAB>credit<TAB>balance<TAB>category<TAB>subcategory<TAB>counterparty<TAB>reference<TAB>isRecurring
 
 Field rules:
 - date: YYYY-MM-DD (convert from DD/MM/YYYY if the statement uses that). Required.
 - narration: raw bank narration, max 200 chars. Replace any TAB or NEWLINE inside with a single space. Required.
-- amount: signed number with decimals, no commas. Positive for credit/inflow, negative for debit/outflow. Required.
-- type: "credit" or "debit" literally. Required.
+- debit: the debit / withdrawal / outflow amount EXACTLY as shown in the statement's Debit column — positive number with decimals, no commas. EMPTY STRING if this row is a credit. Never negative.
+- credit: the credit / deposit / inflow amount EXACTLY as shown in the statement's Credit column — positive number with decimals, no commas. EMPTY STRING if this row is a debit. Never negative.
+- EXACTLY ONE of debit/credit MUST be populated per row. Never both. Never neither. Copy directly from the statement's Debit/Credit columns (or from the DR/CR marker). DO NOT infer, flip signs, or swap columns.
 - balance: number with decimals, no commas. Empty string if the statement doesn't show one.
 - category: one of ${BANK_STATEMENT_CATEGORIES.map(c => `"${c}"`).join(' | ')}. Required.
 - subcategory: string or empty.
