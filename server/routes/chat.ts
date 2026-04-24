@@ -1,7 +1,7 @@
 // server/routes/chat.ts
 import { Router, Response } from 'express';
-import { GEMINI_T1_INPUT_COST, GEMINI_T1_OUTPUT_COST, GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST, GEMINI_THINK_INPUT_COST, GEMINI_THINK_OUTPUT_COST, GEMINI_THINK_FB_INPUT_COST, GEMINI_THINK_FB_OUTPUT_COST, GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, GEMINI_CHAT_MODEL_THINK, GEMINI_CHAT_MODEL_THINK_FB, GEMINI_API_KEYS } from '../lib/gemini.js';
-import { selectTier, confirmUsed, getActiveKeyIndex, type ModelTier } from '../lib/searchQuota.js';
+import { GEMINI_T1_INPUT_COST, GEMINI_T1_OUTPUT_COST, GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST, GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, GEMINI_API_KEYS } from '../lib/gemini.js';
+import { selectTier, confirmUsed, getActiveKeyIndex } from '../lib/searchQuota.js';
 import { streamGeminiChat } from '../lib/geminiChat.js';
 import { chatRepo } from '../db/repositories/chatRepo.js';
 import { messageRepo } from '../db/repositories/messageRepo.js';
@@ -12,6 +12,7 @@ import { getBillingUserId, getBillingUser } from '../lib/billing.js';
 import { retrieveContextWithRefs, SectionReference } from '../rag/index.js';
 import { SseWriter } from '../lib/sseStream.js';
 import { AuthRequest } from '../types.js';
+import { buildChatFactsBlock } from '../data/taxFacts.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 
 const router = Router();
@@ -65,6 +66,33 @@ const WEB_SEARCH_PATTERNS = [
   // "Is this still applicable" / "has this changed" — signals the user wants
   // a freshness check, not a generic lookup
   /\b(still\s+(applicable|valid|in\s+force)|has\s+this\s+changed|any\s+changes)\b/i,
+
+  // Capital-gains rate questions — Budget 2024 (effective 23 Jul 2024) reset
+  // LTCG 10%→12.5% and STCG 15%→20% for listed equity. The model's training
+  // data still skews to the old rates, so force a freshness check for any
+  // LTCG / STCG / capital-gains query.
+  /\b(ltcg|stcg|long[-\s]?term\s+capital\s+gain|short[-\s]?term\s+capital\s+gain|capital\s+gains?)\b/i,
+
+  // Specific section-number queries — sections whose rates/limits were
+  // changed by recent Finance Acts are the highest-drift category.
+  /§\s*\d+/,                                                // unicode section sign
+  /\bsec(?:tion)?\.?\s*1?\d{2,3}[A-Z]{0,3}\b/i,             // "section 194S", "sec 80C", "s. 54F"
+  /\b(80C|80CCD|80D|80E|80G|80TTA|80TTB|80EEA?|80EEB)\b/i,  // popular deduction sections
+  /\b(54|54F|54EC|54B|111A|112|112A|115BA[A-Z]?|115BBH|115QA|194[A-Z]?|206C)\b/,
+  /\bchapter\s+VI-?A\b/i,
+
+  // Rate / threshold / limit queries (generic — catches edge cases the named
+  // patterns miss). Requires the query to also mention a topic word so we
+  // don't spuriously search for "rate limit" (programming).
+  /\b(rate|rates|threshold|limit|ceiling|cap|slab|bracket|exemption|deduction|rebate|surcharge|cess)\b[\s\S]{0,80}\b(tax|gst|tds|tcs|income|capital|nps|rent|salary|property|hra|dividend|interest|commission|professional|contractor|crypto|vda|esop|lta|gratuity|pension|epf|ppf|ulip)\b/i,
+  /\b(tax|gst|tds|tcs|income|capital|nps|rent|salary|property|hra|dividend|interest|commission|professional|contractor|crypto|vda|esop|lta|gratuity|pension|epf|ppf|ulip)\b[\s\S]{0,80}\b(rate|rates|threshold|limit|ceiling|cap|slab|bracket|exemption|deduction|rebate|surcharge|cess)\b/i,
+
+  // Presumptive / audit thresholds (Budget 2023 raised 44AD to ₹3Cr and
+  // 44ADA to ₹75L when cash ≤ 5%).
+  /\b(presumptive|44AD|44ADA|44AE|tax\s+audit)\b/i,
+
+  // VDA / crypto (§115BBH + §194S introduced FY 2022-23, nuance keeps evolving)
+  /\b(vda|virtual\s+digital\s+asset|crypto(?:currency)?|nft)\b/i,
 ];
 
 function shouldEnableWebSearch(query: string): boolean {
@@ -101,10 +129,10 @@ RULES:
 - If question is vague/incomplete, ask a clarifying question instead of guessing.
 - If reference text is injected, use it silently as additional context — NEVER mention "the reference", "provided context", or "provided text". Always answer from your full knowledge; the reference is supplementary, never a limitation.
 - Cite section numbers (both old and new Act). Mention consulting a CA for official filing.
-- GST slabs (post 56th Council): 0% essentials, 5% daily needs, 18% standard, 40% demerit, 3% gold.
-- NEW REGIME FY 2025-26: 0-4L nil, 4-8L 5%, 8-12L 10%, 12-16L 15%, 16-20L 20%, 20-24L 25%, 24L+ 30%. Std deduction ₹75K, rebate 87A ≤₹12L (max ₹60K).
-- NEW REGIME FY 2024-25: 0-3L nil, 3-7L 5%, 7-10L 10%, 10-12L 15%, 12-15L 20%, 15L+ 30%. Std deduction ₹50K (post July Budget ₹75K), rebate 87A ≤₹7L.
-- OLD REGIME (all FYs): Below-60: 0-2.5L nil, 2.5-5L 5%, 5-10L 20%, 10L+ 30%. Senior(60-80): 0-3L nil. Super-senior(80+): 0-5L nil. Std deduction ₹50K, rebate 87A ≤₹5L (max ₹12.5K).
+- ANY rate, threshold, limit or percentage you quote MUST match the FACTS block below. These are the current values post-Finance-Act-2024 and post-56th-GST-Council. If the FACTS block contradicts your training data, the FACTS block is right — your training is stale.
+
+FACTS (authoritative — single source of truth, kept in lockstep with the calculator engines):
+${buildChatFactsBlock()}
 
 HANDLING ATTACHED DOCUMENTS:
 - If the user attaches a document and asks a vague question, your response MUST focus on the attached document's content.
@@ -124,7 +152,7 @@ const ATTACHMENTS_PER_MESSAGE: Record<string, number> = {
 };
 
 router.post('/chat', async (req: AuthRequest, res: Response) => {
-  const { chatId, message, fileContext, fileContexts: rawFileContexts, profileContext, chatMode } = req.body;
+  const { chatId, message, fileContext, fileContexts: rawFileContexts, profileContext } = req.body;
   // Normalize: support both single fileContext and array fileContexts
   const fileContexts: { filename: string; mimeType: string; extractedData?: unknown }[] =
     rawFileContexts ?? (fileContext ? [fileContext] : []);
@@ -161,18 +189,10 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
   const limits = getUserLimits(billingUser);
   const used = getMessageCount(billingUserId, limits.messages.period);
 
-  const isThinking = chatMode === 'thinking';
-  const creditCost = isThinking ? 2 : 1;
-  const modeMaxTokens = isThinking ? 8000 : MAX_TOKENS;
-
-  if (used + creditCost > limits.messages.limit) {
+  if (used + 1 > limits.messages.limit) {
     const periodLabel = limits.messages.period === 'day' ? 'daily' : 'monthly';
-    const remaining = limits.messages.limit - used;
-    const insufficientMsg = isThinking && remaining > 0
-      ? `Thinking mode requires ${creditCost} credits but you only have ${remaining} left. Switch to Fast mode or upgrade your plan.`
-      : `You've reached your ${periodLabel} message limit (${limits.messages.limit} messages). Upgrade your plan for more.`;
     res.status(429).json({
-      error: insufficientMsg,
+      error: `You've reached your ${periodLabel} message limit (${limits.messages.limit} messages). Upgrade your plan for more.`,
       upgrade: true,
     });
     return;
@@ -265,170 +285,149 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
 
   const sse = new SseWriter(res);
 
-  let fullResponse = '';
+  // Heartbeat keeps intermediate proxies (nginx, Cloudflare, etc.) from buffering
+  // or dropping the connection while the model is still "thinking". The client
+  // treats these as no-ops but uses any byte arrival to reset its idle watchdog.
+  const HEARTBEAT_MS = 10_000;
+  const heartbeat = setInterval(() => { sse.writeHeartbeat(); }, HEARTBEAT_MS);
+  // Stop streaming cleanly if the client disconnects mid-response.
+  const clientAbort = new AbortController();
+  req.on('close', () => { clientAbort.abort(); });
 
-  const messages: ChatCompletionMessageParam[] = [
-    { role: 'system', content: SYSTEM_INSTRUCTION },
-    ...history,
-    { role: 'user', content: userContent },
-  ];
+  let fullResponse = '';
 
   // Retry logic: up to 3 attempts with exponential backoff
   const MAX_RETRIES = 3;
-  let success = false;
 
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    try {
-      let stopReason: string | null = null;
-      let inputTok = 0;
-      let outputTok = 0;
+  try {
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      try {
+        let stopReason: string | null = null;
+        let inputTok = 0;
+        let outputTok = 0;
 
-      // ── Dual-mode cascade (all Gemini, free tier) ─────────────────────
-      // FAST     (1 credit): Gemini 2.5 Flash-Lite → Gemini 3.1 Flash-Lite fallback
-      // THINKING (2 credits): Gemini 3 Flash → Gemini 2.5 Flash fallback, always search, 8000 tokens
-      // Search grounding: 2.5 family = 1,500 RPD shared | 3.x family = 5,000/month shared
-      const searchEnabled = isThinking ? true : shouldEnableWebSearch(message);
-      let usedModel = '';
-      const historyPlain = history.map(m => ({ role: m.role as string, content: m.content as string }));
+        // ── Fast-mode cascade ─────────────────────────────────────────────
+        // Primary  : Gemini 2.5 Flash-Lite (2.5 daily pool)
+        // Fallback : Gemini 3.1 Flash-Lite (3.x monthly pool)
+        // Fallback only runs if the primary emitted zero text — we don't
+        // restart the stream after partial output (would produce duplicated
+        // responses on the client).
+        const searchEnabled = shouldEnableWebSearch(message);
+        let usedModel = '';
+        const historyPlain = history.map(m => ({ role: m.role as string, content: m.content as string }));
+        let primaryFailedMidStream = false;
 
-      if (isThinking) {
-        // ── THINKING: Gemini 2.5 Flash primary (always search) ──
-        // 2.5 family uses the daily 1,500 RPD pool — track under 'gemini-2.5'.
-        const primaryIdx = getActiveKeyIndex();
-        const thinkApiKey = GEMINI_API_KEYS[primaryIdx] ?? '';
-        if (thinkApiKey) {
-          usedModel = GEMINI_CHAT_MODEL_THINK;
-          try {
-            for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_THINK, SYSTEM_INSTRUCTION, historyPlain, userContent, thinkApiKey, modeMaxTokens, true, true)) {
-              if (chunk.text) { fullResponse += chunk.text; sse.writeText(chunk.text); }
-              if (chunk.done) { inputTok = chunk.inputTokens ?? 0; outputTok = chunk.outputTokens ?? 0; stopReason = 'end_turn'; }
-            }
-            confirmUsed('gemini-2.5', primaryIdx, true);
-          } catch (err) {
-            console.warn('[chat] Think: Gemini 2.5 Flash failed, falling back to Gemini 3 Flash:', (err as Error).message?.slice(0, 120));
-            fullResponse = ''; usedModel = '';
-          }
-        }
-
-        // Gemini 3 Flash fallback for thinking — uses the 3.x monthly pool.
-        if (!fullResponse) {
-          const selection = selectTier(true);  // pick best key for Gemini 3 quota
-          const fbApiKey = selection.keyIndex >= 0 ? GEMINI_API_KEYS[selection.keyIndex] ?? '' : '';
-          if (fbApiKey) {
-            usedModel = GEMINI_CHAT_MODEL_THINK_FB;
-            try {
-              for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_THINK_FB, SYSTEM_INSTRUCTION, historyPlain, userContent, fbApiKey, modeMaxTokens, true, true)) {
-                if (chunk.text) { fullResponse += chunk.text; sse.writeText(chunk.text); }
-                if (chunk.done) { inputTok = chunk.inputTokens ?? 0; outputTok = chunk.outputTokens ?? 0; stopReason = 'end_turn'; }
-              }
-              confirmUsed('gemini-3', selection.keyIndex, true);
-            } catch (err) {
-              console.warn('[chat] Think fallback: Gemini 3 Flash also failed:', (err as Error).message?.slice(0, 120));
-              fullResponse = ''; usedModel = '';
-            }
-          }
-        }
-      } else {
         // ── FAST: Gemini 2.5 Flash-Lite primary ──
         const activeIdx = getActiveKeyIndex();
         const fastApiKey = GEMINI_API_KEYS[activeIdx] ?? '';
         if (fastApiKey) {
           usedModel = GEMINI_CHAT_MODEL_T2;
           try {
-            for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_T2, SYSTEM_INSTRUCTION, historyPlain, userContent, fastApiKey, modeMaxTokens, searchEnabled, true)) {
+            for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_T2, SYSTEM_INSTRUCTION, historyPlain, userContent, fastApiKey, MAX_TOKENS, searchEnabled, true)) {
               if (chunk.text) { fullResponse += chunk.text; sse.writeText(chunk.text); }
-              if (chunk.done) { inputTok = chunk.inputTokens ?? 0; outputTok = chunk.outputTokens ?? 0; stopReason = 'end_turn'; }
+              if (chunk.done) {
+                inputTok = chunk.inputTokens ?? 0;
+                outputTok = chunk.outputTokens ?? 0;
+                stopReason = chunk.finishReason === 'MAX_TOKENS' ? 'max_tokens' : 'end_turn';
+              }
             }
             confirmUsed('gemini-2.5', activeIdx, searchEnabled);
           } catch (err) {
-            console.warn('[chat] Fast: Gemini 2.5 Flash-Lite failed, falling back to 3.1 Flash-Lite:', (err as Error).message?.slice(0, 120));
-            fullResponse = ''; usedModel = '';
+            // If we already started streaming text, don't run the fallback —
+            // that would concatenate a second response into the same bubble.
+            // Instead, surface a truncation signal and persist what we have.
+            if (fullResponse) {
+              primaryFailedMidStream = true;
+              stopReason = 'network_error';
+              console.warn('[chat] Fast primary failed after partial output; keeping partial response:', (err as Error).message?.slice(0, 120));
+            } else {
+              console.warn('[chat] Fast: Gemini 2.5 Flash-Lite failed, falling back to 3.1 Flash-Lite:', (err as Error).message?.slice(0, 120));
+              usedModel = '';
+            }
           }
         }
 
-        // Gemini 3.1 Flash-Lite fallback for fast
-        if (!fullResponse) {
+        // Gemini 3.1 Flash-Lite fallback for fast (only when primary returned nothing)
+        if (!fullResponse && !primaryFailedMidStream) {
           const selection = selectTier(searchEnabled);
           const fbApiKey = selection.keyIndex >= 0 ? GEMINI_API_KEYS[selection.keyIndex] ?? '' : '';
           if (fbApiKey) {
             usedModel = GEMINI_CHAT_MODEL_T1;
             try {
-              for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_T1, SYSTEM_INSTRUCTION, historyPlain, userContent, fbApiKey, modeMaxTokens, searchEnabled, true)) {
+              for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_T1, SYSTEM_INSTRUCTION, historyPlain, userContent, fbApiKey, MAX_TOKENS, searchEnabled, true)) {
                 if (chunk.text) { fullResponse += chunk.text; sse.writeText(chunk.text); }
-                if (chunk.done) { inputTok = chunk.inputTokens ?? 0; outputTok = chunk.outputTokens ?? 0; stopReason = 'end_turn'; }
+                if (chunk.done) {
+                  inputTok = chunk.inputTokens ?? 0;
+                  outputTok = chunk.outputTokens ?? 0;
+                  stopReason = chunk.finishReason === 'MAX_TOKENS' ? 'max_tokens' : 'end_turn';
+                }
               }
               confirmUsed('gemini-3', selection.keyIndex, searchEnabled);
-            } catch {
-              fullResponse = ''; usedModel = '';
+            } catch (err) {
+              console.warn('[chat] Fast fallback also failed:', (err as Error).message?.slice(0, 120));
+              if (!fullResponse) { usedModel = ''; }
             }
           }
         }
-      }
 
-      // Persist model response
-      if (fullResponse) {
-        messageRepo.create(chatId, 'model', fullResponse);
-      }
-
-      // Auto-title
-      if (chat.title === 'New Chat' && message.trim().length > 0) {
-        const title = message.trim().slice(0, 60) + (message.trim().length > 60 ? '...' : '');
-        chatRepo.updateTitle(chatId, title);
-      }
-      chatRepo.touchTimestamp(chatId);
-
-      // Log usage — cost depends on which model was actually used.
-      // Guard against silent failures: if no tokens were consumed and no
-      // response was produced, the call did NOT succeed — don't charge the
-      // user a credit for it (previously this still logged a usage row and
-      // ate into their message quota).
-      const didProduceOutput = (inputTok > 0 || outputTok > 0) && fullResponse.length > 0;
-      if (didProduceOutput) {
-        const costMap: Record<string, [number, number]> = {
-          [GEMINI_CHAT_MODEL_T1]: [GEMINI_T1_INPUT_COST, GEMINI_T1_OUTPUT_COST],
-          [GEMINI_CHAT_MODEL_T2]: [GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST],
-          [GEMINI_CHAT_MODEL_THINK]: [GEMINI_THINK_INPUT_COST, GEMINI_THINK_OUTPUT_COST],
-          [GEMINI_CHAT_MODEL_THINK_FB]: [GEMINI_THINK_FB_INPUT_COST, GEMINI_THINK_FB_OUTPUT_COST],
-        };
-        const [inputCost, outputCost] = costMap[usedModel] ?? [GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST];
-        const actualSearchUsed = searchEnabled;
-        const cost = (inputTok * inputCost) + (outputTok * outputCost);
-        usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, inputTok, outputTok, cost, false, usedModel || undefined, actualSearchUsed, 'chat');
-        // Thinking mode costs 2 credits — log extra zero-cost rows to consume them.
-        // Only do this if the primary call actually succeeded.
-        if (isThinking) {
-          for (let c = 1; c < creditCost; c++) {
-            usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, 0, 0, 0, false, usedModel || undefined, false, 'chat');
-          }
+        // Neither model produced output — treat this attempt as a failure so
+        // the outer retry loop can try again (rather than silently returning
+        // a blank reply).
+        if (!fullResponse) {
+          throw new Error('No response produced by any model');
         }
-      } else {
-        console.warn('[chat] skipping usage log — no tokens and empty response (likely upstream failure)');
+
+        // Persist model response
+        messageRepo.create(chatId, 'model', fullResponse);
+
+        // Auto-title
+        if (chat.title === 'New Chat' && message.trim().length > 0) {
+          const title = message.trim().slice(0, 60) + (message.trim().length > 60 ? '...' : '');
+          chatRepo.updateTitle(chatId, title);
+        }
+        chatRepo.touchTimestamp(chatId);
+
+        // Log usage — cost depends on which model was actually used.
+        if ((inputTok > 0 || outputTok > 0) && fullResponse.length > 0) {
+          const costMap: Record<string, [number, number]> = {
+            [GEMINI_CHAT_MODEL_T1]: [GEMINI_T1_INPUT_COST, GEMINI_T1_OUTPUT_COST],
+            [GEMINI_CHAT_MODEL_T2]: [GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST],
+          };
+          const [inputCost, outputCost] = costMap[usedModel] ?? [GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST];
+          const cost = (inputTok * inputCost) + (outputTok * outputCost);
+          usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, inputTok, outputTok, cost, false, usedModel || undefined, searchEnabled, 'chat');
+        } else {
+          console.warn('[chat] skipping usage log — no tokens reported (likely partial/truncated stream)');
+        }
+
+        sse.writeDone({ stop_reason: stopReason });
+        return;
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        const status = (err as any)?.status ?? 0;
+        const isRetryable = [429, 500, 502, 503].includes(status) || errMsg.includes('rate_limit') || errMsg.includes('No response produced');
+        console.warn(`[chat] Attempt ${attempt + 1}/${MAX_RETRIES} failed: ${errMsg.slice(0, 120)}`);
+
+        // Don't retry if the client already hung up.
+        if (clientAbort.signal.aborted) return;
+
+        if (!isRetryable || attempt === MAX_RETRIES - 1) {
+          const isRateLimit = status === 429 || errMsg.toLowerCase().includes('rate');
+          const clientMessage = isRateLimit
+            ? 'Too many requests. Please wait a moment and try again.'
+            : "I'm having trouble connecting. Please try again in a moment.";
+          sse.writeError(clientMessage);
+          return;
+        }
+
+        // Exponential backoff: 2s, 4s, 6s
+        await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
       }
-
-      sse.writeDone({ stop_reason: stopReason });
-      success = true;
-      break;
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      const status = (err as any)?.status ?? 0;
-      const isRetryable = [429, 500, 502, 503].includes(status) || errMsg.includes('rate_limit');
-      console.warn(`[chat] Attempt ${attempt + 1}/${MAX_RETRIES} failed: ${errMsg.slice(0, 120)}`);
-
-      if (!isRetryable || attempt === MAX_RETRIES - 1) {
-        const isRateLimit = status === 429 || errMsg.toLowerCase().includes('rate');
-        const clientMessage = isRateLimit
-          ? 'Too many requests. Please wait a moment and try again.'
-          : "I'm having trouble connecting. Please try again in a moment.";
-        sse.writeError(clientMessage);
-        break;
-      }
-
-      // Exponential backoff: 2s, 4s, 6s
-      await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
     }
+  } finally {
+    clearInterval(heartbeat);
+    sse.end();
   }
-
-  sse.end();
 });
 
 export default router;

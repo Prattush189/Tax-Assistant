@@ -29,6 +29,16 @@ export class SseWriter {
     this.res.write(`data: ${JSON.stringify({ text })}\n\n`);
   }
 
+  /**
+   * Keepalive ping. Keeps reverse proxies from closing the connection while
+   * the model is still generating, and lets the client reset its idle
+   * watchdog. The client should ignore `{heartbeat:true}` events entirely.
+   */
+  writeHeartbeat(): void {
+    if (this.closed) return;
+    this.res.write(`data: ${JSON.stringify({ heartbeat: true })}\n\n`);
+  }
+
   /** Emit the terminal `done` event. Extra fields are merged into the payload. */
   writeDone(extra: Record<string, unknown> = {}): void {
     if (this.closed) return;

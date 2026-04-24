@@ -22,6 +22,8 @@ export interface GeminiChatChunk {
   inputTokens?: number;
   outputTokens?: number;
   sources?: Array<{ title: string; url: string }>;
+  /** STOP | MAX_TOKENS | SAFETY | RECITATION | OTHER. Only set on done chunks. */
+  finishReason?: string;
 }
 
 interface GeminiContent {
@@ -106,6 +108,7 @@ export async function* streamGeminiChat(
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
   let sources: Array<{ title: string; url: string }> = [];
+  let finishReason: string | undefined;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -139,6 +142,9 @@ export async function* streamGeminiChat(
           }
         }
       }
+      if (candidate?.finishReason) {
+        finishReason = candidate.finishReason;
+      }
 
       // Extract grounding metadata (sources)
       const grounding = candidate?.groundingMetadata;
@@ -168,5 +174,6 @@ export async function* streamGeminiChat(
     inputTokens: totalInputTokens,
     outputTokens: totalOutputTokens,
     sources: uniqueSources.length > 0 ? uniqueSources : undefined,
+    finishReason,
   };
 }

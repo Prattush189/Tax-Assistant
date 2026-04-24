@@ -12,7 +12,9 @@
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
     "itr:types": "tsx server/scripts/generate-itr-types.ts",
-    "itr:enums": "tsx server/scripts/extract-itr-enums.ts"
+    "itr:enums": "tsx server/scripts/extract-itr-enums.ts",
+    "check:chat-facts": "tsx server/scripts/check-chat-facts.ts",
+    "chat:eval": "tsx server/scripts/chat-eval.ts"
   },
   "dependencies": {
     "@react-oauth/google": "^0.13.5",

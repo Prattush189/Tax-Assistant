@@ -54,18 +54,22 @@ interface SidebarProps {
 
 const PLAN_RANK: Record<string, number> = { free: 0, pro: 1, enterprise: 2 };
 
-const baseNavItems: { id: ActiveView; label: string; icon: typeof MessageCircle }[] = [
-  { id: 'chat', label: 'Chat', icon: MessageCircle },
+type NavItem = { id: ActiveView; label: string; icon: typeof MessageCircle; ai?: boolean };
+
+// `ai: true` tabs surface an [AI] badge beside the label so users can see at a
+// glance which features call an AI model behind the scenes.
+const baseNavItems: NavItem[] = [
+  { id: 'chat', label: 'Chat', icon: MessageCircle, ai: true },
   { id: 'calculator', label: 'Calc', icon: Calculator },
-  { id: 'notices', label: 'Notices', icon: FileText },
+  { id: 'notices', label: 'Notices', icon: FileText, ai: true },
   { id: 'dashboard', label: 'Stats', icon: LayoutDashboard },
 ];
 
-const adminNavItem = { id: 'admin' as ActiveView, label: 'Admin', icon: Shield };
-const itrNavItem = { id: 'itr' as ActiveView, label: 'ITR', icon: FileSpreadsheet };
-const boardResolutionsNavItem = { id: 'board_resolutions' as ActiveView, label: 'Resolutions', icon: Gavel };
-const bankStatementsNavItem = { id: 'bank_statements' as ActiveView, label: 'Statements', icon: Landmark };
-const profileNavItem = { id: 'profile' as ActiveView, label: 'Profile', icon: User };
+const adminNavItem: NavItem = { id: 'admin' as ActiveView, label: 'Admin', icon: Shield };
+const itrNavItem: NavItem = { id: 'itr' as ActiveView, label: 'ITR', icon: FileSpreadsheet };
+const boardResolutionsNavItem: NavItem = { id: 'board_resolutions' as ActiveView, label: 'Resolutions', icon: Gavel, ai: true };
+const bankStatementsNavItem: NavItem = { id: 'bank_statements' as ActiveView, label: 'Statements', icon: Landmark, ai: true };
+const profileNavItem: NavItem = { id: 'profile' as ActiveView, label: 'Profile', icon: User };
 
 function timeAgo(dateStr: string): string {
   const istNow = Date.now() + (5.5 * 60 * 60 * 1000) + (new Date().getTimezoneOffset() * 60 * 1000);
@@ -301,6 +305,17 @@ export function Sidebar({
               >
                 <Icon className={cn("w-3.5 h-3.5 shrink-0", isActive && "text-emerald-500")} />
                 <span className="truncate">{item.label}</span>
+                {item.ai && (
+                  <span
+                    className={cn(
+                      'text-[8px] font-bold tracking-wider px-0.5 rounded leading-none',
+                      isActive
+                        ? 'text-emerald-600 dark:text-emerald-300'
+                        : 'text-purple-500 dark:text-purple-300',
+                    )}
+                    title="Uses AI"
+                  >[AI]</span>
+                )}
               </button>
             );
           })}
@@ -675,6 +690,17 @@ export function Sidebar({
                       isActive ? "text-emerald-500" : "text-gray-300 dark:text-gray-600"
                     )} />
                     <span className="flex-1 text-sm font-medium truncate">{tab.label}</span>
+                    {tab.ai && (
+                      <span
+                        className={cn(
+                          'text-[9px] font-bold tracking-wider px-1 py-0.5 rounded border leading-none shrink-0',
+                          isActive
+                            ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border-emerald-300/60 dark:border-emerald-700/60'
+                            : 'bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-300 border-purple-200 dark:border-purple-800/60',
+                        )}
+                        title="Uses AI"
+                      >AI</span>
+                    )}
                     {isLocked && <Lock className="w-3 h-3 text-gray-400 shrink-0" />}
                   </button>
                 );

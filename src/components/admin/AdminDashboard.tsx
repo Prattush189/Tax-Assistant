@@ -140,12 +140,15 @@ export function AdminDashboard() {
 
   const [adminTab, setAdminTab] = useState<AdminTab>('overview');
 
-  const ADMIN_TABS: { id: AdminTab; label: string; icon: typeof Activity }[] = [
+  // `ai: true` tabs expose AI-specific telemetry (per-model costs / usage /
+  // recent calls). Rendered with a small [AI] badge so admins can see at a
+  // glance which tabs drill into AI infrastructure.
+  const ADMIN_TABS: { id: AdminTab; label: string; icon: typeof Activity; ai?: boolean }[] = [
     { id: 'overview', label: 'Overview', icon: BarChart3 },
     { id: 'users', label: 'Users', icon: Users },
-    { id: 'api-costs', label: 'API Costs', icon: DollarSign },
-    { id: 'recent-calls', label: 'Recent Calls', icon: Clock },
-    { id: 'model-usage', label: 'Model Usage', icon: Cpu },
+    { id: 'api-costs', label: 'API Costs', icon: DollarSign, ai: true },
+    { id: 'recent-calls', label: 'Recent Calls', icon: Clock, ai: true },
+    { id: 'model-usage', label: 'Model Usage', icon: Cpu, ai: true },
   ];
 
   return (
@@ -190,6 +193,17 @@ export function AdminDashboard() {
               >
                 <Icon className="w-4 h-4" />
                 {tab.label}
+                {tab.ai && (
+                  <span
+                    className={cn(
+                      'text-[9px] font-bold tracking-wider px-1 py-0.5 rounded border leading-none',
+                      adminTab === tab.id
+                        ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border-emerald-300/60 dark:border-emerald-700/60'
+                        : 'bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-300 border-purple-200 dark:border-purple-800/60',
+                    )}
+                    title="AI telemetry"
+                  >AI</span>
+                )}
               </button>
             );
           })}

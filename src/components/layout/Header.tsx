@@ -15,10 +15,12 @@ interface HeaderProps {
   onViewChange?: (view: ActiveView) => void;
 }
 
-const navItems: { id: ActiveView; label: string; icon: typeof MessageCircle }[] = [
-  { id: 'chat', label: 'Chat', icon: MessageCircle },
+// `ai: true` marks tabs whose primary surface is an AI-powered feature. The
+// Header and Sidebar render a small [AI] badge beside these labels.
+const navItems: { id: ActiveView; label: string; icon: typeof MessageCircle; ai?: boolean }[] = [
+  { id: 'chat', label: 'Chat', icon: MessageCircle, ai: true },
   { id: 'calculator', label: 'Calculator', icon: Calculator },
-  { id: 'notices', label: 'Notices', icon: FileText },
+  { id: 'notices', label: 'Notices', icon: FileText, ai: true },
   { id: 'profile', label: 'Profile', icon: User },
   { id: 'dashboard', label: 'Stats', icon: LayoutDashboard },
 ];
@@ -41,13 +43,13 @@ export function Header({
   // Board Resolutions: all authenticated users. Plan tab always last.
   const canAccessItr = user?.role === 'admin' || user?.itr_enabled === true;
   const canAccessBoardResolutions = !!user;
-  const allNavItems = [
+  const allNavItems: { id: ActiveView; label: string; icon: typeof MessageCircle; ai?: boolean }[] = [
     ...navItems,
     ...(canAccessItr ? [{ id: 'itr' as ActiveView, label: 'ITR', icon: FileSpreadsheet }] : []),
     ...(canAccessBoardResolutions
-      ? [{ id: 'board_resolutions' as ActiveView, label: 'Resolutions', icon: Gavel }]
+      ? [{ id: 'board_resolutions' as ActiveView, label: 'Resolutions', icon: Gavel, ai: true }]
       : []),
-    ...(user ? [{ id: 'bank_statements' as ActiveView, label: 'Statements', icon: Landmark }] : []),
+    ...(user ? [{ id: 'bank_statements' as ActiveView, label: 'Statements', icon: Landmark, ai: true }] : []),
     ...(user?.role === 'admin' ? [{ id: 'admin' as ActiveView, label: 'Admin', icon: Shield }] : []),
     { id: 'plan' as ActiveView, label: 'Plan', icon: CreditCard },
   ];
@@ -92,6 +94,17 @@ export function Header({
               >
                 <Icon className={cn("w-4 h-4", isActive && "text-emerald-500")} />
                 {item.label}
+                {item.ai && (
+                  <span
+                    className={cn(
+                      'ml-0.5 text-[9px] font-bold tracking-wider px-1 py-0.5 rounded border leading-none',
+                      isActive
+                        ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border-emerald-300/60 dark:border-emerald-700/60'
+                        : 'bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-300 border-purple-200 dark:border-purple-800/60',
+                    )}
+                    title="Uses AI"
+                  >AI</span>
+                )}
               </button>
             );
           })}
