@@ -74,6 +74,11 @@ Field rules:
 - reference: UTR / cheque number / txn reference number. Empty if none.
 - isRecurring: "1" if the same narration pattern appears at least twice with similar amounts (salary/EMI/SIP/rent), else "0".
 
+Concrete example — EXACTLY this tab pattern, with two consecutive tabs where a column is empty:
+2025-02-28\tUPI/DR/100732291255/THE MUSCL\t500.00\t\t6152.58\tPersonal\t\tTHE MUSCL\t100732291255\t0
+2025-03-01\tNEFT-HDFC-SALARY MAR\t\t85000.00\t91152.58\tSalary\t\tACME CORP\tN123456\t1
+Notice row 1 has an EMPTY credit column (two consecutive tabs between 500.00 and 6152.58) and row 2 has an EMPTY debit column (two consecutive tabs between the narration and 85000.00). ALWAYS emit 10 fields per row = 9 tabs per row, including empty ones.
+
 After the last transaction row, emit exactly one trailer line:
 ---END:<N>---
 where <N> is the total count of transaction rows you just emitted. This is required — we verify it to detect truncation.

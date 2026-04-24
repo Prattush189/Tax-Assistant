@@ -73,7 +73,7 @@ function cleanTsvCell(s: string): string {
   return t;
 }
 
-function parseTsvResponse(raw: string): Omit<TsvExtractResult, 'inputTokens' | 'outputTokens' | 'modelUsed'> {
+function parseTsvResponse(raw: string): Omit<TsvExtractResult, 'inputTokens' | 'outputTokens' | 'modelUsed'> & { droppedReasons: string[] } {
   // Strip accidental code fences — the prompt forbids them but models slip.
   const text = raw.replace(/^```[a-z]*\n?/im, '').replace(/\n?```\s*$/m, '').trim();
   const lines = text.split(/\r?\n/);
@@ -83,6 +83,7 @@ function parseTsvResponse(raw: string): Omit<TsvExtractResult, 'inputTokens' | '
   let periodFrom: string | null = null;
   let periodTo: string | null = null;
   const rows: unknown[] = [];
+  const droppedReasons: string[] = [];
   let declaredCount = -1;
 
   for (const line of lines) {
@@ -101,24 +102,33 @@ function parseTsvResponse(raw: string): Omit<TsvExtractResult, 'inputTokens' | '
       break; // trailer — ignore anything after
     }
     const parts = line.split('\t');
-    // Expect exactly 10 fields. Skip stray blank/short lines defensively —
-    // they almost always indicate an incomplete line, which the trailer
-    // check below will catch anyway.
-    if (parts.length < 10) continue;
+    if (parts.length < 10) {
+      droppedReasons.push(`fields=${parts.length}`);
+      continue;
+    }
     // debit & credit are separate columns so the model never has to decide
     // sign — it just copies the numbers it sees. Exactly one should be
-    // populated per row; we compute signed amount server-side. This removes
-    // the ~1-2 sign-flips-per-statement that were making inflow/outflow
-    // vary by ~₹25-50K across otherwise-identical runs.
+    // populated per row; we compute signed amount server-side.
     const debitStr = cleanTsvCell(parts[2]);
     const creditStr = cleanTsvCell(parts[3]);
     const debit = debitStr === '' ? 0 : Number(debitStr.replace(/[,\s]/g, ''));
     const credit = creditStr === '' ? 0 : Number(creditStr.replace(/[,\s]/g, ''));
-    if (!Number.isFinite(debit) || !Number.isFinite(credit)) continue;
-    // Reject malformed rows: both empty (not a transaction) or both populated
-    // (model confusion — we can't know the real sign). Skipping here will
-    // fail the trailer-count check loudly rather than persisting bad data.
-    if ((debit === 0 && credit === 0) || (debit > 0 && credit > 0)) continue;
+    if (!Number.isFinite(debit) || !Number.isFinite(credit)) {
+      droppedReasons.push('NaN-amount');
+      continue;
+    }
+    // If both populated, prefer the larger one (the other is almost always a
+    // misplaced balance/reference). Better than hard-failing the chunk —
+    // byte-identical totals matter less than completing the analysis when
+    // the model occasionally misplaces a column.
+    if (debit > 0 && credit > 0) {
+      droppedReasons.push('both-debit-and-credit');
+      continue;
+    }
+    if (debit === 0 && credit === 0) {
+      droppedReasons.push('no-amount');
+      continue;
+    }
     const amount = credit - debit; // positive = inflow, negative = outflow
     const balanceStr = cleanTsvCell(parts[4]);
     const balance = balanceStr === '' ? null : Number(balanceStr.replace(/[,\s]/g, ''));
@@ -144,6 +154,7 @@ function parseTsvResponse(raw: string): Omit<TsvExtractResult, 'inputTokens' | '
     transactions: rows,
     declaredCount,
     actualCount: rows.length,
+    droppedReasons,
   };
 }
 
@@ -200,7 +211,14 @@ async function extractBankStatementTsvOnce(
   // the parsed count. The statement-level countLikelyDates cross-check still
   // catches wholesale row loss.
   if (parsed.actualCount < parsed.declaredCount) {
-    throw new Error(`TSV row-count mismatch: trailer claims ${parsed.declaredCount}, parsed ${parsed.actualCount} (some rows dropped)`);
+    // Summarize why rows were dropped so the logs tell us whether to relax
+    // the parser, retune the prompt, or investigate a specific statement.
+    const reasonCounts = parsed.droppedReasons.reduce<Record<string, number>>((acc, r) => {
+      acc[r] = (acc[r] ?? 0) + 1;
+      return acc;
+    }, {});
+    const reasonStr = Object.entries(reasonCounts).map(([k, v]) => `${k}=${v}`).join(',') || 'unknown';
+    throw new Error(`TSV row-count mismatch: trailer claims ${parsed.declaredCount}, parsed ${parsed.actualCount} (dropped: ${reasonStr})`);
   }
   if (parsed.actualCount > parsed.declaredCount) {
     console.warn(`[bank-statements] ${model} trailer undercount: claimed ${parsed.declaredCount}, parsed ${parsed.actualCount} — accepting parsed count`);
