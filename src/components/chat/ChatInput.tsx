@@ -1,6 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
-import { Send, Paperclip, FileText, X, BookUser, Lock, BarChart3, Zap, Brain } from 'lucide-react';
-import type { ChatMode } from '../../services/api';
+import { Send, Paperclip, FileText, X, BookUser, Lock, BarChart3 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { UploadPhase } from '../../hooks/useFileUpload';
 import { DocumentContext } from '../../types';
@@ -22,15 +21,12 @@ interface ChatInputProps {
   onReferenceProfile?: (profile: { id: string; name: string; data: Record<string, unknown> }) => void;
   onClearReference?: () => void;
   isPro?: boolean;
-  chatMode?: ChatMode;
-  onModeChange?: (mode: ChatMode) => void;
 }
 
 export function ChatInput({
   input, isLoading, onInputChange, onSend,
   activeDocuments, onFileSelect, onDetachDocument, uploadPhase, attachmentLimit,
   profiles, referencedProfile, onReferenceProfile, onClearReference, isPro,
-  chatMode = 'fast', onModeChange,
 }: ChatInputProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showProfileDropdown, setShowProfileDropdown] = useState(false);
@@ -209,34 +205,6 @@ export function ChatInput({
               className="flex-1 bg-transparent border-0 outline-none px-2 py-2 resize-none min-h-[36px] max-h-32 text-gray-800 dark:text-gray-100 text-sm placeholder:text-gray-400"
               rows={1}
             />
-
-            {/* Fast / Thinking toggle — next to send */}
-            {onModeChange && (
-              <button
-                onClick={() => {
-                  const next: ChatMode = chatMode === 'fast' ? 'thinking' : 'fast';
-                  if (next === 'thinking') {
-                    // One-shot warning: Think mode consumes 2 credits per message
-                    toast('Think mode uses 2 credits per message (vs 1 for Fast). Use it for deeper analysis.', {
-                      icon: '🧠',
-                      duration: 4500,
-                      id: 'think-mode-warn', // de-dupe on rapid toggling
-                    });
-                  }
-                  onModeChange(next);
-                }}
-                className={cn(
-                  'flex items-center gap-1 px-2.5 py-2 rounded-lg text-xs font-medium transition-all shrink-0 border',
-                  chatMode === 'thinking'
-                    ? 'bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400 border-purple-200 dark:border-purple-800'
-                    : 'bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:border-purple-300',
-                )}
-                title={chatMode === 'fast' ? 'Switch to Thinking mode (deeper analysis, 2x credits)' : 'Switch to Fast mode (quick answers, 1x credit)'}
-              >
-                {chatMode === 'thinking' ? <Brain className="w-3.5 h-3.5" /> : <Zap className="w-3.5 h-3.5" />}
-                {chatMode === 'thinking' ? 'Think' : 'Fast'}
-              </button>
-            )}
 
             {/* Send button */}
             <button

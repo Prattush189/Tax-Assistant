@@ -20,7 +20,12 @@ function getAuthHeaders(): Record<string, string> {
 
 // ── Chat API (streaming) ─────────────────────────────────────────────────
 
-export type ChatMode = 'fast' | 'thinking';
+// Kept as a string alias for forward compatibility — only 'fast' is exercised.
+export type ChatMode = 'fast';
+
+// If the server stops pushing chunks for this long, abort and surface an error
+// instead of leaving the UI stuck in "thinking" forever.
+const CHAT_IDLE_TIMEOUT_MS = 45_000;
 
 export async function sendChatMessage(
   chatId: string | null,
@@ -30,12 +35,10 @@ export async function sendChatMessage(
   fileContexts?: { filename: string; mimeType: string; extractedData?: unknown }[],
   onDone?: (stopReason: string | null, references?: SectionReference[]) => void,
   profileContext?: { name: string; data: Record<string, unknown> },
-  chatMode?: ChatMode,
 ): Promise<void> {
   const body: Record<string, unknown> = {
     message,
     chatId: chatId ?? undefined,
-    chatMode: chatMode ?? 'fast',
     // Send as single fileContext for backward compat, or array for multi
     ...(fileContexts && fileContexts.length === 1
       ? { fileContext: fileContexts[0] }
@@ -45,19 +48,36 @@ export async function sendChatMessage(
     ...(profileContext ? { profileContext } : {}),
   };
 
+  const controller = new AbortController();
   const doStreamFetch = () => fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
     body: JSON.stringify(body),
+    signal: controller.signal,
   });
 
-  let response = await doStreamFetch();
+  let response: Response;
+  try {
+    response = await doStreamFetch();
+  } catch (err) {
+    onError(err instanceof Error && err.name === 'AbortError'
+      ? 'Request cancelled.'
+      : 'Network error. Please check your connection and try again.');
+    return;
+  }
 
   // Auto-refresh on 401
   if (response.status === 401) {
     const refreshed = await tryRefreshToken();
     if (refreshed) {
-      response = await doStreamFetch();
+      try {
+        response = await doStreamFetch();
+      } catch (err) {
+        onError(err instanceof Error && err.name === 'AbortError'
+          ? 'Request cancelled.'
+          : 'Network error. Please check your connection and try again.');
+        return;
+      }
     }
   }
 
@@ -76,35 +96,80 @@ export async function sendChatMessage(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  let terminated = false; // true after we've surfaced a done/error to the caller
+  let receivedAnyText = false;
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  // Idle-timeout watchdog: if no bytes arrive for CHAT_IDLE_TIMEOUT_MS,
+  // abort the fetch so the reader.read() promise rejects and we can surface
+  // a helpful error instead of hanging indefinitely.
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  const armIdle = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => { controller.abort(); }, CHAT_IDLE_TIMEOUT_MS);
+  };
+  armIdle();
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() ?? '';
-
-    for (const line of lines) {
-      if (!line.startsWith('data: ')) continue;
-      const payload = line.slice(6).trim();
+  try {
+    while (true) {
+      let chunk: ReadableStreamReadResult<Uint8Array>;
       try {
-        const parsed = JSON.parse(payload);
-        if (parsed.done) {
-          onDone?.(parsed.stop_reason ?? null, parsed.references ?? undefined);
-          return;
+        chunk = await reader.read();
+      } catch (err) {
+        if (terminated) break;
+        const isAbort = err instanceof Error && err.name === 'AbortError';
+        onError(isAbort
+          ? (receivedAnyText
+              ? 'The response was cut off. Please try again.'
+              : 'The server stopped responding. Please try again.')
+          : "I'm having trouble connecting. Please try again in a moment.");
+        terminated = true;
+        break;
+      }
+      const { done, value } = chunk;
+      if (done) break;
+      armIdle();
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const payload = line.slice(6).trim();
+        if (!payload) continue;
+        try {
+          const parsed = JSON.parse(payload);
+          // Server heartbeat — just resets idle watchdog, no user-visible effect.
+          if (parsed.heartbeat) continue;
+          if (parsed.done) {
+            onDone?.(parsed.stop_reason ?? null, parsed.references ?? undefined);
+            terminated = true;
+            return;
+          }
+          if (parsed.error) {
+            onError(parsed.message ?? "I'm having trouble connecting. Please try again in a moment.");
+            terminated = true;
+            return;
+          }
+          if (parsed.text) {
+            receivedAnyText = true;
+            onChunk(parsed.text);
+          }
+        } catch {
+          // Malformed JSON chunk — skip
         }
-        if (parsed.error) {
-          onError(parsed.message ?? "I'm having trouble connecting. Please try again in a moment.");
-          return;
-        }
-        if (parsed.text) {
-          onChunk(parsed.text);
-        }
-      } catch {
-        // Malformed JSON chunk — skip
       }
     }
+
+    // Stream ended (reader.done) without a terminal event — treat as truncation.
+    if (!terminated) {
+      onError(receivedAnyText
+        ? 'The response was cut off before it finished. Please try again.'
+        : "I didn't get a response. Please try again.");
+    }
+  } finally {
+    if (idleTimer) clearTimeout(idleTimer);
+    try { reader.releaseLock(); } catch { /* noop */ }
   }
 }
 

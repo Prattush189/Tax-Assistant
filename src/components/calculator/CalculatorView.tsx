@@ -14,14 +14,16 @@ import { Calculator, TrendingUp, Receipt, Briefcase, Lightbulb, FileText, Home, 
 
 export type CalculatorTab = 'income' | 'capitalGains' | 'gst' | 'tds' | 'advanceTax' | 'salary' | 'investment' | 'rentReceipt' | 'challan280';
 
-export const CALCULATOR_TABS: { id: CalculatorTab; label: string; icon: typeof Calculator; pro?: boolean }[] = [
+// `ai: true` tabs render a small [AI] badge in the sidebar to flag tabs that
+// call an AI model (e.g. Investment Planner's optimize-suggestions endpoint).
+export const CALCULATOR_TABS: { id: CalculatorTab; label: string; icon: typeof Calculator; pro?: boolean; ai?: boolean }[] = [
   { id: 'income', label: 'Income Tax', icon: Calculator },
   { id: 'capitalGains', label: 'Capital Gains', icon: TrendingUp },
   { id: 'gst', label: 'GST', icon: Receipt },
   { id: 'tds', label: 'TDS', icon: FileText },
   { id: 'advanceTax', label: 'Advance Tax', icon: Briefcase },
   { id: 'salary', label: 'Salary Optimizer', icon: Briefcase, pro: true },
-  { id: 'investment', label: 'Investment Planner', icon: Lightbulb },
+  { id: 'investment', label: 'Investment Planner', icon: Lightbulb, ai: true },
   { id: 'rentReceipt', label: 'Rent Receipts', icon: Home },
   { id: 'challan280', label: 'Challan 280', icon: CreditCard },
 ];

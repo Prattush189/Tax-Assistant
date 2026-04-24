@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Cpu, Zap, Shield, Key, Save, RotateCcw } from 'lucide-react';
+import { Cpu, Zap, Shield, Key, Save, RotateCcw, FileText, Landmark } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { cn } from '../../lib/utils';
 import {
@@ -34,10 +34,10 @@ const MODEL_COLORS: Record<string, string> = {
 
 const MODEL_LABELS: Record<string, string> = {
   'claude-haiku-4-5': 'Claude Haiku 4.5 (Notices)',
-  'gemini-3-flash-preview': 'Gemini 3 Flash (Notices FB + Think FB)',
-  'gemini-3.1-flash-lite-preview': 'Gemini 3.1 Flash-Lite (Fast Fallback)',
-  'gemini-2.5-flash-lite': 'Gemini 2.5 Flash-Lite (Fast + Suggestions + Bank Statements)',
-  'gemini-2.5-flash': 'Gemini 2.5 Flash (Think Primary)',
+  'gemini-3-flash-preview': 'Gemini 3 Flash (Notices Fallback)',
+  'gemini-3.1-flash-lite-preview': 'Gemini 3.1 Flash-Lite (Chat Fallback)',
+  'gemini-2.5-flash-lite': 'Gemini 2.5 Flash-Lite (Chat + Suggestions + Bank Statements)',
+  'gemini-2.5-flash': 'Gemini 2.5 Flash (Bank Statements Escalation)',
 };
 
 interface ModelEntry {
@@ -163,48 +163,52 @@ export function ModelUsageDashboard() {
         </div>
       </div>
 
-      {/* Dual-mode cascade architecture */}
+      {/* Chat model cascade (single-tier, post Think-mode removal) */}
       <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5">
-        <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-4">Dual-Mode Cascade Architecture</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Fast mode */}
-          <div className="rounded-xl border-2 border-blue-400 bg-blue-50 dark:bg-blue-900/10 p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <Zap className="w-4 h-4 text-blue-500" />
-              <span className="text-xs font-bold uppercase text-blue-700 dark:text-blue-400">Fast Mode (1 credit)</span>
-            </div>
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-bold text-blue-500 bg-blue-100 dark:bg-blue-900/30 px-1.5 py-0.5 rounded">PRIMARY</span>
-                <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Gemini 2.5 Flash-Lite</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-bold text-violet-500 bg-violet-100 dark:bg-violet-900/30 px-1.5 py-0.5 rounded">FALLBACK</span>
-                <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Gemini 3.1 Flash-Lite</span>
-              </div>
-              <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">4,096 tokens | Selective web search | 2.5 family: 1,500 RPD</p>
-            </div>
+        <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1">Chat Cascade</h3>
+        <p className="text-[11px] text-gray-500 dark:text-gray-400 mb-4">Single-tier (1 credit per message). Think mode has been retired — every chat message now uses the Flash-Lite cascade below.</p>
+        <div className="rounded-xl border-2 border-blue-400 bg-blue-50 dark:bg-blue-900/10 p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Zap className="w-4 h-4 text-blue-500" />
+            <span className="text-xs font-bold uppercase text-blue-700 dark:text-blue-400">Chat (1 credit)</span>
           </div>
-          {/* Thinking mode */}
-          <div className="rounded-xl border-2 border-purple-400 bg-purple-50 dark:bg-purple-900/10 p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <Shield className="w-4 h-4 text-purple-500" />
-              <span className="text-xs font-bold uppercase text-purple-700 dark:text-purple-400">Think Mode (2 credits)</span>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold text-blue-500 bg-blue-100 dark:bg-blue-900/30 px-1.5 py-0.5 rounded">PRIMARY</span>
+              <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Gemini 2.5 Flash-Lite</span>
             </div>
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-bold text-purple-500 bg-purple-100 dark:bg-purple-900/30 px-1.5 py-0.5 rounded">PRIMARY</span>
-                <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Gemini 2.5 Flash</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-bold text-sky-500 bg-sky-100 dark:bg-sky-900/30 px-1.5 py-0.5 rounded">FALLBACK</span>
-                <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Gemini 3 Flash</span>
-              </div>
-              <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">8,000 tokens | Always web search | 2.5 family: 1,500/day</p>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold text-violet-500 bg-violet-100 dark:bg-violet-900/30 px-1.5 py-0.5 rounded">FALLBACK</span>
+              <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Gemini 3.1 Flash-Lite</span>
             </div>
+            <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">4,096 tokens | Selective web search | 2.5 family: 1,500 RPD, 3.x family: 5,000/month</p>
           </div>
         </div>
-        <p className="text-[10px] text-gray-400 text-center mt-3">Search grounding: 2.5 family shares 1,500 RPD | 3.x family shares 5,000/month | All free tier, per API key</p>
+      </div>
+
+      {/* Think-tier models still power these non-chat AI features */}
+      <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5">
+        <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1 flex items-center gap-2">
+          <Shield className="w-4 h-4 text-purple-500" />
+          Other AI Features (Think-tier Models)
+        </h3>
+        <p className="text-[11px] text-gray-500 dark:text-gray-400 mb-3">Think-tier Gemini models are retained for heavier non-chat workloads.</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="rounded-xl border border-purple-200 dark:border-purple-800 bg-purple-50 dark:bg-purple-900/10 p-3">
+            <div className="flex items-center gap-2 mb-1">
+              <FileText className="w-3.5 h-3.5 text-purple-500" />
+              <span className="text-xs font-semibold text-gray-900 dark:text-gray-100">Notice Drafting</span>
+            </div>
+            <p className="text-[11px] text-gray-500 dark:text-gray-400">Claude Haiku 4.5 primary, Gemini 3 Flash Preview fallback.</p>
+          </div>
+          <div className="rounded-xl border border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-900/10 p-3">
+            <div className="flex items-center gap-2 mb-1">
+              <Landmark className="w-3.5 h-3.5 text-sky-500" />
+              <span className="text-xs font-semibold text-gray-900 dark:text-gray-100">Bank-statement Escalation</span>
+            </div>
+            <p className="text-[11px] text-gray-500 dark:text-gray-400">Escalates to Gemini 2.5 Flash on long/complex statement chunks.</p>
+          </div>
+        </div>
       </div>
 
       {/* Rate limiters (Anthropic RPM etc.) */}
