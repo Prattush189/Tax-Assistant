@@ -12,6 +12,7 @@ import { getBillingUserId, getBillingUser } from '../lib/billing.js';
 import { retrieveContextWithRefs, SectionReference } from '../rag/index.js';
 import { SseWriter } from '../lib/sseStream.js';
 import { AuthRequest } from '../types.js';
+import { buildChatFactsBlock } from '../data/taxFacts.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 
 const router = Router();
@@ -71,7 +72,27 @@ const WEB_SEARCH_PATTERNS = [
   // data still skews to the old rates, so force a freshness check for any
   // LTCG / STCG / capital-gains query.
   /\b(ltcg|stcg|long[-\s]?term\s+capital\s+gain|short[-\s]?term\s+capital\s+gain|capital\s+gains?)\b/i,
-  /\bsection\s+11[12]A?\b/i,
+
+  // Specific section-number queries — sections whose rates/limits were
+  // changed by recent Finance Acts are the highest-drift category.
+  /§\s*\d+/,                                                // unicode section sign
+  /\bsec(?:tion)?\.?\s*1?\d{2,3}[A-Z]{0,3}\b/i,             // "section 194S", "sec 80C", "s. 54F"
+  /\b(80C|80CCD|80D|80E|80G|80TTA|80TTB|80EEA?|80EEB)\b/i,  // popular deduction sections
+  /\b(54|54F|54EC|54B|111A|112|112A|115BA[A-Z]?|115BBH|115QA|194[A-Z]?|206C)\b/,
+  /\bchapter\s+VI-?A\b/i,
+
+  // Rate / threshold / limit queries (generic — catches edge cases the named
+  // patterns miss). Requires the query to also mention a topic word so we
+  // don't spuriously search for "rate limit" (programming).
+  /\b(rate|rates|threshold|limit|ceiling|cap|slab|bracket|exemption|deduction|rebate|surcharge|cess)\b[\s\S]{0,80}\b(tax|gst|tds|tcs|income|capital|nps|rent|salary|property|hra|dividend|interest|commission|professional|contractor|crypto|vda|esop|lta|gratuity|pension|epf|ppf|ulip)\b/i,
+  /\b(tax|gst|tds|tcs|income|capital|nps|rent|salary|property|hra|dividend|interest|commission|professional|contractor|crypto|vda|esop|lta|gratuity|pension|epf|ppf|ulip)\b[\s\S]{0,80}\b(rate|rates|threshold|limit|ceiling|cap|slab|bracket|exemption|deduction|rebate|surcharge|cess)\b/i,
+
+  // Presumptive / audit thresholds (Budget 2023 raised 44AD to ₹3Cr and
+  // 44ADA to ₹75L when cash ≤ 5%).
+  /\b(presumptive|44AD|44ADA|44AE|tax\s+audit)\b/i,
+
+  // VDA / crypto (§115BBH + §194S introduced FY 2022-23, nuance keeps evolving)
+  /\b(vda|virtual\s+digital\s+asset|crypto(?:currency)?|nft)\b/i,
 ];
 
 function shouldEnableWebSearch(query: string): boolean {
@@ -108,17 +129,10 @@ RULES:
 - If question is vague/incomplete, ask a clarifying question instead of guessing.
 - If reference text is injected, use it silently as additional context — NEVER mention "the reference", "provided context", or "provided text". Always answer from your full knowledge; the reference is supplementary, never a limitation.
 - Cite section numbers (both old and new Act). Mention consulting a CA for official filing.
-- GST slabs (post 56th Council): 0% essentials, 5% daily needs, 18% standard, 40% demerit, 3% gold.
-- NEW REGIME FY 2025-26: 0-4L nil, 4-8L 5%, 8-12L 10%, 12-16L 15%, 16-20L 20%, 20-24L 25%, 24L+ 30%. Std deduction ₹75K, rebate 87A ≤₹12L (max ₹60K).
-- NEW REGIME FY 2024-25: 0-3L nil, 3-7L 5%, 7-10L 10%, 10-12L 15%, 12-15L 20%, 15L+ 30%. Std deduction ₹50K (post July Budget ₹75K), rebate 87A ≤₹7L.
-- OLD REGIME (all FYs): Below-60: 0-2.5L nil, 2.5-5L 5%, 5-10L 20%, 10L+ 30%. Senior(60-80): 0-3L nil. Super-senior(80+): 0-5L nil. Std deduction ₹50K, rebate 87A ≤₹5L (max ₹12.5K).
+- ANY rate, threshold, limit or percentage you quote MUST match the FACTS block below. These are the current values post-Finance-Act-2024 and post-56th-GST-Council. If the FACTS block contradicts your training data, the FACTS block is right — your training is stale.
 
-CAPITAL GAINS (Budget 2024 reset — effective 23 July 2024; applies to FY 2024-25 onwards, including FY 2025-26 / AY 2026-27). IMPORTANT: Your training data likely reflects the OLD pre-23-July-2024 rates (10% / 15% / 20%-with-indexation). The following are the CURRENT rates — use these, not the old ones:
-- LTCG on listed equity / equity MF / business trust units (§112A, new §196): 12.5% on gains above ₹1,25,000 per year. STT must be paid. Indexation NOT available. (Pre-23-Jul-2024 was 10% above ₹1L.)
-- STCG on listed equity / equity MF / business trust units (§111A, new §195): 20% flat. (Pre-23-Jul-2024 was 15%.)
-- LTCG on other assets — unlisted shares, real estate, gold, debt funds bought before 1 Apr 2023, bonds (§112, new §196): 12.5% WITHOUT indexation. For land/building bought before 23 Jul 2024, resident individuals/HUFs may OPT for 20% WITH indexation (whichever is lower) — this grandfathering applies only to property, not to other assets.
-- Holding-period thresholds (from 23 Jul 2024): listed securities = 12 months long-term; all other assets = 24 months long-term. Debt MFs bought on/after 1 Apr 2023 are always taxed at slab rate regardless of holding period (§50AA).
-- When user asks for "current"/"latest"/"FY 2025-26"/"AY 2026-27" capital gains rates, cite 12.5% / 20% explicitly and note the Budget 2024 change if relevant.
+FACTS (authoritative — single source of truth, kept in lockstep with the calculator engines):
+${buildChatFactsBlock()}
 
 HANDLING ATTACHED DOCUMENTS:
 - If the user attaches a document and asks a vague question, your response MUST focus on the attached document's content.
