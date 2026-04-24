@@ -1,29 +1,15 @@
 /**
  * ChatProvider abstraction for streaming-text LLM calls.
  *
- * Used today by the notice route, where the previous if (anthropicConfigured)
- * { ... } else { ... } block was duplicated logic. With this interface:
- *   const provider = pickChatProvider();          // picks Anthropic or Gemini
- *   const usage = await provider.streamChat(req, onText);
+ * Used today by the notice route. Previously this file also offered an
+ * Anthropic/Claude provider behind a cascade — that path has been removed;
+ * the route is now Gemini-only on `gemini-3-flash-preview`.
  *
- * Adding a new provider (say, Claude Sonnet for an enterprise tier) means
- * adding one file and one branch in pickChatProvider — no route surgery.
- *
- * Scope note: the chat route is intentionally NOT refactored to use this
- * interface. Chat needs Gemini-specific features (multi-key rotation via
- * searchQuota, dual-mode cascade with per-tier quota tracking, conditional
- * Google Search) that don't generalize across providers; the abstraction
- * would either be Gemini-leaky or hide important quota state. Notices —
- * which has none of that — is the ideal client.
+ * We keep the interface and the single-implementation `pickChatProvider()`
+ * shim so the notice route's call-site stays unchanged and future providers
+ * can be slotted back in without route surgery.
  */
 
-import {
-  CLAUDE_HAIKU_MODEL,
-  anthropicConfigured,
-  claudeHaikuCost,
-  streamClaudeChatWithRetry,
-} from './anthropic.js';
-import { BreakerOpenError } from './circuitBreaker.js';
 import {
   GEMINI_API_KEYS,
   GEMINI_CHAT_MODEL_THINK_FB,
@@ -56,24 +42,6 @@ export interface ChatProvider {
   readonly name: string;
   streamChat(req: ChatRequest, onText: (text: string) => void): Promise<ChatUsage>;
 }
-
-// ── Anthropic (Claude Haiku 4.5) implementation ───────────────────────────
-
-export const anthropicChatProvider: ChatProvider = {
-  name: 'anthropic',
-  async streamChat(req, onText) {
-    const usage = await streamClaudeChatWithRetry(req.systemPrompt, req.userMessage, onText, req.maxTokens);
-    return {
-      inputTokens: usage.inputTokens,
-      outputTokens: usage.outputTokens,
-      cacheReadTokens: usage.cacheReadTokens,
-      cacheCreationTokens: usage.cacheCreationTokens,
-      costUsd: claudeHaikuCost(usage.inputTokens, usage.outputTokens, usage.cacheCreationTokens, usage.cacheReadTokens),
-      modelUsed: CLAUDE_HAIKU_MODEL,
-      withSearch: false,
-    };
-  },
-};
 
 // ── Gemini (3 Flash Preview, with Google Search grounding) implementation ─
 
@@ -117,40 +85,7 @@ export const geminiChatProvider: ChatProvider = {
   },
 };
 
-/**
- * Cascade provider: tries Anthropic first (when configured), automatically
- * falls back to Gemini if the Anthropic circuit breaker is open or if no
- * Anthropic key is present. Non-breaker errors from Anthropic are re-thrown
- * so the caller can surface them (e.g. auth failures, invalid requests).
- */
-export const cascadeChatProvider: ChatProvider = {
-  name: 'cascade',
-  async streamChat(req, onText) {
-    if (anthropicConfigured) {
-      try {
-        return await anthropicChatProvider.streamChat(req, onText);
-      } catch (err) {
-        const status = (err as { status?: number })?.status ?? 0;
-        const isAuthError = status === 401 || status === 403;
-        if (err instanceof BreakerOpenError) {
-          console.warn(`[chatProvider] Anthropic breaker open — falling back to Gemini`);
-        } else if (isAuthError) {
-          console.warn(`[chatProvider] Anthropic auth error (${status}) — falling back to Gemini. Check ANTHROPIC_API_KEY.`);
-        } else {
-          throw err;
-        }
-        // Fall through to Gemini
-      }
-    }
-    return geminiChatProvider.streamChat(req, onText);
-  },
-};
-
-/**
- * Pick the best available provider. Returns the cascade provider which tries
- * Anthropic first and automatically falls back to Gemini when the Anthropic
- * circuit breaker is open.
- */
+/** Pick the best available provider. Gemini-only today. */
 export function pickChatProvider(): ChatProvider {
-  return cascadeChatProvider;
+  return geminiChatProvider;
 }

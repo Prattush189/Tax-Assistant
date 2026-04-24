@@ -5,15 +5,8 @@ import Papa from 'papaparse';
 import { extractWithRetry } from '../lib/documentExtract.js';
 import { callGeminiJson } from '../lib/geminiJson.js';
 import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_TSV_PROMPT, BANK_STATEMENT_CATEGORIES } from '../lib/bankStatementPrompt.js';
-import { gemini } from '../lib/gemini.js';
+import { gemini, GEMINI_CHAT_MODEL_THINK_FB } from '../lib/gemini.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
-import {
-  anthropicConfigured,
-  extractTsvWithClaude,
-  claudeHaikuCost,
-  CLAUDE_HAIKU_MODEL,
-} from '../lib/anthropic.js';
-import { BreakerOpenError } from '../lib/circuitBreaker.js';
 import { bankStatementRepo } from '../db/repositories/bankStatementRepo.js';
 import { bankTransactionRepo, BankTransactionInput } from '../db/repositories/bankTransactionRepo.js';
 import { bankStatementRuleRepo, BankStatementRuleRow } from '../db/repositories/bankStatementRuleRepo.js';
@@ -72,12 +65,6 @@ interface TsvExtractResult {
   modelUsed: string;
   declaredCount: number;
   actualCount: number;
-  // Present only when the Claude path ran — used by the cost logger to bill
-  // cached prompt tokens at the reduced rate. Zero / absent on the Gemini path.
-  cacheCreationTokens?: number;
-  cacheReadTokens?: number;
-  // Provider tag so the cost logger can dispatch to the right pricing table.
-  provider?: 'anthropic' | 'gemini';
 }
 
 function cleanTsvCell(s: string): string {
@@ -184,42 +171,6 @@ async function extractBankStatementTsvOnce(
     inputTokens: response.usage?.prompt_tokens ?? 0,
     outputTokens: response.usage?.completion_tokens ?? 0,
     modelUsed: model,
-    provider: 'gemini',
-  };
-}
-
-/**
- * Claude Haiku variant of the TSV extractor. The system prompt is sent with
- * cache_control so a multi-chunk statement only pays the full prompt cost on
- * the first chunk. User content holds just the INPUT_TEXT — keeping the
- * chunk-varying part out of the cached block is what makes the cache hit.
- */
-async function extractBankStatementTsvOnceClaude(
-  chunkText: string,
-  maxTokens: number,
-): Promise<TsvExtractResult> {
-  const result = await extractTsvWithClaude(
-    BANK_STATEMENT_TSV_PROMPT,
-    `INPUT_TEXT:\n${chunkText}`,
-    maxTokens,
-  );
-  const parsed = parseTsvResponse(result.text);
-
-  if (parsed.declaredCount < 0) {
-    throw new Error(`TSV response was truncated: missing ---END:N--- trailer (got ${parsed.actualCount} rows before truncation)`);
-  }
-  if (parsed.declaredCount !== parsed.actualCount) {
-    throw new Error(`TSV row-count mismatch: trailer claims ${parsed.declaredCount}, parsed ${parsed.actualCount}`);
-  }
-
-  return {
-    ...parsed,
-    inputTokens: result.inputTokens,
-    outputTokens: result.outputTokens,
-    cacheCreationTokens: result.cacheCreationTokens,
-    cacheReadTokens: result.cacheReadTokens,
-    modelUsed: CLAUDE_HAIKU_MODEL,
-    provider: 'anthropic',
   };
 }
 
@@ -233,67 +184,35 @@ async function extractBankStatementTsvOnceClaude(
  * escalate straight to the larger flash model with a doubled token budget.
  */
 /**
- * Claude Haiku primary → Gemini flash fallback.
+ * Two-tier Gemini cascade: `gemini-3-flash-preview` primary → `gemini-2.5-flash`
+ * fallback. The Gemini-3 family is the strongest flash-tier model currently
+ * available; `gemini-2.5-flash` stays as the fallback because it was the
+ * previous primary and carries a proven cost/reliability profile with 2× the
+ * output-token headroom when a dense chunk truncates under the primary.
  *
- * Cost vs reliability trade-off: Gemini flash-lite is ~13× cheaper than Haiku
- * per token, but on dense 40+-page statements we were losing whole analyses
- * to transient Gemini 5xx/rate-limit storms — one failed chunk kills the
- * whole request, and a partial tax extraction is useless. Anthropic has
- * separate infrastructure and a much lower upstream-failure rate, so using
- * Haiku as primary dramatically improves the end-to-end success rate.
- *
- * Prompt caching softens the cost hit: the ~3KB TSV prompt is marked
- * ephemeral, so chunks 2-N of a multi-chunk statement pay 10% on the prompt
- * portion — effective premium lands around 6-8× vs Gemini, not 13×.
- *
- * Gemini fallback remains for:
- *   - Environments without an ANTHROPIC_API_KEY set
- *   - Real Anthropic outages (circuit breaker opens → BreakerOpenError)
- *   - Auth/quota failures on Anthropic
- * This keeps the feature working even if Anthropic has a bad day.
+ * Retry shape (same at both tiers, different counts):
+ *   - Primary × 3 attempts with exponential backoff + jitter on 429/5xx.
+ *   - Fallback × 2 attempts with flat backoff on 429/5xx.
+ *   - Validation failures (truncation / trailer mismatch) break out
+ *     immediately at each tier — the fallback's doubled output ceiling is
+ *     exactly what resolves truncation, so we don't waste another 30-50s
+ *     retrying the same params on the same model.
  */
 async function extractBankStatementTsv(chunkText: string, maxTokens: number): Promise<TsvExtractResult> {
-  const jitter = () => 200 + Math.floor(Math.random() * 400);
-  const isRetryableStatus = (s: number) =>
-    s === 429 || s === 500 || s === 502 || s === 503 || s === 504;
-
-  // ── Primary: Claude Haiku 4.5 ─────────────────────────────────────────
-  // Haiku gets a generous 16K output budget — its TSV throughput is high
-  // enough that a single call handles even the densest ~400-tx chunks
-  // without truncation, which was a frequent flash-lite failure mode.
-  if (anthropicConfigured) {
-    try {
-      return await extractBankStatementTsvOnceClaude(chunkText, Math.max(maxTokens, 16_384));
-    } catch (err) {
-      const status = (err as { status?: number })?.status ?? 0;
-      const isAuthError = status === 401 || status === 403;
-      if (err instanceof BreakerOpenError) {
-        console.warn('[bank-statements] Anthropic breaker open — falling back to Gemini flash');
-      } else if (isAuthError) {
-        console.warn(`[bank-statements] Anthropic auth error (${status}) — falling back to Gemini flash`);
-      } else {
-        // Anything else from Claude (rate-limit exhausted after its own
-        // retries, a truncation/validation error, a timeout) — surface it.
-        // Falling through to Gemini on every failure would mask real problems
-        // and defeat the reason we put Claude first. The user can still
-        // retry, which is cheap.
-        throw err;
-      }
-      // Fall through to Gemini on breaker / auth only.
-    }
-  }
-
-  // ── Fallback: Gemini flash-lite → flash ladder ────────────────────────
-  // Reached only when Claude is misconfigured or the Anthropic breaker is
-  // open. Mirrors the original resilience ladder — flash-lite × 3 with
-  // jitter, then flash × 2 with double output tokens.
   const MAX_PRIMARY_ATTEMPTS = 3;
   const MAX_FALLBACK_ATTEMPTS = 2;
   let lastErr: unknown;
 
+  // Small jitter on retries: when multiple chunks land on the same upstream
+  // blip, lock-stepped backoffs all reawake in the same window and slam Gemini
+  // together. 200-600ms of noise desynchronises them.
+  const jitter = () => 200 + Math.floor(Math.random() * 400);
+  const isRetryableStatus = (s: number) =>
+    s === 429 || s === 500 || s === 502 || s === 503 || s === 504;
+
   for (let attempt = 0; attempt < MAX_PRIMARY_ATTEMPTS; attempt++) {
     try {
-      return await extractBankStatementTsvOnce(chunkText, 'gemini-2.5-flash-lite', maxTokens);
+      return await extractBankStatementTsvOnce(chunkText, GEMINI_CHAT_MODEL_THINK_FB, maxTokens);
     } catch (err) {
       lastErr = err;
       const status = (err as { status?: number })?.status ?? 0;
@@ -306,6 +225,10 @@ async function extractBankStatementTsv(chunkText: string, maxTokens: number): Pr
     }
   }
 
+  // Fallback: gemini-2.5-flash with double the output ceiling. Handles the
+  // two failure modes the primary can't cheaply escape — persistent upstream
+  // blips specific to the gemini-3 preview family, and truncation on dense
+  // chunks that exceed the primary's 8K-token output ceiling.
   for (let attempt = 0; attempt < MAX_FALLBACK_ATTEMPTS; attempt++) {
     try {
       return await extractBankStatementTsvOnce(chunkText, 'gemini-2.5-flash', maxTokens * 2);
@@ -795,12 +718,7 @@ router.post(
         }
 
         (res.locals as Record<string, unknown>).geminiUsages = chunkResults.map(r => ({
-          inputTokens: r.inputTokens,
-          outputTokens: r.outputTokens,
-          modelUsed: r.modelUsed,
-          provider: r.provider ?? 'gemini',
-          cacheCreationTokens: r.cacheCreationTokens ?? 0,
-          cacheReadTokens: r.cacheReadTokens ?? 0,
+          inputTokens: r.inputTokens, outputTokens: r.outputTokens, modelUsed: r.modelUsed,
         }));
       } else {
         // CSV path: parse client-provided CSV to a compact text block and ask
@@ -851,40 +769,16 @@ router.post(
         console.error('[bank-statements] Failed to log usage:', err);
       }
 
-      // Log model cost — aggregated across vision / pdfText-chunk / CSV
+      // Log Gemini-side cost — aggregated across vision or pdfText-chunk
       // calls — so this feature appears in the admin API-cost dashboard.
-      // Per-usage dispatch on provider: Haiku calls are priced via
-      // claudeHaikuCost (including the cached-prompt discount for chunks
-      // after the first), Gemini calls fall back to flat T2 pricing.
       try {
         const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
         const usages = (res.locals as Record<string, unknown>).geminiUsages as
-          Array<{
-            inputTokens: number;
-            outputTokens: number;
-            modelUsed: string;
-            provider?: 'anthropic' | 'gemini';
-            cacheCreationTokens?: number;
-            cacheReadTokens?: number;
-          }> | undefined;
+          Array<{ inputTokens: number; outputTokens: number; modelUsed: string }> | undefined;
         if (usages && usages.length > 0) {
-          let inputTok = 0;
-          let outputTok = 0;
-          let cost = 0;
-          for (const u of usages) {
-            inputTok += u.inputTokens;
-            outputTok += u.outputTokens;
-            if (u.provider === 'anthropic') {
-              cost += claudeHaikuCost(
-                u.inputTokens,
-                u.outputTokens,
-                u.cacheCreationTokens ?? 0,
-                u.cacheReadTokens ?? 0,
-              );
-            } else {
-              cost += u.inputTokens * GEMINI_T2_INPUT_COST + u.outputTokens * GEMINI_T2_OUTPUT_COST;
-            }
-          }
+          const inputTok = usages.reduce((a, u) => a + u.inputTokens, 0);
+          const outputTok = usages.reduce((a, u) => a + u.outputTokens, 0);
+          const cost = inputTok * GEMINI_T2_INPUT_COST + outputTok * GEMINI_T2_OUTPUT_COST;
           usageRepo.logWithBilling(clientIp, req.user.id, quota.billingUserId, inputTok, outputTok, cost, false, usages[0].modelUsed, false, 'bank_statement');
         }
       } catch (err) {
