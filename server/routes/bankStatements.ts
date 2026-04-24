@@ -138,16 +138,24 @@ async function extractBankStatementTsvOnce(
   chunkText: string,
   model: string,
   maxTokens: number,
+  reasoningEffort: 'none' | 'low' | 'medium' | 'high',
 ): Promise<TsvExtractResult> {
   const messages: ChatCompletionMessageParam[] = [{
     role: 'user',
     content: `${BANK_STATEMENT_TSV_PROMPT}\n\nINPUT_TEXT:\n${chunkText}`,
   }];
+  // `reasoning_effort` is the OpenAI-compat knob for Gemini's thinking budget.
+  // Both gemini-2.5-flash and gemini-3-flash-preview are thinking models: by
+  // default they burn a large fraction of `max_tokens` on internal reasoning
+  // before emitting a single TSV row, which was producing finish_reason=length
+  // at 1-59 rows. Transcribing rows from already-extracted text needs no
+  // reasoning, so we drop the budget to the floor for each model.
   const response = await gemini.chat.completions.create({
     model,
     max_tokens: maxTokens,
     messages,
     stream: false,
+    reasoning_effort: reasoningEffort,
   });
   const raw = response.choices[0]?.message?.content ?? '';
   const finishReason = response.choices[0]?.finish_reason ?? 'unknown';
@@ -235,7 +243,8 @@ async function extractBankStatementTsv(chunkText: string, maxTokens: number): Pr
   const PRIMARY_BACKOFFS_MS = [2_000, 5_000, 12_000];
   for (let attempt = 0; attempt < MAX_PRIMARY_ATTEMPTS; attempt++) {
     try {
-      return await extractBankStatementTsvOnce(chunkText, 'gemini-2.5-flash', maxTokens);
+      // gemini-2.5-flash supports thinking_budget=0 (reasoning_effort='none').
+      return await extractBankStatementTsvOnce(chunkText, 'gemini-2.5-flash', maxTokens, 'none');
     } catch (err) {
       lastErr = err;
       const status = (err as { status?: number })?.status ?? 0;
@@ -258,7 +267,9 @@ async function extractBankStatementTsv(chunkText: string, maxTokens: number): Pr
   // chunks that exceed the primary's 8K-token output ceiling.
   for (let attempt = 0; attempt < MAX_FALLBACK_ATTEMPTS; attempt++) {
     try {
-      return await extractBankStatementTsvOnce(chunkText, GEMINI_CHAT_MODEL_THINK_FB, maxTokens * 2);
+      // gemini-3-flash-preview can't fully disable thinking but accepts 'low',
+      // which is still dramatically cheaper than the default 'medium' budget.
+      return await extractBankStatementTsvOnce(chunkText, GEMINI_CHAT_MODEL_THINK_FB, maxTokens * 2, 'low');
     } catch (err) {
       lastErr = err;
       const status = (err as { status?: number })?.status ?? 0;
