@@ -67,8 +67,15 @@ export async function* streamGeminiChat(
   // Optional context cache: if the caller opts in and the prompt is large
   // enough to qualify, send `cachedContent: cachedContents/...` instead of
   // the inline systemInstruction. Falls back to inline on any cache failure.
+  //
+  // Gemini rejects `cachedContent + tools` in the same call ("CachedContent
+  // can not be used with GenerateContent request setting system_instruction,
+  // tools or tool_config") — across all current models, not just previews.
+  // So when the caller wants Google-Search grounding we skip the cache path
+  // entirely; otherwise we'd waste a cache-create HTTP call and a failed 400
+  // on every search-enabled request.
   let cachedContentName: string | null = null;
-  if (useCache) {
+  if (useCache && !enableSearch) {
     cachedContentName = await getOrCreateCachedContent(model, systemPrompt, apiKey);
   }
 

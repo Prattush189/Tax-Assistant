@@ -104,11 +104,12 @@ async function createCache(model: string, systemPrompt: string, apiKey: string):
   }
 }
 
-/** Drop the cache entry for this prompt — call when Gemini returns NOT_FOUND
- *  on a cachedContent reference (TTL expired). The next call will recreate. */
+/** Drop the cache entry for this prompt — call when Gemini rejects the
+ *  cachedContent reference (TTL expired, cache+tools combo not allowed, etc).
+ *  The next call will recreate. */
 export function invalidateCache(model: string, systemPrompt: string, apiKey: string): void {
   const key = cacheKey(model, apiKey, systemPrompt);
   if (cacheMap.delete(key)) {
-    console.log(`[geminiCache] invalidated ${key} (likely TTL expired)`);
+    console.log(`[geminiCache] invalidated ${key}`);
   }
 }
