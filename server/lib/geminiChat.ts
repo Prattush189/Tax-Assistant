@@ -72,33 +72,56 @@ export async function* streamGeminiChat(
     cachedContentName = await getOrCreateCachedContent(model, systemPrompt, apiKey);
   }
 
-  const body: Record<string, unknown> = { contents, generationConfig: { maxOutputTokens } };
-  if (cachedContentName) {
-    body.cachedContent = cachedContentName;
-  } else {
-    body.systemInstruction = { parts: [{ text: systemPrompt }] };
-  }
-
-  // Only enable Google Search grounding when needed — preserves free quota
-  if (enableSearch) {
-    body.tools = [{ google_search: {} }];
-  }
+  // Build the request body. Extracted so we can retry without the cache
+  // reference if Gemini rejects the combination (e.g. some preview models
+  // reject `cachedContent + tools` in the same call).
+  const buildBody = (withCache: boolean) => {
+    const b: Record<string, unknown> = { contents, generationConfig: { maxOutputTokens } };
+    if (withCache && cachedContentName) {
+      b.cachedContent = cachedContentName;
+    } else {
+      b.systemInstruction = { parts: [{ text: systemPrompt }] };
+    }
+    if (enableSearch) {
+      b.tools = [{ google_search: {} }];
+    }
+    return b;
+  };
 
   const url = `${BASE_URL}/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
 
-  const response = await fetch(url, {
+  const postBody = async (withCache: boolean) => fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify(buildBody(withCache)),
   });
+
+  let response = await postBody(cachedContentName !== null);
+
+  if (!response.ok && cachedContentName) {
+    // Peek at the error — if it's cache-related (Gemini usually returns
+    // "CachedContent can not be ..." or "NOT_FOUND"), drop our local cache
+    // entry and retry once with the inline systemInstruction. This keeps
+    // chat working when a specific (model, search, cache) combination is
+    // unsupported by a preview model, without taking caching down entirely.
+    const errText = await response.text();
+    const cacheRelated =
+      response.status === 404 ||
+      /not.?found/i.test(errText) ||
+      /cached\s*content/i.test(errText);
+    if (cacheRelated) {
+      console.warn(`[geminiChat] cache rejected by ${model} (${response.status}); retrying inline. ${errText.slice(0, 160)}`);
+      invalidateCache(model, systemPrompt, apiKey);
+      cachedContentName = null;
+      response = await postBody(false);
+    } else {
+      // Non-cache error — throw with the text we already consumed.
+      throw new Error(`Gemini ${model} error ${response.status}: ${errText.slice(0, 300)}`);
+    }
+  }
 
   if (!response.ok) {
     const errText = await response.text();
-    // If the cache reference was rejected (TTL expired server-side, or other
-    // NOT_FOUND), invalidate our local entry so the next call recreates it.
-    if (cachedContentName && (response.status === 404 || /not.?found/i.test(errText))) {
-      invalidateCache(model, systemPrompt, apiKey);
-    }
     throw new Error(`Gemini ${model} error ${response.status}: ${errText.slice(0, 300)}`);
   }
 
