@@ -13,6 +13,7 @@ import {
   BankStatementSummary,
   BankTransaction,
   BankStatementRule,
+  BankStatementAnalyzeProgress,
 } from '../services/api';
 
 export type BankStatementDetail = {
@@ -31,6 +32,7 @@ export function useBankStatementManager(enabled: boolean) {
   const [current, setCurrent] = useState<BankStatementDetail | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analyzeProgress, setAnalyzeProgress] = useState<BankStatementAnalyzeProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rules, setRules] = useState<BankStatementRule[]>([]);
 
@@ -81,9 +83,10 @@ export function useBankStatementManager(enabled: boolean) {
 
   const analyzeFile = useCallback(async (file: File): Promise<BankStatementDetail> => {
     setIsAnalyzing(true);
+    setAnalyzeProgress(null);
     setError(null);
     try {
-      const result = await analyzeBankStatementFile(file);
+      const result = await analyzeBankStatementFile(file, (p) => setAnalyzeProgress(p));
       setStatements((prev) => [result.statement, ...prev]);
       setCurrentId(result.statement.id);
       setCurrent(result);
@@ -93,6 +96,7 @@ export function useBankStatementManager(enabled: boolean) {
       throw e;
     } finally {
       setIsAnalyzing(false);
+      setAnalyzeProgress(null);
     }
   }, []);
 
@@ -165,6 +169,7 @@ export function useBankStatementManager(enabled: boolean) {
     current,
     isLoading,
     isAnalyzing,
+    analyzeProgress,
     error,
     rules,
     refresh,

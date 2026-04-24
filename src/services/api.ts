@@ -1332,7 +1332,16 @@ export async function fetchBankStatement(id: string): Promise<{ statement: BankS
   return authFetch(`/api/bank-statements/${id}`);
 }
 
-export async function analyzeBankStatementFile(file: File): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[] }> {
+export interface BankStatementAnalyzeProgress {
+  completed: number;
+  total: number;
+  pages?: [number, number];
+}
+
+export async function analyzeBankStatementFile(
+  file: File,
+  onProgress?: (p: BankStatementAnalyzeProgress) => void,
+): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[] }> {
   // Fast path: if this is a digitally-generated PDF, extract the text layer
   // in the browser and send text-only to the server. The server skips the
   // Gemini vision pass and completes in ~10-15s instead of 30-60s. Scanned
@@ -1342,7 +1351,7 @@ export async function analyzeBankStatementFile(file: File): Promise<{ statement:
       const { extractPdfTextClient } = await import('../lib/pdfText');
       const text = await extractPdfTextClient(file);
       if (text) {
-        return analyzeBankStatementPdfText(text, file.name);
+        return analyzeBankStatementPdfText(text, file.name, onProgress);
       }
     } catch (err) {
       // Text extraction is best-effort — fall back to vision on any failure.
@@ -1384,17 +1393,29 @@ export async function analyzeBankStatementFile(file: File): Promise<{ statement:
   }
 }
 
-async function analyzeBankStatementPdfText(pdfText: string, filename: string): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[]; warning?: string }> {
+async function analyzeBankStatementPdfText(
+  pdfText: string,
+  filename: string,
+  onProgress?: (p: BankStatementAnalyzeProgress) => void,
+): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[]; warning?: string }> {
   // Large multi-chunk statements (40+ pages) can take 2-3 minutes of parallel
   // Gemini calls. We bump the abort well past that so the server gets a
   // chance to return a partial result with a warning rather than the client
   // killing the request.
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 240_000);
+  // Stream mode only when a progress sink is provided — otherwise use the
+  // simpler JSON response so callers that don't care about progress stay on
+  // the single code path.
+  const wantsStream = typeof onProgress === 'function';
   const doFetch = () => fetch('/api/bank-statements/analyze', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-    body: JSON.stringify({ pdfText, filename }),
+    headers: {
+      'Content-Type': 'application/json',
+      ...(wantsStream ? { Accept: 'text/event-stream' } : {}),
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify({ pdfText, filename, ...(wantsStream ? { stream: true } : {}) }),
     signal: controller.signal,
   });
   try {
@@ -1403,6 +1424,11 @@ async function analyzeBankStatementPdfText(pdfText: string, filename: string): P
       const refreshed = await tryRefreshToken();
       if (refreshed) res = await doFetch();
     }
+
+    if (wantsStream && res.ok && res.body) {
+      return await consumeAnalyzeStream(res.body, onProgress!);
+    }
+
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       // Server returns `{error, detail?, hint?}` — fold them into one message
@@ -1415,12 +1441,100 @@ async function analyzeBankStatementPdfText(pdfText: string, filename: string): P
     return data;
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error('Analysis timed out. Very large statements (>80 pages) may exceed our time budget — try a CSV export instead.');
+      throw new Error('Analysis timed out. Very large statements (>150 pages) may exceed our time budget — try a CSV export instead.');
     }
     throw err;
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Parse an SSE stream from /api/bank-statements/analyze.
+ *
+ * Protocol (matches server):
+ *   { type: 'start',    totalChunks, pages }
+ *   { type: 'progress', completed, total, pages: [from,to], txInChunk }  (one per chunk)
+ *   { type: 'done',     statement, transactions, txCount, warning? }
+ *   { type: 'error',    error, detail?, hint? }
+ *
+ * We can't change HTTP status after SSE headers flush, so errors arrive as a
+ * payload, not a non-200 response — translate them back into a thrown Error
+ * whose message matches the JSON path so callers show the same toast.
+ */
+async function consumeAnalyzeStream(
+  body: ReadableStream<Uint8Array>,
+  onProgress: (p: BankStatementAnalyzeProgress) => void,
+): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[]; warning?: string }> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let finalPayload: { statement: BankStatementSummary; transactions: BankTransaction[]; warning?: string } | null = null;
+  let errorPayload: { error?: string; detail?: string; hint?: string } | null = null;
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    // SSE event boundary is a blank line (\n\n). Keep the trailing partial
+    // event in the buffer for the next read.
+    let sep: number;
+    while ((sep = buffer.indexOf('\n\n')) !== -1) {
+      const block = buffer.slice(0, sep);
+      buffer = buffer.slice(sep + 2);
+      const dataLine = block.split('\n').find((l) => l.startsWith('data:'));
+      if (!dataLine) continue;
+      const json = dataLine.slice(5).trim();
+      if (!json) continue;
+      try {
+        const evt = JSON.parse(json) as {
+          type: string;
+          totalChunks?: number;
+          total?: number;
+          completed?: number;
+          pages?: [number, number] | number;
+          [k: string]: unknown;
+        };
+        if (evt.type === 'start') {
+          onProgress({
+            completed: 0,
+            total: evt.totalChunks ?? 0,
+          });
+        } else if (evt.type === 'progress') {
+          onProgress({
+            completed: evt.completed ?? 0,
+            total: evt.total ?? 0,
+            pages: Array.isArray(evt.pages) ? (evt.pages as [number, number]) : undefined,
+          });
+        } else if (evt.type === 'done') {
+          finalPayload = {
+            statement: evt.statement as BankStatementSummary,
+            transactions: evt.transactions as BankTransaction[],
+            warning: evt.warning as string | undefined,
+          };
+        } else if (evt.type === 'error') {
+          errorPayload = {
+            error: evt.error as string | undefined,
+            detail: evt.detail as string | undefined,
+            hint: evt.hint as string | undefined,
+          };
+        }
+      } catch {
+        // Malformed event — skip. Stream continues on the next boundary.
+      }
+    }
+  }
+
+  if (errorPayload) {
+    const parts = [errorPayload.error ?? 'Failed to analyze statement'];
+    if (errorPayload.hint) parts.push(errorPayload.hint);
+    if (errorPayload.detail) parts.push(`(${errorPayload.detail})`);
+    throw new Error(parts.join(' — '));
+  }
+  if (!finalPayload) {
+    throw new Error('Analysis stream ended without a final result.');
+  }
+  return finalPayload;
 }
 
 export async function analyzeBankStatementCsv(csvText: string, filename?: string): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[] }> {

@@ -184,8 +184,16 @@ async function extractBankStatementTsvOnce(
  * escalate straight to the larger flash model with a doubled token budget.
  */
 async function extractBankStatementTsv(chunkText: string, maxTokens: number): Promise<TsvExtractResult> {
-  const MAX_PRIMARY_ATTEMPTS = 2;
+  const MAX_PRIMARY_ATTEMPTS = 3;
+  const MAX_FALLBACK_ATTEMPTS = 2;
   let lastErr: unknown;
+
+  // Small jitter on retries: when multiple chunks land on the same upstream
+  // blip, lock-stepped backoffs all reawake in the same window and slam Gemini
+  // together. 200-600ms of noise desynchronises them.
+  const jitter = () => 200 + Math.floor(Math.random() * 400);
+  const isRetryableStatus = (s: number) =>
+    s === 429 || s === 500 || s === 502 || s === 503 || s === 504;
 
   for (let attempt = 0; attempt < MAX_PRIMARY_ATTEMPTS; attempt++) {
     try {
@@ -197,10 +205,11 @@ async function extractBankStatementTsv(chunkText: string, maxTokens: number): Pr
       // Truncation is deterministic — escalate rather than waste another 30-50s
       // getting the same failure. 429/5xx can be transient so those still retry.
       if (validationFailure) break;
-      const retryable = status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
-      if (!retryable) break;
+      if (!isRetryableStatus(status)) break;
       if (attempt < MAX_PRIMARY_ATTEMPTS - 1) {
-        await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)));
+        // 1.2s, 2.4s baseline + jitter. Gemini 503 bursts generally clear in
+        // 3-5s; three waves with jitter comfortably straddle that window.
+        await new Promise(r => setTimeout(r, 1200 * Math.pow(2, attempt) + jitter()));
       }
     }
   }
@@ -208,10 +217,22 @@ async function extractBankStatementTsv(chunkText: string, maxTokens: number): Pr
   // Escalation: larger model with double the output ceiling. Flash has higher
   // throughput for long outputs; doubling max_tokens gives enough headroom
   // that chunks which truncated flash-lite's 8K ceiling finish cleanly here.
-  try {
-    return await extractBankStatementTsvOnce(chunkText, 'gemini-2.5-flash', maxTokens * 2);
-  } catch (err) {
-    lastErr = err;
+  // Also retry flash on 5xx — a regional Gemini blip that takes out flash-lite
+  // often ripples through flash too, so one extra attempt rescues the request
+  // instead of failing it after a single unlucky coincidence.
+  for (let attempt = 0; attempt < MAX_FALLBACK_ATTEMPTS; attempt++) {
+    try {
+      return await extractBankStatementTsvOnce(chunkText, 'gemini-2.5-flash', maxTokens * 2);
+    } catch (err) {
+      lastErr = err;
+      const status = (err as { status?: number })?.status ?? 0;
+      const validationFailure = /trailer|mismatch|truncated/i.test((err as Error).message ?? '');
+      if (validationFailure) break;
+      if (!isRetryableStatus(status)) break;
+      if (attempt < MAX_FALLBACK_ATTEMPTS - 1) {
+        await new Promise(r => setTimeout(r, 1500 + jitter()));
+      }
+    }
   }
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
@@ -513,6 +534,28 @@ router.post(
       return;
     }
 
+    // Opt-in SSE progress stream — only meaningful for the pdfText path
+    // because that's the one with visible multi-chunk work. Image/vision and
+    // CSV complete in a single call and just use the JSON response.
+    const wantsStream = isPdfText && req.body?.stream === true;
+    let sseOpen = false;
+    const sendSse = (obj: unknown) => {
+      if (!sseOpen) return;
+      try { res.write(`data: ${JSON.stringify(obj)}\n\n`); } catch { /* client disconnected */ }
+    };
+    if (wantsStream) {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
+        'Connection': 'keep-alive',
+        // Tell any upstream nginx/proxy not to buffer — otherwise chunk
+        // completions don't reach the browser until the whole response ends,
+        // defeating the progress bar.
+        'X-Accel-Buffering': 'no',
+      });
+      sseOpen = true;
+    }
+
     try {
       let extracted: ExtractedStatement;
       let filename: string | null;
@@ -568,10 +611,12 @@ router.post(
         // per-key rate limits from turning parallel calls into 429s.
         //
         //   ~20K chars ≈ 6-8 typical pages ≈ 180-250 transactions.
-        //   12 chunks covers statements up to ~100 pages (every realistic case).
+        //   20 chunks covers statements up to ~150 pages. Going past the cap
+        //   silently drops pages, which is unacceptable for a tax feature —
+        //   the explicit ceiling still bounds worst-case cost per request.
         const MAX_CHARS_PER_CHUNK = 20_000;
         const MAX_OUTPUT_TOKENS = 8192;
-        const MAX_CHUNKS = 12;
+        const MAX_CHUNKS = 20;
         const CHUNK_CONCURRENCY = 4;
 
         // Build chunks by packing pages until we approach the char budget.
@@ -607,11 +652,14 @@ router.post(
         const dateCount = countLikelyDates(rawText);
         console.log(`[bank-statements] pdfText: ${pages.length} pages → ${chunks.length} chunk(s), ~${dateCount} candidate dates`);
 
+        sendSse({ type: 'start', totalChunks: chunks.length, pages: pages.length });
+
         // Bounded-concurrency: we still need every chunk to succeed (silently
         // dropping transactions is unacceptable for a tax feature) but firing
-        // all 12 chunks at Gemini simultaneously produces 429s on a single
+        // all chunks at Gemini simultaneously produces 429s on a single
         // API key. Four concurrent calls keeps us well under the per-key RPM
         // cap while still completing a 10-chunk statement in roughly 3 waves.
+        let completedCount = 0;
         const chunkResults = await mapWithConcurrency(
           chunks,
           CHUNK_CONCURRENCY,
@@ -620,6 +668,14 @@ router.post(
             try {
               const r = await extractBankStatementTsv(chunk, MAX_OUTPUT_TOKENS);
               console.log(`[bank-statements] chunk ${idx + 1}/${chunks.length} (pages ${chunkPageRanges[idx][0]}-${chunkPageRanges[idx][1]}) ✓ ${r.actualCount} tx in ${Date.now() - t0}ms`);
+              completedCount += 1;
+              sendSse({
+                type: 'progress',
+                completed: completedCount,
+                total: chunks.length,
+                pages: chunkPageRanges[idx],
+                txInChunk: r.actualCount,
+              });
               return r;
             } catch (e) {
               const msg = (e as Error).message ?? String(e);
@@ -722,20 +778,35 @@ router.post(
 
       const transactions = bankTransactionRepo.listByStatement(statement.id).map(serializeTransaction);
       const warning = (res.locals as Record<string, unknown>).analyzerWarning as string | undefined;
-      res.status(200).json({
+      const payload = {
         statement: serializeStatement(bankStatementRepo.findByIdForUser(statement.id, req.user.id)),
         transactions,
         txCount,
         ...(warning ? { warning } : {}),
-      });
+      };
+      if (sseOpen) {
+        sendSse({ type: 'done', ...payload });
+        res.end();
+      } else {
+        res.status(200).json(payload);
+      }
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       console.error('[bank-statements] analyze error:', errMsg);
-      res.status(500).json({
+      const body = {
         error: 'Failed to analyze statement.',
         detail: errMsg.slice(0, 400),
-        hint: 'If this is a large statement (40+ pages), try a CSV export instead. Scanned / image PDFs may also fail — re-save as a digital PDF and retry.',
-      });
+        hint: 'If this is a large statement (150+ pages), try a CSV export instead. Scanned / image PDFs may also fail — re-save as a digital PDF and retry.',
+      };
+      if (sseOpen) {
+        // SSE headers are already flushed, so we can't change status — emit
+        // an error event and end the stream. The client parses this back into
+        // a thrown Error, same shape as the JSON path.
+        sendSse({ type: 'error', ...body });
+        res.end();
+      } else {
+        res.status(500).json(body);
+      }
     }
   },
 );

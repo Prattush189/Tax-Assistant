@@ -3,7 +3,31 @@ import { Upload, FileText, Loader2 } from 'lucide-react';
 import Papa from 'papaparse';
 import toast from 'react-hot-toast';
 import { BankStatementManager } from '../../hooks/useBankStatementManager';
+import type { BankStatementAnalyzeProgress } from '../../services/api';
 import { cn } from '../../lib/utils';
+
+function AnalyzeProgressBar({ progress }: { progress: BankStatementAnalyzeProgress }) {
+  // While the first `start` event is in flight the server hasn't reported
+  // chunk count yet — show an indeterminate hint rather than a 0/0 bar.
+  const total = progress.total || 0;
+  const pct = total > 0 ? Math.min(100, Math.round((progress.completed / total) * 100)) : 0;
+  const label = total > 0
+    ? `Section ${Math.min(progress.completed + (progress.completed === total ? 0 : 1), total)} of ${total}${progress.pages ? ` · pages ${progress.pages[0]}–${progress.pages[1]}` : ''}`
+    : 'Preparing sections…';
+  return (
+    <div className="mt-3">
+      <div className="h-2 w-full rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden">
+        <div
+          className="h-full bg-blue-600 dark:bg-blue-500 transition-all duration-300 ease-out"
+          style={{ width: total > 0 ? `${pct}%` : '15%' }}
+        />
+      </div>
+      <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+        {label}{total > 0 ? ` · ${pct}%` : ''}
+      </p>
+    </div>
+  );
+}
 
 interface Props {
   manager: BankStatementManager;
@@ -65,13 +89,17 @@ export function BankStatementUploader({ manager }: Props) {
           ? <Loader2 className="w-8 h-8 text-blue-600 dark:text-blue-400 animate-spin" />
           : <Upload className="w-8 h-8 text-blue-600 dark:text-blue-400" />}
       </div>
-      <div className="text-center">
+      <div className="text-center w-full max-w-md">
         <p className="font-semibold text-gray-800 dark:text-gray-100">
           {manager.isAnalyzing ? 'Analyzing your statement…' : 'Drop your bank statement here'}
         </p>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-          PDF, JPG, PNG, WebP up to 10 MB — or a CSV export from your bank
-        </p>
+        {manager.isAnalyzing && manager.analyzeProgress ? (
+          <AnalyzeProgressBar progress={manager.analyzeProgress} />
+        ) : (
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+            PDF, JPG, PNG, WebP up to 10 MB — or a CSV export from your bank
+          </p>
+        )}
       </div>
       <button
         type="button"
