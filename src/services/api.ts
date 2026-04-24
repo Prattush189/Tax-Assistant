@@ -1653,8 +1653,30 @@ export async function updateBankTransaction(
   });
 }
 
-export function bankStatementCsvUrl(id: string): string {
-  return `/api/bank-statements/${id}/export.csv`;
+export async function downloadBankStatementCsv(id: string, suggestedName: string): Promise<void> {
+  // Plain <a href> downloads can't carry the Authorization header, so the
+  // /export.csv endpoint 401s. Fetch with auth, then trigger a download via a
+  // blob URL so the user gets a normal "Save as" with the right filename.
+  const res = await fetch(`/api/bank-statements/${id}/export.csv`, {
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) {
+    const msg = await res.text().catch(() => '');
+    throw new Error(`CSV export failed (${res.status}): ${msg.slice(0, 200) || res.statusText}`);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  try {
+    const safeName = suggestedName.replace(/[^a-z0-9_-]+/gi, '_') || 'statement';
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${safeName}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 export async function fetchBankStatementRules(): Promise<{ rules: BankStatementRule[] }> {
