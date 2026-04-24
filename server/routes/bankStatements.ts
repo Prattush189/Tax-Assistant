@@ -696,11 +696,12 @@ router.post(
         const MAX_CHARS_PER_CHUNK = 8_000;
         const MAX_OUTPUT_TOKENS = 16_384;
         const MAX_CHUNKS = 50;
-        // Concurrency 2 still fits a 46-page statement in ~3 waves but
-        // leaves enough headroom that a single upstream blip doesn't tear
-        // the whole analysis down. Four per key regularly tripped 503
-        // bursts that compounded with our retry schedule.
-        const CHUNK_CONCURRENCY = 2;
+        // Concurrency 4: with thinking disabled on the primary and the larger
+        // output budget, individual chunks are more reliable, so we can push
+        // parallelism back up without tripping the retry ladder. A 46-page
+        // statement now completes in 2 waves (~50s) instead of 4 (~80s). If
+        // we start seeing sustained 429/503 bursts, drop back to 2.
+        const CHUNK_CONCURRENCY = 4;
 
         // Build chunks by packing pages until we approach the char budget.
         // This means a 10-page statement is ONE call; 46 pages → 3 calls.
