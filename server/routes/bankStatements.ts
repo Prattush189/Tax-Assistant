@@ -150,13 +150,18 @@ async function extractBankStatementTsvOnce(
     stream: false,
   });
   const raw = response.choices[0]?.message?.content ?? '';
+  const finishReason = response.choices[0]?.finish_reason ?? 'unknown';
   const parsed = parseTsvResponse(raw);
 
-  // Integrity check #1: trailer MUST be present. Its absence means the
-  // model's output was truncated mid-stream and we have no idea how many
-  // rows were dropped.
+  // Integrity check #1: trailer MUST be present. Its absence means either
+  // the model's output was truncated mid-stream (hit max_tokens) OR the
+  // model returned a short prose reply / refusal that happens to contain
+  // a couple of tab-separated lines. Log the raw preview + finish_reason
+  // so the logs tell us which case it is on the next occurrence.
   if (parsed.declaredCount < 0) {
-    throw new Error(`TSV response was truncated: missing ---END:N--- trailer (got ${parsed.actualCount} rows before truncation)`);
+    const preview = raw.slice(0, 300).replace(/\n/g, '\\n');
+    console.warn(`[bank-statements] ${model} truncated (finish_reason=${finishReason}, got ${parsed.actualCount} rows). Raw preview: ${preview}`);
+    throw new Error(`TSV response was truncated: missing ---END:N--- trailer (got ${parsed.actualCount} rows, finish_reason=${finishReason})`);
   }
 
   // Integrity check #2: parsed rows MUST match trailer count. A mismatch
@@ -649,14 +654,24 @@ router.post(
         //   20 chunks covers statements up to ~150 pages. Going past the cap
         //   silently drops pages, which is unacceptable for a tax feature —
         //   the explicit ceiling still bounds worst-case cost per request.
-        const MAX_CHARS_PER_CHUNK = 20_000;
+        // Sizing: aim for chunks that reliably finish on gemini-2.5-flash.
+        // 20K char chunks with 8K max_tokens were producing short/truncated
+        // responses (1-9 rows for a 17-page chunk) — the model was bailing
+        // early on dense input, not running out of tokens. Halving to 12K
+        // gives the model a clearer task per call. Each chunk is now
+        // ~4 typical pages / ~120 transactions, well inside what even a
+        // noisy flash response can handle.
+        //
+        //   ~12K chars ≈ 4 typical pages ≈ 120 transactions.
+        //   35 chunks covers statements up to ~140 pages. The explicit
+        //   ceiling bounds worst-case cost per request.
+        const MAX_CHARS_PER_CHUNK = 12_000;
         const MAX_OUTPUT_TOKENS = 8192;
-        const MAX_CHUNKS = 20;
-        // Lowered from 4 → 2: 4 concurrent requests per key regularly tripped
-        // the preview model into 503 bursts that compounded with our retry
-        // schedule (every chunk's retry would coincide). 2 still fits a
-        // 46-page statement in ~3 waves but leaves enough headroom that a
-        // single upstream blip doesn't tear the whole analysis down.
+        const MAX_CHUNKS = 35;
+        // Concurrency 2 still fits a 46-page statement in ~3 waves but
+        // leaves enough headroom that a single upstream blip doesn't tear
+        // the whole analysis down. Four per key regularly tripped 503
+        // bursts that compounded with our retry schedule.
         const CHUNK_CONCURRENCY = 2;
 
         // Build chunks by packing pages until we approach the char budget.
