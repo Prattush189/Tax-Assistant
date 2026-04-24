@@ -150,12 +150,19 @@ async function extractBankStatementTsvOnce(
   // before emitting a single TSV row, which was producing finish_reason=length
   // at 1-59 rows. Transcribing rows from already-extracted text needs no
   // reasoning, so we drop the budget to the floor for each model.
+  //
+  // `temperature: 0` makes the extraction deterministic — without it, the
+  // same statement run twice produced different categorizations, amount
+  // signs, and counterparty strings (total inflow varied by ~₹30K across
+  // runs). Transcription + rule-based categorization has no creative
+  // component; sampling just adds noise.
   const response = await gemini.chat.completions.create({
     model,
     max_tokens: maxTokens,
     messages,
     stream: false,
     reasoning_effort: reasoningEffort,
+    temperature: 0,
   });
   const raw = response.choices[0]?.message?.content ?? '';
   const finishReason = response.choices[0]?.finish_reason ?? 'unknown';
