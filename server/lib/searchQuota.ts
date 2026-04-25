@@ -30,13 +30,65 @@ export type ModelTier = 'gemini-3' | 'gemini-2.5';
 const DEFAULT_T1_LIMIT = 5000;   // 5,000/month per key (Gemini 3 family — shared across 3.x models)
 const DEFAULT_T2_LIMIT = 1500;   // 1,500/day per key (Gemini 2.5 family — shared across 2.5 models)
 
-// Mutable runtime limits (admin can lower these).
-let t1Limit = DEFAULT_T1_LIMIT;
-let t2Limit = DEFAULT_T2_LIMIT;
+// ── Runtime config persistence ───────────────────────────────────────────
+// `t1Limit`, `t2Limit`, and `activeKeyIndex` are admin-adjustable at runtime.
+// Without persistence they snap back to defaults on every PM2 restart, so
+// any limit-lowering or key-switch from the admin UI silently undoes itself
+// on the next deploy. Backed by a tiny key-value table.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS app_config (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+  );
+`);
+
+const cfgGetStmt = db.prepare('SELECT value FROM app_config WHERE key = ?');
+const cfgSetStmt = db.prepare(`
+  INSERT INTO app_config (key, value, updated_at)
+  VALUES (?, ?, datetime('now', '+5 hours', '+30 minutes'))
+  ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+`);
+
+function readConfigInt(key: string): number | null {
+  try {
+    const row = cfgGetStmt.get(key) as { value: string } | undefined;
+    if (!row) return null;
+    const n = parseInt(row.value, 10);
+    return Number.isFinite(n) ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeConfigInt(key: string, value: number): void {
+  try {
+    cfgSetStmt.run(key, String(value));
+  } catch (e) {
+    console.warn(`[searchQuota] persist app_config[${key}] failed:`, (e as Error).message);
+  }
+}
+
+// Mutable runtime limits (admin can lower these). Hydrated from app_config
+// on module load; clamped to the free-tier ceiling.
+let t1Limit = (() => {
+  const stored = readConfigInt('gemini_t1_limit');
+  if (stored === null) return DEFAULT_T1_LIMIT;
+  return Math.max(0, Math.min(DEFAULT_T1_LIMIT, stored));
+})();
+let t2Limit = (() => {
+  const stored = readConfigInt('gemini_t2_limit');
+  if (stored === null) return DEFAULT_T2_LIMIT;
+  return Math.max(0, Math.min(DEFAULT_T2_LIMIT, stored));
+})();
 
 // Which API key is preferred as primary. Iteration in selectTier() still rotates
-// through all keys, but starts here.
-let activeKeyIndex = 0;
+// through all keys, but starts here. Hydrated from app_config; bounds-validated
+// once `keys[]` is populated below.
+let activeKeyIndex = (() => {
+  const stored = readConfigInt('gemini_active_key_index');
+  return stored === null ? 0 : stored;
+})();
 
 interface KeyQuota {
   label: string;
@@ -56,6 +108,13 @@ function makeDefault(label: string): KeyQuota {
 
 const KEY_LABELS = ['Key 1 (Primary)', 'Key 2 (Secondary)'];
 const keys: KeyQuota[] = KEY_LABELS.map(makeDefault);
+
+// activeKeyIndex was hydrated from app_config above; clamp it now that we
+// know the actual key count, so a stale config row from a future schema
+// (e.g. 3-key setup) can't poison the rotation pointer.
+if (!Number.isInteger(activeKeyIndex) || activeKeyIndex < 0 || activeKeyIndex >= keys.length) {
+  activeKeyIndex = 0;
+}
 
 // ── Persistence ────────────────────────────────────────────────────────────
 // Counters must survive server restarts. Each key's row is upserted on every
@@ -237,9 +296,11 @@ export function getGeminiConfig() {
 export function setGeminiLimits(input: { t1Limit?: number; t2Limit?: number }): { t1Limit: number; t2Limit: number } {
   if (typeof input.t1Limit === 'number' && Number.isFinite(input.t1Limit)) {
     t1Limit = Math.max(0, Math.min(DEFAULT_T1_LIMIT, Math.floor(input.t1Limit)));
+    writeConfigInt('gemini_t1_limit', t1Limit);
   }
   if (typeof input.t2Limit === 'number' && Number.isFinite(input.t2Limit)) {
     t2Limit = Math.max(0, Math.min(DEFAULT_T2_LIMIT, Math.floor(input.t2Limit)));
+    writeConfigInt('gemini_t2_limit', t2Limit);
   }
   return { t1Limit, t2Limit };
 }
@@ -251,6 +312,7 @@ export function setGeminiLimits(input: { t1Limit?: number; t2Limit?: number }): 
 export function setActiveKey(index: number): boolean {
   if (!Number.isInteger(index) || index < 0 || index >= keys.length) return false;
   activeKeyIndex = index;
+  writeConfigInt('gemini_active_key_index', activeKeyIndex);
   return true;
 }
 
