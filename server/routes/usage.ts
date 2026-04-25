@@ -81,6 +81,14 @@ router.get('/', (req: AuthRequest, res: Response) => {
     console.error('[usage] board resolutions count failed', err);
   }
 
+  // Partnership deeds (monthly)
+  let partnershipDeedsUsed = 0;
+  try {
+    partnershipDeedsUsed = featureUsageRepo.countThisMonthByBillingUser(billingUser.id, 'partnership_deeds');
+  } catch (err) {
+    console.error('[usage] partnership deeds count failed', err);
+  }
+
   // Bank statement analyses (monthly)
   let bankStatementsUsed = 0;
   try {
@@ -155,6 +163,12 @@ router.get('/', (req: AuthRequest, res: Response) => {
         limit: limits.boardResolutions,
         period: 'month',
         label: 'Board Resolutions',
+      },
+      partnershipDeeds: {
+        used: partnershipDeedsUsed,
+        limit: limits.partnershipDeeds,
+        period: 'month',
+        label: 'Partnership Deeds',
       },
       bankStatements: {
         used: bankStatementsUsed,

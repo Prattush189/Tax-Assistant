@@ -9,6 +9,7 @@ const PAGE_SIZE = 100;
 const CATEGORY_COLORS: Record<string, string> = {
   chat: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400',
   notice: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400',
+  partnership_deed: 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-400',
   suggestion: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400',
   bank_statement: 'bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-400',
   style_profile: 'bg-pink-100 text-pink-700 dark:bg-pink-900/40 dark:text-pink-400',
@@ -19,6 +20,7 @@ const CATEGORY_COLORS: Record<string, string> = {
 const CATEGORY_LABELS: Record<string, string> = {
   chat: 'Chat',
   notice: 'Notice',
+  partnership_deed: 'Partnership Deed',
   suggestion: 'Suggestion',
   bank_statement: 'Bank Statement',
   style_profile: 'Style Profile',

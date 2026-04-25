@@ -1,5 +1,5 @@
 import { ReactNode } from 'react';
-import { Scale, FileText, Gavel, ScrollText } from 'lucide-react';
+import { FileText, Gavel, ScrollText } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 type LegalTab = 'notices' | 'board_resolutions' | 'partnership_deeds';
@@ -20,22 +20,13 @@ const TABS: { id: LegalTab; label: string; icon: typeof FileText }[] = [
  * Hub page that wraps the three legal-document features in a single shell
  * with a horizontal tab strip. The actual feature surfaces (NoticeDrafterPage,
  * BoardResolutionView, PartnershipDeedView) are passed in as `children` —
- * this component only owns the title bar + tab bar.
+ * this component only owns the tab bar.
  */
 export function LegalView({ activeView, onViewChange, children }: Props) {
   return (
     <div className="flex-1 flex flex-col min-h-0">
-      {/* Hub header with title + tab strip */}
-      <div className="px-4 lg:px-6 py-3 border-b border-gray-200/50 dark:border-gray-800/50 shrink-0 bg-white/30 dark:bg-gray-900/20">
-        <div className="flex items-center gap-3 mb-3">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#059669]/20 to-[#047857]/20 flex items-center justify-center">
-            <Scale className="w-4 h-4 text-[#059669]" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <h1 className="text-base font-bold text-gray-800 dark:text-gray-100">Legal</h1>
-            <p className="text-[11px] text-gray-400">AI drafting for notices, resolutions and deeds</p>
-          </div>
-        </div>
+      {/* Tab strip */}
+      <div className="px-4 lg:px-6 py-2 border-b border-gray-200/50 dark:border-gray-800/50 shrink-0 bg-white/30 dark:bg-gray-900/20">
         <nav className="flex gap-1 overflow-x-auto -mx-1 px-1">
           {TABS.map((tab) => {
             const Icon = tab.icon;

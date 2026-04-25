@@ -359,6 +359,7 @@ export interface UserUsageResponse {
     suggestions: UsageMetric;
     notices: UsageMetric;
     boardResolutions: UsageMetric;
+    partnershipDeeds: UsageMetric;
     bankStatements: UsageMetric;
     profiles: UsageMetric;
   };
