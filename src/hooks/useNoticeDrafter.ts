@@ -102,7 +102,7 @@ export function useNoticeDrafter() {
     }
   }, []);
 
-  const generate = useCallback(async (input: NoticeGenerateInput) => {
+  const generate = useCallback(async (input: NoticeGenerateInput, file?: File) => {
     setIsGenerating(true);
     setGeneratedContent('');
     setError(null);
@@ -118,6 +118,7 @@ export function useNoticeDrafter() {
           setIsGenerating(false);
           loadNotices();
         },
+        file,
       );
     } catch {
       setError('An unexpected error occurred.');

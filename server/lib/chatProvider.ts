@@ -1,9 +1,8 @@
 /**
  * ChatProvider abstraction for streaming-text LLM calls.
  *
- * Used today by the notice route. Previously this file also offered an
- * Anthropic/Claude provider behind a cascade — that path has been removed;
- * the route is now Gemini-only on `gemini-3-flash-preview`.
+ * Used today by the notice route. Gemini-only on `gemini-2.5-flash-lite`
+ * with Google Search grounding enabled.
  *
  * We keep the interface and the single-implementation `pickChatProvider()`
  * shim so the notice route's call-site stays unchanged and future providers
@@ -12,9 +11,9 @@
 
 import {
   GEMINI_API_KEYS,
-  GEMINI_CHAT_MODEL_THINK_FB,
-  GEMINI_THINK_FB_INPUT_COST,
-  GEMINI_THINK_FB_OUTPUT_COST,
+  GEMINI_CHAT_MODEL_T2,
+  GEMINI_T2_INPUT_COST,
+  GEMINI_T2_OUTPUT_COST,
 } from './gemini.js';
 import { streamGeminiChat } from './geminiChat.js';
 import { selectTier, confirmUsed } from './searchQuota.js';
@@ -43,7 +42,7 @@ export interface ChatProvider {
   streamChat(req: ChatRequest, onText: (text: string) => void): Promise<ChatUsage>;
 }
 
-// ── Gemini (3 Flash Preview, with Google Search grounding) implementation ─
+// ── Gemini 2.5 Flash-Lite (with Google Search grounding) implementation ──
 
 export const geminiChatProvider: ChatProvider = {
   name: 'gemini',
@@ -54,7 +53,7 @@ export const geminiChatProvider: ChatProvider = {
     let outputTokens = 0;
 
     const stream = streamGeminiChat(
-      GEMINI_CHAT_MODEL_THINK_FB,
+      GEMINI_CHAT_MODEL_T2,
       req.systemPrompt,
       [],
       req.userMessage,
@@ -69,7 +68,7 @@ export const geminiChatProvider: ChatProvider = {
       if (chunk.done) {
         inputTokens = chunk.inputTokens ?? 0;
         outputTokens = chunk.outputTokens ?? 0;
-        confirmUsed('gemini-3', selection.keyIndex, true);
+        confirmUsed('gemini-2.5', selection.keyIndex, true);
       }
     }
 
@@ -78,8 +77,8 @@ export const geminiChatProvider: ChatProvider = {
       outputTokens,
       cacheReadTokens: 0,
       cacheCreationTokens: 0,
-      costUsd: inputTokens * GEMINI_THINK_FB_INPUT_COST + outputTokens * GEMINI_THINK_FB_OUTPUT_COST,
-      modelUsed: GEMINI_CHAT_MODEL_THINK_FB,
+      costUsd: inputTokens * GEMINI_T2_INPUT_COST + outputTokens * GEMINI_T2_OUTPUT_COST,
+      modelUsed: GEMINI_CHAT_MODEL_T2,
       withSearch: true,
     };
   },

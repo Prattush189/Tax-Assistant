@@ -520,12 +520,29 @@ export async function generateNotice(
   onChunk: (text: string) => void,
   onError: (msg: string) => void,
   onDone?: (noticeId: string | null) => void,
+  file?: File,
 ): Promise<void> {
-  const doFetch = () => fetch('/api/notices/generate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-    body: JSON.stringify(input),
-  });
+  // When a file is attached, we ship it as multipart so the notice route can
+  // extract it server-side. This bypasses /api/upload, which means the upload
+  // does NOT consume the user's chat-attachment monthly quota — only the
+  // per-notice counter is bumped after a successful draft.
+  const doFetch = () => {
+    if (file) {
+      const form = new FormData();
+      form.append('payload', JSON.stringify(input));
+      form.append('file', file);
+      return fetch('/api/notices/generate', {
+        method: 'POST',
+        headers: { ...getAuthHeaders() },
+        body: form,
+      });
+    }
+    return fetch('/api/notices/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+      body: JSON.stringify(input),
+    });
+  };
 
   let response = await doFetch();
   if (response.status === 401) {

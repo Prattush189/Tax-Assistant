@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Upload, FileText, Send, Image as ImageIcon, X, AlertCircle } from 'lucide-react';
-import { useFileUpload } from '../../hooks/useFileUpload';
+import { Upload, FileText, Send, Image as ImageIcon, X } from 'lucide-react';
 import { NoticeGenerateInput } from '../../services/api';
 import { LoadingAnimation } from '../ui/LoadingAnimation';
 import { LetterheadConfig } from '../../hooks/useNoticeDrafter';
@@ -45,7 +44,7 @@ const SUB_TYPES: Record<string, { value: string; label: string }[]> = {
 };
 
 interface NoticeFormProps {
-  onGenerate: (input: NoticeGenerateInput) => void;
+  onGenerate: (input: NoticeGenerateInput, file?: File) => void;
   isGenerating: boolean;
   usage: { used: number; limit: number };
   letterhead: LetterheadConfig;
@@ -79,20 +78,20 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
   const [section, setSection] = useState('');
   const [assessmentYear, setAssessmentYear] = useState('');
   const [keyPoints, setKeyPoints] = useState('');
-  const [extractedText, setExtractedText] = useState('');
+  const [noticeFile, setNoticeFile] = useState<File | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
   const headerImgRef = useRef<HTMLInputElement>(null);
   const watermarkImgRef = useRef<HTMLInputElement>(null);
 
-  const fileUpload = useFileUpload();
-
   // Clear per-notice fields when a new notice is successfully generated so old
-  // data doesn't contaminate the next draft (extracted text is the most dangerous).
+  // data doesn't contaminate the next draft.
   const prevNoticeIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (currentNoticeId && currentNoticeId !== prevNoticeIdRef.current) {
       prevNoticeIdRef.current = currentNoticeId;
       setKeyPoints('');
-      setExtractedText('');
+      setNoticeFile(null);
+      setFileError(null);
       setSubType('');
       setNoticeNumber('');
       setNoticeDate('');
@@ -101,7 +100,6 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
       setRecipientOfficer('');
       setRecipientOffice('');
       setRecipientAddress('');
-      fileUpload.reset();
       if (noticeFileRef.current) noticeFileRef.current.value = '';
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -142,26 +140,36 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
 
   const noticeFileRef = useRef<HTMLInputElement>(null);
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const ALLOWED_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
+  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB — match server limit
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
-    // Reset input value so the same file can be re-selected after an error
     e.target.value = '';
-    const doc = await fileUpload.handleFile(file);
-    if (doc?.extractedData?.summary) {
-      setExtractedText(doc.extractedData.summary);
+    if (!file) return;
+    if (!ALLOWED_TYPES.includes(file.type)) {
+      setFileError('Please upload a PDF or image (JPEG, PNG, WebP).');
+      setNoticeFile(null);
+      return;
     }
+    if (file.size > MAX_FILE_SIZE) {
+      setFileError('File exceeds the 10MB size limit.');
+      setNoticeFile(null);
+      return;
+    }
+    setFileError(null);
+    setNoticeFile(file);
   };
 
   const handleClearUpload = () => {
-    setExtractedText('');
-    fileUpload.reset();
+    setNoticeFile(null);
+    setFileError(null);
     if (noticeFileRef.current) noticeFileRef.current.value = '';
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!keyPoints.trim() && !extractedText.trim()) return;
+    if (!keyPoints.trim() && !noticeFile) return;
 
     onGenerate({
       noticeType,
@@ -184,8 +192,7 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
         assessmentYear: assessmentYear || undefined,
       },
       keyPoints: keyPoints.trim(),
-      extractedText: extractedText || undefined,
-    });
+    }, noticeFile ?? undefined);
   };
 
   const inputClass = "w-full px-3 py-2 text-sm bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-[#059669]/50 focus:border-[#059669] outline-none transition-all text-gray-800 dark:text-gray-200";
@@ -222,39 +229,21 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
         </div>
       </div>
 
-      {/* Upload notice document */}
+      {/* Upload notice document — file is sent on submit; the server extracts it */}
       <div>
         <label className={labelClass}>Upload Notice (optional)</label>
-        {fileUpload.uploadPhase === 'error' ? (
-          <div className="flex items-start gap-2 px-3 py-2.5 border-2 border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 rounded-lg">
-            <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
-            <p className="text-sm text-red-600 dark:text-red-400 flex-1">
-              {fileUpload.errorMessage || 'Upload failed. Please try again.'}
-            </p>
-            <button type="button" onClick={handleClearUpload} className="text-red-400 hover:text-red-600 shrink-0">
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        ) : extractedText ? (
+        {noticeFile ? (
           <div className="flex items-center gap-2 px-3 py-2.5 border-2 border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20 rounded-lg">
             <FileText className="w-4 h-4 text-green-500 shrink-0" />
-            <span className="text-sm text-green-700 dark:text-green-400 flex-1">Document uploaded</span>
+            <span className="text-sm text-green-700 dark:text-green-400 flex-1 truncate">{noticeFile.name}</span>
             <button type="button" onClick={handleClearUpload} className="text-green-400 hover:text-green-600 shrink-0">
               <X className="w-4 h-4" />
             </button>
           </div>
         ) : (
           <label className="flex items-center gap-2 px-3 py-2.5 border-2 border-dashed border-gray-200 dark:border-gray-700 rounded-lg cursor-pointer hover:border-[#059669] transition-colors">
-            {fileUpload.uploadPhase === 'uploading' || fileUpload.uploadPhase === 'analyzing' ? (
-              <LoadingAnimation size="xs" />
-            ) : (
-              <Upload className="w-4 h-4 text-gray-400" />
-            )}
-            <span className="text-sm text-gray-500 dark:text-gray-400">
-              {fileUpload.uploadPhase === 'uploading' || fileUpload.uploadPhase === 'analyzing'
-                ? 'Uploading…'
-                : 'PDF, JPEG, PNG'}
-            </span>
+            <Upload className="w-4 h-4 text-gray-400" />
+            <span className="text-sm text-gray-500 dark:text-gray-400">PDF, JPEG, PNG (max 10MB)</span>
             <input
               ref={noticeFileRef}
               type="file"
@@ -263,6 +252,9 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
               className="hidden"
             />
           </label>
+        )}
+        {fileError && (
+          <p className="mt-1 text-xs text-red-500">{fileError}</p>
         )}
       </div>
 
@@ -541,14 +533,14 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
           placeholder="Describe the issues raised in the notice and any clarifications or defenses you want to include..."
           rows={4}
           className={`${inputClass} resize-none`}
-          required={!extractedText}
+          required={!noticeFile}
         />
       </div>
 
       {/* Generate button */}
       <button
         type="submit"
-        disabled={isGenerating || usage.used >= usage.limit || (!keyPoints.trim() && !extractedText)}
+        disabled={isGenerating || usage.used >= usage.limit || (!keyPoints.trim() && !noticeFile)}
         className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-[#059669] to-[#047857] hover:from-[#047857] hover:to-[#065F46] text-white font-medium rounded-xl shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {isGenerating ? (

@@ -1,4 +1,5 @@
-import { Router, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
+import multer, { MulterError } from 'multer';
 import { pickChatProvider } from '../lib/chatProvider.js';
 import { SseWriter } from '../lib/sseStream.js';
 
@@ -8,7 +9,49 @@ import { styleProfileRepo } from '../db/repositories/styleProfileRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { getBillingUser } from '../lib/billing.js';
+import { extractWithRetry } from '../lib/documentExtract.js';
+import { GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST } from '../lib/gemini.js';
 import { AuthRequest } from '../types.js';
+
+// ── Notice attachment uploader (mirrors bank-statements pattern) ──
+// We accept the file in-route instead of routing through /api/upload so the
+// extraction does NOT consume the user's chat-attachment monthly quota.
+// Only the per-notice `notice` counter is bumped (after a successful draft).
+const ALLOWED_MIME_TYPES = [
+  'application/pdf',
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+] as const;
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  fileFilter: (_req, file, cb) => {
+    if ((ALLOWED_MIME_TYPES as readonly string[]).includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('INVALID_MIME_TYPE'));
+    }
+  },
+});
+
+const NOTICE_EXTRACTION_PROMPT = `You are extracting the textual content of an Indian tax notice (Income Tax / GST / TDS) so a downstream model can draft a reply.
+
+Return ONLY a JSON object with this shape:
+{
+  "summary": "Plain-text transcription of the notice body — every sentence, every figure, every section/sub-section reference, every demand amount. Preserve the department's exact wording for any phrase you would put inside quote-marks. 4000 chars max.",
+  "noticeNumber": "string or null",
+  "noticeDate": "string or null (DD/MM/YYYY if available)",
+  "section": "string or null",
+  "assessmentYear": "string or null",
+  "din": "string or null"
+}
+
+STRICT RULES:
+- Output MUST be valid JSON, no markdown fences, no commentary.
+- Escape quotes in string values with backslash. No literal newlines inside strings — use \\n.
+- Never invent values; use null when a field is genuinely absent from the document.`;
 
 const router = Router();
 
@@ -97,13 +140,65 @@ DO NOT cite blog posts, YouTube, Quora, generic Q&A sites, or unofficial summari
 Inline citation form: when the supporting authority is an official notification, circular, or judgment URL surfaced by the search, append a short bracketed reference at the end of the relevant sentence — e.g. \`(see CBDT Circular No. 12/2024 dated 15.05.2024)\` or \`(see ITAT Mumbai, ITA No. 1234/2023 dated 02.02.2024)\`. Keep the URL out of the letter body — the bracketed reference plus precise document number is enough for the recipient to locate it.`;
 
 // ── Generate notice draft (streaming) ──
-router.post('/generate', async (req: AuthRequest, res: Response) => {
+// Accepts EITHER:
+//   - JSON body { noticeType, ..., extractedText? }
+//   - multipart/form-data with `payload` (JSON string of the same fields) plus
+//     an optional `file` (PDF/image of the notice). When a file is present,
+//     this route extracts it server-side via Gemini vision and merges the
+//     extracted text into the prompt. The vision extraction cost is logged to
+//     usageRepo under feature='notice' and does NOT touch the chat-attachment
+//     monthly quota.
+router.post(
+  '/generate',
+  (req: Request, res: Response, next: NextFunction) => {
+    const ct = req.headers['content-type'] ?? '';
+    if (typeof ct === 'string' && ct.startsWith('multipart/form-data')) {
+      upload.single('file')(req, res, (err) => {
+        if (err) {
+          if (err instanceof Error && err.message === 'INVALID_MIME_TYPE') {
+            res.status(400).json({ error: 'Invalid file type. Please upload a PDF or image (JPEG, PNG, WebP).' });
+            return;
+          }
+          if (err instanceof MulterError && err.code === 'LIMIT_FILE_SIZE') {
+            res.status(400).json({ error: 'File exceeds the 10MB size limit.' });
+            return;
+          }
+          return next(err);
+        }
+        next();
+      });
+    } else {
+      next();
+    }
+  },
+  async (req: AuthRequest, res: Response) => {
   if (!req.user) {
     res.status(401).json({ error: 'Authentication required' });
     return;
   }
 
-  const { noticeType, subType, senderDetails, recipientDetails, noticeDetails, keyPoints, extractedText } = req.body;
+  // Multipart: form fields arrive as `payload` (stringified JSON) so we can
+  // ship the file alongside structured data without needing a separate route.
+  let parsedBody: Record<string, unknown> = req.body;
+  if (req.file && typeof req.body?.payload === 'string') {
+    try {
+      parsedBody = JSON.parse(req.body.payload);
+    } catch {
+      res.status(400).json({ error: 'Invalid `payload` JSON in multipart body.' });
+      return;
+    }
+  }
+
+  const { noticeType, subType, senderDetails, recipientDetails, noticeDetails, keyPoints } = parsedBody as {
+    noticeType?: string;
+    subType?: string;
+    senderDetails?: Record<string, string>;
+    recipientDetails?: Record<string, string>;
+    noticeDetails?: Record<string, string>;
+    keyPoints?: string;
+    extractedText?: string;
+  };
+  let extractedText = (parsedBody as { extractedText?: string }).extractedText;
 
   if (!noticeType || !keyPoints) {
     res.status(400).json({ error: 'Notice type and key points are required' });
@@ -125,6 +220,63 @@ router.post('/generate', async (req: AuthRequest, res: Response) => {
     });
     return;
   }
+
+  const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
+
+  // ── Server-side notice extraction (when a file was uploaded) ──
+  // Cost is logged to usageRepo under feature='notice' so it appears alongside
+  // the draft cost in the admin dashboard, but the chat attachment_upload
+  // counter is intentionally NOT incremented here.
+  let extractionMeta: { mergedNoticeNumber?: string; mergedNoticeDate?: string; mergedSection?: string; mergedAssessmentYear?: string; mergedDin?: string } = {};
+  if (req.file) {
+    try {
+      const base64Data = req.file.buffer.toString('base64');
+      const dataUrl = `data:${req.file.mimetype};base64,${base64Data}`;
+      const extraction = await extractWithRetry<{
+        summary: string;
+        noticeNumber: string | null;
+        noticeDate: string | null;
+        section: string | null;
+        assessmentYear: string | null;
+        din: string | null;
+      }>(dataUrl, NOTICE_EXTRACTION_PROMPT);
+
+      const data = extraction.data ?? {};
+      extractedText = (extractedText ?? '') + (data.summary ?? '');
+      extractionMeta = {
+        mergedNoticeNumber: data.noticeNumber ?? undefined,
+        mergedNoticeDate: data.noticeDate ?? undefined,
+        mergedSection: data.section ?? undefined,
+        mergedAssessmentYear: data.assessmentYear ?? undefined,
+        mergedDin: data.din ?? undefined,
+      };
+
+      // Log vision cost to api_usage with feature='notice'. We use the same
+      // T2 (gemini-2.5-flash-lite) cost basis since extractWithRetry's primary
+      // model is GEMINI_MODEL = 'gemini-2.5-flash-lite'.
+      try {
+        const cost = extraction.inputTokens * GEMINI_T2_INPUT_COST + extraction.outputTokens * GEMINI_T2_OUTPUT_COST;
+        usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, extraction.inputTokens, extraction.outputTokens, cost, false, extraction.modelUsed, false, 'notice');
+      } catch (logErr) {
+        console.error('[notices] Failed to log extraction cost:', logErr);
+      }
+    } catch (extractErr) {
+      console.error('[notices] Notice file extraction failed:', extractErr);
+      res.status(502).json({ error: 'Could not read the uploaded notice. Try again, or paste the key points manually.' });
+      return;
+    }
+  }
+
+  // Fill any missing structured fields from extraction so the prompt below
+  // doesn't fall back to the "[extract from notice text below]" placeholder
+  // when the model already returned the value during extraction.
+  const mergedNoticeDetails: Record<string, string | undefined> = {
+    noticeNumber: noticeDetails?.noticeNumber || extractionMeta.mergedNoticeNumber,
+    noticeDate: noticeDetails?.noticeDate || extractionMeta.mergedNoticeDate,
+    section: noticeDetails?.section || extractionMeta.mergedSection,
+    assessmentYear: noticeDetails?.assessmentYear || extractionMeta.mergedAssessmentYear,
+    din: noticeDetails?.din || extractionMeta.mergedDin,
+  };
 
   // ── Build the user prompt ────────────────────────────────────────────────
   // NOTE: The notice record is intentionally created AFTER successful generation
@@ -156,11 +308,11 @@ router.post('/generate', async (req: AuthRequest, res: Response) => {
   userPrompt += `  Address: ${recipientDetails?.address || 'Bengaluru'}\n`;
 
   userPrompt += `\nNotice Details:\n`;
-  userPrompt += `  Notice / Intimation No.: ${noticeDetails?.noticeNumber || '[extract from notice text below]'}\n`;
-  userPrompt += `  Notice Date: ${noticeDetails?.noticeDate || '[extract from notice text below]'}\n`;
-  userPrompt += `  Section: ${noticeDetails?.section || '[extract from notice text below]'}\n`;
-  userPrompt += `  Assessment Year / Period: ${noticeDetails?.assessmentYear || '[extract from notice text below]'}\n`;
-  if (noticeDetails?.din) userPrompt += `  DIN: ${noticeDetails.din}\n`;
+  userPrompt += `  Notice / Intimation No.: ${mergedNoticeDetails.noticeNumber || '[extract from notice text below]'}\n`;
+  userPrompt += `  Notice Date: ${mergedNoticeDetails.noticeDate || '[extract from notice text below]'}\n`;
+  userPrompt += `  Section: ${mergedNoticeDetails.section || '[extract from notice text below]'}\n`;
+  userPrompt += `  Assessment Year / Period: ${mergedNoticeDetails.assessmentYear || '[extract from notice text below]'}\n`;
+  if (mergedNoticeDetails.din) userPrompt += `  DIN: ${mergedNoticeDetails.din}\n`;
 
   userPrompt += `\nKey points the reply must address (from the taxpayer):\n${keyPoints}\n`;
 
@@ -193,7 +345,6 @@ router.post('/generate', async (req: AuthRequest, res: Response) => {
   userPrompt += `Do NOT output any bracketed placeholders like [NAME] or [TBD] in the final letter — use the supplied values or a sensible plain-language fallback.\n`;
 
   const sse = new SseWriter(res);
-  const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
   let fullResponse = '';
 
   try {
@@ -205,9 +356,9 @@ router.post('/generate', async (req: AuthRequest, res: Response) => {
 
     // Only create the notice record and log usage after successful generation.
     // This ensures failed attempts never consume quota or appear in saved drafts.
-    const inputData = JSON.stringify({ noticeType, subType, senderDetails, recipientDetails, noticeDetails, keyPoints });
-    const title = `${noticeType.toUpperCase()} - ${subType || 'Reply'} - ${noticeDetails?.noticeNumber || 'Draft'}`;
-    const noticeId = noticeRepo.create(req.user.id, noticeType, subType, title, inputData, billingUserId);
+    const inputData = JSON.stringify({ noticeType, subType, senderDetails, recipientDetails, noticeDetails: mergedNoticeDetails, keyPoints });
+    const title = `${noticeType.toUpperCase()} - ${subType || 'Reply'} - ${mergedNoticeDetails.noticeNumber || 'Draft'}`;
+    const noticeId = noticeRepo.create(req.user.id, noticeType, subType ?? null, title, inputData, billingUserId);
     if (fullResponse) {
       noticeRepo.updateContent(noticeId, fullResponse);
     }
