@@ -1,12 +1,3 @@
-export interface SectionReference {
-  source: string;
-  section: string;
-  label: string;
-  text: string;
-  pdfFile?: string;
-  pdfFiles?: { label: string; file: string }[];
-}
-
 export interface Message {
   role: 'user' | 'model';
   content: string;
@@ -20,7 +11,6 @@ export interface Message {
     mimeType: string;
   }[];
   truncated?: boolean;
-  references?: SectionReference[];
   profileRef?: string;  // profile name referenced in this message
 }
 

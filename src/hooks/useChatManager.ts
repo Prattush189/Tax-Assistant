@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Message, DocumentContext, SectionReference } from '../types';
+import { Message, DocumentContext } from '../types';
 import {
   fetchChats,
   createChat as apiCreateChat,
@@ -164,7 +164,6 @@ export function useChatManager() {
     streamingContentRef.current.set(thisChatId, ''); // register active stream
 
     let wasTruncated = false;
-    let receivedRefs: SectionReference[] | undefined;
 
     // Line-buffered streaming: accumulate text and only reveal complete lines
     let buffer = '';
@@ -230,9 +229,8 @@ export function useChatManager() {
           });
         },
         activeDocuments.length > 0 ? activeDocuments.map(d => ({ filename: d.filename, mimeType: d.mimeType, extractedData: d.extractedData })) : undefined,
-        (stopReason, references) => {
+        (stopReason) => {
           if (stopReason === 'max_tokens') wasTruncated = true;
-          if (references?.length) receivedRefs = references;
         },
         referencedProfile ? { name: referencedProfile.name, data: referencedProfile.data } : undefined,
       );
@@ -242,13 +240,12 @@ export function useChatManager() {
       // Flush any remaining buffered text
       flushAll();
 
-      // Mark truncated and/or attach references (only if still on the same chat)
-      if (!isStale() && (wasTruncated || receivedRefs)) {
+      // Mark truncated (only if still on the same chat)
+      if (!isStale() && wasTruncated) {
         setMessages(prev => {
           const updated = [...prev];
           const last = { ...updated[updated.length - 1] };
-          if (wasTruncated) last.truncated = true;
-          if (receivedRefs) last.references = receivedRefs;
+          last.truncated = true;
           updated[updated.length - 1] = last;
           return updated;
         });

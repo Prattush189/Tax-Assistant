@@ -9,7 +9,6 @@ import { userRepo } from '../db/repositories/userRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { getBillingUser } from '../lib/billing.js';
 import { AuthRequest } from '../types.js';
-import { retrieveContext } from '../rag/index.js';
 
 const router = Router();
 
@@ -51,7 +50,7 @@ DOCUMENT STRUCTURE (produce every section that applies, in this order)
 
 (5) \`## 3. LEGAL SUBMISSIONS\` — the heart of the reply. Break into lettered sub-parts \`### A. <heading>\`, \`### B. <heading>\`, etc. Each sub-part states one discrete legal point with the exact section cited and sub-section where applicable. Quote statutory text inside \`> "..."\` blockquotes so it stands out.
 
-(6) \`## 4. SUPPORTING CASE LAWS / LEGAL PRECEDENTS\` — a numbered list using \`**(i)** <heading>:\`, \`**(ii)** <heading>:\` etc. Under each, a short paragraph stating the principle and the citation in this exact form: \`[Assessee] v. [Department], (Year) Volume ITR/GSTL Page (Court abbreviation)\`. Cite 2–4 precedents. Only use real judgments — never fabricate a citation; if unsure, state the principle as a "well-settled rule" without a fake citation.
+(6) \`## 4. SUPPORTING CASE LAWS / LEGAL PRECEDENTS\` — a numbered list using \`**(i)** <heading>:\`, \`**(ii)** <heading>:\` etc. Under each, a short paragraph stating the principle and the citation in this exact form: \`[Assessee] v. [Department], (Year) Volume ITR/GSTL Page (Court abbreviation)\`. Cite 2–4 precedents. Only use real judgments — never fabricate a citation; if unsure, state the principle as a "well-settled rule" without a fake citation. Verify each cited section number, sub-section text, and case-law reference against the web search results before relying on it.
 
 (7) \`## 5. RELIEF SOUGHT\` — a numbered list \`(1) (2) (3) ...\` of the exact prayers. Include precise rupee amounts wherever the notice has quantified figures (e.g. refund, interest withdrawal, demand rectification).
 
@@ -80,7 +79,22 @@ QUALITY BAR
 - Be precise about section numbers and sub-sections — a wrong citation sinks the reply.
 - Only cite judgments you are confident exist with the citation you provide. A plain principle is better than a fabricated citation.
 - Write in the voice of a practising senior advocate: precise, assertive, respectful. No marketing language, no emojis, no hedging about being AI-generated.
-- Complete every sentence — never truncate mid-argument.`;
+- Complete every sentence — never truncate mid-argument.
+
+WEB-SEARCH-GROUNDED CITATIONS (mandatory)
+You have live Google Search grounding. Use it to verify every section number, sub-section quotation, rule citation, and case-law reference before including it in the letter. When a fact is ambiguous or recent (post-2023 amendment, FA 2025/2026 change, fresh notification), search first.
+
+ONLY treat the following as authoritative sources — prefer these in your search results and cite them inline in section 5 (Legal Submissions) and section 6 (Case Laws / Precedents) where appropriate:
+- incometax.gov.in, incometaxindia.gov.in, eportal.incometax.gov.in (CBDT, Income Tax Department)
+- gst.gov.in, cbic.gov.in, cbic-gst.gov.in (CBIC, GST Council)
+- mca.gov.in (MCA), sebi.gov.in (SEBI), rbi.org.in (RBI) — for cross-statute references
+- indiankanoon.org, itat.gov.in, sci.gov.in, livelaw.in (judgments — court / official reporters)
+- taxmann.com, taxsutra.com, cleartax.in/lawnetwork (commentary cross-checks only — never as the primary citation when an official source exists)
+- Official press releases / circulars / notifications (PIB, CBDT/CBIC notification PDFs)
+
+DO NOT cite blog posts, YouTube, Quora, generic Q&A sites, or unofficial summaries. If web search returns only such sources for a point, drop the citation and fall back to "well-settled rule" language.
+
+Inline citation form: when the supporting authority is an official notification, circular, or judgment URL surfaced by the search, append a short bracketed reference at the end of the relevant sentence — e.g. \`(see CBDT Circular No. 12/2024 dated 15.05.2024)\` or \`(see ITAT Mumbai, ITA No. 1234/2023 dated 02.02.2024)\`. Keep the URL out of the letter body — the bracketed reference plus precise document number is enough for the recipient to locate it.`;
 
 // ── Generate notice draft (streaming) ──
 router.post('/generate', async (req: AuthRequest, res: Response) => {
@@ -154,12 +168,6 @@ router.post('/generate', async (req: AuthRequest, res: Response) => {
     userPrompt += `\n=== UPLOADED NOTICE TEXT (use this to fill any "[extract from notice text below]" fields above, and to pull exact figures / department wording for quotations) ===\n`;
     userPrompt += extractedText.slice(0, 8000);
     userPrompt += `\n=== END OF NOTICE TEXT ===\n`;
-  }
-
-  const ragQuery = `${noticeType} ${subType || ''} section ${noticeDetails?.section || ''} notice reply`;
-  const ragContext = retrieveContext(ragQuery);
-  if (ragContext) {
-    userPrompt += `\n=== SUPPLEMENTARY ACT REFERENCE (use for accurate section numbers / sub-section text) ===\n${ragContext}\n`;
   }
 
   // Inject user's writing style as a USER-message block (not in the system

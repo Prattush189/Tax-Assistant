@@ -1,18 +1,14 @@
 // server/index.ts
 import 'dotenv/config';
 import './db/index.js';
-import { initRAG } from './rag/index.js';
 import express from 'express';
 
-// Initialize RAG chunks at startup
-initRAG();
 import chatRouter from './routes/chat.js';
 import uploadRouter from './routes/upload.js';
 import chatsRouter from './routes/chats.js';
 import authRouter from './routes/auth.js';
 import adminRouter from './routes/admin.js';
 import noticesRouter from './routes/notices.js';
-import pdfRouter from './routes/pdf.js';
 import suggestionsRouter from './routes/suggestions.js';
 import profilesRouter from './routes/profiles.js';
 import genericProfilesRouter from './routes/genericProfiles.js';
@@ -113,7 +109,6 @@ app.use('/api', chatRouter);
 app.use('/api', uploadRouter);
 app.use('/api/chats', chatsRouter);
 app.use('/api/notices', noticesRouter);
-app.use('/api/pdfs', pdfRouter);
 app.use('/api/suggestions', suggestionsRouter);
 app.use('/api/profiles', profilesRouter);
 app.use('/api/generic-profiles', genericProfilesRouter);

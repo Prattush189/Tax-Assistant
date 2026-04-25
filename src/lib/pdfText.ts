@@ -13,9 +13,6 @@
 
 import { pdfjs } from 'react-pdf';
 
-// Worker setup: same URL the PdfReferenceModal uses. Setting it a second
-// time here is safe — pdfjs ignores repeat assignments to the same value —
-// and means extraction still works if the modal hasn't been imported yet.
 if (typeof window !== 'undefined' && !pdfjs.GlobalWorkerOptions.workerSrc) {
   pdfjs.GlobalWorkerOptions.workerSrc = new URL(
     'pdfjs-dist/build/pdf.worker.min.mjs',

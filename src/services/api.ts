@@ -1,4 +1,4 @@
-import { Message, UploadResponse, SectionReference } from '../types';
+import { Message, UploadResponse } from '../types';
 
 const TOKEN_KEY = 'tax_access_token';
 
@@ -33,7 +33,7 @@ export async function sendChatMessage(
   onChunk: (text: string) => void,
   onError: (msg: string) => void,
   fileContexts?: { filename: string; mimeType: string; extractedData?: unknown }[],
-  onDone?: (stopReason: string | null, references?: SectionReference[]) => void,
+  onDone?: (stopReason: string | null) => void,
   profileContext?: { name: string; data: Record<string, unknown> },
 ): Promise<void> {
   const body: Record<string, unknown> = {
@@ -142,7 +142,7 @@ export async function sendChatMessage(
           // Server heartbeat — just resets idle watchdog, no user-visible effect.
           if (parsed.heartbeat) continue;
           if (parsed.done) {
-            onDone?.(parsed.stop_reason ?? null, parsed.references ?? undefined);
+            onDone?.(parsed.stop_reason ?? null);
             terminated = true;
             return;
           }

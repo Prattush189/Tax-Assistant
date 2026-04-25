@@ -1,12 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { User, FileText, Copy, Check, Flag, ChevronRight, BookOpen, BarChart3 } from 'lucide-react';
-import { Message, SectionReference } from '../../types';
+import { User, FileText, Copy, Check, Flag, ChevronRight, BarChart3 } from 'lucide-react';
+import { Message } from '../../types';
 import { cn } from '../../lib/utils';
 import { ChartRenderer } from './ChartRenderer';
-import { PdfReferenceModal } from './PdfReferenceModal';
-import { SectionModal } from './SectionModal';
 import toast from 'react-hot-toast';
 
 // Custom link component — shows confirmation dialog before opening external links
@@ -114,9 +112,8 @@ interface MessageBubbleProps {
 }
 
 export function MessageBubble({ message, onContinue, isLastModel, isLoading }: MessageBubbleProps) {
-  const { role, content, timestamp, attachment, attachments, truncated, references } = message;
+  const { role, content, timestamp, attachment, attachments, truncated } = message;
   const [copied, setCopied] = useState(false);
-  const [activeRef, setActiveRef] = useState<SectionReference | null>(null);
   // Only the last model message while loading is considered "streaming"
   const isStreaming = !!(role === 'model' && isLastModel && isLoading && content.length > 0);
 
@@ -221,32 +218,7 @@ export function MessageBubble({ message, onContinue, isLastModel, isLoading }: M
           </div>
         )}
 
-        {/* Section references */}
-        {role === 'model' && references && references.length > 0 && (
-          <div className="mt-3 ml-1">
-            <p className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-1.5">References</p>
-            <div className="flex flex-wrap gap-1.5">
-              {references.map((ref, i) => (
-                <button
-                  key={`${ref.source}-${ref.section}-${i}`}
-                  onClick={() => setActiveRef(ref)}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/15 border border-emerald-200/60 dark:border-emerald-800/30 rounded-lg hover:bg-emerald-100 dark:hover:bg-emerald-900/25 transition-all"
-                >
-                  <BookOpen className="w-3 h-3" />
-                  {ref.label} — {ref.section.split(' [')[0]}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
-
-      {/* Section modal — PDF viewer if PDF available, text fallback otherwise */}
-      {activeRef && (activeRef.pdfFile || activeRef.pdfFiles) ? (
-        <PdfReferenceModal reference={activeRef} onClose={() => setActiveRef(null)} />
-      ) : activeRef ? (
-        <SectionModal reference={activeRef} onClose={() => setActiveRef(null)} />
-      ) : null}
     </div>
   );
 }
