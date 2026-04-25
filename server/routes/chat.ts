@@ -9,95 +9,13 @@ import { usageRepo } from '../db/repositories/usageRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { getUserLimits, getEffectivePlan } from '../lib/planLimits.js';
 import { getBillingUserId, getBillingUser } from '../lib/billing.js';
-import { retrieveContextWithRefs, SectionReference } from '../rag/index.js';
 import { SseWriter } from '../lib/sseStream.js';
 import { AuthRequest } from '../types.js';
-import { buildChatFactsBlock } from '../data/taxFacts.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 
 const router = Router();
 
 const MAX_TOKENS = 4096;
-
-// ── Selective web search ──────────────────────────────────────────────────
-// When any of these patterns match the user's query, Google Search grounding
-// is enabled so Gemini can fetch live CBDT/CBIC notifications, Budget updates,
-// and case-law mentions. The local RAG reference is still injected as
-// supplementary context.
-const WEB_SEARCH_PATTERNS = [
-  // Recent / latest info
-  /\b(latest|recent|updated?|current|upcoming)\s+(change|circular|notification|amendment|rule|budget|reform|rate|threshold)/i,
-  /\blatest\b/i,
-  /\b(news|update|announcement)\b/i,
-
-  // Specific time references
-  /\b(today|yesterday|this\s+week|this\s+month|right\s+now|currently)\b/i,
-
-  // Specific years (2024+)
-  /\b20(2[4-9]|[3-9]\d)\b/,
-
-  // Specific months / dates
-  /\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+20\d{2}\b/i,
-  /\b\d{1,2}[\/-]\d{1,2}[\/-]20\d{2}\b/,
-
-  // FY / AY references
-  /\b(fy|ay)\s*20\d{2}/i,
-
-  // Government / regulatory
-  /\b(budget\s+20\d{2}|union\s+budget|finance\s+(act|bill))\b/i,
-  /\b(circular|notification|press\s+release|CBDT|CBIC|gazette)\b/i,
-  /\b(announced?|introduced|notified|amended)\s+in\s+20\d{2}/i,
-
-  // Old-vs-new / comparison / renumbering queries (common when users ask
-  // about the IT Act 2025 vs 1961 transition or GST rate changes)
-  /\bold\b[\s\S]{0,30}\bnew\b/i,
-  /\bnew\b[\s\S]{0,30}\bold\b/i,
-  /\b(old|new)\s+(act|section|regime|rule|law|provision|code)\b/i,
-  /\b(compare|comparison|versus|difference|differences|differ|replaced?)\b/i,
-  /\b\d{2,4}\s*(?:vs|versus|→|->)\s*\d{2,4}\b/i,
-  /\bvs\b/i,
-
-  // IT Act version references
-  /\b(it|income\s+tax)\s+act\s+(1961|2025|2026)\b/i,
-  /\bact\s+(1961|2025|2026)\b/i,
-  /\brenumbering\b/i,
-  /\brenumbered\b/i,
-
-  // "Is this still applicable" / "has this changed" — signals the user wants
-  // a freshness check, not a generic lookup
-  /\b(still\s+(applicable|valid|in\s+force)|has\s+this\s+changed|any\s+changes)\b/i,
-
-  // Capital-gains rate questions — Budget 2024 (effective 23 Jul 2024) reset
-  // LTCG 10%→12.5% and STCG 15%→20% for listed equity. The model's training
-  // data still skews to the old rates, so force a freshness check for any
-  // LTCG / STCG / capital-gains query.
-  /\b(ltcg|stcg|long[-\s]?term\s+capital\s+gain|short[-\s]?term\s+capital\s+gain|capital\s+gains?)\b/i,
-
-  // Specific section-number queries — sections whose rates/limits were
-  // changed by recent Finance Acts are the highest-drift category.
-  /§\s*\d+/,                                                // unicode section sign
-  /\bsec(?:tion)?\.?\s*1?\d{2,3}[A-Z]{0,3}\b/i,             // "section 194S", "sec 80C", "s. 54F"
-  /\b(80C|80CCD|80D|80E|80G|80TTA|80TTB|80EEA?|80EEB)\b/i,  // popular deduction sections
-  /\b(54|54F|54EC|54B|111A|112|112A|115BA[A-Z]?|115BBH|115QA|194[A-Z]?|206C)\b/,
-  /\bchapter\s+VI-?A\b/i,
-
-  // Rate / threshold / limit queries (generic — catches edge cases the named
-  // patterns miss). Requires the query to also mention a topic word so we
-  // don't spuriously search for "rate limit" (programming).
-  /\b(rate|rates|threshold|limit|ceiling|cap|slab|bracket|exemption|deduction|rebate|surcharge|cess)\b[\s\S]{0,80}\b(tax|gst|tds|tcs|income|capital|nps|rent|salary|property|hra|dividend|interest|commission|professional|contractor|crypto|vda|esop|lta|gratuity|pension|epf|ppf|ulip)\b/i,
-  /\b(tax|gst|tds|tcs|income|capital|nps|rent|salary|property|hra|dividend|interest|commission|professional|contractor|crypto|vda|esop|lta|gratuity|pension|epf|ppf|ulip)\b[\s\S]{0,80}\b(rate|rates|threshold|limit|ceiling|cap|slab|bracket|exemption|deduction|rebate|surcharge|cess)\b/i,
-
-  // Presumptive / audit thresholds (Budget 2023 raised 44AD to ₹3Cr and
-  // 44ADA to ₹75L when cash ≤ 5%).
-  /\b(presumptive|44AD|44ADA|44AE|tax\s+audit)\b/i,
-
-  // VDA / crypto (§115BBH + §194S introduced FY 2022-23, nuance keeps evolving)
-  /\b(vda|virtual\s+digital\s+asset|crypto(?:currency)?|nft)\b/i,
-];
-
-function shouldEnableWebSearch(query: string): boolean {
-  return WEB_SEARCH_PATTERNS.some(p => p.test(query));
-}
 
 // ── Plan-based message limits ──
 // Counts messages against the BILLING user (inviter for shared-pool members,
@@ -127,12 +45,8 @@ RULES:
 - NEVER fabricate section numbers, rates, or policy changes. Say "I'm not certain" if unsure.
 - Lead with the answer. No filler, no tangential sections, no padding.
 - If question is vague/incomplete, ask a clarifying question instead of guessing.
-- If reference text is injected, use it silently as additional context — NEVER mention "the reference", "provided context", or "provided text". Always answer from your full knowledge; the reference is supplementary, never a limitation.
+- Web search results returned via grounding are the authoritative source for any rate, threshold, deduction, or section-number question. If the search results contradict your training data, trust the search results — your training is stale.
 - Cite section numbers (both old and new Act). Mention consulting a CA for official filing.
-- ANY rate, threshold, limit or percentage you quote MUST match the FACTS block below. These are the current values post-Finance-Act-2024 and post-56th-GST-Council. If the FACTS block contradicts your training data, the FACTS block is right — your training is stale.
-
-FACTS (authoritative — single source of truth, kept in lockstep with the calculator engines):
-${buildChatFactsBlock()}
 
 HANDLING ATTACHED DOCUMENTS:
 - If the user attaches a document and asks a vague question, your response MUST focus on the attached document's content.
@@ -275,14 +189,6 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
     userContent = `[Tax Profile: ${profileContext.name}]\nIncome: ₹${profileContext.data.gross_salary}, Other: ₹${profileContext.data.other_income}, FY: ${profileContext.data.fy}, Age: ${profileContext.data.age_category}\nDeductions: ${profileContext.data.deductions_data}\nHRA: ${profileContext.data.hra_data}\n\n${userContent}`;
   }
 
-  // RAG: retrieve relevant Act sections (lightweight — 2-3 chunks for reference)
-  let ragReferences: SectionReference[] = [];
-  const ragResult = retrieveContextWithRefs(userContent);
-  if (ragResult) {
-    userContent = `[Supplementary Act reference — use alongside your knowledge, not instead of it]:\n${ragResult.context}\n\n---\n\n${userContent}`;
-    ragReferences = ragResult.references;
-  }
-
   const sse = new SseWriter(res);
 
   // Heartbeat keeps intermediate proxies (nginx, Cloudflare, etc.) from buffering
@@ -312,7 +218,10 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
         // Fallback only runs if the primary emitted zero text — we don't
         // restart the stream after partial output (would produce duplicated
         // responses on the client).
-        const searchEnabled = shouldEnableWebSearch(message);
+        // Web search grounding is always enabled — the chat has no local
+        // reference data, so live search is the sole source of truth for
+        // rates, sections, and amendments.
+        const searchEnabled = true;
         let usedModel = '';
         const historyPlain = history.map(m => ({ role: m.role as string, content: m.content as string }));
         let primaryFailedMidStream = false;
