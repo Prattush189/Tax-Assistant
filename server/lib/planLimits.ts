@@ -4,8 +4,8 @@
  * Two sources of truth, checked in order:
  *   1. `plugin_limits` JSON column on the user row — per-feature overrides
  *      pushed by a parent/consultant app via the plugin SSO handshake.
- *   2. `plugin_plan` column — an override plan id (e.g. 'enterprise-shared')
- *      whose defaults apply if plugin_limits doesn't specify a given field.
+ *   2. `plugin_plan` column — an override plan id whose defaults apply if
+ *      plugin_limits doesn't specify a given field.
  *   3. `plan` column — the user's standalone Smartbiz AI plan.
  *
  * All route-level enforcement (chat, notices, upload, suggestions, profiles,
@@ -14,7 +14,7 @@
 
 import type { UserRow } from '../db/repositories/userRepo.js';
 
-export type PlanId = 'free' | 'pro' | 'enterprise' | 'enterprise-shared';
+export type PlanId = 'free' | 'pro' | 'enterprise';
 
 /** Number of days a free-plan trial lasts before the account is locked. */
 export const TRIAL_DAYS = 30;
@@ -61,22 +61,7 @@ export const PLAN_DEFAULTS: Record<PlanId, UserLimits> = {
     notices: 50,
     profiles: 25,
     boardResolutions: 50,
-    bankStatements: 200,
-  },
-  /**
-   * enterprise-shared defaults are intentionally generous — the consultant's
-   * parent app is expected to allocate per-staff/per-client caps via
-   * `plugin_limits` on every SSO handshake. If the parent forgets to pass
-   * limits, the user silently falls back to these ceilings.
-   */
-  'enterprise-shared': {
-    messages: { limit: 10000, period: 'month' },
-    attachments: 500,
-    suggestions: 1000,
-    notices: 100,
-    profiles: 50,
-    boardResolutions: 100,
-    bankStatements: 500,
+    bankStatements: 100,
   },
 };
 

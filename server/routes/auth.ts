@@ -56,7 +56,7 @@ function loginAndIssueTokens(user: { id: string; email: string; role?: string; p
   return generateTokens({ ...user, sessionToken });
 }
 
-const VALID_PLUGIN_PLANS = new Set(['free', 'pro', 'enterprise', 'enterprise-shared']);
+const VALID_PLUGIN_PLANS = new Set(['free', 'pro', 'enterprise']);
 const VALID_PLUGIN_ROLES = new Set(['consultant', 'staff', 'client']);
 
 /**
@@ -680,7 +680,7 @@ router.delete('/account', authMiddleware, async (req: AuthRequest, res: Response
 // Accepts a signed handshake from a trusted parent app and returns a full JWT.
 // Required: { userId, name, timestamp, nonce, signature } + at least one of
 // { email, phone }.
-// Optional (for consultant/enterprise-shared plans):
+// Optional (for consultant-pool plugin overrides):
 //   { plan, limits, role, consultantId, inviterUserId, phone }
 //
 // Signature base string (11 fields — all optional stringified as empty when

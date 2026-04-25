@@ -67,9 +67,9 @@ export function countSeats(inviterId: string): {
 
 /**
  * Can this user invite others? Only enterprise standalones (not invited
- * themselves — chain-block) and parent-app enterprise-shared consultants.
+ * themselves — chain-block) qualify.
  */
 export function canInvite(user: UserRow): boolean {
   if (user.inviter_id) return false; // chain-block: invitees never invite
-  return user.plan === 'enterprise' || user.plugin_plan === 'enterprise' || user.plugin_plan === 'enterprise-shared';
+  return user.plan === 'enterprise' || user.plugin_plan === 'enterprise';
 }

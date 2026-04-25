@@ -171,7 +171,7 @@ async function extractBankStatementTsvOnce(
     content: `${conditionsBlock}${BANK_STATEMENT_TSV_PROMPT}\n\nINPUT_TEXT:\n${chunkText}`,
   }];
   // `reasoning_effort` is the OpenAI-compat knob for Gemini's thinking budget.
-  // Both gemini-2.5-flash-lite and gemini-3-flash-preview are thinking models: by
+  // Both gemini-2.5-flash and gemini-3-flash-preview are thinking models: by
   // default they burn a large fraction of `max_tokens` on internal reasoning
   // before emitting a single TSV row, which was producing finish_reason=length
   // at 1-59 rows. Transcribing rows from already-extracted text needs no
@@ -238,12 +238,12 @@ async function extractBankStatementTsvOnce(
  * Retry + fallback wrapper around the TSV extraction.
  *
  * Two-tier Gemini cascade:
- *   - Primary : `gemini-2.5-flash-lite`   — cheapest GA flash-tier model;
- *                                           handles the bulk of TSV
- *                                           extractions reliably.
+ *   - Primary : `gemini-2.5-flash`        — stable GA model, the most reliable
+ *                                           flash-tier option for a long
+ *                                           JSON-adjacent extraction.
  *   - Fallback: `gemini-3-flash-preview`  — stronger on dense chunks but
  *                                           flakier (400/503 bursts); only
- *                                           asked when the primary fails.
+ *                                           asked when the GA model fails.
  *
  * Earlier versions had these reversed. Empirically the preview model was
  * producing intermittent 400 (no body) and 503 (no body) errors that the
@@ -290,14 +290,14 @@ async function extractBankStatementTsv(chunkText: string, maxTokens: number, con
   const PRIMARY_BACKOFFS_MS = [2_000, 5_000, 12_000];
   for (let attempt = 0; attempt < MAX_PRIMARY_ATTEMPTS; attempt++) {
     try {
-      // gemini-2.5-flash-lite supports thinking_budget=0 (reasoning_effort='none').
-      return await extractBankStatementTsvOnce(chunkText, 'gemini-2.5-flash-lite', maxTokens, 'none', conditionsBlock);
+      // gemini-2.5-flash supports thinking_budget=0 (reasoning_effort='none').
+      return await extractBankStatementTsvOnce(chunkText, 'gemini-2.5-flash', maxTokens, 'none', conditionsBlock);
     } catch (err) {
       lastErr = err;
       const status = (err as { status?: number })?.status ?? 0;
       const msg = (err as Error).message?.slice(0, 140) ?? '';
       if (tierDone(err)) {
-        console.warn(`[bank-statements] primary gemini-2.5-flash-lite giving up after attempt ${attempt + 1}: ${status || 'no status'} — ${msg}`);
+        console.warn(`[bank-statements] primary gemini-2.5-flash giving up after attempt ${attempt + 1}: ${status || 'no status'} — ${msg}`);
         break;
       }
       if (attempt < MAX_PRIMARY_ATTEMPTS - 1) {
@@ -750,7 +750,7 @@ router.post(
         //   20 chunks covers statements up to ~150 pages. Going past the cap
         //   silently drops pages, which is unacceptable for a tax feature —
         //   the explicit ceiling still bounds worst-case cost per request.
-        // Sizing: aim for chunks that reliably finish on gemini-2.5-flash-lite.
+        // Sizing: aim for chunks that reliably finish on gemini-2.5-flash.
         // 20K char chunks with 8K max_tokens were producing short/truncated
         // responses (1-9 rows for a 17-page chunk) — the model was bailing
         // early on dense input, not running out of tokens. Halving to 12K

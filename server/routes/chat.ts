@@ -77,7 +77,6 @@ const ATTACHMENTS_PER_MESSAGE: Record<string, number> = {
   free: 1,
   pro: 3,
   enterprise: 5,
-  'enterprise-shared': 5,
 };
 
 router.post('/chat', async (req: AuthRequest, res: Response) => {

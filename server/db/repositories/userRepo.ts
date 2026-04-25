@@ -11,7 +11,7 @@ export interface UserRow {
   suspended_until: string | null;
   google_id: string | null;
   external_id: string | null;
-  plugin_plan: string | null;         // e.g. 'enterprise-shared' (not constrained by CHECK)
+  plugin_plan: string | null;         // plugin-supplied plan override (not constrained by CHECK)
   plugin_limits: string | null;       // JSON — see server/lib/planLimits.ts
   plugin_role: string | null;         // 'consultant' | 'staff' | 'client'
   plugin_consultant_id: string | null;

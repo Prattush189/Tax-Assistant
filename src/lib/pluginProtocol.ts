@@ -11,10 +11,10 @@
 export type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings';
 export type CalculatorTab = 'income' | 'capitalGains' | 'gst' | 'tds' | 'advanceTax' | 'salary' | 'investment';
 
-/** Shared plan IDs (includes 'enterprise-shared' for consultant-pool plans) */
-export type PlanId = 'free' | 'pro' | 'enterprise' | 'enterprise-shared';
+/** Shared plan IDs */
+export type PlanId = 'free' | 'pro' | 'enterprise';
 
-/** Consultant-hierarchy role (only meaningful for enterprise-shared plans) */
+/** Consultant-hierarchy role used by parent apps that allocate a shared pool */
 export type ConsultantRole = 'consultant' | 'staff' | 'client';
 
 /**
@@ -39,8 +39,8 @@ export interface SsoPayload {
   nonce: string;         // random per-request
   signature: string;     // hex HMAC-SHA256 — see PLUGIN_INTEGRATION.md for base string
 
-  // --- Optional enterprise-shared fields (all included in the signature) ---
-  plan?: PlanId;                    // override the user's Smartbiz AI plan (e.g. 'enterprise-shared')
+  // --- Optional consultant-pool fields (all included in the signature) ---
+  plan?: PlanId;                    // override the user's Smartbiz AI plan
   limits?: PluginLimitOverrides;    // per-feature caps assigned by the consultant
   role?: ConsultantRole;            // consultant | staff | client
   consultantId?: string;            // parent's ID of the owning consultant (staff/client only)
