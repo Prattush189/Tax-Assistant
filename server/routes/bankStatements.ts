@@ -5,7 +5,7 @@ import Papa from 'papaparse';
 import { extractWithRetry } from '../lib/documentExtract.js';
 import { callGeminiJson } from '../lib/geminiJson.js';
 import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_TSV_PROMPT, BANK_STATEMENT_CATEGORIES, buildConditionsBlock, countWords, MAX_CONDITION_WORDS } from '../lib/bankStatementPrompt.js';
-import { gemini } from '../lib/gemini.js';
+import { gemini, GEMINI_CHAT_MODEL_THINK_FB } from '../lib/gemini.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { bankStatementRepo } from '../db/repositories/bankStatementRepo.js';
 import { bankTransactionRepo, BankTransactionInput } from '../db/repositories/bankTransactionRepo.js';
@@ -235,26 +235,34 @@ async function extractBankStatementTsvOnce(
 }
 
 /**
- * Retry + escalation wrapper around the TSV extraction.
+ * Retry + fallback wrapper around the TSV extraction.
  *
- * Single-model, two-phase retry on `gemini-2.5-flash`:
- *   - Phase 1 (transient blip): up to 4 attempts at the standard `maxTokens`
- *     output ceiling with exponential backoff (2s / 5s / 12s + jitter) on
- *     429 / 5xx. Resolves the common case — a flaky upstream window.
- *   - Phase 2 (truncation rescue): up to 3 more attempts at 2× `maxTokens`
- *     to absorb the rare dense-chunk overflow that a normal retry can't fix.
+ * Two-tier Gemini cascade:
+ *   - Primary : `gemini-2.5-flash`        — stable GA model, the most reliable
+ *                                           flash-tier option for a long
+ *                                           JSON-adjacent extraction.
+ *   - Fallback: `gemini-3-flash-preview`  — stronger on dense chunks but
+ *                                           flakier (400/503 bursts); only
+ *                                           asked when the GA model fails.
  *
- * Determinism guarantee: both phases use the SAME model and reasoning
- * budget. Earlier versions escalated to gemini-3-flash-preview which, even
- * with temperature=0, produced different debit/credit and category decisions
- * — so two runs of the same statement that differed only in upstream
- * blip-luck produced different inflow / outflow / net totals. Keeping the
- * model fixed eliminates that source of variance.
+ * Earlier versions had these reversed. Empirically the preview model was
+ * producing intermittent 400 (no body) and 503 (no body) errors that the
+ * retry loop couldn't recover from inside one request, while the GA model
+ * has been boringly reliable. Putting the reliable one first gets far more
+ * statements across the line on the first try, and the preview model still
+ * acts as an escape hatch.
  *
- *   - 400 from the model: skip the remaining attempts in that phase
- *     (retrying a 400 doesn't help) and escalate to phase 2 / surface.
- *   - Validation failures (truncation / trailer mismatch) jump straight to
- *     phase 2 — the doubled output ceiling is what resolves them.
+ * Retry shape:
+ *   - Primary  × 4 attempts, exp backoff 2s/5s/12s with jitter, on 429/5xx.
+ *   - Fallback × 3 attempts, flat backoff ~3s with jitter, on 429/5xx.
+ *   - 400 from either tier: skip the rest of that tier's retries (retrying
+ *     a 400 doesn't help) and escalate. Most 400s from Gemini's OpenAI-
+ *     compatible endpoint come from preview-model quirks, which the other
+ *     model usually doesn't share.
+ *   - Validation failures (truncation / trailer mismatch) break out
+ *     immediately at each tier — the fallback's doubled output ceiling is
+ *     exactly what resolves truncation, so we don't waste another 30-50s
+ *     retrying the same params on the same model.
  */
 async function extractBankStatementTsv(chunkText: string, maxTokens: number, conditionsBlock: string): Promise<TsvExtractResult> {
   const MAX_PRIMARY_ATTEMPTS = 4;
@@ -267,7 +275,7 @@ async function extractBankStatementTsv(chunkText: string, maxTokens: number, con
   const jitter = () => 300 + Math.floor(Math.random() * 600);
   const isRetryableStatus = (s: number) =>
     s === 429 || s === 500 || s === 502 || s === 503 || s === 504;
-  const phaseDone = (err: unknown): boolean => {
+  const tierDone = (err: unknown): boolean => {
     const msg = (err as Error).message ?? '';
     const status = (err as { status?: number })?.status ?? 0;
     if (/trailer|mismatch|truncated/i.test(msg)) return true;   // retry won't help
@@ -288,7 +296,7 @@ async function extractBankStatementTsv(chunkText: string, maxTokens: number, con
       lastErr = err;
       const status = (err as { status?: number })?.status ?? 0;
       const msg = (err as Error).message?.slice(0, 140) ?? '';
-      if (phaseDone(err)) {
+      if (tierDone(err)) {
         console.warn(`[bank-statements] primary gemini-2.5-flash giving up after attempt ${attempt + 1}: ${status || 'no status'} — ${msg}`);
         break;
       }
@@ -300,22 +308,26 @@ async function extractBankStatementTsv(chunkText: string, maxTokens: number, con
     }
   }
 
-  // Phase 2: same model, doubled output ceiling. Handles dense-chunk
-  // truncation and the long upstream blip that outlasted phase 1.
+  // Fallback: gemini-3-flash-preview with 2× the output ceiling. Handles the
+  // two failure modes the primary can't cheaply escape — a GA-model blip
+  // that outlasts the primary's 19s retry window, and truncation on dense
+  // chunks that exceed the primary's 8K-token output ceiling.
   for (let attempt = 0; attempt < MAX_FALLBACK_ATTEMPTS; attempt++) {
     try {
-      return await extractBankStatementTsvOnce(chunkText, 'gemini-2.5-flash', maxTokens * 2, 'none', conditionsBlock);
+      // gemini-3-flash-preview can't fully disable thinking but accepts 'low',
+      // which is still dramatically cheaper than the default 'medium' budget.
+      return await extractBankStatementTsvOnce(chunkText, GEMINI_CHAT_MODEL_THINK_FB, maxTokens * 2, 'low', conditionsBlock);
     } catch (err) {
       lastErr = err;
       const status = (err as { status?: number })?.status ?? 0;
       const msg = (err as Error).message?.slice(0, 140) ?? '';
-      if (phaseDone(err)) {
-        console.warn(`[bank-statements] phase-2 gemini-2.5-flash (2x tokens) giving up after attempt ${attempt + 1}: ${status || 'no status'} — ${msg}`);
+      if (tierDone(err)) {
+        console.warn(`[bank-statements] fallback ${GEMINI_CHAT_MODEL_THINK_FB} giving up after attempt ${attempt + 1}: ${status || 'no status'} — ${msg}`);
         break;
       }
       if (attempt < MAX_FALLBACK_ATTEMPTS - 1) {
         const wait = 3_000 + jitter();
-        console.warn(`[bank-statements] phase-2 attempt ${attempt + 1}/${MAX_FALLBACK_ATTEMPTS} failed (${status || 'no status'}); retrying in ${wait}ms`);
+        console.warn(`[bank-statements] fallback attempt ${attempt + 1}/${MAX_FALLBACK_ATTEMPTS} failed (${status || 'no status'}); retrying in ${wait}ms`);
         await new Promise(r => setTimeout(r, wait));
       }
     }
