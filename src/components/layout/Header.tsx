@@ -1,8 +1,16 @@
-import { Menu, Moon, Sun, LogOut, MessageCircle, Calculator, CreditCard, FileText, FileSpreadsheet, Gavel, Landmark, Shield, Settings, X, Minus } from 'lucide-react';
+import { Menu, Moon, Sun, LogOut, MessageCircle, Calculator, CreditCard, FileSpreadsheet, Scale, Landmark, Shield, Settings, X, Minus } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { postToParent } from '../../lib/pluginProtocol';
 
-type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions' | 'bank_statements';
+type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions' | 'partnership_deeds' | 'bank_statements';
+
+// Views that all live inside the unified "Legal" hub. The Legal nav button is
+// highlighted whenever the current view is any of these.
+const LEGAL_VIEWS: ReadonlySet<ActiveView> = new Set([
+  'notices',
+  'board_resolutions',
+  'partnership_deeds',
+]);
 
 interface HeaderProps {
   isPluginMode: boolean;
@@ -22,7 +30,6 @@ interface HeaderProps {
 const navItems: { id: ActiveView; label: string; icon: typeof MessageCircle; ai?: boolean }[] = [
   { id: 'chat', label: 'Chat', icon: MessageCircle, ai: true },
   { id: 'calculator', label: 'Calculator', icon: Calculator },
-  { id: 'notices', label: 'Notices', icon: FileText, ai: true },
 ];
 
 function getInitials(name: string): string {
@@ -40,15 +47,14 @@ export function Header({
   onViewChange,
 }: HeaderProps) {
   // ITR: admin-only OR explicit itr_enabled grant (not available to regular enterprise users yet).
-  // Board Resolutions: all authenticated users. Plan tab always last.
+  // Legal hub (Notices / Board Resolutions / Partnership Deeds): all authenticated users.
+  // Plan tab always last.
   const canAccessItr = user?.role === 'admin' || user?.itr_enabled === true;
-  const canAccessBoardResolutions = !!user;
+  const canAccessLegal = !!user;
   const allNavItems: { id: ActiveView; label: string; icon: typeof MessageCircle; ai?: boolean }[] = [
     ...navItems,
     ...(canAccessItr ? [{ id: 'itr' as ActiveView, label: 'ITR', icon: FileSpreadsheet }] : []),
-    ...(canAccessBoardResolutions
-      ? [{ id: 'board_resolutions' as ActiveView, label: 'Resolutions', icon: Gavel }]
-      : []),
+    ...(canAccessLegal ? [{ id: 'notices' as ActiveView, label: 'Legal', icon: Scale, ai: true }] : []),
     ...(user ? [{ id: 'bank_statements' as ActiveView, label: 'Statements', icon: Landmark, ai: true }] : []),
     ...(user?.role === 'admin' ? [{ id: 'admin' as ActiveView, label: 'Admin', icon: Shield }] : []),
     { id: 'plan' as ActiveView, label: 'Plan', icon: CreditCard },
@@ -80,7 +86,12 @@ export function Header({
         <nav className="hidden lg:flex items-center gap-1 flex-1 justify-center">
           {allNavItems.map((item) => {
             const Icon = item.icon;
-            const isActive = activeView === item.id;
+            // Legal entry uses 'notices' as its id (the default sub-tab) but
+            // stays highlighted whenever any legal sub-view is active.
+            const isLegalEntry = item.label === 'Legal';
+            const isActive = isLegalEntry
+              ? LEGAL_VIEWS.has(activeView as ActiveView)
+              : activeView === item.id;
             return (
               <button
                 key={item.id}

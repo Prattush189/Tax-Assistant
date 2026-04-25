@@ -1,13 +1,22 @@
-import { X, Plus, LogOut, Trash2, MessageSquare, MessageCircle, Calculator, LayoutDashboard, Shield, CreditCard, FileText, FileSpreadsheet, Gavel, Landmark, User, Users, Settings, AlertTriangle, Lock } from 'lucide-react';
+import { X, Plus, LogOut, Trash2, MessageSquare, MessageCircle, Calculator, LayoutDashboard, Shield, CreditCard, FileText, FileSpreadsheet, Gavel, Landmark, User, Settings, AlertTriangle, Lock, Scale, ScrollText } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { ChatItem, NoticeItem, ItrDraft, BoardResolutionDraft, GenericProfile, BankStatementSummary } from '../../services/api';
+import { ChatItem, NoticeItem, ItrDraft, BoardResolutionDraft, GenericProfile, BankStatementSummary, PartnershipDeedDraft } from '../../services/api';
 import { TEMPLATE_TITLES } from '../board-resolutions/lib/uiModel';
+import { TEMPLATE_TITLES as DEED_TEMPLATE_TITLES } from '../partnership-deeds/lib/uiModel';
 import { useState } from 'react';
 import { usePreferences } from '../../hooks/usePreferences';
 import { useAuth } from '../../contexts/AuthContext';
 import { CalculatorTab, CALCULATOR_TABS } from '../calculator/CalculatorView';
 
-type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions' | 'bank_statements';
+type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions' | 'partnership_deeds' | 'bank_statements';
+
+// Views that all live inside the unified "Legal" hub. The Legal nav button is
+// highlighted whenever the current view is any of these.
+const LEGAL_VIEWS: ReadonlySet<ActiveView> = new Set([
+  'notices',
+  'board_resolutions',
+  'partnership_deeds',
+]);
 
 interface SidebarProps {
   isOpen: boolean;
@@ -42,6 +51,11 @@ interface SidebarProps {
   onNewBankStatement: () => void;
   onSwitchBankStatement: (statementId: string) => void;
   onDeleteBankStatement: (statementId: string) => void;
+  partnershipDeedList: PartnershipDeedDraft[];
+  currentPartnershipDeedId: string | null;
+  onNewPartnershipDeed: () => void;
+  onSwitchPartnershipDeed: (draftId: string) => void;
+  onDeletePartnershipDeed: (draftId: string) => void;
   user: { id: string; email: string; name: string; role: string; plan?: string; itr_enabled?: boolean } | null;
   onLogout: () => void;
   activeView: ActiveView;
@@ -59,13 +73,14 @@ type NavItem = { id: ActiveView; label: string; icon: typeof MessageCircle; ai?:
 const baseNavItems: NavItem[] = [
   { id: 'chat', label: 'Chat', icon: MessageCircle, ai: true },
   { id: 'calculator', label: 'Calc', icon: Calculator },
-  { id: 'notices', label: 'Notices', icon: FileText, ai: true },
   { id: 'dashboard', label: 'Stats', icon: LayoutDashboard },
 ];
 
 const adminNavItem: NavItem = { id: 'admin' as ActiveView, label: 'Admin', icon: Shield };
 const itrNavItem: NavItem = { id: 'itr' as ActiveView, label: 'ITR', icon: FileSpreadsheet };
-const boardResolutionsNavItem: NavItem = { id: 'board_resolutions' as ActiveView, label: 'Resolutions', icon: Gavel };
+// Legal hub entry — clicking lands on Notices by default; the Legal hub itself
+// renders the inner tab strip (Notices / Board Resolutions / Partnership Deeds).
+const legalNavItem: NavItem = { id: 'notices' as ActiveView, label: 'Legal', icon: Scale, ai: true };
 const bankStatementsNavItem: NavItem = { id: 'bank_statements' as ActiveView, label: 'Statements', icon: Landmark, ai: true };
 const profileNavItem: NavItem = { id: 'profile' as ActiveView, label: 'Profile', icon: User };
 
@@ -110,6 +125,7 @@ export function Sidebar({
   boardResolutionList, currentBoardResolutionId, onNewBoardResolution, onSwitchBoardResolution, onDeleteBoardResolution,
   profileList, currentProfileId, onNewProfile, onSwitchProfile, onDeleteProfile,
   bankStatementList, currentBankStatementId, onNewBankStatement, onSwitchBankStatement, onDeleteBankStatement,
+  partnershipDeedList, currentPartnershipDeedId, onNewPartnershipDeed, onSwitchPartnershipDeed, onDeletePartnershipDeed,
   user, onLogout, activeView, onViewChange,
   calculatorTab, onCalculatorTabChange,
 }: SidebarProps) {
@@ -122,6 +138,7 @@ export function Sidebar({
   const [pendingDeleteBoardResolution, setPendingDeleteBoardResolution] = useState<{ id: string; title: string } | null>(null);
   const [pendingDeleteProfile, setPendingDeleteProfile] = useState<{ id: string; title: string } | null>(null);
   const [pendingDeleteBankStatement, setPendingDeleteBankStatement] = useState<{ id: string; title: string } | null>(null);
+  const [pendingDeletePartnershipDeed, setPendingDeletePartnershipDeed] = useState<{ id: string; title: string } | null>(null);
   const [pendingDeleteAll, setPendingDeleteAll] = useState<{ label: string; count: number } | null>(null);
   const [isDeletingAll, setIsDeletingAll] = useState(false);
   const { prefs } = usePreferences();
@@ -231,6 +248,26 @@ export function Sidebar({
     }
   };
 
+  const handleDeletePartnershipDeed = (e: React.MouseEvent, draftId: string) => {
+    e.stopPropagation();
+    if (prefs.confirmBeforeDeletingChats) {
+      const draft = partnershipDeedList.find((d) => d.id === draftId);
+      setPendingDeletePartnershipDeed({ id: draftId, title: draft?.name || 'this draft' });
+      return;
+    }
+    performDeletePartnershipDeed(draftId);
+  };
+
+  const performDeletePartnershipDeed = async (draftId: string) => {
+    setDeletingId(draftId);
+    try {
+      await onDeletePartnershipDeed(draftId);
+    } finally {
+      setDeletingId(null);
+      setPendingDeletePartnershipDeed(null);
+    }
+  };
+
   const handleDeleteBankStatement = (e: React.MouseEvent, statementId: string) => {
     e.stopPropagation();
     if (prefs.confirmBeforeDeletingChats) {
@@ -264,6 +301,8 @@ export function Sidebar({
         return { label: 'ITR drafts', items: itrDraftList.map(d => d.id), del: onDeleteItrDraft };
       case 'board_resolutions':
         return { label: 'resolution drafts', items: boardResolutionList.map(d => d.id), del: onDeleteBoardResolution };
+      case 'partnership_deeds':
+        return { label: 'partnership deed drafts', items: partnershipDeedList.map(d => d.id), del: onDeletePartnershipDeed };
       case 'profile':
         return { label: 'profiles', items: profileList.map(p => p.id), del: onDeleteProfile };
       case 'bank_statements':
@@ -289,16 +328,16 @@ export function Sidebar({
   };
 
   // ITR: admin-only OR explicit itr_enabled grant (not available to regular enterprise users yet).
-  // Board Resolutions: open to all authenticated users (limits enforced server-side).
+  // Legal hub (Notices / Board Resolutions / Partnership Deeds): open to all
+  // authenticated users (limits enforced server-side).
   // Plan tab always last (rightmost).
-  const isEnterprise = user?.plan === 'enterprise';
   const canAccessItr = user?.role === 'admin' || user?.itr_enabled === true;
-  const canAccessBoardResolutions = !!user;
+  const canAccessLegal = !!user;
   const navItems = [
     ...baseNavItems,
     profileNavItem,
     ...(canAccessItr ? [itrNavItem] : []),
-    ...(canAccessBoardResolutions ? [boardResolutionsNavItem] : []),
+    ...(canAccessLegal ? [legalNavItem] : []),
     ...(user ? [bankStatementsNavItem] : []),
     ...(user?.role === 'admin' ? [adminNavItem] : []),
     { id: 'plan' as ActiveView, label: 'Plan', icon: CreditCard },
@@ -328,7 +367,12 @@ export function Sidebar({
         <div className="lg:hidden flex flex-wrap gap-0.5 mb-3 bg-gray-100 dark:bg-gray-800/60 p-1 rounded-xl">
           {navItems.map((item) => {
             const Icon = item.icon;
-            const isActive = activeView === item.id;
+            // Legal entry uses 'notices' as id but stays highlighted for all
+            // legal sub-views (notices, board_resolutions, partnership_deeds).
+            const isLegalEntry = item.label === 'Legal';
+            const isActive = isLegalEntry
+              ? LEGAL_VIEWS.has(activeView)
+              : activeView === item.id;
             return (
               <button
                 key={item.id}
@@ -399,6 +443,17 @@ export function Sidebar({
           >
             <Plus className="w-4 h-4" />
             New Resolution
+          </button>
+        )}
+
+        {/* New Partnership Deed Button */}
+        {activeView === 'partnership_deeds' && (
+          <button
+            onClick={() => { onNewPartnershipDeed(); onClose(); }}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-xl shadow-md shadow-emerald-600/15 transition-all text-sm"
+          >
+            <Plus className="w-4 h-4" />
+            New Deed
           </button>
         )}
 
@@ -655,6 +710,54 @@ export function Sidebar({
               </div>
             )}
           </>
+        ) : activeView === 'partnership_deeds' ? (
+          <>
+            <h2 className="text-[11px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider px-2 py-2">Partnership Deeds</h2>
+            {partnershipDeedList.length === 0 ? (
+              <p className="text-sm text-gray-400 dark:text-gray-500 px-3 py-4 text-center">No drafts yet. Start one!</p>
+            ) : (
+              <div className="space-y-0.5">
+                {partnershipDeedList.map((draft) => {
+                  const isActive = currentPartnershipDeedId === draft.id;
+                  return (
+                    <div key={draft.id} className="relative group">
+                      <button
+                        onClick={() => { onSwitchPartnershipDeed(draft.id); onClose(); }}
+                        className={cn(
+                          "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left transition-all pr-8",
+                          isActive
+                            ? "bg-emerald-50 dark:bg-emerald-900/15 text-emerald-700 dark:text-emerald-300"
+                            : "text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/60"
+                        )}
+                      >
+                        <ScrollText className={cn(
+                          "w-4 h-4 shrink-0",
+                          isActive ? "text-emerald-500" : "text-gray-300 dark:text-gray-600"
+                        )} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{draft.name}</p>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-medium uppercase text-emerald-600/70 dark:text-emerald-400/70 truncate">
+                              {DEED_TEMPLATE_TITLES[draft.template_id]}
+                            </span>
+                            <span className="text-[11px] text-gray-400 dark:text-gray-500">·</span>
+                            <p className="text-[11px] text-gray-400 dark:text-gray-500">{timeAgo(draft.updated_at)}</p>
+                          </div>
+                        </div>
+                      </button>
+                      <button
+                        onClick={(e) => handleDeletePartnershipDeed(e, draft.id)}
+                        disabled={deletingId === draft.id}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all"
+                      >
+                        <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
         ) : activeView === 'bank_statements' ? (
           <>
             <h2 className="text-[11px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider px-2 py-2">Statements</h2>
@@ -746,7 +849,7 @@ export function Sidebar({
           </>
         ) : (
           <div className="px-3 py-8 text-center text-gray-400 dark:text-gray-500">
-            <p className="text-sm">Switch to Chat or Notices to see history</p>
+            <p className="text-sm">Switch to a list view to see history</p>
           </div>
         )}
       </div>
@@ -994,6 +1097,46 @@ export function Sidebar({
                 className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50"
               >
                 {deletingId === pendingDeleteBoardResolution.id ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete partnership deed confirmation dialog */}
+      {pendingDeletePartnershipDeed && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={() => setPendingDeletePartnershipDeed(null)}
+        >
+          <div
+            className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-6 max-w-sm w-full border border-gray-200 dark:border-gray-700"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-red-100 dark:bg-red-900/30 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-red-600 dark:text-red-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Delete deed draft?</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400 break-words">
+                  "{pendingDeletePartnershipDeed.title}" will be permanently deleted.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setPendingDeletePartnershipDeed(null)}
+                className="px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => performDeletePartnershipDeed(pendingDeletePartnershipDeed.id)}
+                disabled={deletingId === pendingDeletePartnershipDeed.id}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50"
+              >
+                {deletingId === pendingDeletePartnershipDeed.id ? 'Deleting...' : 'Delete'}
               </button>
             </div>
           </div>

@@ -193,6 +193,29 @@ CREATE TABLE IF NOT EXISTS board_resolutions (
   updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
 );
 
+-- Partnership deed drafts (Indian Partnership Act 1932 + LLP Act 2008 templates).
+-- Hybrid of board_resolutions (form payload) and notices (AI-generated body) —
+-- ui_payload is the form JSON, generated_content is the streamed Markdown.
+-- Indexes are created in server/db/index.ts migration block, NOT here.
+CREATE TABLE IF NOT EXISTS partnership_deeds (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  billing_user_id TEXT,
+  template_id TEXT NOT NULL CHECK(template_id IN (
+    'partnership_deed',
+    'llp_agreement',
+    'reconstitution_deed',
+    'retirement_deed',
+    'dissolution_deed'
+  )),
+  name TEXT NOT NULL,
+  ui_payload TEXT NOT NULL DEFAULT '{}',
+  generated_content TEXT,
+  exported_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+);
+
 -- Clients table for CA bulk ITR filing management
 CREATE TABLE IF NOT EXISTS clients (
   id TEXT PRIMARY KEY,

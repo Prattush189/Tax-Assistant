@@ -881,6 +881,130 @@ export async function deleteBoardResolutionDraft(id: string): Promise<void> {
   await authFetch(`/api/board-resolutions/drafts/${id}`, { method: 'DELETE' });
 }
 
+// ── Partnership Deeds API ───────────────────────────────────────────────
+
+export type PartnershipDeedTemplateId =
+  | 'partnership_deed'
+  | 'llp_agreement'
+  | 'reconstitution_deed'
+  | 'retirement_deed'
+  | 'dissolution_deed';
+
+export interface PartnershipDeedDraft {
+  id: string;
+  user_id: string;
+  template_id: PartnershipDeedTemplateId;
+  name: string;
+  ui_payload: Record<string, unknown>;
+  generated_content: string | null;
+  exported_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function fetchPartnershipDeedDrafts(): Promise<{
+  drafts: PartnershipDeedDraft[];
+  usage: { used: number; limit: number };
+}> {
+  return authFetch('/api/partnership-deeds/drafts');
+}
+
+export async function createPartnershipDeedDraft(input: {
+  template_id: PartnershipDeedTemplateId;
+  name: string;
+  ui_payload?: Record<string, unknown>;
+}): Promise<PartnershipDeedDraft> {
+  return authFetch('/api/partnership-deeds/drafts', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function fetchPartnershipDeedDraft(id: string): Promise<PartnershipDeedDraft> {
+  return authFetch(`/api/partnership-deeds/drafts/${id}`);
+}
+
+export async function updatePartnershipDeedDraft(
+  id: string,
+  patch: { name?: string; ui_payload?: Record<string, unknown> },
+): Promise<void> {
+  await authFetch(`/api/partnership-deeds/drafts/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+}
+
+export async function deletePartnershipDeedDraft(id: string): Promise<void> {
+  await authFetch(`/api/partnership-deeds/drafts/${id}`, { method: 'DELETE' });
+}
+
+export async function markPartnershipDeedExported(id: string): Promise<void> {
+  await authFetch(`/api/partnership-deeds/drafts/${id}/mark-exported`, {
+    method: 'POST',
+  });
+}
+
+/**
+ * Stream-generate the deed body. Backend returns SSE events:
+ *   data: {"text": "..."}            ← incremental markdown chunk
+ *   data: {"done": true, "draftId": "..."}
+ *   data: {"error": true, "message": "..."}
+ *
+ * 429 (quota exhausted) and 400 (validation) are returned as plain JSON
+ * BEFORE the SSE stream opens — caller's `onError` handles both.
+ */
+export async function generatePartnershipDeed(
+  draftId: string,
+  onChunk: (text: string) => void,
+  onError: (msg: string, kind?: 'quota' | 'generic') => void,
+  onDone?: () => void,
+): Promise<void> {
+  const doFetch = () => fetch(`/api/partnership-deeds/drafts/${draftId}/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+  });
+
+  let response = await doFetch();
+  if (response.status === 401) {
+    const refreshed = await tryRefreshToken();
+    if (refreshed) response = await doFetch();
+  }
+
+  if (!response.ok || !response.body) {
+    let errorMessage = 'Failed to generate partnership deed.';
+    let kind: 'quota' | 'generic' = 'generic';
+    try {
+      const errData = await response.json();
+      if (errData.error) errorMessage = errData.error;
+      if (response.status === 429 || errData.upgrade) kind = 'quota';
+    } catch { /* ignore */ }
+    onError(errorMessage, kind);
+    return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      try {
+        const parsed = JSON.parse(line.slice(6).trim());
+        if (parsed.done) { onDone?.(); return; }
+        if (parsed.error) { onError(parsed.message ?? 'Generation failed.', 'generic'); return; }
+        if (parsed.text) onChunk(parsed.text);
+      } catch { /* skip */ }
+    }
+  }
+}
+
 // ── Income Tax portal import ────────────────────────────────────────────
 
 export interface ItPortalImportResult {
