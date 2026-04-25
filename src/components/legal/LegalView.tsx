@@ -10,10 +10,10 @@ interface Props {
   children: ReactNode;
 }
 
-const TABS: { id: LegalTab; label: string; icon: typeof FileText }[] = [
-  { id: 'notices', label: 'Notice Replies', icon: FileText },
+const TABS: { id: LegalTab; label: string; icon: typeof FileText; ai?: boolean }[] = [
+  { id: 'notices', label: 'Notice Replies', icon: FileText, ai: true },
   { id: 'board_resolutions', label: 'Board Resolutions', icon: Gavel },
-  { id: 'partnership_deeds', label: 'Partnership Deeds', icon: ScrollText },
+  { id: 'partnership_deeds', label: 'Partnership Deeds', icon: ScrollText, ai: true },
 ];
 
 /**
@@ -44,15 +44,17 @@ export function LegalView({ activeView, onViewChange, children }: Props) {
               >
                 <Icon className={cn('w-4 h-4', isActive && 'text-emerald-500')} />
                 {tab.label}
-                <span
-                  className={cn(
-                    'ml-0.5 text-[9px] font-bold tracking-wider px-1 py-0.5 rounded border leading-none',
-                    isActive
-                      ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border-emerald-300/60 dark:border-emerald-700/60'
-                      : 'bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-300 border-purple-200 dark:border-purple-800/60',
-                  )}
-                  title="Uses AI"
-                >AI</span>
+                {tab.ai && (
+                  <span
+                    className={cn(
+                      'ml-0.5 text-[9px] font-bold tracking-wider px-1 py-0.5 rounded border leading-none',
+                      isActive
+                        ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border-emerald-300/60 dark:border-emerald-700/60'
+                        : 'bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-300 border-purple-200 dark:border-purple-800/60',
+                    )}
+                    title="Uses AI"
+                  >AI</span>
+                )}
               </button>
             );
           })}
