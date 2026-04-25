@@ -1,4 +1,4 @@
-import { Menu, Moon, Sun, LogOut, MessageCircle, Calculator, LayoutDashboard, CreditCard, FileText, FileSpreadsheet, Gavel, Landmark, User, Shield, Settings, X, Minus } from 'lucide-react';
+import { Menu, Moon, Sun, LogOut, MessageCircle, Calculator, CreditCard, FileText, FileSpreadsheet, Gavel, Landmark, Shield, Settings, X, Minus } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { postToParent } from '../../lib/pluginProtocol';
 
@@ -16,13 +16,13 @@ interface HeaderProps {
 }
 
 // `ai: true` marks tabs whose primary surface is an AI-powered feature. The
-// Header and Sidebar render a small [AI] badge beside these labels.
+// Header and Sidebar render a small [AI] badge beside these labels. Profile
+// and Stats live in the sidebar footer instead — they're treated as
+// shortcuts, not first-class top-bar tabs.
 const navItems: { id: ActiveView; label: string; icon: typeof MessageCircle; ai?: boolean }[] = [
   { id: 'chat', label: 'Chat', icon: MessageCircle, ai: true },
   { id: 'calculator', label: 'Calculator', icon: Calculator },
   { id: 'notices', label: 'Notices', icon: FileText, ai: true },
-  { id: 'profile', label: 'Profile', icon: User },
-  { id: 'dashboard', label: 'Stats', icon: LayoutDashboard },
 ];
 
 function getInitials(name: string): string {
