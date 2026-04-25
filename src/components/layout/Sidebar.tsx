@@ -1,4 +1,4 @@
-import { X, Plus, Moon, Sun, LogOut, Trash2, MessageSquare, MessageCircle, Calculator, LayoutDashboard, Shield, CreditCard, FileText, FileSpreadsheet, Gavel, Landmark, User, Users, Settings, AlertTriangle, Lock } from 'lucide-react';
+import { X, Plus, LogOut, Trash2, MessageSquare, MessageCircle, Calculator, LayoutDashboard, Shield, CreditCard, FileText, FileSpreadsheet, Gavel, Landmark, User, Users, Settings, AlertTriangle, Lock } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { ChatItem, NoticeItem, ItrDraft, BoardResolutionDraft, GenericProfile, BankStatementSummary } from '../../services/api';
 import { TEMPLATE_TITLES } from '../board-resolutions/lib/uiModel';
@@ -12,8 +12,6 @@ type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'noti
 interface SidebarProps {
   isOpen: boolean;
   onClose: () => void;
-  isDarkMode: boolean;
-  onToggleTheme: () => void;
   chatList: ChatItem[];
   currentChatId: string | null;
   onNewChat: () => void;
@@ -105,7 +103,7 @@ function planBadgeClass(plan?: string): string {
 }
 
 export function Sidebar({
-  isOpen, onClose, isDarkMode, onToggleTheme,
+  isOpen, onClose,
   chatList, currentChatId, onNewChat, onSwitchChat, onDeleteChat,
   noticeList, currentNoticeId, onNewNotice, onSwitchNotice, onDeleteNotice,
   itrDraftList, currentItrDraftId, onNewItrDraft, onSwitchItrDraft, onDeleteItrDraft,
@@ -124,6 +122,8 @@ export function Sidebar({
   const [pendingDeleteBoardResolution, setPendingDeleteBoardResolution] = useState<{ id: string; title: string } | null>(null);
   const [pendingDeleteProfile, setPendingDeleteProfile] = useState<{ id: string; title: string } | null>(null);
   const [pendingDeleteBankStatement, setPendingDeleteBankStatement] = useState<{ id: string; title: string } | null>(null);
+  const [pendingDeleteAll, setPendingDeleteAll] = useState<{ label: string; count: number } | null>(null);
+  const [isDeletingAll, setIsDeletingAll] = useState(false);
   const { prefs } = usePreferences();
 
   const handleDelete = async (e: React.MouseEvent, chatId: string) => {
@@ -248,6 +248,43 @@ export function Sidebar({
     } finally {
       setDeletingId(null);
       setPendingDeleteBankStatement(null);
+    }
+  };
+
+  // Maps the active list view to its plural label, current items, and per-item
+  // delete handler. Anything not listed (calc, dashboard, admin, plan,
+  // settings) returns null — the Delete All button hides for those views.
+  const deleteAllTarget = (() => {
+    switch (activeView) {
+      case 'chat':
+        return { label: 'chats', items: chatList.map(c => c.id), del: onDeleteChat };
+      case 'notices':
+        return { label: 'notice drafts', items: noticeList.map(n => n.id), del: onDeleteNotice };
+      case 'itr':
+        return { label: 'ITR drafts', items: itrDraftList.map(d => d.id), del: onDeleteItrDraft };
+      case 'board_resolutions':
+        return { label: 'resolution drafts', items: boardResolutionList.map(d => d.id), del: onDeleteBoardResolution };
+      case 'profile':
+        return { label: 'profiles', items: profileList.map(p => p.id), del: onDeleteProfile };
+      case 'bank_statements':
+        return { label: 'statements', items: bankStatementList.map(s => s.id), del: onDeleteBankStatement };
+      default:
+        return null;
+    }
+  })();
+
+  const performDeleteAll = async () => {
+    if (!deleteAllTarget) return;
+    setIsDeletingAll(true);
+    try {
+      // Parallel deletes via the existing per-item handlers — N round-trips
+      // but they fire concurrently. allSettled so a single failure doesn't
+      // strand the rest. Per-item handlers update local list state, so the
+      // sidebar empties as the requests resolve.
+      await Promise.allSettled(deleteAllTarget.items.map(id => deleteAllTarget.del(id)));
+    } finally {
+      setIsDeletingAll(false);
+      setPendingDeleteAll(null);
     }
   };
 
@@ -716,13 +753,46 @@ export function Sidebar({
 
       {/* Footer */}
       <div className="p-3 border-t border-gray-100 dark:border-gray-800 space-y-1">
+        {/* Profile + Stats shortcuts — sky tone separates them from the
+            emerald used by Settings, so users can scan the footer and tell
+            "navigate-to" rows from the active-section row. */}
         <button
-          onClick={onToggleTheme}
-          className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/60 rounded-xl transition-colors"
+          onClick={() => onViewChange('profile')}
+          className={cn(
+            'w-full flex items-center gap-2.5 px-3 py-2 text-sm rounded-xl transition-colors',
+            activeView === 'profile'
+              ? 'bg-sky-50 dark:bg-sky-900/25 text-sky-700 dark:text-sky-300'
+              : 'text-sky-600 dark:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-900/15',
+          )}
         >
-          {isDarkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-          {isDarkMode ? 'Light Mode' : 'Dark Mode'}
+          <User className="w-4 h-4" />
+          Profile
         </button>
+        <button
+          onClick={() => onViewChange('dashboard')}
+          className={cn(
+            'w-full flex items-center gap-2.5 px-3 py-2 text-sm rounded-xl transition-colors',
+            activeView === 'dashboard'
+              ? 'bg-sky-50 dark:bg-sky-900/25 text-sky-700 dark:text-sky-300'
+              : 'text-sky-600 dark:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-900/15',
+          )}
+        >
+          <LayoutDashboard className="w-4 h-4" />
+          Stats
+        </button>
+
+        {/* Delete-all — only meaningful when the current section is a list view
+            with items. Hidden otherwise so we don't flash a useless button. */}
+        {deleteAllTarget && deleteAllTarget.items.length > 0 && (
+          <button
+            onClick={() => setPendingDeleteAll({ label: deleteAllTarget.label, count: deleteAllTarget.items.length })}
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl transition-colors"
+          >
+            <Trash2 className="w-4 h-4" />
+            Delete all {deleteAllTarget.label}
+          </button>
+        )}
+
         <button
           onClick={() => onViewChange('settings')}
           className={cn(
@@ -964,6 +1034,49 @@ export function Sidebar({
                 className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50"
               >
                 {deletingId === pendingDeleteBankStatement.id ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete-all confirmation dialog */}
+      {pendingDeleteAll && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={() => !isDeletingAll && setPendingDeleteAll(null)}
+        >
+          <div
+            className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-6 max-w-sm w-full border border-gray-200 dark:border-gray-700"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-red-100 dark:bg-red-900/30 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-red-600 dark:text-red-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">
+                  Delete all {pendingDeleteAll.label}?
+                </h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400 break-words">
+                  All {pendingDeleteAll.count} {pendingDeleteAll.label} will be permanently deleted. This cannot be undone.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setPendingDeleteAll(null)}
+                disabled={isDeletingAll}
+                className="px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void performDeleteAll()}
+                disabled={isDeletingAll}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50"
+              >
+                {isDeletingAll ? 'Deleting…' : `Delete all ${pendingDeleteAll.count}`}
               </button>
             </div>
           </div>

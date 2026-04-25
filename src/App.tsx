@@ -120,8 +120,6 @@ function AppContent() {
         <Sidebar
           isOpen={isSidebarOpen}
           onClose={() => setIsSidebarOpen(false)}
-          isDarkMode={isDarkMode}
-          onToggleTheme={toggleTheme}
           chatList={chatManager.chatList}
           currentChatId={chatManager.currentChatId}
           onNewChat={chatManager.createNewChat}
