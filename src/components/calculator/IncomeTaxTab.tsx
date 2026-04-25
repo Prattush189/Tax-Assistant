@@ -1,11 +1,15 @@
-import { useState } from 'react';
 import { cn } from '../../lib/utils';
 import type { AgeCategory } from '../../types';
 import { RegimeComparison } from './RegimeComparison';
 import { useTaxCalculator } from '../../contexts/TaxCalculatorContext';
 import { LoadFromProfile } from '../profile/shared/LoadFromProfile';
 import { profileToCalculator } from '../profile/lib/prefillAdapters';
-import { PROFILE_AYS, ProfileAy } from '../profile/lib/profileModel';
+
+// AY = FY year + 1 (e.g. FY 2024-25 -> AY 2025-26)
+const fyToAy = (fy: string) => {
+  const [start, end] = fy.split('-').map(Number);
+  return `${start + 1}-${String((end + 1) % 100).padStart(2, '0')}`;
+};
 
 const AGE_OPTIONS: { value: AgeCategory; label: string }[] = [
   { value: 'below60', label: 'Below 60' },
@@ -64,25 +68,13 @@ export function IncomeTaxTab() {
   const isIndividualOrHuf = taxpayerCategory === 'Individual' || taxpayerCategory === 'HUF';
   const isIndividual = taxpayerCategory === 'Individual';
 
-  const [prefillAy, setPrefillAy] = useState<ProfileAy>('2025-26');
-
   return (
     <div className="max-w-3xl">
       {/* Profile prefill */}
       <div className="flex items-center justify-end gap-2 mb-4">
-        <label className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">AY</label>
-        <select
-          value={prefillAy}
-          onChange={(e) => setPrefillAy(e.target.value as ProfileAy)}
-          className="px-2 py-1 text-xs bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none"
-        >
-          {PROFILE_AYS.map((ay) => (
-            <option key={ay} value={ay}>{ay}</option>
-          ))}
-        </select>
         <LoadFromProfile
           onPick={(profile) => {
-            const p = profileToCalculator(profile, prefillAy);
+            const p = profileToCalculator(profile, fyToAy(fy));
             if (p.taxpayerCategory) setTaxpayerCategory(p.taxpayerCategory);
             if (p.grossSalary !== undefined) setGrossSalary(p.grossSalary);
             if (p.otherIncome !== undefined) setOtherIncome(p.otherIncome);
