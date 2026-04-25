@@ -679,6 +679,14 @@ router.post(
       if (!sseOpen) return;
       try { res.write(`data: ${JSON.stringify(obj)}\n\n`); } catch { /* client disconnected */ }
     };
+    // Heartbeat keeps proxies (nginx, Cloudflare) from idle-killing the
+    // connection while a chunk is grinding through Gemini retries (a single
+    // chunk can take 30-60s with backoff). The client treats `type: 'ping'`
+    // as a no-op but uses any byte arrival to reset its idle watchdog.
+    let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+    const stopHeartbeat = () => {
+      if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+    };
     if (wantsStream) {
       res.writeHead(200, {
         'Content-Type': 'text/event-stream; charset=utf-8',
@@ -690,6 +698,9 @@ router.post(
         'X-Accel-Buffering': 'no',
       });
       sseOpen = true;
+      heartbeatTimer = setInterval(() => sendSse({ type: 'ping' }), 10_000);
+      // Stop the heartbeat when the client hangs up.
+      req.on('close', stopHeartbeat);
     }
 
     try {
@@ -947,6 +958,7 @@ router.post(
         ...(warning ? { warning } : {}),
       };
       if (sseOpen) {
+        stopHeartbeat();
         sendSse({ type: 'done', ...payload });
         res.end();
       } else {
@@ -964,6 +976,7 @@ router.post(
         // SSE headers are already flushed, so we can't change status — emit
         // an error event and end the stream. The client parses this back into
         // a thrown Error, same shape as the JSON path.
+        stopHeartbeat();
         sendSse({ type: 'error', ...body });
         res.end();
       } else {
