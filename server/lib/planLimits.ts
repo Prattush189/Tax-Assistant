@@ -54,7 +54,7 @@ export const PLAN_DEFAULTS: Record<PlanId, UserLimits> = {
     notices: 15,
     profiles: 5,
     boardResolutions: 15,
-    partnershipDeeds: 30,
+    partnershipDeeds: 15,
     bankStatements: 15,
   },
   enterprise: {
@@ -64,7 +64,7 @@ export const PLAN_DEFAULTS: Record<PlanId, UserLimits> = {
     notices: 50,
     profiles: 25,
     boardResolutions: 50,
-    partnershipDeeds: 100,
+    partnershipDeeds: 50,
     bankStatements: 50,
   },
 };
