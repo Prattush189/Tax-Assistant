@@ -65,7 +65,7 @@ const baseNavItems: NavItem[] = [
 
 const adminNavItem: NavItem = { id: 'admin' as ActiveView, label: 'Admin', icon: Shield };
 const itrNavItem: NavItem = { id: 'itr' as ActiveView, label: 'ITR', icon: FileSpreadsheet };
-const boardResolutionsNavItem: NavItem = { id: 'board_resolutions' as ActiveView, label: 'Resolutions', icon: Gavel, ai: true };
+const boardResolutionsNavItem: NavItem = { id: 'board_resolutions' as ActiveView, label: 'Resolutions', icon: Gavel };
 const bankStatementsNavItem: NavItem = { id: 'bank_statements' as ActiveView, label: 'Statements', icon: Landmark, ai: true };
 const profileNavItem: NavItem = { id: 'profile' as ActiveView, label: 'Profile', icon: User };
 
