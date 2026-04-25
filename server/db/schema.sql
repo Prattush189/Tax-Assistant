@@ -299,3 +299,62 @@ CREATE TABLE IF NOT EXISTS bank_statement_conditions (
   text TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
 );
+
+-- Ledger Scrutiny: AI audit of multi-account ledger PDFs (Tally/Busy/Marg
+-- exports). One job per uploaded ledger; each job has many accounts and
+-- many observations (audit flags grouped by severity).
+CREATE TABLE IF NOT EXISTS ledger_scrutiny_jobs (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  billing_user_id TEXT,
+  name TEXT NOT NULL,
+  party_name TEXT,
+  gstin TEXT,
+  period_from TEXT,
+  period_to TEXT,
+  source_filename TEXT,
+  source_mime TEXT,
+  file_hash TEXT,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'extracting', 'scrutinizing', 'done', 'error')),
+  total_flags_high INTEGER NOT NULL DEFAULT 0,
+  total_flags_warn INTEGER NOT NULL DEFAULT 0,
+  total_flags_info INTEGER NOT NULL DEFAULT 0,
+  total_flagged_amount REAL NOT NULL DEFAULT 0,
+  raw_extracted TEXT,
+  error_message TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+);
+
+-- Per-account rows extracted from the ledger. opening/closing are signed
+-- (positive = debit balance, negative = credit balance).
+CREATE TABLE IF NOT EXISTS ledger_accounts (
+  id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL REFERENCES ledger_scrutiny_jobs(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  account_type TEXT,
+  opening REAL NOT NULL DEFAULT 0,
+  closing REAL NOT NULL DEFAULT 0,
+  total_debit REAL NOT NULL DEFAULT 0,
+  total_credit REAL NOT NULL DEFAULT 0,
+  tx_count INTEGER NOT NULL DEFAULT 0,
+  sort_index INTEGER NOT NULL DEFAULT 0
+);
+
+-- Audit observations / flags raised by the LLM rubric. status flips between
+-- 'open' and 'resolved' when the user marks an issue addressed.
+CREATE TABLE IF NOT EXISTS ledger_observations (
+  id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL REFERENCES ledger_scrutiny_jobs(id) ON DELETE CASCADE,
+  account_id TEXT REFERENCES ledger_accounts(id) ON DELETE CASCADE,
+  account_name TEXT,
+  code TEXT NOT NULL,
+  severity TEXT NOT NULL CHECK(severity IN ('info', 'warn', 'high')),
+  message TEXT NOT NULL,
+  amount REAL,
+  date_ref TEXT,
+  suggested_action TEXT,
+  status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'resolved')),
+  source TEXT NOT NULL DEFAULT 'ai',
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+);

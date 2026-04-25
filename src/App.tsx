@@ -14,6 +14,7 @@ import { useBoardResolutionManager } from './hooks/useBoardResolutionManager';
 import { usePartnershipDeedsManager } from './hooks/usePartnershipDeedsManager';
 import { useProfileManager } from './hooks/useProfileManager';
 import { useBankStatementManager } from './hooks/useBankStatementManager';
+import { useLedgerScrutinyManager } from './hooks/useLedgerScrutinyManager';
 import { useAuth } from './contexts/AuthContext';
 import { AuthGuard } from './components/auth/AuthGuard';
 import { AcceptInvitePage } from './components/auth/AcceptInvitePage';
@@ -33,12 +34,14 @@ import { BoardResolutionView } from './components/board-resolutions/BoardResolut
 import { PartnershipDeedView } from './components/partnership-deeds/PartnershipDeedView';
 import { LegalView } from './components/legal/LegalView';
 import { BankStatementView } from './components/bank-statements/BankStatementView';
+import { BooksView } from './components/books/BooksView';
+import { LedgerScrutinyView } from './components/ledger-scrutiny/LedgerScrutinyView';
 import { ProfileView } from './components/profile/ProfileView';
 import { TaxCalculatorProvider } from './contexts/TaxCalculatorContext';
 import type { ParentToIframeMessage } from './lib/pluginProtocol';
 import { cn } from './lib/utils';
 
-type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions' | 'partnership_deeds' | 'bank_statements';
+type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions' | 'partnership_deeds' | 'bank_statements' | 'ledger_scrutiny';
 
 /**
  * Dispatches SET_VIEW / SET_CALCULATOR_TAB / LOGOUT into local state.
@@ -82,7 +85,7 @@ function AppContent() {
   const { isPluginMode } = usePluginMode(setIsDarkMode);
   const [activeView, setActiveView] = useState<ActiveView>(() => {
     const saved = localStorage.getItem('activeView') as ActiveView | null;
-    const valid: ActiveView[] = ['chat', 'calculator', 'dashboard', 'admin', 'plan', 'notices', 'settings', 'itr', 'profile', 'board_resolutions', 'partnership_deeds', 'bank_statements'];
+    const valid: ActiveView[] = ['chat', 'calculator', 'dashboard', 'admin', 'plan', 'notices', 'settings', 'itr', 'profile', 'board_resolutions', 'partnership_deeds', 'bank_statements', 'ledger_scrutiny'];
     return saved && valid.includes(saved) ? saved : 'chat';
   });
   const [calculatorTab, setCalculatorTab] = useState<CalculatorTab>('income');
@@ -106,6 +109,8 @@ function AppContent() {
   const partnershipDeedManager = usePartnershipDeedsManager(canAccessLegal);
   // Bank statement analyzer: open to all authenticated users.
   const bankStatementManager = useBankStatementManager(!!user);
+  // Ledger scrutiny: open to all authenticated users (plan limits enforced server-side).
+  const ledgerScrutinyManager = useLedgerScrutinyManager(!!user);
 
   // Trial expiry: free-plan users are locked out after 30 days.
   const isTrialExpired =
@@ -218,7 +223,16 @@ function AppContent() {
                   <PartnershipDeedView manager={partnershipDeedManager} />
                 </LegalView>
               )}
-              {activeView === 'bank_statements' && <BankStatementView manager={bankStatementManager} />}
+              {activeView === 'bank_statements' && (
+                <BooksView activeView={activeView} onViewChange={navigateTo}>
+                  <BankStatementView manager={bankStatementManager} />
+                </BooksView>
+              )}
+              {activeView === 'ledger_scrutiny' && (
+                <BooksView activeView={activeView} onViewChange={navigateTo}>
+                  <LedgerScrutinyView manager={ledgerScrutinyManager} />
+                </BooksView>
+              )}
               {isTrialExpired && <TrialExpiredWall />}
               {activeView === 'profile' && <ProfileView manager={profileManager} />}
               {activeView === 'settings' && <SettingsPage />}

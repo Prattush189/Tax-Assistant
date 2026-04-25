@@ -33,6 +33,7 @@ export interface UserLimits {
   boardResolutions: number;   // monthly
   partnershipDeeds: number;   // monthly
   bankStatements: number;     // monthly
+  ledgerScrutiny: number;     // monthly
 }
 
 /** Baseline defaults for each plan tier. */
@@ -46,6 +47,7 @@ export const PLAN_DEFAULTS: Record<PlanId, UserLimits> = {
     boardResolutions: 3,
     partnershipDeeds: 3,
     bankStatements: 3,
+    ledgerScrutiny: 1,
   },
   pro: {
     messages: { limit: 1500, period: 'month' },
@@ -56,6 +58,7 @@ export const PLAN_DEFAULTS: Record<PlanId, UserLimits> = {
     boardResolutions: 15,
     partnershipDeeds: 15,
     bankStatements: 15,
+    ledgerScrutiny: 5,
   },
   enterprise: {
     messages: { limit: 3000, period: 'month' },
@@ -66,6 +69,7 @@ export const PLAN_DEFAULTS: Record<PlanId, UserLimits> = {
     boardResolutions: 50,
     partnershipDeeds: 50,
     bankStatements: 50,
+    ledgerScrutiny: 20,
   },
 };
 
@@ -115,6 +119,7 @@ export function getUserLimits(user: LimitUserInput): UserLimits {
     boardResolutions: overrides.boardResolutions ?? base.boardResolutions,
     partnershipDeeds: overrides.partnershipDeeds ?? base.partnershipDeeds,
     bankStatements: overrides.bankStatements ?? base.bankStatements,
+    ledgerScrutiny: overrides.ledgerScrutiny ?? base.ledgerScrutiny,
   };
 }
 
@@ -144,6 +149,7 @@ export function sanitizePluginLimits(raw: unknown): UserLimits | null {
   const boardResolutions = numeric(r.boardResolutions);
   const partnershipDeeds = numeric(r.partnershipDeeds);
   const bankStatements = numeric(r.bankStatements);
+  const ledgerScrutiny = numeric(r.ledgerScrutiny);
 
   // Require at least one field to be set
   if (
@@ -154,7 +160,8 @@ export function sanitizePluginLimits(raw: unknown): UserLimits | null {
     profiles === undefined &&
     boardResolutions === undefined &&
     partnershipDeeds === undefined &&
-    bankStatements === undefined
+    bankStatements === undefined &&
+    ledgerScrutiny === undefined
   ) {
     return null;
   }
@@ -169,6 +176,7 @@ export function sanitizePluginLimits(raw: unknown): UserLimits | null {
     boardResolutions: boardResolutions ?? 0,
     partnershipDeeds: partnershipDeeds ?? 0,
     bankStatements: bankStatements ?? 0,
+    ledgerScrutiny: ledgerScrutiny ?? 0,
   };
 }
 

@@ -1,0 +1,299 @@
+import crypto from 'crypto';
+import db from '../index.js';
+
+export type LedgerJobStatus = 'pending' | 'extracting' | 'scrutinizing' | 'done' | 'error';
+export type LedgerObservationSeverity = 'info' | 'warn' | 'high';
+export type LedgerObservationStatus = 'open' | 'resolved';
+
+export interface LedgerJobRow {
+  id: string;
+  user_id: string;
+  billing_user_id: string | null;
+  name: string;
+  party_name: string | null;
+  gstin: string | null;
+  period_from: string | null;
+  period_to: string | null;
+  source_filename: string | null;
+  source_mime: string | null;
+  file_hash: string | null;
+  status: LedgerJobStatus;
+  total_flags_high: number;
+  total_flags_warn: number;
+  total_flags_info: number;
+  total_flagged_amount: number;
+  raw_extracted: string | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LedgerAccountRow {
+  id: string;
+  job_id: string;
+  name: string;
+  account_type: string | null;
+  opening: number;
+  closing: number;
+  total_debit: number;
+  total_credit: number;
+  tx_count: number;
+  sort_index: number;
+}
+
+export interface LedgerObservationRow {
+  id: string;
+  job_id: string;
+  account_id: string | null;
+  account_name: string | null;
+  code: string;
+  severity: LedgerObservationSeverity;
+  message: string;
+  amount: number | null;
+  date_ref: string | null;
+  suggested_action: string | null;
+  status: LedgerObservationStatus;
+  source: string;
+  created_at: string;
+}
+
+export interface LedgerJobCreateInput {
+  name: string;
+  partyName: string | null;
+  gstin: string | null;
+  periodFrom: string | null;
+  periodTo: string | null;
+  sourceFilename: string | null;
+  sourceMime: string | null;
+  fileHash: string | null;
+}
+
+export interface LedgerAccountCreateInput {
+  name: string;
+  accountType: string | null;
+  opening: number;
+  closing: number;
+  totalDebit: number;
+  totalCredit: number;
+  txCount: number;
+  sortIndex: number;
+}
+
+export interface LedgerObservationCreateInput {
+  accountId: string | null;
+  accountName: string | null;
+  code: string;
+  severity: LedgerObservationSeverity;
+  message: string;
+  amount: number | null;
+  dateRef: string | null;
+  suggestedAction: string | null;
+}
+
+const stmts = {
+  jobsByUser: db.prepare(
+    'SELECT * FROM ledger_scrutiny_jobs WHERE user_id = ? ORDER BY updated_at DESC'
+  ),
+  jobByIdForUser: db.prepare(
+    'SELECT * FROM ledger_scrutiny_jobs WHERE id = ? AND user_id = ?'
+  ),
+  jobByHashForUser: db.prepare(
+    'SELECT * FROM ledger_scrutiny_jobs WHERE user_id = ? AND file_hash = ? ORDER BY created_at DESC LIMIT 1'
+  ),
+  insertJob: db.prepare(
+    `INSERT INTO ledger_scrutiny_jobs (
+      id, user_id, billing_user_id, name,
+      party_name, gstin, period_from, period_to,
+      source_filename, source_mime, file_hash, status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ),
+  updateJobStatus: db.prepare(
+    `UPDATE ledger_scrutiny_jobs
+       SET status = ?, error_message = ?,
+           updated_at = datetime('now', '+5 hours', '+30 minutes')
+     WHERE id = ? AND user_id = ?`
+  ),
+  updateJobExtraction: db.prepare(
+    `UPDATE ledger_scrutiny_jobs
+       SET raw_extracted = ?, party_name = COALESCE(?, party_name),
+           gstin = COALESCE(?, gstin),
+           period_from = COALESCE(?, period_from),
+           period_to = COALESCE(?, period_to),
+           updated_at = datetime('now', '+5 hours', '+30 minutes')
+     WHERE id = ? AND user_id = ?`
+  ),
+  updateJobName: db.prepare(
+    "UPDATE ledger_scrutiny_jobs SET name = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ? AND user_id = ?"
+  ),
+  updateJobTotals: db.prepare(
+    `UPDATE ledger_scrutiny_jobs
+       SET total_flags_high = ?, total_flags_warn = ?, total_flags_info = ?,
+           total_flagged_amount = ?,
+           updated_at = datetime('now', '+5 hours', '+30 minutes')
+     WHERE id = ?`
+  ),
+  deleteJob: db.prepare('DELETE FROM ledger_scrutiny_jobs WHERE id = ? AND user_id = ?'),
+
+  accountsByJob: db.prepare(
+    'SELECT * FROM ledger_accounts WHERE job_id = ? ORDER BY sort_index ASC, name ASC'
+  ),
+  insertAccount: db.prepare(
+    `INSERT INTO ledger_accounts (
+      id, job_id, name, account_type,
+      opening, closing, total_debit, total_credit, tx_count, sort_index
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ),
+  deleteAccountsByJob: db.prepare('DELETE FROM ledger_accounts WHERE job_id = ?'),
+
+  observationsByJob: db.prepare(
+    'SELECT * FROM ledger_observations WHERE job_id = ? ORDER BY CASE severity WHEN \'high\' THEN 0 WHEN \'warn\' THEN 1 ELSE 2 END, created_at ASC'
+  ),
+  insertObservation: db.prepare(
+    `INSERT INTO ledger_observations (
+      id, job_id, account_id, account_name,
+      code, severity, message, amount, date_ref, suggested_action,
+      status, source
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', 'ai')`
+  ),
+  deleteObservationsByJob: db.prepare('DELETE FROM ledger_observations WHERE job_id = ?'),
+  updateObservationStatus: db.prepare(
+    `UPDATE ledger_observations SET status = ?
+       WHERE id = ? AND job_id IN (SELECT id FROM ledger_scrutiny_jobs WHERE user_id = ?)`
+  ),
+  observationByIdForUser: db.prepare(
+    `SELECT o.* FROM ledger_observations o
+       JOIN ledger_scrutiny_jobs j ON j.id = o.job_id
+      WHERE o.id = ? AND j.user_id = ?`
+  ),
+};
+
+export const ledgerScrutinyRepo = {
+  // ── jobs ────────────────────────────────────────────────────────────
+  listByUser(userId: string): LedgerJobRow[] {
+    return stmts.jobsByUser.all(userId) as LedgerJobRow[];
+  },
+
+  findByIdForUser(id: string, userId: string): LedgerJobRow | undefined {
+    return stmts.jobByIdForUser.get(id, userId) as LedgerJobRow | undefined;
+  },
+
+  findByHashForUser(userId: string, fileHash: string): LedgerJobRow | undefined {
+    return stmts.jobByHashForUser.get(userId, fileHash) as LedgerJobRow | undefined;
+  },
+
+  createJob(userId: string, billingUserId: string, input: LedgerJobCreateInput): LedgerJobRow {
+    const id = crypto.randomBytes(16).toString('hex');
+    stmts.insertJob.run(
+      id,
+      userId,
+      billingUserId,
+      input.name,
+      input.partyName,
+      input.gstin,
+      input.periodFrom,
+      input.periodTo,
+      input.sourceFilename,
+      input.sourceMime,
+      input.fileHash,
+      'pending',
+    );
+    return this.findByIdForUser(id, userId)!;
+  },
+
+  setStatus(id: string, userId: string, status: LedgerJobStatus, errorMessage: string | null = null): void {
+    stmts.updateJobStatus.run(status, errorMessage, id, userId);
+  },
+
+  saveExtraction(
+    id: string,
+    userId: string,
+    rawJson: string,
+    meta: { partyName?: string | null; gstin?: string | null; periodFrom?: string | null; periodTo?: string | null },
+  ): void {
+    stmts.updateJobExtraction.run(
+      rawJson,
+      meta.partyName ?? null,
+      meta.gstin ?? null,
+      meta.periodFrom ?? null,
+      meta.periodTo ?? null,
+      id,
+      userId,
+    );
+  },
+
+  rename(id: string, userId: string, name: string): boolean {
+    return stmts.updateJobName.run(name, id, userId).changes > 0;
+  },
+
+  updateTotals(id: string, high: number, warn: number, info: number, flaggedAmount: number): void {
+    stmts.updateJobTotals.run(high, warn, info, flaggedAmount, id);
+  },
+
+  deleteById(id: string, userId: string): boolean {
+    return stmts.deleteJob.run(id, userId).changes > 0;
+  },
+
+  // ── accounts ────────────────────────────────────────────────────────
+  listAccounts(jobId: string): LedgerAccountRow[] {
+    return stmts.accountsByJob.all(jobId) as LedgerAccountRow[];
+  },
+
+  replaceAccounts(jobId: string, accounts: LedgerAccountCreateInput[]): LedgerAccountRow[] {
+    const tx = db.transaction((rows: LedgerAccountCreateInput[]) => {
+      stmts.deleteAccountsByJob.run(jobId);
+      for (const a of rows) {
+        const id = crypto.randomBytes(16).toString('hex');
+        stmts.insertAccount.run(
+          id,
+          jobId,
+          a.name,
+          a.accountType,
+          a.opening,
+          a.closing,
+          a.totalDebit,
+          a.totalCredit,
+          a.txCount,
+          a.sortIndex,
+        );
+      }
+    });
+    tx(accounts);
+    return this.listAccounts(jobId);
+  },
+
+  // ── observations ────────────────────────────────────────────────────
+  listObservations(jobId: string): LedgerObservationRow[] {
+    return stmts.observationsByJob.all(jobId) as LedgerObservationRow[];
+  },
+
+  replaceObservations(jobId: string, observations: LedgerObservationCreateInput[]): LedgerObservationRow[] {
+    const tx = db.transaction((rows: LedgerObservationCreateInput[]) => {
+      stmts.deleteObservationsByJob.run(jobId);
+      for (const o of rows) {
+        const id = crypto.randomBytes(16).toString('hex');
+        stmts.insertObservation.run(
+          id,
+          jobId,
+          o.accountId,
+          o.accountName,
+          o.code,
+          o.severity,
+          o.message,
+          o.amount,
+          o.dateRef,
+          o.suggestedAction,
+        );
+      }
+    });
+    tx(observations);
+    return this.listObservations(jobId);
+  },
+
+  setObservationStatus(observationId: string, userId: string, status: LedgerObservationStatus): boolean {
+    return stmts.updateObservationStatus.run(status, observationId, userId).changes > 0;
+  },
+
+  findObservationForUser(observationId: string, userId: string): LedgerObservationRow | undefined {
+    return stmts.observationByIdForUser.get(observationId, userId) as LedgerObservationRow | undefined;
+  },
+};

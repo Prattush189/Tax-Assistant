@@ -182,6 +182,14 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_bank_tx_statement_id ON bank_transaction
 db.exec("CREATE INDEX IF NOT EXISTS idx_bank_tx_category ON bank_transactions(category)");
 db.exec("CREATE INDEX IF NOT EXISTS idx_bank_rules_user_id ON bank_statement_rules(user_id)");
 
+// Indexes for ledger_scrutiny_* (AI ledger scrutiny analyzer)
+db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_jobs_user_id ON ledger_scrutiny_jobs(user_id)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_jobs_billing ON ledger_scrutiny_jobs(billing_user_id)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_jobs_updated_at ON ledger_scrutiny_jobs(updated_at DESC)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_accounts_job_id ON ledger_accounts(job_id, sort_index)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_obs_job_id ON ledger_observations(job_id, severity)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_obs_account_id ON ledger_observations(account_id)");
+
 // Add counterparty/reference columns if upgrading from an earlier feature-branch build.
 {
   const txCols = (db.prepare("PRAGMA table_info(bank_transactions)").all() as { name: string }[]).map(c => c.name);

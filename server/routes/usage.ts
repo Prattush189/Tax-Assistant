@@ -97,6 +97,14 @@ router.get('/', (req: AuthRequest, res: Response) => {
     console.error('[usage] bank statements count failed', err);
   }
 
+  // Ledger scrutiny (monthly)
+  let ledgerScrutinyUsed = 0;
+  try {
+    ledgerScrutinyUsed = featureUsageRepo.countThisMonthByBillingUser(billingUser.id, 'ledger_scrutiny');
+  } catch (err) {
+    console.error('[usage] ledger scrutiny count failed', err);
+  }
+
   // Saved profiles (count — not period based)
   let profilesUsed = 0;
   try {
@@ -175,6 +183,12 @@ router.get('/', (req: AuthRequest, res: Response) => {
         limit: limits.bankStatements,
         period: 'month',
         label: 'Bank Statements',
+      },
+      ledgerScrutiny: {
+        used: ledgerScrutinyUsed,
+        limit: limits.ledgerScrutiny,
+        period: 'month',
+        label: 'Ledger Scrutinies',
       },
       profiles: {
         used: profilesUsed,

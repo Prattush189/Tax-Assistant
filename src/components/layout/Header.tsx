@@ -2,7 +2,7 @@ import { Menu, Moon, Sun, LogOut, MessageCircle, Calculator, CreditCard, FileSpr
 import { cn } from '../../lib/utils';
 import { postToParent } from '../../lib/pluginProtocol';
 
-type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions' | 'partnership_deeds' | 'bank_statements';
+type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions' | 'partnership_deeds' | 'bank_statements' | 'ledger_scrutiny';
 
 // Views that all live inside the unified "Legal" hub. The Legal nav button is
 // highlighted whenever the current view is any of these.
@@ -10,6 +10,13 @@ const LEGAL_VIEWS: ReadonlySet<ActiveView> = new Set([
   'notices',
   'board_resolutions',
   'partnership_deeds',
+]);
+
+// Views that all live inside the "Books" hub. The Books nav button stays
+// highlighted on either tab.
+const BOOKS_VIEWS: ReadonlySet<ActiveView> = new Set([
+  'bank_statements',
+  'ledger_scrutiny',
 ]);
 
 interface HeaderProps {
@@ -55,7 +62,7 @@ export function Header({
     ...navItems,
     ...(canAccessItr ? [{ id: 'itr' as ActiveView, label: 'ITR', icon: FileSpreadsheet }] : []),
     ...(canAccessLegal ? [{ id: 'notices' as ActiveView, label: 'Legal', icon: Scale, ai: true }] : []),
-    ...(user ? [{ id: 'bank_statements' as ActiveView, label: 'Statements', icon: Landmark, ai: true }] : []),
+    ...(user ? [{ id: 'bank_statements' as ActiveView, label: 'Books', icon: Landmark, ai: true }] : []),
     ...(user?.role === 'admin' ? [{ id: 'admin' as ActiveView, label: 'Admin', icon: Shield }] : []),
     { id: 'plan' as ActiveView, label: 'Plan', icon: CreditCard },
   ];
@@ -89,9 +96,12 @@ export function Header({
             // Legal entry uses 'notices' as its id (the default sub-tab) but
             // stays highlighted whenever any legal sub-view is active.
             const isLegalEntry = item.label === 'Legal';
+            const isBooksEntry = item.label === 'Books';
             const isActive = isLegalEntry
               ? LEGAL_VIEWS.has(activeView as ActiveView)
-              : activeView === item.id;
+              : isBooksEntry
+                ? BOOKS_VIEWS.has(activeView as ActiveView)
+                : activeView === item.id;
             return (
               <button
                 key={item.id}

@@ -361,6 +361,7 @@ export interface UserUsageResponse {
     boardResolutions: UsageMetric;
     partnershipDeeds: UsageMetric;
     bankStatements: UsageMetric;
+    ledgerScrutiny: UsageMetric;
     profiles: UsageMetric;
   };
 }
@@ -1861,4 +1862,185 @@ export async function createBankStatementCondition(text: string): Promise<{ cond
 
 export async function deleteBankStatementCondition(id: string): Promise<void> {
   await authFetch(`/api/bank-statements/conditions/${id}`, { method: 'DELETE' });
+}
+
+// ── Ledger Scrutiny API ───────────────────────────────────────────────────
+
+export type LedgerScrutinySeverity = 'info' | 'warn' | 'high';
+export type LedgerObservationStatus = 'open' | 'resolved';
+export type LedgerJobStatus = 'pending' | 'extracting' | 'scrutinizing' | 'done' | 'error';
+
+export interface LedgerScrutinyJob {
+  id: string;
+  name: string;
+  partyName: string | null;
+  gstin: string | null;
+  periodFrom: string | null;
+  periodTo: string | null;
+  sourceFilename: string | null;
+  sourceMime: string | null;
+  status: LedgerJobStatus;
+  totalFlagsHigh: number;
+  totalFlagsWarn: number;
+  totalFlagsInfo: number;
+  totalFlaggedAmount: number;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LedgerScrutinyAccount {
+  id: string;
+  name: string;
+  accountType: string | null;
+  opening: number;
+  closing: number;
+  totalDebit: number;
+  totalCredit: number;
+  txCount: number;
+}
+
+export interface LedgerScrutinyObservation {
+  id: string;
+  accountId: string | null;
+  accountName: string | null;
+  code: string;
+  severity: LedgerScrutinySeverity;
+  message: string;
+  amount: number | null;
+  dateRef: string | null;
+  suggestedAction: string | null;
+  status: LedgerObservationStatus;
+  source: string;
+  createdAt: string;
+}
+
+export interface LedgerScrutinyDetail {
+  job: LedgerScrutinyJob;
+  accounts: LedgerScrutinyAccount[];
+  observations: LedgerScrutinyObservation[];
+}
+
+export async function fetchLedgerScrutinyJobs(): Promise<{
+  jobs: LedgerScrutinyJob[];
+  usage: { used: number; limit: number };
+}> {
+  return authFetch('/api/ledger-scrutiny');
+}
+
+export async function fetchLedgerScrutinyJob(id: string): Promise<LedgerScrutinyDetail> {
+  return authFetch(`/api/ledger-scrutiny/${id}`);
+}
+
+export async function uploadLedgerScrutinyPdf(file: File): Promise<LedgerScrutinyDetail> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 240_000);
+  const doFetch = () => fetch('/api/ledger-scrutiny/upload', {
+    method: 'POST',
+    headers: { ...getAuthHeaders() },
+    body: formData,
+    signal: controller.signal,
+  });
+  try {
+    let res = await doFetch();
+    if (res.status === 401) {
+      const refreshed = await tryRefreshToken();
+      if (refreshed) res = await doFetch();
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const parts = [data.error ?? 'Failed to upload ledger'];
+      if (data.hint) parts.push(data.hint);
+      if (data.detail) parts.push(`(${data.detail})`);
+      throw new Error(parts.join(' — '));
+    }
+    return data;
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('Ledger extract timed out — try a smaller export or split the year.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function scrutinizeLedger(
+  jobId: string,
+  onChunk: (text: string) => void,
+  onError: (msg: string, kind?: 'quota' | 'generic') => void,
+  onDone?: (summary: { jobId: string; observationsCount: number }) => void,
+): Promise<void> {
+  const doFetch = () => fetch(`/api/ledger-scrutiny/${jobId}/scrutinize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+  });
+
+  let response = await doFetch();
+  if (response.status === 401) {
+    const refreshed = await tryRefreshToken();
+    if (refreshed) response = await doFetch();
+  }
+
+  if (!response.ok || !response.body) {
+    let errorMessage = 'Failed to scrutinize ledger.';
+    let kind: 'quota' | 'generic' = 'generic';
+    try {
+      const errData = await response.json();
+      if (errData.error) errorMessage = errData.error;
+      if (response.status === 429 || errData.upgrade) kind = 'quota';
+    } catch { /* ignore */ }
+    onError(errorMessage, kind);
+    return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      try {
+        const parsed = JSON.parse(line.slice(6).trim());
+        if (parsed.heartbeat) continue;
+        if (parsed.done) {
+          onDone?.({ jobId: parsed.jobId, observationsCount: parsed.observationsCount });
+          return;
+        }
+        if (parsed.error) { onError(parsed.message ?? 'Scrutiny failed.', 'generic'); return; }
+        if (parsed.text) onChunk(parsed.text);
+      } catch { /* skip */ }
+    }
+  }
+}
+
+export async function renameLedgerScrutinyJob(id: string, name: string): Promise<{ job: LedgerScrutinyJob }> {
+  return authFetch(`/api/ledger-scrutiny/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function deleteLedgerScrutinyJob(id: string): Promise<void> {
+  await authFetch(`/api/ledger-scrutiny/${id}`, { method: 'DELETE' });
+}
+
+export async function updateLedgerObservationStatus(
+  jobId: string,
+  obsId: string,
+  status: LedgerObservationStatus,
+): Promise<{ observation: LedgerScrutinyObservation }> {
+  return authFetch(`/api/ledger-scrutiny/${jobId}/observations/${obsId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status }),
+  });
 }

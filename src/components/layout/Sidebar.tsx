@@ -8,7 +8,7 @@ import { usePreferences } from '../../hooks/usePreferences';
 import { useAuth } from '../../contexts/AuthContext';
 import { CalculatorTab, CALCULATOR_TABS } from '../calculator/CalculatorView';
 
-type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions' | 'partnership_deeds' | 'bank_statements';
+type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions' | 'partnership_deeds' | 'bank_statements' | 'ledger_scrutiny';
 
 // Views that all live inside the unified "Legal" hub. The Legal nav button is
 // highlighted whenever the current view is any of these.
@@ -16,6 +16,13 @@ const LEGAL_VIEWS: ReadonlySet<ActiveView> = new Set([
   'notices',
   'board_resolutions',
   'partnership_deeds',
+]);
+
+// Views that all live inside the "Books" hub (Bank Statements + Ledger Scrutiny).
+// The Books nav button stays highlighted on either tab.
+const BOOKS_VIEWS: ReadonlySet<ActiveView> = new Set([
+  'bank_statements',
+  'ledger_scrutiny',
 ]);
 
 interface SidebarProps {
@@ -81,7 +88,7 @@ const itrNavItem: NavItem = { id: 'itr' as ActiveView, label: 'ITR', icon: FileS
 // Legal hub entry — clicking lands on Notices by default; the Legal hub itself
 // renders the inner tab strip (Notices / Board Resolutions / Partnership Deeds).
 const legalNavItem: NavItem = { id: 'notices' as ActiveView, label: 'Legal', icon: Scale, ai: true };
-const bankStatementsNavItem: NavItem = { id: 'bank_statements' as ActiveView, label: 'Statements', icon: Landmark, ai: true };
+const bankStatementsNavItem: NavItem = { id: 'bank_statements' as ActiveView, label: 'Books', icon: Landmark, ai: true };
 const profileNavItem: NavItem = { id: 'profile' as ActiveView, label: 'Profile', icon: User };
 
 function timeAgo(dateStr: string): string {
@@ -370,9 +377,12 @@ export function Sidebar({
             // Legal entry uses 'notices' as id but stays highlighted for all
             // legal sub-views (notices, board_resolutions, partnership_deeds).
             const isLegalEntry = item.label === 'Legal';
+            const isBooksEntry = item.label === 'Books';
             const isActive = isLegalEntry
               ? LEGAL_VIEWS.has(activeView)
-              : activeView === item.id;
+              : isBooksEntry
+                ? BOOKS_VIEWS.has(activeView)
+                : activeView === item.id;
             return (
               <button
                 key={item.id}
