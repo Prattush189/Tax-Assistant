@@ -26,12 +26,13 @@ export interface MessageLimit {
 
 export interface UserLimits {
   messages: MessageLimit;
-  attachments: number;       // monthly
-  suggestions: number;       // monthly
-  notices: number;           // monthly
-  profiles: number;          // total
-  boardResolutions: number;  // monthly
-  bankStatements: number;    // monthly
+  attachments: number;        // monthly
+  suggestions: number;        // monthly
+  notices: number;            // monthly
+  profiles: number;           // total
+  boardResolutions: number;   // monthly
+  partnershipDeeds: number;   // monthly
+  bankStatements: number;     // monthly
 }
 
 /** Baseline defaults for each plan tier. */
@@ -43,6 +44,7 @@ export const PLAN_DEFAULTS: Record<PlanId, UserLimits> = {
     notices: 3,
     profiles: 1,
     boardResolutions: 3,
+    partnershipDeeds: 3,
     bankStatements: 3,
   },
   pro: {
@@ -52,6 +54,7 @@ export const PLAN_DEFAULTS: Record<PlanId, UserLimits> = {
     notices: 15,
     profiles: 5,
     boardResolutions: 15,
+    partnershipDeeds: 15,
     bankStatements: 15,
   },
   enterprise: {
@@ -61,6 +64,7 @@ export const PLAN_DEFAULTS: Record<PlanId, UserLimits> = {
     notices: 50,
     profiles: 25,
     boardResolutions: 50,
+    partnershipDeeds: 50,
     bankStatements: 50,
   },
 };
@@ -109,6 +113,7 @@ export function getUserLimits(user: LimitUserInput): UserLimits {
     notices: overrides.notices ?? base.notices,
     profiles: overrides.profiles ?? base.profiles,
     boardResolutions: overrides.boardResolutions ?? base.boardResolutions,
+    partnershipDeeds: overrides.partnershipDeeds ?? base.partnershipDeeds,
     bankStatements: overrides.bankStatements ?? base.bankStatements,
   };
 }
@@ -137,6 +142,7 @@ export function sanitizePluginLimits(raw: unknown): UserLimits | null {
   const notices = numeric(r.notices);
   const profiles = numeric(r.profiles);
   const boardResolutions = numeric(r.boardResolutions);
+  const partnershipDeeds = numeric(r.partnershipDeeds);
   const bankStatements = numeric(r.bankStatements);
 
   // Require at least one field to be set
@@ -147,6 +153,7 @@ export function sanitizePluginLimits(raw: unknown): UserLimits | null {
     notices === undefined &&
     profiles === undefined &&
     boardResolutions === undefined &&
+    partnershipDeeds === undefined &&
     bankStatements === undefined
   ) {
     return null;
@@ -160,6 +167,7 @@ export function sanitizePluginLimits(raw: unknown): UserLimits | null {
     notices: notices ?? 0,
     profiles: profiles ?? 0,
     boardResolutions: boardResolutions ?? 0,
+    partnershipDeeds: partnershipDeeds ?? 0,
     bankStatements: bankStatements ?? 0,
   };
 }

@@ -11,6 +11,7 @@ import { useChatManager } from './hooks/useChatManager';
 import { useNoticeDrafter } from './hooks/useNoticeDrafter';
 import { useItrManager } from './hooks/useItrManager';
 import { useBoardResolutionManager } from './hooks/useBoardResolutionManager';
+import { usePartnershipDeedsManager } from './hooks/usePartnershipDeedsManager';
 import { useProfileManager } from './hooks/useProfileManager';
 import { useBankStatementManager } from './hooks/useBankStatementManager';
 import { useAuth } from './contexts/AuthContext';
@@ -29,13 +30,15 @@ import { SettingsPage } from './components/settings/SettingsPage';
 import { NoticeDrafterPage } from './components/notices/NoticeDrafterPage';
 import { ItrView } from './components/itr/ItrView';
 import { BoardResolutionView } from './components/board-resolutions/BoardResolutionView';
+import { PartnershipDeedView } from './components/partnership-deeds/PartnershipDeedView';
+import { LegalView } from './components/legal/LegalView';
 import { BankStatementView } from './components/bank-statements/BankStatementView';
 import { ProfileView } from './components/profile/ProfileView';
 import { TaxCalculatorProvider } from './contexts/TaxCalculatorContext';
 import type { ParentToIframeMessage } from './lib/pluginProtocol';
 import { cn } from './lib/utils';
 
-type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions' | 'bank_statements';
+type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions' | 'partnership_deeds' | 'bank_statements';
 
 /**
  * Dispatches SET_VIEW / SET_CALCULATOR_TAB / LOGOUT into local state.
@@ -79,7 +82,7 @@ function AppContent() {
   const { isPluginMode } = usePluginMode(setIsDarkMode);
   const [activeView, setActiveView] = useState<ActiveView>(() => {
     const saved = localStorage.getItem('activeView') as ActiveView | null;
-    const valid: ActiveView[] = ['chat', 'calculator', 'dashboard', 'admin', 'plan', 'notices', 'settings', 'itr', 'profile', 'board_resolutions', 'bank_statements'];
+    const valid: ActiveView[] = ['chat', 'calculator', 'dashboard', 'admin', 'plan', 'notices', 'settings', 'itr', 'profile', 'board_resolutions', 'partnership_deeds', 'bank_statements'];
     return saved && valid.includes(saved) ? saved : 'chat';
   });
   const [calculatorTab, setCalculatorTab] = useState<CalculatorTab>('income');
@@ -94,12 +97,13 @@ function AppContent() {
   const chatManager = useChatManager();
   const noticeDrafter = useNoticeDrafter();
   // ITR: admin-only OR explicit itr_enabled grant (not available to regular enterprise users yet).
-  const isEnterprise = user?.plan === 'enterprise';
   const canAccessItr = user?.role === 'admin' || user?.itr_enabled === true;
   const itrManager = useItrManager(canAccessItr);
-  // Board Resolutions: open to all authenticated users (plan limits enforced server-side).
-  const canAccessBoardResolutions = !!user;
-  const boardResolutionManager = useBoardResolutionManager(canAccessBoardResolutions);
+  // Legal hub (Notices / Board Resolutions / Partnership Deeds): open to all
+  // authenticated users (plan limits enforced server-side).
+  const canAccessLegal = !!user;
+  const boardResolutionManager = useBoardResolutionManager(canAccessLegal);
+  const partnershipDeedManager = usePartnershipDeedsManager(canAccessLegal);
   // Bank statement analyzer: open to all authenticated users.
   const bankStatementManager = useBankStatementManager(!!user);
 
@@ -143,6 +147,11 @@ function AppContent() {
           onNewBoardResolution={boardResolutionManager.clearDraft}
           onSwitchBoardResolution={boardResolutionManager.loadDraft}
           onDeleteBoardResolution={boardResolutionManager.removeDraft}
+          partnershipDeedList={partnershipDeedManager.drafts}
+          currentPartnershipDeedId={partnershipDeedManager.currentDraftId}
+          onNewPartnershipDeed={partnershipDeedManager.clearDraft}
+          onSwitchPartnershipDeed={partnershipDeedManager.loadDraft}
+          onDeletePartnershipDeed={partnershipDeedManager.removeDraft}
           profileList={profileManager.profiles}
           currentProfileId={profileManager.currentProfileId}
           onNewProfile={profileManager.clearCurrent}
@@ -193,10 +202,21 @@ function AppContent() {
               {activeView === 'dashboard' && <DashboardView />}
               {activeView === 'admin' && user?.role === 'admin' && <AdminDashboard />}
               {activeView === 'plan' && <PlanPage />}
-              {activeView === 'notices' && <NoticeDrafterPage drafter={noticeDrafter} />}
+              {activeView === 'notices' && (
+                <LegalView activeView={activeView} onViewChange={navigateTo}>
+                  <NoticeDrafterPage drafter={noticeDrafter} />
+                </LegalView>
+              )}
               {activeView === 'itr' && canAccessItr && <ItrView manager={itrManager} />}
-              {activeView === 'board_resolutions' && canAccessBoardResolutions && (
-                <BoardResolutionView manager={boardResolutionManager} />
+              {activeView === 'board_resolutions' && canAccessLegal && (
+                <LegalView activeView={activeView} onViewChange={navigateTo}>
+                  <BoardResolutionView manager={boardResolutionManager} />
+                </LegalView>
+              )}
+              {activeView === 'partnership_deeds' && canAccessLegal && (
+                <LegalView activeView={activeView} onViewChange={navigateTo}>
+                  <PartnershipDeedView manager={partnershipDeedManager} />
+                </LegalView>
               )}
               {activeView === 'bank_statements' && <BankStatementView manager={bankStatementManager} />}
               {isTrialExpired && <TrialExpiredWall />}

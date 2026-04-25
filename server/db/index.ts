@@ -109,7 +109,7 @@ function ensureBillingCol(table: string): boolean {
   db.exec(`UPDATE ${table} SET billing_user_id = user_id WHERE billing_user_id IS NULL`);
   return true;
 }
-for (const t of ['api_usage', 'feature_usage', 'notices', 'tax_profiles', 'profiles', 'itr_drafts']) {
+for (const t of ['api_usage', 'feature_usage', 'notices', 'tax_profiles', 'profiles', 'itr_drafts', 'partnership_deeds']) {
   ensureBillingCol(t);
 }
 db.exec("CREATE INDEX IF NOT EXISTS idx_api_usage_billing ON api_usage(billing_user_id, created_at)");
@@ -159,6 +159,11 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_itr_drafts_updated_at ON itr_drafts(upda
 // Indexes for board_resolutions — same idempotency rule.
 db.exec("CREATE INDEX IF NOT EXISTS idx_board_resolutions_user_id ON board_resolutions(user_id)");
 db.exec("CREATE INDEX IF NOT EXISTS idx_board_resolutions_updated_at ON board_resolutions(updated_at DESC)");
+
+// Indexes for partnership_deeds — same idempotency rule.
+db.exec("CREATE INDEX IF NOT EXISTS idx_partnership_deeds_user_id ON partnership_deeds(user_id)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_partnership_deeds_updated_at ON partnership_deeds(updated_at DESC)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_partnership_deeds_billing ON partnership_deeds(billing_user_id)");
 
 // Indexes for clients table (CA bulk ITR filing)
 db.exec("CREATE INDEX IF NOT EXISTS idx_clients_user_id ON clients(user_id)");

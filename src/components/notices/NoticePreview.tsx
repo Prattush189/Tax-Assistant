@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { Download, Copy, Check, Trash2, Edit3 } from 'lucide-react';
 import { LetterheadConfig } from '../../hooks/useNoticeDrafter';
 import { LoadingAnimation } from '../ui/LoadingAnimation';
-import { renderMarkdownToPdf } from './markdownPdf';
+import { renderMarkdownToPdf } from '../../lib/markdownPdf';
 
 interface NoticePreviewProps {
   content: string;
