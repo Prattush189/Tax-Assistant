@@ -243,11 +243,12 @@ export function generateTaxPlanningReport(
     'Pay any advance tax due to avoid interest u/s 234B/234C.',
   ];
   for (let i = 0; i < actions.length; i++) {
-    checkBreak(8);
+    const lines = doc.splitTextToSize(`[ ] ${actions[i]}`, pw - ml - mr - 8);
+    checkBreak(lines.length * 6);
     doc.setFontSize(10);
     doc.setFont('helvetica', 'normal');
-    doc.text(`☐ ${actions[i]}`, ml + 4, y);
-    y += 6;
+    doc.text(lines, ml + 4, y);
+    y += lines.length * 6;
   }
 
   // ── Footer ─────────────────────────────────────────────────────────
