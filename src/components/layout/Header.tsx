@@ -47,7 +47,7 @@ export function Header({
     ...navItems,
     ...(canAccessItr ? [{ id: 'itr' as ActiveView, label: 'ITR', icon: FileSpreadsheet }] : []),
     ...(canAccessBoardResolutions
-      ? [{ id: 'board_resolutions' as ActiveView, label: 'Resolutions', icon: Gavel, ai: true }]
+      ? [{ id: 'board_resolutions' as ActiveView, label: 'Resolutions', icon: Gavel }]
       : []),
     ...(user ? [{ id: 'bank_statements' as ActiveView, label: 'Statements', icon: Landmark, ai: true }] : []),
     ...(user?.role === 'admin' ? [{ id: 'admin' as ActiveView, label: 'Admin', icon: Shield }] : []),
