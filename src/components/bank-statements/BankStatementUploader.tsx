@@ -97,7 +97,7 @@ export function BankStatementUploader({ manager }: Props) {
           <AnalyzeProgressBar progress={manager.analyzeProgress} />
         ) : (
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-            PDF, JPG, PNG, WebP up to 10 MB — or a CSV export from your bank
+            PDF, JPG, PNG, WebP up to 500 KB — or a CSV export from your bank
           </p>
         )}
       </div>

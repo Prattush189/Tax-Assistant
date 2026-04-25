@@ -39,8 +39,8 @@ export function Form16ImportDialog({ open, onClose, onImported }: Props) {
       setError('Please select a PDF file.');
       return;
     }
-    if (f.size > 10 * 1024 * 1024) {
-      setError('File exceeds the 10 MB limit.');
+    if (f.size > 500 * 1024) {
+      setError('File exceeds the 500 KB limit.');
       return;
     }
     setError(null);
@@ -152,7 +152,7 @@ export function Form16ImportDialog({ open, onClose, onImported }: Props) {
                       Drop your Form 16 PDF here, or <span className="text-emerald-600 dark:text-emerald-400 font-medium">browse</span>
                     </p>
                     <p className="text-[11px] text-gray-400 dark:text-gray-500 mt-1">
-                      PDF only, max 10 MB
+                      PDF only, max 500 KB
                     </p>
                   </>
                 )}

@@ -75,7 +75,7 @@ const STYLE_ALLOWED_MIMES = [
 
 const styleUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: 500 * 1024 },
   fileFilter: (_req, file, cb) => {
     if ((STYLE_ALLOWED_MIMES as readonly string[]).includes(file.mimetype)) {
       cb(null, true);
