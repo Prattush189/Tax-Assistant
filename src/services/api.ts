@@ -1543,20 +1543,13 @@ async function analyzeBankStatementPdfText(
  * Protocol (matches server):
  *   { type: 'start',    totalChunks, pages }
  *   { type: 'progress', completed, total, pages: [from,to], txInChunk }  (one per chunk)
- *   { type: 'ping' }                                                     (heartbeat — every 10s)
  *   { type: 'done',     statement, transactions, txCount, warning? }
  *   { type: 'error',    error, detail?, hint? }
  *
  * We can't change HTTP status after SSE headers flush, so errors arrive as a
  * payload, not a non-200 response — translate them back into a thrown Error
  * whose message matches the JSON path so callers show the same toast.
- *
- * Idle watchdog: if no bytes (event OR ping) arrive for SSE_IDLE_TIMEOUT_MS,
- * abort the stream and surface a clear "stuck" error instead of leaving the
- * UI on the spinner until the outer 240s overall timeout fires.
  */
-const SSE_IDLE_TIMEOUT_MS = 30_000;
-
 async function consumeAnalyzeStream(
   body: ReadableStream<Uint8Array>,
   onProgress: (p: BankStatementAnalyzeProgress) => void,
@@ -1567,81 +1560,59 @@ async function consumeAnalyzeStream(
   let finalPayload: { statement: BankStatementSummary; transactions: BankTransaction[]; warning?: string } | null = null;
   let errorPayload: { error?: string; detail?: string; hint?: string } | null = null;
 
-  // Idle watchdog — armed before each read, cleared on every byte arrival.
-  let idleTimer: ReturnType<typeof setTimeout> | null = null;
-  let idleTimedOut = false;
-  const armIdle = () => {
-    if (idleTimer) clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => {
-      idleTimedOut = true;
-      try { reader.cancel(); } catch { /* noop */ }
-    }, SSE_IDLE_TIMEOUT_MS);
-  };
-  armIdle();
-
-  try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      armIdle();
-      buffer += decoder.decode(value, { stream: true });
-      // SSE event boundary is a blank line (\n\n). Keep the trailing partial
-      // event in the buffer for the next read.
-      let sep: number;
-      while ((sep = buffer.indexOf('\n\n')) !== -1) {
-        const block = buffer.slice(0, sep);
-        buffer = buffer.slice(sep + 2);
-        const dataLine = block.split('\n').find((l) => l.startsWith('data:'));
-        if (!dataLine) continue;
-        const json = dataLine.slice(5).trim();
-        if (!json) continue;
-        try {
-          const evt = JSON.parse(json) as {
-            type: string;
-            totalChunks?: number;
-            total?: number;
-            completed?: number;
-            pages?: [number, number] | number;
-            [k: string]: unknown;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    // SSE event boundary is a blank line (\n\n). Keep the trailing partial
+    // event in the buffer for the next read.
+    let sep: number;
+    while ((sep = buffer.indexOf('\n\n')) !== -1) {
+      const block = buffer.slice(0, sep);
+      buffer = buffer.slice(sep + 2);
+      const dataLine = block.split('\n').find((l) => l.startsWith('data:'));
+      if (!dataLine) continue;
+      const json = dataLine.slice(5).trim();
+      if (!json) continue;
+      try {
+        const evt = JSON.parse(json) as {
+          type: string;
+          totalChunks?: number;
+          total?: number;
+          completed?: number;
+          pages?: [number, number] | number;
+          [k: string]: unknown;
+        };
+        if (evt.type === 'start') {
+          onProgress({
+            completed: 0,
+            total: evt.totalChunks ?? 0,
+          });
+        } else if (evt.type === 'progress') {
+          onProgress({
+            completed: evt.completed ?? 0,
+            total: evt.total ?? 0,
+            pages: Array.isArray(evt.pages) ? (evt.pages as [number, number]) : undefined,
+          });
+        } else if (evt.type === 'done') {
+          finalPayload = {
+            statement: evt.statement as BankStatementSummary,
+            transactions: evt.transactions as BankTransaction[],
+            warning: evt.warning as string | undefined,
           };
-          if (evt.type === 'start') {
-            onProgress({
-              completed: 0,
-              total: evt.totalChunks ?? 0,
-            });
-          } else if (evt.type === 'progress') {
-            onProgress({
-              completed: evt.completed ?? 0,
-              total: evt.total ?? 0,
-              pages: Array.isArray(evt.pages) ? (evt.pages as [number, number]) : undefined,
-            });
-          } else if (evt.type === 'ping') {
-            // Heartbeat — already reset the watchdog at byte arrival, no other action.
-          } else if (evt.type === 'done') {
-            finalPayload = {
-              statement: evt.statement as BankStatementSummary,
-              transactions: evt.transactions as BankTransaction[],
-              warning: evt.warning as string | undefined,
-            };
-          } else if (evt.type === 'error') {
-            errorPayload = {
-              error: evt.error as string | undefined,
-              detail: evt.detail as string | undefined,
-              hint: evt.hint as string | undefined,
-            };
-          }
-        } catch {
-          // Malformed event — skip. Stream continues on the next boundary.
+        } else if (evt.type === 'error') {
+          errorPayload = {
+            error: evt.error as string | undefined,
+            detail: evt.detail as string | undefined,
+            hint: evt.hint as string | undefined,
+          };
         }
+      } catch {
+        // Malformed event — skip. Stream continues on the next boundary.
       }
     }
-  } finally {
-    if (idleTimer) clearTimeout(idleTimer);
   }
 
-  if (idleTimedOut) {
-    throw new Error('Analysis stalled — the server stopped responding. Please try again, or use a CSV export.');
-  }
   if (errorPayload) {
     const parts = [errorPayload.error ?? 'Failed to analyze statement'];
     if (errorPayload.hint) parts.push(errorPayload.hint);
