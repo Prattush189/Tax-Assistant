@@ -52,7 +52,7 @@ export const PLAN_DEFAULTS: Record<PlanId, UserLimits> = {
     notices: 15,
     profiles: 5,
     boardResolutions: 15,
-    bankStatements: 30,
+    bankStatements: 15,
   },
   enterprise: {
     messages: { limit: 3000, period: 'month' },
@@ -61,7 +61,7 @@ export const PLAN_DEFAULTS: Record<PlanId, UserLimits> = {
     notices: 50,
     profiles: 25,
     boardResolutions: 50,
-    bankStatements: 100,
+    bankStatements: 50,
   },
 };
 
