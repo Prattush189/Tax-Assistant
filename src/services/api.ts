@@ -1389,6 +1389,12 @@ export interface BankStatementRule {
   createdAt: string;
 }
 
+export interface BankStatementCondition {
+  id: string;
+  text: string;
+  createdAt: string;
+}
+
 export async function fetchBankStatements(): Promise<{ statements: BankStatementSummary[] }> {
   return authFetch('/api/bank-statements');
 }
@@ -1696,4 +1702,21 @@ export async function createBankStatementRule(input: {
 
 export async function deleteBankStatementRule(id: string): Promise<void> {
   await authFetch(`/api/bank-statements/rules/${id}`, { method: 'DELETE' });
+}
+
+export const BANK_STATEMENT_CONDITION_MAX_WORDS = 50;
+
+export async function fetchBankStatementConditions(): Promise<{ conditions: BankStatementCondition[]; maxWords: number }> {
+  return authFetch('/api/bank-statements/conditions');
+}
+
+export async function createBankStatementCondition(text: string): Promise<{ condition: BankStatementCondition }> {
+  return authFetch('/api/bank-statements/conditions', {
+    method: 'POST',
+    body: JSON.stringify({ text }),
+  });
+}
+
+export async function deleteBankStatementCondition(id: string): Promise<void> {
+  await authFetch(`/api/bank-statements/conditions/${id}`, { method: 'DELETE' });
 }

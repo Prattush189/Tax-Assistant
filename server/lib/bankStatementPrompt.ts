@@ -1,5 +1,39 @@
 // server/lib/bankStatementPrompt.ts
 
+// Per-condition word ceiling. Enforced both in the React form (live counter)
+// and in the POST /conditions handler — the prompt-builder also clips so a
+// stale row from before the limit existed can't leak into the AI prompt.
+export const MAX_CONDITION_WORDS = 50;
+
+export function countWords(text: string): number {
+  const trimmed = text.trim();
+  if (!trimmed) return 0;
+  return trimmed.split(/\s+/).length;
+}
+
+/**
+ * Build the user-conditions block prepended to every parse prompt.
+ *
+ * Free-form instructions the user wants the AI to follow when categorising
+ * transactions: filters, exclusions, special tagging hints, etc. We render
+ * them as a numbered list so the model can reference them mentally and so a
+ * single condition that goes long doesn't shadow the rest.
+ *
+ * Returns an empty string when the user has no conditions — caller can blindly
+ * concatenate without worrying about extra whitespace.
+ */
+export function buildConditionsBlock(conditions: { text: string }[]): string {
+  if (!conditions.length) return '';
+  const items = conditions
+    .map((c) => c.text.trim())
+    .filter(Boolean)
+    .map((t) => t.split(/\s+/).slice(0, MAX_CONDITION_WORDS).join(' '))
+    .map((t, i) => `${i + 1}. ${t}`)
+    .join('\n');
+  if (!items) return '';
+  return `USER FILTERING / TAGGING CONDITIONS — apply to every transaction. If a condition asks you to exclude or skip a row, omit it entirely from the output. If it asks to tag/categorise differently, override the default category accordingly. Conditions take precedence over the default categorisation rules below.\n${items}\n\n---\n\n`;
+}
+
 export const BANK_STATEMENT_CATEGORIES = [
   'Business Income',
   'Salary',

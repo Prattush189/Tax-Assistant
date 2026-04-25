@@ -14,6 +14,12 @@ if (!fs.existsSync(dbDir)) {
   fs.mkdirSync(dbDir, { recursive: true });
 }
 
+// Surface the resolved DB path on boot so deploys that wipe state are easy
+// to diagnose. If this path lives inside the deploy directory and the deploy
+// pipeline reclones / cleans on each push, every counter (search quota,
+// usage, etc.) will reset on push — fix is to set DB_PATH outside the repo.
+console.log(`[db] using SQLite file: ${dbPath}`);
+
 const db = new Database(dbPath);
 
 db.pragma('journal_mode = WAL');

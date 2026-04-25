@@ -265,3 +265,14 @@ CREATE TABLE IF NOT EXISTS bank_statement_rules (
   counterparty_label TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
 );
+
+-- Free-form per-user conditions appended to the bank-statement parse prompt.
+-- Used for filter / include / exclude / tagging instructions the user wants
+-- the AI to follow ("ignore txns under ₹100", "treat ZOMATO as Personal").
+-- Each row is one instruction, capped to 50 words server-side.
+CREATE TABLE IF NOT EXISTS bank_statement_conditions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  text TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+);

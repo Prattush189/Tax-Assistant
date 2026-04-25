@@ -1,5 +1,31 @@
 # Production Deploy Guide
 
+## Persistent storage (READ THIS FIRST)
+
+The app keeps **everything** in one SQLite file: users, chats, messages,
+profiles, bank statements, and the per-key Gemini search-quota counters
+(`search_quota` table — drives the dashboard you see on the admin page).
+
+By default the DB lives at `<repo>/data/tax-assistant.db`, and `.gitignore`
+excludes `/data/`. So if your deploy pipeline does any of:
+
+- fresh `git clone` into a new directory each deploy
+- `git clean -fdx` (wipes ignored files)
+- runs on ephemeral storage (Vercel/Netlify/Railway free tier)
+
+…the DB file is gone after every push and **all counters reset to 0**.
+
+**Fix:** point `DB_PATH` to a stable absolute path outside the deploy directory.
+
+```bash
+# in your production .env
+DB_PATH=/var/lib/tax-assistant/tax-assistant.db
+```
+
+`mkdir -p /var/lib/tax-assistant` once on the server (and `chown` it to the
+PM2 user). The boot log prints `[db] using SQLite file: <path>` so you can
+verify it lands where you expect.
+
 ## Server: aaPanel + Apache + PM2
 
 ### Prerequisites

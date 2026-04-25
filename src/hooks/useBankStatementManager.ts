@@ -10,9 +10,13 @@ import {
   fetchBankStatementRules,
   createBankStatementRule,
   deleteBankStatementRule,
+  fetchBankStatementConditions,
+  createBankStatementCondition,
+  deleteBankStatementCondition,
   BankStatementSummary,
   BankTransaction,
   BankStatementRule,
+  BankStatementCondition,
   BankStatementAnalyzeProgress,
 } from '../services/api';
 
@@ -35,15 +39,21 @@ export function useBankStatementManager(enabled: boolean) {
   const [analyzeProgress, setAnalyzeProgress] = useState<BankStatementAnalyzeProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rules, setRules] = useState<BankStatementRule[]>([]);
+  const [conditions, setConditions] = useState<BankStatementCondition[]>([]);
 
   useEffect(() => {
     if (!enabled) return;
     (async () => {
       setIsLoading(true);
       try {
-        const [list, ruleList] = await Promise.all([fetchBankStatements(), fetchBankStatementRules()]);
+        const [list, ruleList, condList] = await Promise.all([
+          fetchBankStatements(),
+          fetchBankStatementRules(),
+          fetchBankStatementConditions(),
+        ]);
         setStatements(list.statements);
         setRules(ruleList.rules);
+        setConditions(condList.conditions);
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to load statements');
       } finally {
@@ -163,6 +173,17 @@ export function useBankStatementManager(enabled: boolean) {
     setRules((prev) => prev.filter((r) => r.id !== id));
   }, []);
 
+  const addCondition = useCallback(async (text: string): Promise<BankStatementCondition> => {
+    const { condition } = await createBankStatementCondition(text);
+    setConditions((prev) => [condition, ...prev]);
+    return condition;
+  }, []);
+
+  const removeCondition = useCallback(async (id: string) => {
+    await deleteBankStatementCondition(id);
+    setConditions((prev) => prev.filter((c) => c.id !== id));
+  }, []);
+
   return {
     statements,
     currentId,
@@ -172,6 +193,7 @@ export function useBankStatementManager(enabled: boolean) {
     analyzeProgress,
     error,
     rules,
+    conditions,
     refresh,
     clear,
     load,
@@ -182,6 +204,8 @@ export function useBankStatementManager(enabled: boolean) {
     reassignCategory,
     addRule,
     removeRule,
+    addCondition,
+    removeCondition,
   };
 }
 

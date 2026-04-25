@@ -4,12 +4,13 @@ import multer, { MulterError } from 'multer';
 import Papa from 'papaparse';
 import { extractWithRetry } from '../lib/documentExtract.js';
 import { callGeminiJson } from '../lib/geminiJson.js';
-import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_TSV_PROMPT, BANK_STATEMENT_CATEGORIES } from '../lib/bankStatementPrompt.js';
+import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_TSV_PROMPT, BANK_STATEMENT_CATEGORIES, buildConditionsBlock, countWords, MAX_CONDITION_WORDS } from '../lib/bankStatementPrompt.js';
 import { gemini, GEMINI_CHAT_MODEL_THINK_FB } from '../lib/gemini.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { bankStatementRepo } from '../db/repositories/bankStatementRepo.js';
 import { bankTransactionRepo, BankTransactionInput } from '../db/repositories/bankTransactionRepo.js';
 import { bankStatementRuleRepo, BankStatementRuleRow } from '../db/repositories/bankStatementRuleRepo.js';
+import { bankStatementConditionRepo, BankStatementConditionRow } from '../db/repositories/bankStatementConditionRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
@@ -163,10 +164,11 @@ async function extractBankStatementTsvOnce(
   model: string,
   maxTokens: number,
   reasoningEffort: 'none' | 'low' | 'medium' | 'high',
+  conditionsBlock: string,
 ): Promise<TsvExtractResult> {
   const messages: ChatCompletionMessageParam[] = [{
     role: 'user',
-    content: `${BANK_STATEMENT_TSV_PROMPT}\n\nINPUT_TEXT:\n${chunkText}`,
+    content: `${conditionsBlock}${BANK_STATEMENT_TSV_PROMPT}\n\nINPUT_TEXT:\n${chunkText}`,
   }];
   // `reasoning_effort` is the OpenAI-compat knob for Gemini's thinking budget.
   // Both gemini-2.5-flash and gemini-3-flash-preview are thinking models: by
@@ -262,7 +264,7 @@ async function extractBankStatementTsvOnce(
  *     exactly what resolves truncation, so we don't waste another 30-50s
  *     retrying the same params on the same model.
  */
-async function extractBankStatementTsv(chunkText: string, maxTokens: number): Promise<TsvExtractResult> {
+async function extractBankStatementTsv(chunkText: string, maxTokens: number, conditionsBlock: string): Promise<TsvExtractResult> {
   const MAX_PRIMARY_ATTEMPTS = 4;
   const MAX_FALLBACK_ATTEMPTS = 3;
   let lastErr: unknown;
@@ -289,7 +291,7 @@ async function extractBankStatementTsv(chunkText: string, maxTokens: number): Pr
   for (let attempt = 0; attempt < MAX_PRIMARY_ATTEMPTS; attempt++) {
     try {
       // gemini-2.5-flash supports thinking_budget=0 (reasoning_effort='none').
-      return await extractBankStatementTsvOnce(chunkText, 'gemini-2.5-flash', maxTokens, 'none');
+      return await extractBankStatementTsvOnce(chunkText, 'gemini-2.5-flash', maxTokens, 'none', conditionsBlock);
     } catch (err) {
       lastErr = err;
       const status = (err as { status?: number })?.status ?? 0;
@@ -314,7 +316,7 @@ async function extractBankStatementTsv(chunkText: string, maxTokens: number): Pr
     try {
       // gemini-3-flash-preview can't fully disable thinking but accepts 'low',
       // which is still dramatically cheaper than the default 'medium' budget.
-      return await extractBankStatementTsvOnce(chunkText, GEMINI_CHAT_MODEL_THINK_FB, maxTokens * 2, 'low');
+      return await extractBankStatementTsvOnce(chunkText, GEMINI_CHAT_MODEL_THINK_FB, maxTokens * 2, 'low', conditionsBlock);
     } catch (err) {
       lastErr = err;
       const status = (err as { status?: number })?.status ?? 0;
@@ -590,6 +592,38 @@ router.delete('/rules/:ruleId', (req: AuthRequest, res: Response) => {
   res.json({ success: true });
 });
 
+function serializeCondition(row: BankStatementConditionRow) {
+  return { id: row.id, text: row.text, createdAt: row.created_at };
+}
+
+// GET /api/bank-statements/conditions — list user-defined parsing conditions.
+router.get('/conditions', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const conditions = bankStatementConditionRepo.listByUser(req.user.id).map(serializeCondition);
+  res.json({ conditions, maxWords: MAX_CONDITION_WORDS });
+});
+
+// POST /api/bank-statements/conditions — create a new condition.
+router.post('/conditions', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
+  if (!text) { res.status(400).json({ error: 'text is required' }); return; }
+  if (countWords(text) > MAX_CONDITION_WORDS) {
+    res.status(400).json({ error: `Condition exceeds the ${MAX_CONDITION_WORDS}-word limit` });
+    return;
+  }
+  const row = bankStatementConditionRepo.create(req.user.id, text.slice(0, 1000));
+  res.status(201).json({ condition: serializeCondition(row) });
+});
+
+// DELETE /api/bank-statements/conditions/:conditionId
+router.delete('/conditions/:conditionId', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const ok = bankStatementConditionRepo.delete(req.user.id, req.params.conditionId);
+  if (!ok) { res.status(404).json({ error: 'Condition not found' }); return; }
+  res.json({ success: true });
+});
+
 // GET /api/bank-statements/:id — detail + transactions
 router.get('/:id', (req: AuthRequest, res: Response) => {
   if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
@@ -621,6 +655,12 @@ router.post(
 
     const quota = enforceQuota(req, res);
     if (!quota.ok) return;
+
+    // Load free-form parsing conditions for this user once and prepend them to
+    // every prompt path (TSV chunks, vision, CSV). Empty string when the user
+    // has none.
+    const userConditions = bankStatementConditionRepo.listByUser(req.user.id);
+    const conditionsBlock = buildConditionsBlock(userConditions);
 
     const isPdfText = !req.file && typeof req.body?.pdfText === 'string' && req.body.pdfText.length > 0;
     const isCsv = !req.file && !isPdfText && typeof req.body?.csvText === 'string';
@@ -665,7 +705,7 @@ router.post(
         // Vision fallback path — used only for scanned/image PDFs or direct
         // image uploads. Digital PDFs get pre-extracted client-side and hit
         // the faster `pdfText` branch below.
-        const visionResult = await extractWithRetry<ExtractedStatement>(dataUrl, BANK_STATEMENT_PROMPT, { maxTokens: 8192 });
+        const visionResult = await extractWithRetry<ExtractedStatement>(dataUrl, `${conditionsBlock}${BANK_STATEMENT_PROMPT}`, { maxTokens: 8192 });
         extracted = visionResult.data;
         (res.locals as Record<string, unknown>).geminiUsages = [{
           inputTokens: visionResult.inputTokens,
@@ -788,7 +828,7 @@ router.post(
           async (chunk, idx) => {
             const t0 = Date.now();
             try {
-              const r = await extractBankStatementTsv(chunk, MAX_OUTPUT_TOKENS);
+              const r = await extractBankStatementTsv(chunk, MAX_OUTPUT_TOKENS, conditionsBlock);
               console.log(`[bank-statements] chunk ${idx + 1}/${chunks.length} (pages ${chunkPageRanges[idx][0]}-${chunkPageRanges[idx][1]}) ✓ ${r.actualCount} tx in ${Date.now() - t0}ms`);
               completedCount += 1;
               sendSse({
@@ -858,7 +898,7 @@ router.post(
           };
         });
         const csvSnippet = JSON.stringify(normalized).slice(0, 80000);
-        const csvPrompt = `${BANK_STATEMENT_PROMPT}\n\nThe transactions array has already been extracted and is given below as JSON. Return the same schema, filling bankName/period from context if obvious (else null) and adding category / subcategory / isRecurring to each row. Preserve the given amount signs.\n\nINPUT_ROWS:\n${csvSnippet}`;
+        const csvPrompt = `${conditionsBlock}${BANK_STATEMENT_PROMPT}\n\nThe transactions array has already been extracted and is given below as JSON. Return the same schema, filling bankName/period from context if obvious (else null) and adding category / subcategory / isRecurring to each row. Preserve the given amount signs.\n\nINPUT_ROWS:\n${csvSnippet}`;
         // Send as a tiny data URL with plain text — reuse the pipeline.
         const dataUrl = `data:text/plain;base64,${Buffer.from(csvPrompt).toString('base64')}`;
         const csvResult = await extractWithRetry<ExtractedStatement>(dataUrl, csvPrompt, { maxTokens: 8192 });

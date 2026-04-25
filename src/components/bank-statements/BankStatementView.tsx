@@ -8,6 +8,7 @@ import { CategoryBreakdown } from './CategoryBreakdown';
 import { CounterpartySummary } from './CounterpartySummary';
 import { TransactionTable } from './TransactionTable';
 import { BankStatementRules } from './BankStatementRules';
+import { BankStatementConditions } from './BankStatementConditions';
 
 interface Props {
   manager: BankStatementManager;
@@ -58,6 +59,8 @@ export function BankStatementView({ manager }: Props) {
           <BankStatementUploader manager={manager} />
 
           <BankStatementRules manager={manager} />
+
+          <BankStatementConditions manager={manager} />
 
           {manager.statements.length > 0 && (
             <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900/40 p-5">
