@@ -6,6 +6,7 @@ import {
   scrutinizeLedger,
   renameLedgerScrutinyJob,
   deleteLedgerScrutinyJob,
+  cancelLedgerScrutinyJob,
   updateLedgerObservationStatus,
   LedgerScrutinyJob,
   LedgerScrutinyDetail,
@@ -153,6 +154,18 @@ export function useLedgerScrutinyManager(enabled: boolean) {
     if (currentId === id) clear();
   }, [currentId, clear]);
 
+  /** Cancel a running scrutiny. Counts toward the monthly quota — Gemini
+   *  has likely already done partial work, and refunding would let users
+   *  bypass the limit by spamming Generate→Cancel. The server keeps the
+   *  Promise chain running internally but discards the result. */
+  const cancel = useCallback(async (id: string): Promise<void> => {
+    const { job } = await cancelLedgerScrutinyJob(id);
+    if (job) {
+      setJobs((prev) => prev.map((j) => (j.id === id ? job : j)));
+      setCurrent((prev) => (prev && prev.job.id === id ? { ...prev, job } : prev));
+    }
+  }, []);
+
   const setObservationStatus = useCallback(async (
     obsId: string,
     status: LedgerObservationStatus,
@@ -195,6 +208,7 @@ export function useLedgerScrutinyManager(enabled: boolean) {
     scrutinize,
     rename,
     remove,
+    cancel,
     setObservationStatus,
   };
 }

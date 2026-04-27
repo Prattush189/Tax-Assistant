@@ -1501,7 +1501,7 @@ export async function acceptInvitation(input: {
 
 // ── Bank Statement Analyzer API ───────────────────────────────────────────
 
-export type BankStatementStatus = 'analyzing' | 'done' | 'error';
+export type BankStatementStatus = 'analyzing' | 'done' | 'error' | 'cancelled';
 
 export interface BankStatementSummary {
   id: string;
@@ -1613,7 +1613,12 @@ export async function analyzeBankStatementFile(
     return data;
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error('Analysis timed out — the file may be too large or complex. Try a CSV export instead.');
+      // Could be a 6-min timer or a tab navigation that aborted the
+      // in-flight fetch. Either way, the analysis keeps running on the
+      // server (Node default — handlers don't abort on disconnect) and
+      // the placeholder row will settle to 'done' or 'error'. Reload to
+      // pick up the result instead of treating this as terminal.
+      throw new Error('Analysis is still running server-side — reload the page in a few minutes to see the result. (Or, for very large statements over 150 pages, try a CSV export.)');
     }
     throw err;
   } finally {
@@ -1668,7 +1673,9 @@ async function analyzeBankStatementPdfText(
     return data;
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error('Analysis timed out. Very large statements (>150 pages) may exceed our time budget — try a CSV export instead.');
+      // Same shape as the multipart path — server keeps running on
+      // disconnect, so don't surface this as a terminal failure.
+      throw new Error('Analysis is still running server-side — reload the page in a few minutes to see the result. (Or, for very large statements over 150 pages, try a CSV export.)');
     }
     throw err;
   } finally {
@@ -1803,6 +1810,10 @@ export async function deleteBankStatement(id: string): Promise<void> {
   await authFetch(`/api/bank-statements/${id}`, { method: 'DELETE' });
 }
 
+export async function cancelBankStatement(id: string): Promise<{ statement: BankStatementSummary | null }> {
+  return authFetch(`/api/bank-statements/${id}/cancel`, { method: 'POST' });
+}
+
 export async function updateBankTransaction(
   statementId: string,
   txId: string,
@@ -1881,7 +1892,7 @@ export async function deleteBankStatementCondition(id: string): Promise<void> {
 
 export type LedgerScrutinySeverity = 'info' | 'warn' | 'high';
 export type LedgerObservationStatus = 'open' | 'resolved';
-export type LedgerJobStatus = 'pending' | 'extracting' | 'scrutinizing' | 'done' | 'error';
+export type LedgerJobStatus = 'pending' | 'extracting' | 'scrutinizing' | 'done' | 'error' | 'cancelled';
 
 export interface LedgerScrutinyJob {
   id: string;
@@ -2127,6 +2138,10 @@ export async function renameLedgerScrutinyJob(id: string, name: string): Promise
 
 export async function deleteLedgerScrutinyJob(id: string): Promise<void> {
   await authFetch(`/api/ledger-scrutiny/${id}`, { method: 'DELETE' });
+}
+
+export async function cancelLedgerScrutinyJob(id: string): Promise<{ job: LedgerScrutinyJob | null }> {
+  return authFetch(`/api/ledger-scrutiny/${id}/cancel`, { method: 'POST' });
 }
 
 export async function updateLedgerObservationStatus(

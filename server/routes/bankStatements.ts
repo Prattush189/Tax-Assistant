@@ -1000,6 +1000,22 @@ router.post(
         }];
       }
 
+      // Honor a mid-flight cancel. If the user clicked Cancel while
+      // Gemini was running, the placeholder row is now 'cancelled' —
+      // don't overwrite it with extracted data and don't bill the slot
+      // again (cancel route already debited featureUsage).
+      if (bankStatementRepo.getStatus(placeholder.id, req.user.id) === 'cancelled') {
+        console.log(`[bank-statements] statement ${placeholder.id} was cancelled mid-analysis; discarding ${extracted.transactions.length} extracted rows`);
+        const cancelledPayload = {
+          statement: serializeStatement(bankStatementRepo.findByIdForUser(placeholder.id, req.user.id)),
+          transactions: [],
+          txCount: 0,
+          cancelled: true,
+        };
+        if (sseOpen) { sendSse({ type: 'done', ...cancelledPayload }); res.end(); }
+        else res.status(200).json(cancelledPayload);
+        return;
+      }
       const { txCount } = persistStatement(req.user.id, placeholder.id, extracted, filename ?? 'Bank Statement');
 
       try {
@@ -1088,6 +1104,31 @@ router.delete('/:id', (req: AuthRequest, res: Response) => {
   const ok = bankStatementRepo.deleteById(req.params.id, req.user.id);
   if (!ok) { res.status(404).json({ error: 'Statement not found' }); return; }
   res.json({ success: true });
+});
+
+// POST /api/bank-statements/:id/cancel — user-triggered cancel for a
+// running analysis. Counts toward the monthly quota for the same reason
+// ledger does: we already paid the Gemini cost for whatever chunks ran,
+// and refunding the slot would make Generate→Cancel a free way past the
+// monthly cap.
+router.post('/:id/cancel', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const stmt = bankStatementRepo.findByIdForUser(req.params.id, req.user.id);
+  if (!stmt) { res.status(404).json({ error: 'Statement not found' }); return; }
+  if (stmt.status !== 'analyzing') {
+    res.status(400).json({ error: `Statement already ${stmt.status}; nothing to cancel.` });
+    return;
+  }
+  const ok = bankStatementRepo.cancel(stmt.id, req.user.id);
+  if (!ok) { res.status(409).json({ error: 'Statement settled before cancel could apply.' }); return; }
+  try {
+    const actor = userRepo.findById(req.user.id);
+    const billingUserId = actor ? getBillingUser(actor).id : req.user.id;
+    featureUsageRepo.logWithBilling(req.user.id, billingUserId, 'bank_statement_analyze');
+  } catch (err) {
+    console.error('[bank-statements] cancel feature_usage log failed', err);
+  }
+  res.json({ statement: serializeStatement(bankStatementRepo.findByIdForUser(stmt.id, req.user.id)) });
 });
 
 // PATCH /api/bank-statements/:id/transactions/:txId — reassign category

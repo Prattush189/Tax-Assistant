@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import db from '../index.js';
 
-export type BankStatementStatus = 'analyzing' | 'done' | 'error';
+export type BankStatementStatus = 'analyzing' | 'done' | 'error' | 'cancelled';
 
 export interface BankStatementRow {
   id: string;
@@ -79,6 +79,15 @@ const stmts = {
        SET status = 'error', error_message = ?,
            updated_at = datetime('now', '+5 hours', '+30 minutes')
      WHERE id = ? AND user_id = ?`
+  ),
+  cancel: db.prepare(
+    `UPDATE bank_statements
+       SET status = 'cancelled', error_message = COALESCE(error_message, 'Cancelled by user'),
+           updated_at = datetime('now', '+5 hours', '+30 minutes')
+     WHERE id = ? AND user_id = ? AND status = 'analyzing'`
+  ),
+  getStatus: db.prepare(
+    'SELECT status FROM bank_statements WHERE id = ? AND user_id = ?'
   ),
   inProgressByHashForUser: db.prepare(
     `SELECT * FROM bank_statements
@@ -161,6 +170,19 @@ export const bankStatementRepo = {
 
   setError(id: string, userId: string, message: string): boolean {
     return stmts.setError.run(message.slice(0, 500), id, userId).changes > 0;
+  },
+
+  /** Cancel an analyzing statement. Only flips rows that are still
+   *  'analyzing' so a late update from a finished Gemini run can't
+   *  silently overwrite the cancel intent. */
+  cancel(id: string, userId: string): boolean {
+    return stmts.cancel.run(id, userId).changes > 0;
+  },
+
+  /** Cheap status read for the in-flight cancel guard in /analyze. */
+  getStatus(id: string, userId: string): BankStatementStatus | null {
+    const row = stmts.getStatus.get(id, userId) as { status: BankStatementStatus } | undefined;
+    return row?.status ?? null;
   },
 
   findInProgressByHashForUser(userId: string, fileHash: string): BankStatementRow | undefined {

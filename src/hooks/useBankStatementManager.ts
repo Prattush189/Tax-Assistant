@@ -6,6 +6,7 @@ import {
   analyzeBankStatementCsv,
   renameBankStatement,
   deleteBankStatement,
+  cancelBankStatement,
   updateBankTransaction,
   fetchBankStatementRules,
   createBankStatementRule,
@@ -157,6 +158,17 @@ export function useBankStatementManager(enabled: boolean) {
     if (currentId === id) clear();
   }, [currentId, clear]);
 
+  /** Cancel an analyzing statement. Counts toward the monthly quota
+   *  (server already debited featureUsage on the cancel endpoint to
+   *  close the Generate→Cancel loophole). */
+  const cancel = useCallback(async (id: string): Promise<void> => {
+    const { statement } = await cancelBankStatement(id);
+    if (statement) {
+      setStatements((prev) => prev.map((s) => (s.id === id ? statement : s)));
+      setCurrent((prev) => (prev && prev.statement.id === id ? { ...prev, statement } : prev));
+    }
+  }, []);
+
   const reassignCategory = useCallback(
     async (txId: string, category: string, subcategory?: string | null) => {
       if (!current) return;
@@ -226,6 +238,7 @@ export function useBankStatementManager(enabled: boolean) {
     analyzeCsv,
     rename,
     remove,
+    cancel,
     reassignCategory,
     addRule,
     removeRule,

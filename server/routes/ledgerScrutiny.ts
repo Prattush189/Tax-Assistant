@@ -1384,6 +1384,22 @@ router.post(
         if (typeof o.amount === 'number') flaggedAmount += Math.abs(o.amount);
       }
       ledgerScrutinyRepo.updateTotals(job.id, high, warn, info, flaggedAmount);
+      // If the user cancelled mid-flight, leave the row at 'cancelled'.
+      // Persisting a 'done' over the top would hide their cancel intent
+      // and re-enable Export PDF on a job they explicitly abandoned.
+      const currentStatus = ledgerScrutinyRepo.getStatus(job.id, req.user.id);
+      if (currentStatus === 'cancelled') {
+        console.log(`[ledger-scrutiny] job ${job.id} was cancelled; skipping 'done' transition and quota debit`);
+        res.status(200).json({
+          job: serializeJob(ledgerScrutinyRepo.findByIdForUser(job.id, req.user.id)),
+          accounts: ledgerScrutinyRepo.listAccounts(job.id).map(serializeAccount),
+          observations: [],
+          extractPath,
+          chunkCount,
+          cancelled: true,
+        });
+        return;
+      }
       ledgerScrutinyRepo.setStatus(job.id, req.user.id, 'done');
 
       // Bill the monthly quota now that both passes succeeded.
@@ -1563,6 +1579,11 @@ router.post('/:id/scrutinize', async (req: AuthRequest, res: Response) => {
       if (typeof o.amount === 'number') flaggedAmount += Math.abs(o.amount);
     }
     ledgerScrutinyRepo.updateTotals(job.id, high, warn, info, flaggedAmount);
+    // Honor a mid-flight cancel: don't overwrite 'cancelled' with 'done'.
+    if (ledgerScrutinyRepo.getStatus(job.id, req.user.id) === 'cancelled') {
+      sse.writeDone({ jobId: job.id, cancelled: true, summary: { high, warn, info, flaggedAmount, headline: null }, observationsCount: 0 });
+      return;
+    }
     ledgerScrutinyRepo.setStatus(job.id, req.user.id, 'done');
 
     // Bill the monthly quota only on success.
@@ -1610,6 +1631,33 @@ router.post('/:id/scrutinize', async (req: AuthRequest, res: Response) => {
   } finally {
     sse.end();
   }
+});
+
+// POST /api/ledger-scrutiny/:id/cancel — user-triggered cancel for a
+// running job. Counts toward the monthly quota (we already paid the
+// Gemini cost for whatever chunks have run; refunding the slot would
+// let users spam-and-cancel to avoid the limit).
+router.post('/:id/cancel', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const job = ledgerScrutinyRepo.findByIdForUser(req.params.id, req.user.id);
+  if (!job) { res.status(404).json({ error: 'Job not found' }); return; }
+  if (job.status !== 'pending' && job.status !== 'extracting' && job.status !== 'scrutinizing') {
+    res.status(400).json({ error: `Job already ${job.status}; nothing to cancel.` });
+    return;
+  }
+  const ok = ledgerScrutinyRepo.cancelJob(job.id, req.user.id);
+  if (!ok) { res.status(409).json({ error: 'Job already settled before cancel could apply.' }); return; }
+  // Charge the slot. The user got partial Gemini work whether we like it
+  // or not, and refunding here would create a "spam Generate, hit Cancel"
+  // loophole around the monthly limit. Surface this in the UI label.
+  try {
+    const actor = userRepo.findById(req.user.id);
+    const billingUserId = actor ? getBillingUser(actor).id : req.user.id;
+    featureUsageRepo.logWithBilling(req.user.id, billingUserId, 'ledger_scrutiny');
+  } catch (err) {
+    console.error('[ledger-scrutiny] cancel feature_usage log failed', err);
+  }
+  res.json({ job: serializeJob(ledgerScrutinyRepo.findByIdForUser(job.id, req.user.id)) });
 });
 
 // Multer error handler — scoped to this router.

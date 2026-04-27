@@ -166,8 +166,8 @@ export function ScrutinyReport({ manager }: Props) {
           status. */}
       {isRunning && (
         <div className="rounded-2xl border border-emerald-200 dark:border-emerald-800/60 bg-emerald-50/60 dark:bg-emerald-900/15 p-5">
-          <div className="flex items-center gap-3">
-            <Loader2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 animate-spin shrink-0" />
+          <div className="flex items-start gap-3">
+            <Loader2 className="w-5 h-5 mt-0.5 text-emerald-600 dark:text-emerald-400 animate-spin shrink-0" />
             <div className="min-w-0 flex-1">
               <p className="font-semibold text-gray-900 dark:text-gray-100">
                 {job.status === 'extracting' && 'Extracting accounts and transactions…'}
@@ -178,6 +178,17 @@ export function ScrutinyReport({ manager }: Props) {
                 Long ledgers can take up to 20 minutes. The server keeps running even if you close this tab — just come back here to see the result.
               </p>
             </div>
+            <button
+              type="button"
+              onClick={async () => {
+                if (!confirm("Cancel this scrutiny? It will count toward your monthly limit — Gemini has already done partial work and we can't refund the slot.")) return;
+                try { await manager.cancel(job.id); toast.success('Cancelled'); }
+                catch (e) { toast.error(e instanceof Error ? e.message : 'Cancel failed'); }
+              }}
+              className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-rose-300 dark:border-rose-700 text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/20"
+            >
+              Cancel
+            </button>
           </div>
           {/* Indeterminate progress bar — we don't surface chunk counts
               from the server yet, but the spinning gradient signals

@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import db from '../index.js';
 
-export type LedgerJobStatus = 'pending' | 'extracting' | 'scrutinizing' | 'done' | 'error';
+export type LedgerJobStatus = 'pending' | 'extracting' | 'scrutinizing' | 'done' | 'error' | 'cancelled';
 export type LedgerObservationSeverity = 'info' | 'warn' | 'high';
 export type LedgerObservationStatus = 'open' | 'resolved';
 
@@ -122,6 +122,20 @@ const stmts = {
            updated_at = datetime('now', '+5 hours', '+30 minutes')
      WHERE id = ? AND user_id = ?`
   ),
+  // Used by the cancel button. Only flips RUNNING jobs to 'cancelled' so a
+  // late server-side completion doesn't accidentally re-cancel a 'done' job.
+  cancelJob: db.prepare(
+    `UPDATE ledger_scrutiny_jobs
+       SET status = 'cancelled', error_message = COALESCE(error_message, 'Cancelled by user'),
+           updated_at = datetime('now', '+5 hours', '+30 minutes')
+     WHERE id = ? AND user_id = ? AND status IN ('pending','extracting','scrutinizing')`
+  ),
+  // Read just the current status — used by long-running handlers to bail
+  // out early if the user clicked Cancel mid-flight (the in-progress
+  // Promise chain keeps producing chunks but we throw away the result).
+  getStatus: db.prepare(
+    'SELECT status FROM ledger_scrutiny_jobs WHERE id = ? AND user_id = ?'
+  ),
   updateJobExtraction: db.prepare(
     `UPDATE ledger_scrutiny_jobs
        SET raw_extracted = ?, party_name = COALESCE(?, party_name),
@@ -215,6 +229,22 @@ export const ledgerScrutinyRepo = {
 
   setStatus(id: string, userId: string, status: LedgerJobStatus, errorMessage: string | null = null): void {
     stmts.updateJobStatus.run(status, errorMessage, id, userId);
+  },
+
+  /** Cancel a running job. Returns true if the cancel actually flipped a
+   *  row, false if the job had already settled (done/error/cancelled).
+   *  The Gemini Promise chain on the server keeps running until natural
+   *  completion — there's no kill-mid-fetch in Node — but the route
+   *  re-checks status before persisting results so a cancelled job's
+   *  output is discarded. */
+  cancelJob(id: string, userId: string): boolean {
+    return stmts.cancelJob.run(id, userId).changes > 0;
+  },
+
+  /** Cheap status read for in-flight bail-out checks. */
+  getStatus(id: string, userId: string): LedgerJobStatus | null {
+    const row = stmts.getStatus.get(id, userId) as { status: LedgerJobStatus } | undefined;
+    return row?.status ?? null;
   },
 
   saveExtraction(

@@ -90,6 +90,15 @@ export function BankStatementView({ manager }: Props) {
     );
   }
 
+  // While the statement is still being analyzed on the server (via the
+  // 5 s polling loop in the manager) we show a progress banner with a
+  // Cancel button instead of the (empty) tables. Same shape as the
+  // ledger ScrutinyReport progress UI.
+  const stmtStatus = manager.current.statement.status;
+  const isAnalyzing = stmtStatus === 'analyzing';
+  const isError = stmtStatus === 'error';
+  const isCancelled = stmtStatus === 'cancelled';
+
   return (
     <motion.div
       key={manager.current.statement.id}
@@ -100,11 +109,60 @@ export function BankStatementView({ manager }: Props) {
     >
       <div className="max-w-5xl mx-auto p-6 space-y-5">
         <BankStatementSummary detail={manager.current} onDelete={handleDelete} />
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          <CategoryBreakdown transactions={manager.current.transactions} />
-          <CounterpartySummary transactions={manager.current.transactions} />
-        </div>
-        <TransactionTable transactions={manager.current.transactions} manager={manager} />
+        {isAnalyzing && (
+          <div className="rounded-2xl border border-blue-200 dark:border-blue-800/60 bg-blue-50/60 dark:bg-blue-900/15 p-5">
+            <div className="flex items-start gap-3">
+              <Loader2 className="w-5 h-5 mt-0.5 text-blue-600 dark:text-blue-400 animate-spin shrink-0" />
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold text-gray-900 dark:text-gray-100">Analyzing your statement…</p>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                  Long statements (50+ pages) can take up to 5 minutes. The server keeps running even if you close this tab — just come back here to see the result.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!manager.current) return;
+                  if (!confirm("Cancel this analysis? It will count toward your monthly limit — Gemini has already done partial work and we can't refund the slot.")) return;
+                  try { await manager.cancel(manager.current.statement.id); toast.success('Cancelled'); }
+                  catch (e) { toast.error(e instanceof Error ? e.message : 'Cancel failed'); }
+                }}
+                className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-rose-300 dark:border-rose-700 text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/20"
+              >
+                Cancel
+              </button>
+            </div>
+            <div className="mt-3 h-1.5 w-full rounded-full bg-blue-100 dark:bg-blue-900/40 overflow-hidden">
+              <div className="h-full w-1/3 bg-blue-500 dark:bg-blue-400" style={{ animation: 'bankProgress 1.6s ease-in-out infinite' }} />
+            </div>
+            <style>{`@keyframes bankProgress { 0% { transform: translateX(-120%); } 50% { transform: translateX(120%); } 100% { transform: translateX(320%); } }`}</style>
+          </div>
+        )}
+        {isError && (
+          <div className="rounded-2xl border border-rose-200 dark:border-rose-800/60 bg-rose-50/60 dark:bg-rose-900/15 p-5">
+            <p className="font-semibold text-rose-800 dark:text-rose-200">Analysis failed</p>
+            <p className="text-xs text-rose-700 dark:text-rose-300 mt-1">
+              {manager.current.statement.errorMessage ?? 'Unknown error. Try uploading the statement again.'}
+            </p>
+          </div>
+        )}
+        {isCancelled && (
+          <div className="rounded-2xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/30 p-5">
+            <p className="font-semibold text-gray-800 dark:text-gray-200">Cancelled</p>
+            <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+              You cancelled this analysis. The slot was counted toward your monthly limit because Gemini had already done partial work.
+            </p>
+          </div>
+        )}
+        {!isAnalyzing && !isError && !isCancelled && (
+          <>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+              <CategoryBreakdown transactions={manager.current.transactions} />
+              <CounterpartySummary transactions={manager.current.transactions} />
+            </div>
+            <TransactionTable transactions={manager.current.transactions} manager={manager} />
+          </>
+        )}
       </div>
     </motion.div>
   );
