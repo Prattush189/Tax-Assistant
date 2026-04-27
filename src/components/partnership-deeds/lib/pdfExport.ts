@@ -28,7 +28,14 @@ function ensureSpace(doc: jsPDF, y: number, needed: number): number {
   return y;
 }
 
-/** Top stamp-paper banner. Returns the new Y position after rendering. */
+/** Top stamp-paper banner. Returns the new Y position after rendering.
+ *
+ * Layout (top → bottom):
+ *   1. Compact banner box stating the stamp-act requirement.
+ *   2. A blank "Affix stamp paper here" area large enough to physically
+ *      paste a state stamp paper onto the printout.
+ *   3. The deed title, with breathing room above and below.
+ *   4. A divider line, with extra space before the markdown body starts. */
 function paintStampBanner(doc: jsPDF, state: string | undefined, templateLabel: string): number {
   const stateLabel = state ?? '_____';
   const bannerText = `[ STAMP PAPER OF Rs. _____ AS PER ${stateLabel.toUpperCase()} STAMP ACT ]`;
@@ -36,10 +43,11 @@ function paintStampBanner(doc: jsPDF, state: string | undefined, templateLabel: 
 
   let y = MARGIN;
 
-  // Outer banner box
+  // 1. Compact banner box with the stamp-act notice.
+  const bannerH = 18;
   doc.setDrawColor(60, 60, 60);
   doc.setLineWidth(0.4);
-  doc.rect(MARGIN, y, PAGE_W - MARGIN * 2, 18);
+  doc.rect(MARGIN, y, PAGE_W - MARGIN * 2, bannerH);
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10);
@@ -53,20 +61,48 @@ function paintStampBanner(doc: jsPDF, state: string | undefined, templateLabel: 
     align: 'center',
   });
 
-  y += 22;
+  y += bannerH + 8;
 
-  // Document title
+  // 2. Stamp affix area — a clearly-bordered blank space for the user to
+  //    physically paste their state stamp paper onto the printed deed.
+  //    Sized to comfortably hold a standard non-judicial stamp paper.
+  const stampW = 90;
+  const stampH = 50;
+  const stampX = (PAGE_W - stampW) / 2;
+  doc.setDrawColor(140, 140, 140);
+  doc.setLineWidth(0.3);
+  // Dashed border so it visually reads as a placeholder area, not part of
+  // the deed body. Fall back to a solid border if the jsPDF build doesn't
+  // expose setLineDashPattern (older 4.x bundles).
+  type DashableDoc = jsPDF & { setLineDashPattern?: (pattern: number[], phase: number) => jsPDF };
+  const dashable = doc as DashableDoc;
+  if (typeof dashable.setLineDashPattern === 'function') {
+    dashable.setLineDashPattern([2, 2], 0);
+  }
+  doc.rect(stampX, y, stampW, stampH);
+  if (typeof dashable.setLineDashPattern === 'function') {
+    dashable.setLineDashPattern([], 0);
+  }
+  doc.setFont('helvetica', 'italic');
+  doc.setFontSize(9);
+  doc.setTextColor(130, 130, 130);
+  doc.text('Affix stamp paper here', PAGE_W / 2, y + stampH / 2 + 1, { align: 'center' });
+
+  y += stampH + 14;
+
+  // 3. Document title with generous spacing on both sides.
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(16);
   doc.setTextColor(30, 58, 138);
   doc.text(titleText, PAGE_W / 2, y, { align: 'center' });
-  y += 8;
+  y += 11;
 
+  // 4. Divider line + extra padding before the body.
   doc.setDrawColor(30, 58, 138);
   doc.setLineWidth(0.5);
   doc.line(MARGIN, y, PAGE_W - MARGIN, y);
 
-  return y + 6;
+  return y + 12;
 }
 
 /** Bottom block: witnesses, partner signature lines, notary, §58 registration placeholder. */
