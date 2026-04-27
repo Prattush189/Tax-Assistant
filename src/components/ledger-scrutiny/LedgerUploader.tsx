@@ -48,7 +48,7 @@ function ScrutinyProgressBar({
 }
 
 const ACCEPT = '.pdf,application/pdf';
-const MAX_BYTES = 1 * 1024 * 1024;
+const MAX_BYTES = 3 * 1024 * 1024;
 
 export function LedgerUploader({ manager }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -63,7 +63,7 @@ export function LedgerUploader({ manager }: Props) {
       return;
     }
     if (file.size > MAX_BYTES) {
-      toast.error('Ledger PDF exceeds the 1 MB size limit. Split the export and re-upload.');
+      toast.error('Ledger PDF exceeds the 3 MB size limit. Split the export and re-upload.');
       return;
     }
 
@@ -122,7 +122,7 @@ export function LedgerUploader({ manager }: Props) {
         ) : (
           <>
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-              Tally / Busy / Marg PDF export · max 1 MB
+              Tally / Busy / Marg PDF export · max 3 MB
             </p>
             <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
               Long ledgers (50+ pages) can take up to 10 minutes to extract and audit.

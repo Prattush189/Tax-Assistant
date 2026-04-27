@@ -9,8 +9,9 @@
 //      personal expenses, suspicious narrations, reconciliation, RCM) per
 //      account. Streamed via SSE so the UI fills in progressively.
 //
-// File-size limit: 1 MB at the multer layer. Ledger PDFs are dense text —
-// 1 MB comfortably holds ~150 pages of typed ledger. Larger files will be
+// File-size limit: 3 MB at the multer layer. Year-long Tally / Busy
+// exports with many account heads can run 200+ pages and routinely cross
+// 1-2 MB once images and fonts are embedded. Anything beyond 3 MB is
 // rejected with a clear "split the export" hint.
 
 import crypto from 'crypto';
@@ -43,7 +44,7 @@ import { AuthRequest } from '../types.js';
 
 const router = Router();
 
-const MAX_FILE_BYTES = 1 * 1024 * 1024; // 1 MB — user-mandated cap
+const MAX_FILE_BYTES = 3 * 1024 * 1024; // 3 MB — Tally / Busy year-long ledgers can be dense.
 
 const ALLOWED_MIME_TYPES = ['application/pdf'] as const;
 
@@ -545,6 +546,66 @@ async function extractLedgerTsv(chunkText: string, maxTokens: number): Promise<L
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
+/**
+ * Try `extractLedgerTsv` on the chunk, and if it fails for a reason that
+ * smaller input would plausibly fix (truncation / trailer mismatch / tier
+ * exhaustion after retries), split the chunk in half and try each half
+ * separately. Recurses up to `maxDepth` times before giving up — at depth
+ * 2 a single original chunk can become 4 sub-chunks, which is enough to
+ * recover from any practical Tally export where one section happens to
+ * be denser than the rest.
+ *
+ * The bank-statement pipeline doesn't need this because its chunks are
+ * uniformly sized small chunks of transactions. Ledgers are different:
+ * one account head can dump 500+ transactions in a single page, while
+ * the next page might have a sparse 5-transaction account. Bisection
+ * gives us a self-healing recovery path for the dense outliers.
+ */
+async function extractLedgerTsvWithBisect(
+  chunkText: string,
+  maxTokens: number,
+  depth: number,
+  maxDepth: number,
+  label: string,
+): Promise<LedgerTsvChunkResult[]> {
+  try {
+    const r = await extractLedgerTsv(chunkText, maxTokens);
+    return [r];
+  } catch (err) {
+    const msg = (err as Error).message ?? String(err);
+    if (depth >= maxDepth) {
+      console.warn(`[ledger-scrutiny] ${label}: bisect depth ${depth} reached, surfacing error: ${msg.slice(0, 140)}`);
+      throw err;
+    }
+    if (chunkText.length < 1500) {
+      // Below 1.5K chars there's nothing to gain from another split — the
+      // failure is the model giving up on legitimately small input.
+      console.warn(`[ledger-scrutiny] ${label}: chunk too small to bisect (${chunkText.length} chars), surfacing error`);
+      throw err;
+    }
+    console.warn(`[ledger-scrutiny] ${label}: bisecting after failure (${msg.slice(0, 140)})`);
+
+    // Split on a paragraph boundary near the midpoint to keep account
+    // blocks intact. The text is `\n\n`-joined pages, so a `\n\n` near
+    // the middle is the cleanest cut point.
+    const mid = Math.floor(chunkText.length / 2);
+    let cut = chunkText.lastIndexOf('\n\n', mid);
+    if (cut < chunkText.length * 0.2 || cut < 0) {
+      cut = chunkText.indexOf('\n\n', mid);
+    }
+    if (cut < 0) cut = mid;
+    const left = chunkText.slice(0, cut).trim();
+    const right = chunkText.slice(cut).trim();
+    if (!left || !right) throw err;
+
+    const [leftRes, rightRes] = await Promise.all([
+      extractLedgerTsvWithBisect(left, maxTokens, depth + 1, maxDepth, `${label}.L`),
+      extractLedgerTsvWithBisect(right, maxTokens, depth + 1, maxDepth, `${label}.R`),
+    ]);
+    return [...leftRes, ...rightRes];
+  }
+}
+
 /** Bounded-concurrency map. Lets us run chunk extractions in parallel
  *  without firing 6+ concurrent Gemini calls per request, which routinely
  *  trips per-key rate limits on long ledgers. */
@@ -849,32 +910,41 @@ router.post(
         const dateCount = countLikelyDates(pdfText);
         console.log(`[ledger-scrutiny] pdfText path: ${chunks.length} chunk(s), ~${dateCount} candidate dates`);
 
-        const chunkResults = await mapWithConcurrency(
+        const chunkResultLists = await mapWithConcurrency(
           chunks,
           CHUNK_CONCURRENCY,
           async (chunk, idx) => {
             const t0 = Date.now();
+            const label = `chunk ${idx + 1}/${chunks.length}`;
             try {
-              const r = await extractLedgerTsv(chunk, MAX_OUTPUT_TOKENS);
-              console.log(`[ledger-scrutiny] chunk ${idx + 1}/${chunks.length} ✓ ${r.accounts.length} accounts, ${r.actualCount} TX in ${Date.now() - t0}ms`);
-              return r;
+              // depth 0 → can recursively split up to depth 2 (4 sub-chunks).
+              const results = await extractLedgerTsvWithBisect(chunk, MAX_OUTPUT_TOKENS, 0, 2, label);
+              const totalTx = results.reduce((s, r) => s + r.actualCount, 0);
+              const totalAcct = results.reduce((s, r) => s + r.accounts.length, 0);
+              const note = results.length > 1 ? ` (bisected into ${results.length})` : '';
+              console.log(`[ledger-scrutiny] ${label} ✓ ${totalAcct} accounts, ${totalTx} TX in ${Date.now() - t0}ms${note}`);
+              return results;
             } catch (e) {
               const msg = (e as Error).message ?? String(e);
-              console.error(`[ledger-scrutiny] chunk ${idx + 1}/${chunks.length} ✗ ${msg}`);
+              console.error(`[ledger-scrutiny] ${label} ✗ ${msg}`);
               throw new Error(`Section ${idx + 1}/${chunks.length}: ${msg}`);
             }
           },
         );
+        const chunkResults = chunkResultLists.flat();
 
         extracted = mergeLedgerChunks(chunkResults);
         const totalTx = extracted.accounts.reduce((s, a) => s + a.transactions.length, 0);
 
         // Cross-check: candidate-date count vs extracted transaction count.
-        // dateCount is noisy (period headers, voucher dates not in tx rows,
-        // running-balance "As at" lines all match), so we anchor the floor
-        // at 50% — same threshold the bank-statement analyzer uses. Catches
-        // wholesale chunk loss without false-failing legitimate ledgers.
-        if (dateCount > 0 && totalTx < dateCount * 0.5) {
+        // Ledger text has FAR more date-like markers than transaction rows
+        // (period headers on every page, voucher type lists, opening/closing
+        // balance dates, running-balance "As at" lines, page footers), so
+        // the bank-statement 50% threshold false-fails on dense Tally
+        // exports. Drop the floor to 25% — still catches wholesale chunk
+        // loss (one chunk silently dropped = ~50%+ shortfall on a 4-chunk
+        // run) without rejecting legitimate ledgers.
+        if (dateCount > 0 && totalTx < dateCount * 0.25) {
           throw new Error(
             `Transaction count sanity check failed: extracted ${totalTx} TX rows but found ~${dateCount} date-like markers in the ledger text. ` +
             `Rather than persist a likely-incomplete extraction, we're bailing.`,
@@ -1059,7 +1129,12 @@ router.post('/:id/scrutinize', async (req: AuthRequest, res: Response) => {
   try {
     const provider = pickChatProvider();
     const usage = await provider.streamChat(
-      { systemPrompt: LEDGER_SCRUTINY_SYSTEM_PROMPT, userMessage, maxTokens: 8192 },
+      // 16K tokens of audit-JSON room. Year-long ledgers can produce 50+
+      // observations across 30+ accounts, each carrying section citations
+      // and suggested actions; the old 8K ceiling was truncating mid-array
+      // on anything bigger than a quarterly export, surfacing as a generic
+      // "Scrutiny response was not valid JSON" with no diagnostic.
+      { systemPrompt: LEDGER_SCRUTINY_SYSTEM_PROMPT, userMessage, maxTokens: 16384 },
       (text) => {
         fullResponse += text;
         sse.writeText(text);
@@ -1163,7 +1238,7 @@ router.post('/:id/scrutinize', async (req: AuthRequest, res: Response) => {
 router.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
   if (err instanceof MulterError) {
     if (err.code === 'LIMIT_FILE_SIZE') {
-      res.status(400).json({ error: 'Ledger PDF exceeds the 1 MB size limit. Split the export and re-upload.' });
+      res.status(400).json({ error: 'Ledger PDF exceeds the 3 MB size limit. Split the export and re-upload.' });
       return;
     }
     res.status(400).json({ error: `Upload error: ${err.message}` });
