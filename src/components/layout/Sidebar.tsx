@@ -1,6 +1,6 @@
 import { X, Plus, LogOut, Trash2, MessageSquare, MessageCircle, Calculator, LayoutDashboard, Shield, CreditCard, FileText, FileSpreadsheet, Gavel, Landmark, User, Settings, AlertTriangle, Lock, Scale, ScrollText } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { ChatItem, NoticeItem, ItrDraft, BoardResolutionDraft, GenericProfile, BankStatementSummary, PartnershipDeedDraft } from '../../services/api';
+import { ChatItem, NoticeItem, ItrDraft, BoardResolutionDraft, GenericProfile, BankStatementSummary, PartnershipDeedDraft, LedgerScrutinyJob } from '../../services/api';
 import { TEMPLATE_TITLES } from '../board-resolutions/lib/uiModel';
 import { TEMPLATE_TITLES as DEED_TEMPLATE_TITLES } from '../partnership-deeds/lib/uiModel';
 import { useState } from 'react';
@@ -58,6 +58,11 @@ interface SidebarProps {
   onNewBankStatement: () => void;
   onSwitchBankStatement: (statementId: string) => void;
   onDeleteBankStatement: (statementId: string) => void;
+  ledgerScrutinyList: LedgerScrutinyJob[];
+  currentLedgerScrutinyId: string | null;
+  onNewLedgerScrutiny: () => void;
+  onSwitchLedgerScrutiny: (jobId: string) => void;
+  onDeleteLedgerScrutiny: (jobId: string) => void;
   partnershipDeedList: PartnershipDeedDraft[];
   currentPartnershipDeedId: string | null;
   onNewPartnershipDeed: () => void;
@@ -132,6 +137,7 @@ export function Sidebar({
   boardResolutionList, currentBoardResolutionId, onNewBoardResolution, onSwitchBoardResolution, onDeleteBoardResolution,
   profileList, currentProfileId, onNewProfile, onSwitchProfile, onDeleteProfile,
   bankStatementList, currentBankStatementId, onNewBankStatement, onSwitchBankStatement, onDeleteBankStatement,
+  ledgerScrutinyList, currentLedgerScrutinyId, onNewLedgerScrutiny, onSwitchLedgerScrutiny, onDeleteLedgerScrutiny,
   partnershipDeedList, currentPartnershipDeedId, onNewPartnershipDeed, onSwitchPartnershipDeed, onDeletePartnershipDeed,
   user, onLogout, activeView, onViewChange,
   calculatorTab, onCalculatorTabChange,
@@ -145,6 +151,7 @@ export function Sidebar({
   const [pendingDeleteBoardResolution, setPendingDeleteBoardResolution] = useState<{ id: string; title: string } | null>(null);
   const [pendingDeleteProfile, setPendingDeleteProfile] = useState<{ id: string; title: string } | null>(null);
   const [pendingDeleteBankStatement, setPendingDeleteBankStatement] = useState<{ id: string; title: string } | null>(null);
+  const [pendingDeleteLedgerScrutiny, setPendingDeleteLedgerScrutiny] = useState<{ id: string; title: string } | null>(null);
   const [pendingDeletePartnershipDeed, setPendingDeletePartnershipDeed] = useState<{ id: string; title: string } | null>(null);
   const [pendingDeleteAll, setPendingDeleteAll] = useState<{ label: string; count: number } | null>(null);
   const [isDeletingAll, setIsDeletingAll] = useState(false);
@@ -295,6 +302,32 @@ export function Sidebar({
     }
   };
 
+  const handleDeleteLedgerScrutiny = (e: React.MouseEvent, jobId: string) => {
+    e.stopPropagation();
+    // Refuse to delete a ledger that's still extracting / scrutinizing —
+    // the server-side handler keeps running on disconnect and a delete
+    // mid-run leaves orphaned cost. Match the ScrutinyReport guard.
+    const job = ledgerScrutinyList.find((j) => j.id === jobId);
+    if (job && (job.status === 'extracting' || job.status === 'scrutinizing' || job.status === 'pending')) {
+      return;
+    }
+    if (prefs.confirmBeforeDeletingChats) {
+      setPendingDeleteLedgerScrutiny({ id: jobId, title: job?.partyName ?? job?.name ?? 'this scrutiny' });
+      return;
+    }
+    performDeleteLedgerScrutiny(jobId);
+  };
+
+  const performDeleteLedgerScrutiny = async (jobId: string) => {
+    setDeletingId(jobId);
+    try {
+      await onDeleteLedgerScrutiny(jobId);
+    } finally {
+      setDeletingId(null);
+      setPendingDeleteLedgerScrutiny(null);
+    }
+  };
+
   // Maps the active list view to its plural label, current items, and per-item
   // delete handler. Anything not listed (calc, dashboard, admin, plan,
   // settings) returns null — the Delete All button hides for those views.
@@ -314,6 +347,15 @@ export function Sidebar({
         return { label: 'profiles', items: profileList.map(p => p.id), del: onDeleteProfile };
       case 'bank_statements':
         return { label: 'statements', items: bankStatementList.map(s => s.id), del: onDeleteBankStatement };
+      case 'ledger_scrutiny':
+        // Skip in-progress jobs from "Delete all" — same reason as the
+        // per-row guard. Filter rather than refuse so a user with both
+        // running and finished jobs can still bulk-clean the finished ones.
+        return {
+          label: 'ledger scrutinies',
+          items: ledgerScrutinyList.filter(j => j.status !== 'extracting' && j.status !== 'scrutinizing' && j.status !== 'pending').map(j => j.id),
+          del: onDeleteLedgerScrutiny,
+        };
       default:
         return null;
     }
@@ -816,6 +858,66 @@ export function Sidebar({
               </div>
             )}
           </>
+        ) : activeView === 'ledger_scrutiny' ? (
+          <>
+            <h2 className="text-[11px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider px-2 py-2">Scrutinies</h2>
+            {ledgerScrutinyList.length === 0 ? (
+              <p className="text-sm text-gray-400 dark:text-gray-500 px-3 py-4 text-center">No scrutinies yet. Upload one!</p>
+            ) : (
+              <div className="space-y-0.5">
+                {ledgerScrutinyList.map((job) => {
+                  const isActive = currentLedgerScrutinyId === job.id;
+                  const isRunning = job.status === 'extracting' || job.status === 'scrutinizing' || job.status === 'pending';
+                  const isError = job.status === 'error';
+                  return (
+                    <div key={job.id} className="relative group">
+                      <button
+                        onClick={() => { onSwitchLedgerScrutiny(job.id); onClose(); }}
+                        className={cn(
+                          "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left transition-all pr-8",
+                          isActive
+                            ? "bg-emerald-50 dark:bg-emerald-900/15 text-emerald-700 dark:text-emerald-300"
+                            : "text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/60"
+                        )}
+                      >
+                        <ScrollText className={cn(
+                          "w-4 h-4 shrink-0",
+                          isActive ? "text-emerald-500" : "text-gray-300 dark:text-gray-600"
+                        )} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{job.partyName ?? job.name}</p>
+                          <div className="flex items-center gap-1.5">
+                            {isRunning ? (
+                              <span className="text-[10px] font-medium uppercase text-emerald-600/80 dark:text-emerald-400/80 truncate flex items-center gap-1">
+                                <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                {job.status === 'scrutinizing' ? 'auditing' : job.status === 'extracting' ? 'extracting' : 'queued'}
+                              </span>
+                            ) : isError ? (
+                              <span className="text-[10px] font-medium uppercase text-rose-600/80 dark:text-rose-400/80 truncate">error</span>
+                            ) : (
+                              <span className="text-[10px] font-medium uppercase text-emerald-600/70 dark:text-emerald-400/70 truncate">
+                                {job.totalFlagsHigh}H · {job.totalFlagsWarn}W · {job.totalFlagsInfo}I
+                              </span>
+                            )}
+                            <span className="text-[11px] text-gray-400 dark:text-gray-500">·</span>
+                            <p className="text-[11px] text-gray-400 dark:text-gray-500">{timeAgo(job.updatedAt)}</p>
+                          </div>
+                        </div>
+                      </button>
+                      <button
+                        onClick={(e) => handleDeleteLedgerScrutiny(e, job.id)}
+                        disabled={deletingId === job.id || isRunning}
+                        title={isRunning ? "Can't delete a running audit" : undefined}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                      >
+                        <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
         ) : activeView === 'calculator' ? (
           <>
             <h2 className="text-[11px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider px-2 py-2">Calculators</h2>
@@ -1187,6 +1289,46 @@ export function Sidebar({
                 className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50"
               >
                 {deletingId === pendingDeleteBankStatement.id ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete ledger scrutiny confirmation dialog */}
+      {pendingDeleteLedgerScrutiny && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={() => setPendingDeleteLedgerScrutiny(null)}
+        >
+          <div
+            className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-6 max-w-sm w-full border border-gray-200 dark:border-gray-700"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-red-100 dark:bg-red-900/30 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-red-600 dark:text-red-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Delete scrutiny?</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400 break-words">
+                  "{pendingDeleteLedgerScrutiny.title}" and all its observations will be permanently deleted.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setPendingDeleteLedgerScrutiny(null)}
+                className="px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => performDeleteLedgerScrutiny(pendingDeleteLedgerScrutiny.id)}
+                disabled={deletingId === pendingDeleteLedgerScrutiny.id}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50"
+              >
+                {deletingId === pendingDeleteLedgerScrutiny.id ? 'Deleting...' : 'Delete'}
               </button>
             </div>
           </div>

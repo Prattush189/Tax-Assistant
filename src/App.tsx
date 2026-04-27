@@ -167,6 +167,11 @@ function AppContent() {
           onNewBankStatement={bankStatementManager.clear}
           onSwitchBankStatement={bankStatementManager.load}
           onDeleteBankStatement={bankStatementManager.remove}
+          ledgerScrutinyList={ledgerScrutinyManager.jobs}
+          currentLedgerScrutinyId={ledgerScrutinyManager.currentId}
+          onNewLedgerScrutiny={ledgerScrutinyManager.clear}
+          onSwitchLedgerScrutiny={ledgerScrutinyManager.load}
+          onDeleteLedgerScrutiny={ledgerScrutinyManager.remove}
           user={user}
           onLogout={logout}
           activeView={activeView}
