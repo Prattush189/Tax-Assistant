@@ -2,10 +2,49 @@ import { useRef, useState } from 'react';
 import { Upload, FileText, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { LedgerScrutinyManager } from '../../hooks/useLedgerScrutinyManager';
+import type { LedgerScrutinyProgress } from '../../services/api';
 import { cn } from '../../lib/utils';
 
 interface Props {
   manager: LedgerScrutinyManager;
+}
+
+function ScrutinyProgressBar({
+  phase,
+  progress,
+}: {
+  phase: 'extracting' | 'scrutinizing';
+  progress: LedgerScrutinyProgress | null;
+}) {
+  // Extract pass is a single synchronous Gemini call — no real progress
+  // signal, so we render an indeterminate sliver. Scrutinize pass streams
+  // bytes from the model and the server emits periodic {completed,total}
+  // events; we cap completed at total-1 server-side so the bar never
+  // visually completes before the `done` event lands.
+  const total = progress?.total ?? 0;
+  const completed = progress?.completed ?? 0;
+  const pct = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : 0;
+  const indeterminate = phase === 'extracting' || total === 0;
+
+  const label = phase === 'extracting'
+    ? 'Reading the ledger structure…'
+    : progress?.accountsTotal
+      ? `Auditing ${progress.accountsTotal} account${progress.accountsTotal === 1 ? '' : 's'} against §40A(3) / §269ST / TDS rubric`
+      : 'Auditing accounts…';
+
+  return (
+    <div className="mt-3">
+      <div className="h-2 w-full rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden">
+        <div
+          className="h-full bg-emerald-600 dark:bg-emerald-500 transition-all duration-300 ease-out"
+          style={{ width: indeterminate ? '15%' : `${pct}%` }}
+        />
+      </div>
+      <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+        {label}{!indeterminate ? ` · ${pct}%` : ''}
+      </p>
+    </div>
+  );
 }
 
 const ACCEPT = '.pdf,application/pdf';
@@ -70,12 +109,14 @@ export function LedgerUploader({ manager }: Props) {
       </div>
       <div className="text-center w-full max-w-md">
         <p className="font-semibold text-gray-800 dark:text-gray-100">{stage}</p>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-          Tally / Busy / Marg PDF export · max 1 MB
-        </p>
-        {manager.isScrutinizing && manager.streamBuffer && (
-          <p className="mt-3 text-[11px] text-gray-400 dark:text-gray-500">
-            Streaming {manager.streamBuffer.length.toLocaleString()} chars from the model…
+        {busy ? (
+          <ScrutinyProgressBar
+            phase={manager.isUploading ? 'extracting' : 'scrutinizing'}
+            progress={manager.scrutinizeProgress}
+          />
+        ) : (
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+            Tally / Busy / Marg PDF export · max 1 MB
           </p>
         )}
       </div>

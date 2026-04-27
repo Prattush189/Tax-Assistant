@@ -1967,11 +1967,19 @@ export async function uploadLedgerScrutinyPdf(file: File): Promise<LedgerScrutin
   }
 }
 
+export interface LedgerScrutinyProgress {
+  phase?: 'scrutinizing';
+  completed: number;
+  total: number;
+  accountsTotal?: number;
+}
+
 export async function scrutinizeLedger(
   jobId: string,
   onChunk: (text: string) => void,
   onError: (msg: string, kind?: 'quota' | 'generic') => void,
   onDone?: (summary: { jobId: string; observationsCount: number }) => void,
+  onProgress?: (p: LedgerScrutinyProgress) => void,
 ): Promise<void> {
   const doFetch = () => fetch(`/api/ledger-scrutiny/${jobId}/scrutinize`, {
     method: 'POST',
@@ -2017,6 +2025,15 @@ export async function scrutinizeLedger(
           return;
         }
         if (parsed.error) { onError(parsed.message ?? 'Scrutiny failed.', 'generic'); return; }
+        if (parsed.phase === 'scrutinizing' || parsed.progress === true) {
+          onProgress?.({
+            phase: parsed.phase === 'scrutinizing' ? 'scrutinizing' : undefined,
+            completed: typeof parsed.completed === 'number' ? parsed.completed : 0,
+            total: typeof parsed.total === 'number' ? parsed.total : 0,
+            accountsTotal: typeof parsed.accountsTotal === 'number' ? parsed.accountsTotal : undefined,
+          });
+          continue;
+        }
         if (parsed.text) onChunk(parsed.text);
       } catch { /* skip */ }
     }

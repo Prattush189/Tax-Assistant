@@ -39,6 +39,17 @@ export class SseWriter {
     this.res.write(`data: ${JSON.stringify({ heartbeat: true })}\n\n`);
   }
 
+  /**
+   * Emit an arbitrary structured event (e.g. progress milestones). The
+   * payload is serialized as-is — the route owns the schema and the client
+   * parser must agree. Use `writeText` for token chunks and `writeDone` /
+   * `writeError` for terminal events.
+   */
+  writeEvent(payload: Record<string, unknown>): void {
+    if (this.closed) return;
+    this.res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  }
+
   /** Emit the terminal `done` event. Extra fields are merged into the payload. */
   writeDone(extra: Record<string, unknown> = {}): void {
     if (this.closed) return;

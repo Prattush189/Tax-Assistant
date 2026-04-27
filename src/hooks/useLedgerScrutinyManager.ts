@@ -10,6 +10,7 @@ import {
   LedgerScrutinyJob,
   LedgerScrutinyDetail,
   LedgerObservationStatus,
+  LedgerScrutinyProgress,
 } from '../services/api';
 
 export function useLedgerScrutinyManager(enabled: boolean) {
@@ -21,6 +22,7 @@ export function useLedgerScrutinyManager(enabled: boolean) {
   const [isUploading, setIsUploading] = useState(false);
   const [isScrutinizing, setIsScrutinizing] = useState(false);
   const [streamBuffer, setStreamBuffer] = useState<string>('');
+  const [scrutinizeProgress, setScrutinizeProgress] = useState<LedgerScrutinyProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -93,12 +95,14 @@ export function useLedgerScrutinyManager(enabled: boolean) {
     setIsScrutinizing(true);
     setError(null);
     setStreamBuffer('');
+    setScrutinizeProgress(null);
     return new Promise<void>((resolve, reject) => {
       void scrutinizeLedger(
         jobId,
         (chunk) => { setStreamBuffer((prev) => prev + chunk); },
         (msg, _kind) => {
           setIsScrutinizing(false);
+          setScrutinizeProgress(null);
           setError(msg);
           reject(new Error(msg));
         },
@@ -112,8 +116,10 @@ export function useLedgerScrutinyManager(enabled: boolean) {
             console.error('[ledger] reload failed', e);
           }
           setIsScrutinizing(false);
+          setScrutinizeProgress(null);
           resolve();
         },
+        (p) => setScrutinizeProgress(p),
       );
     });
   }, [refresh]);
@@ -154,6 +160,7 @@ export function useLedgerScrutinyManager(enabled: boolean) {
     isUploading,
     isScrutinizing,
     streamBuffer,
+    scrutinizeProgress,
     error,
     refresh,
     clear,

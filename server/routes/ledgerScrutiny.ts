@@ -476,6 +476,21 @@ router.post('/:id/scrutinize', async (req: AuthRequest, res: Response) => {
   const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
   let fullResponse = '';
 
+  // Progress signal for the client's progress bar. We don't know the exact
+  // length of the model's JSON output ahead of time, so we estimate ~250
+  // chars of streamed text per account (rough but stable enough that the
+  // bar advances smoothly). The client caps `completed` at `total - 1` so
+  // it never visually "completes" before the `done` event arrives.
+  const totalBytesEstimate = Math.max(accounts.length * 250, 4000);
+  sse.writeEvent({
+    phase: 'scrutinizing',
+    accountsTotal: accounts.length,
+    total: totalBytesEstimate,
+    completed: 0,
+  });
+  let streamedBytes = 0;
+  let lastProgressEmit = 0;
+
   try {
     const provider = pickChatProvider();
     const usage = await provider.streamChat(
@@ -483,6 +498,16 @@ router.post('/:id/scrutinize', async (req: AuthRequest, res: Response) => {
       (text) => {
         fullResponse += text;
         sse.writeText(text);
+        streamedBytes += text.length;
+        const now = Date.now();
+        if (now - lastProgressEmit >= 250) {
+          lastProgressEmit = now;
+          sse.writeEvent({
+            progress: true,
+            completed: Math.min(streamedBytes, totalBytesEstimate - 1),
+            total: totalBytesEstimate,
+          });
+        }
       },
     );
 
