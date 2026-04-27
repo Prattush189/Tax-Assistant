@@ -141,7 +141,7 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
   const noticeFileRef = useRef<HTMLInputElement>(null);
 
   const ALLOWED_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
-  const MAX_FILE_SIZE = 500 * 1024; // 500 KB — match server limit
+  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB — match server limit
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -153,7 +153,7 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
       return;
     }
     if (file.size > MAX_FILE_SIZE) {
-      setFileError('File exceeds the 500 KB size limit.');
+      setFileError('File exceeds the 10 MB size limit.');
       setNoticeFile(null);
       return;
     }
@@ -243,7 +243,7 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
         ) : (
           <label className="flex items-center gap-2 px-3 py-2.5 border-2 border-dashed border-gray-200 dark:border-gray-700 rounded-lg cursor-pointer hover:border-[#059669] transition-colors">
             <Upload className="w-4 h-4 text-gray-400" />
-            <span className="text-sm text-gray-500 dark:text-gray-400">PDF, JPEG, PNG (max 500 KB)</span>
+            <span className="text-sm text-gray-500 dark:text-gray-400">PDF, JPEG, PNG (max 10 MB)</span>
             <input
               ref={noticeFileRef}
               type="file"
