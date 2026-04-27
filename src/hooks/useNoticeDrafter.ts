@@ -102,6 +102,19 @@ export function useNoticeDrafter() {
     }
   }, []);
 
+  // Reload-resume polling. Server creates a notice row UPFRONT with
+  // status='generating' before the Gemini call, so a tab close + reload
+  // mid-draft doesn't lose work — Node keeps the handler running and
+  // updates the row to 'generated' or 'error' on completion. Poll every
+  // 5 s while any notice is 'generating' so the list refreshes and the
+  // hasInProgressJob flag exits cleanly.
+  useEffect(() => {
+    const hasInProgress = notices.some(n => n.status === 'generating');
+    if (!hasInProgress) return;
+    const handle = setInterval(() => { void loadNotices(); }, 5000);
+    return () => clearInterval(handle);
+  }, [notices, loadNotices]);
+
   const generate = useCallback(async (input: NoticeGenerateInput, file?: File) => {
     setIsGenerating(true);
     setGeneratedContent('');
@@ -152,6 +165,11 @@ export function useNoticeDrafter() {
     setError(null);
   }, []);
 
+  // Any notice still being generated on the server (status='generating'
+  // in the persisted list, or the in-flight isGenerating flag from this
+  // session). UI uses this to gate destructive actions across the app.
+  const hasInProgressJob = isGenerating || notices.some(n => n.status === 'generating');
+
   return {
     notices,
     usage,
@@ -159,6 +177,7 @@ export function useNoticeDrafter() {
     setGeneratedContent,
     currentNoticeId,
     isGenerating,
+    hasInProgressJob,
     error,
     letterhead,
     setLetterhead,

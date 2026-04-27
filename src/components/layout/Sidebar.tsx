@@ -585,6 +585,8 @@ export function Sidebar({
               <div className="space-y-0.5">
                 {noticeList.map((notice) => {
                   const isActive = currentNoticeId === notice.id;
+                  const isGenerating = notice.status === 'generating';
+                  const isError = notice.status === 'error';
                   return (
                     <div key={notice.id} className="relative group">
                       <button
@@ -603,9 +605,18 @@ export function Sidebar({
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium truncate">{notice.title || 'Untitled'}</p>
                           <div className="flex items-center gap-1.5">
-                            <span className="text-[10px] font-medium uppercase text-emerald-600/70 dark:text-emerald-400/70">
-                              {notice.notice_type}
-                            </span>
+                            {isGenerating ? (
+                              <span className="text-[10px] font-medium uppercase text-emerald-600/80 dark:text-emerald-400/80 truncate flex items-center gap-1">
+                                <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                generating
+                              </span>
+                            ) : isError ? (
+                              <span className="text-[10px] font-medium uppercase text-rose-600/80 dark:text-rose-400/80 truncate">error</span>
+                            ) : (
+                              <span className="text-[10px] font-medium uppercase text-emerald-600/70 dark:text-emerald-400/70">
+                                {notice.notice_type}
+                              </span>
+                            )}
                             <span className="text-[11px] text-gray-400 dark:text-gray-500">·</span>
                             <p className="text-[11px] text-gray-400 dark:text-gray-500">{timeAgo(notice.updated_at)}</p>
                           </div>
@@ -613,8 +624,9 @@ export function Sidebar({
                       </button>
                       <button
                         onClick={(e) => handleDeleteNotice(e, notice.id)}
-                        disabled={deletingId === notice.id}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all"
+                        disabled={deletingId === notice.id || isGenerating}
+                        title={isGenerating ? "Can't delete while the notice is generating" : undefined}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
                       >
                         <Trash2 className="w-3.5 h-3.5 text-red-500" />
                       </button>
@@ -771,6 +783,8 @@ export function Sidebar({
               <div className="space-y-0.5">
                 {partnershipDeedList.map((draft) => {
                   const isActive = currentPartnershipDeedId === draft.id;
+                  const isGenerating = draft.status === 'generating';
+                  const isError = draft.status === 'error';
                   return (
                     <div key={draft.id} className="relative group">
                       <button
@@ -789,9 +803,18 @@ export function Sidebar({
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium truncate">{draft.name}</p>
                           <div className="flex items-center gap-1.5">
-                            <span className="text-[10px] font-medium uppercase text-emerald-600/70 dark:text-emerald-400/70 truncate">
-                              {DEED_TEMPLATE_TITLES[draft.template_id]}
-                            </span>
+                            {isGenerating ? (
+                              <span className="text-[10px] font-medium uppercase text-emerald-600/80 dark:text-emerald-400/80 truncate flex items-center gap-1">
+                                <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                generating
+                              </span>
+                            ) : isError ? (
+                              <span className="text-[10px] font-medium uppercase text-rose-600/80 dark:text-rose-400/80 truncate">error</span>
+                            ) : (
+                              <span className="text-[10px] font-medium uppercase text-emerald-600/70 dark:text-emerald-400/70 truncate">
+                                {DEED_TEMPLATE_TITLES[draft.template_id]}
+                              </span>
+                            )}
                             <span className="text-[11px] text-gray-400 dark:text-gray-500">·</span>
                             <p className="text-[11px] text-gray-400 dark:text-gray-500">{timeAgo(draft.updated_at)}</p>
                           </div>
@@ -799,8 +822,9 @@ export function Sidebar({
                       </button>
                       <button
                         onClick={(e) => handleDeletePartnershipDeed(e, draft.id)}
-                        disabled={deletingId === draft.id}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all"
+                        disabled={deletingId === draft.id || isGenerating}
+                        title={isGenerating ? "Can't delete while the deed is generating" : undefined}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
                       >
                         <Trash2 className="w-3.5 h-3.5 text-red-500" />
                       </button>

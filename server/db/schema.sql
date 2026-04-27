@@ -83,7 +83,14 @@ CREATE TABLE IF NOT EXISTS notices (
   title TEXT,
   input_data TEXT,
   generated_content TEXT,
+  -- Status enum: 'draft' (manual draft, no AI), 'generating' (Gemini in
+  -- flight; row was created upfront so a tab close + reload re-attaches),
+  -- 'generated' (AI completed successfully), 'error' (Gemini failed; see
+  -- error_message). The dedup guard refuses parallel runs on the same
+  -- file_hash while another is 'generating'.
   status TEXT NOT NULL DEFAULT 'draft',
+  file_hash TEXT,
+  error_message TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
 );

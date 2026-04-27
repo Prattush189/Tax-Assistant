@@ -202,6 +202,40 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_bank_rules_user_id ON bank_statement_rul
   }
 }
 
+// Reload-resume support for notices: file_hash + error_message (status
+// already exists). Lets a tab close + reload mid-AI-draft re-attach to
+// the in-flight notice and the dedup guard refuse a parallel run with
+// the same input fingerprint.
+{
+  const cs = db.prepare("PRAGMA table_info(notices)").all() as Array<{ name: string }>;
+  const names = cs.map(c => c.name);
+  if (!names.includes('file_hash')) {
+    db.exec("ALTER TABLE notices ADD COLUMN file_hash TEXT");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_notices_user_hash ON notices(user_id, file_hash)");
+  }
+  if (!names.includes('error_message')) {
+    db.exec("ALTER TABLE notices ADD COLUMN error_message TEXT");
+  }
+}
+
+// Reload-resume support for partnership_deeds: status / file_hash /
+// error_message. Same shape as bank_statements / notices — placeholder
+// upfront, dedup by input fingerprint, status surfaced in the sidebar.
+{
+  const cs = db.prepare("PRAGMA table_info(partnership_deeds)").all() as Array<{ name: string }>;
+  const names = cs.map(c => c.name);
+  if (!names.includes('status')) {
+    db.exec("ALTER TABLE partnership_deeds ADD COLUMN status TEXT NOT NULL DEFAULT 'draft'");
+  }
+  if (!names.includes('file_hash')) {
+    db.exec("ALTER TABLE partnership_deeds ADD COLUMN file_hash TEXT");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_partnership_deeds_user_hash ON partnership_deeds(user_id, file_hash)");
+  }
+  if (!names.includes('error_message')) {
+    db.exec("ALTER TABLE partnership_deeds ADD COLUMN error_message TEXT");
+  }
+}
+
 // Indexes for ledger_scrutiny_* (AI ledger scrutiny analyzer)
 db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_jobs_user_id ON ledger_scrutiny_jobs(user_id)");
 db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_jobs_billing ON ledger_scrutiny_jobs(billing_user_id)");

@@ -482,12 +482,15 @@ export async function deleteAccount(currentPassword: string | null, confirmation
 
 // ── Notice Drafter API ───────────────────────────────────────────────────
 
+export type NoticeStatus = 'draft' | 'generating' | 'generated' | 'error';
+
 export interface NoticeItem {
   id: string;
   notice_type: string;
   sub_type: string | null;
   title: string | null;
-  status: string;
+  status: NoticeStatus;
+  error_message?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -892,6 +895,8 @@ export type PartnershipDeedTemplateId =
   | 'retirement_deed'
   | 'dissolution_deed';
 
+export type PartnershipDeedStatus = 'draft' | 'generating' | 'generated' | 'error';
+
 export interface PartnershipDeedDraft {
   id: string;
   user_id: string;
@@ -899,6 +904,8 @@ export interface PartnershipDeedDraft {
   name: string;
   ui_payload: Record<string, unknown>;
   generated_content: string | null;
+  status: PartnershipDeedStatus;
+  error_message?: string | null;
   exported_at: string | null;
   created_at: string;
   updated_at: string;

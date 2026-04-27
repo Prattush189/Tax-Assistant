@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
 import { pickChatProvider } from '../lib/chatProvider.js';
@@ -347,6 +348,29 @@ router.post(
   const sse = new SseWriter(res);
   let fullResponse = '';
 
+  // Reload-resume: persist a placeholder row UPFRONT with status='generating'
+  // so a tab close + reload mid-draft re-attaches via /api/notices and the
+  // frontend manager's polling loop. Dedup against an in-progress run for
+  // the same input fingerprint so a panicked retry doesn't double-bill the
+  // user. Hash captures the meaningful identity of the request — not the
+  // full prompt (which includes large extracted text), but enough to detect
+  // an exact repeat.
+  const inputData = JSON.stringify({ noticeType, subType, senderDetails, recipientDetails, noticeDetails: mergedNoticeDetails, keyPoints });
+  const title = `${noticeType.toUpperCase()} - ${subType || 'Reply'} - ${mergedNoticeDetails.noticeNumber || 'Draft'}`;
+  const fileHash = crypto.createHash('sha256')
+    .update(`${noticeType}|${subType ?? ''}|${senderDetails?.pan ?? ''}|${mergedNoticeDetails.noticeNumber ?? ''}|${keyPoints ?? ''}`)
+    .digest('hex');
+
+  const inProgress = noticeRepo.findInProgressByHashForUser(req.user.id, fileHash);
+  if (inProgress) {
+    console.log(`[notices] re-attaching to in-progress notice ${inProgress.id} instead of starting a new run`);
+    sse.writeDone({ noticeId: inProgress.id, resumed: true });
+    sse.end();
+    return;
+  }
+
+  const noticeId = noticeRepo.createPlaceholder(req.user.id, noticeType, subType ?? null, title, inputData, fileHash, billingUserId);
+
   try {
     const provider = pickChatProvider();
     const usage = await provider.streamChat(
@@ -354,13 +378,18 @@ router.post(
       (text) => { fullResponse += text; sse.writeText(text); },
     );
 
-    // Only create the notice record and log usage after successful generation.
-    // This ensures failed attempts never consume quota or appear in saved drafts.
-    const inputData = JSON.stringify({ noticeType, subType, senderDetails, recipientDetails, noticeDetails: mergedNoticeDetails, keyPoints });
-    const title = `${noticeType.toUpperCase()} - ${subType || 'Reply'} - ${mergedNoticeDetails.noticeNumber || 'Draft'}`;
-    const noticeId = noticeRepo.create(req.user.id, noticeType, subType ?? null, title, inputData, billingUserId);
     if (fullResponse) {
+      // updateContent flips status='generating' → 'generated' and clears
+      // any previous error_message. Quota is debited here too (only on
+      // success) via featureUsageRepo below.
       noticeRepo.updateContent(noticeId, fullResponse);
+    } else {
+      // Empty response from the model. Treat as error so the row doesn't
+      // sit forever on 'generating' or appear as a successful empty draft.
+      noticeRepo.setError(noticeId, req.user.id, 'Model returned an empty response');
+      sse.writeError('Failed to generate notice draft — empty model response. Please try again.');
+      sse.end();
+      return;
     }
 
     // Log TOTAL input tokens consumed (fresh + cache reads + cache writes) so
@@ -378,6 +407,14 @@ router.post(
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
     console.error(`[notices] Generation error: ${errMsg.slice(0, 200)}`);
+    // Mark the placeholder row as 'error' so the polling loop stops and
+    // the user sees the failure in the list with a recoverable error
+    // message rather than a forever-'generating' row.
+    try {
+      noticeRepo.setError(noticeId, req.user!.id, errMsg);
+    } catch (e) {
+      console.error('[notices] failed to mark notice as error:', e);
+    }
     sse.writeError('Failed to generate notice draft. Please try again.');
   }
 

@@ -1,6 +1,8 @@
 import db from '../index.js';
 import crypto from 'crypto';
 
+export type NoticeStatus = 'draft' | 'generating' | 'generated' | 'error';
+
 export interface Notice {
   id: string;
   user_id: string;
@@ -9,7 +11,9 @@ export interface Notice {
   title: string | null;
   input_data: string | null;
   generated_content: string | null;
-  status: string;
+  status: NoticeStatus;
+  file_hash: string | null;
+  error_message: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -18,12 +22,31 @@ const stmts = {
   create: db.prepare(
     'INSERT INTO notices (id, user_id, billing_user_id, notice_type, sub_type, title, input_data) VALUES (?, ?, ?, ?, ?, ?, ?)'
   ),
+  // Upfront placeholder for AI-driven notices: status='generating' so a
+  // tab-close + reload sees the in-flight notice in the list and the
+  // dedup guard refuses a parallel run on the same input fingerprint.
+  createPlaceholder: db.prepare(
+    `INSERT INTO notices (
+      id, user_id, billing_user_id, notice_type, sub_type, title,
+      input_data, file_hash, status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'generating')`
+  ),
+  setError: db.prepare(
+    `UPDATE notices SET status = 'error', error_message = ?,
+       updated_at = datetime('now', '+5 hours', '+30 minutes')
+     WHERE id = ? AND user_id = ?`
+  ),
+  inProgressByHashForUser: db.prepare(
+    `SELECT * FROM notices
+       WHERE user_id = ? AND file_hash = ? AND status = 'generating'
+       ORDER BY created_at DESC LIMIT 1`
+  ),
   findById: db.prepare('SELECT * FROM notices WHERE id = ?'),
   findByUser: db.prepare(
-    'SELECT id, notice_type, sub_type, title, status, created_at, updated_at FROM notices WHERE user_id = ? ORDER BY updated_at DESC LIMIT 50'
+    'SELECT id, notice_type, sub_type, title, status, error_message, created_at, updated_at FROM notices WHERE user_id = ? ORDER BY updated_at DESC LIMIT 50'
   ),
   updateContent: db.prepare(
-    "UPDATE notices SET generated_content = ?, status = 'generated', updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
+    "UPDATE notices SET generated_content = ?, status = 'generated', error_message = NULL, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
   ),
   updateDraft: db.prepare(
     "UPDATE notices SET generated_content = ?, title = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
@@ -56,6 +79,29 @@ export const noticeRepo = {
     const id = crypto.randomBytes(16).toString('hex');
     stmts.create.run(id, userId, billingUserId ?? userId, noticeType, subType, title, inputData);
     return id;
+  },
+
+  /** Upfront placeholder created BEFORE the Gemini call. */
+  createPlaceholder(
+    userId: string,
+    noticeType: string,
+    subType: string | null,
+    title: string | null,
+    inputData: string | null,
+    fileHash: string | null,
+    billingUserId?: string,
+  ): string {
+    const id = crypto.randomBytes(16).toString('hex');
+    stmts.createPlaceholder.run(id, userId, billingUserId ?? userId, noticeType, subType, title, inputData, fileHash);
+    return id;
+  },
+
+  setError(id: string, userId: string, message: string): boolean {
+    return stmts.setError.run(message.slice(0, 500), id, userId).changes > 0;
+  },
+
+  findInProgressByHashForUser(userId: string, fileHash: string): Notice | null {
+    return (stmts.inProgressByHashForUser.get(userId, fileHash) as Notice) ?? null;
   },
 
   findById(id: string): Notice | null {

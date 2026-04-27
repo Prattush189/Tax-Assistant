@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { Router, Response } from 'express';
 import { pickChatProvider } from '../lib/chatProvider.js';
 import { SseWriter } from '../lib/sseStream.js';
@@ -312,6 +313,25 @@ router.post('/drafts/:id/generate', async (req: AuthRequest, res: Response) => {
   const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
   let fullResponse = '';
 
+  // Reload-resume + dedup: hash the input fingerprint (template + payload
+  // + state, since stamp duty depends on state) and refuse a parallel
+  // run for the same draft+fingerprint that's already 'generating'.
+  // Then flip the existing draft row to status='generating' so the
+  // frontend list / sidebar reflect the in-flight state and the polling
+  // loop can pick up completion. Node keeps the handler running on tab
+  // close; the row updates to 'generated' or 'error' regardless.
+  const fileHash = crypto.createHash('sha256')
+    .update(`${draft.template_id}|${state}|${draft.ui_payload}`)
+    .digest('hex');
+  const inProgress = partnershipDeedRepo.findInProgressByHashForUser(req.user.id, fileHash);
+  if (inProgress && inProgress.id !== draft.id) {
+    console.log(`[partnership-deeds] re-attaching to in-progress draft ${inProgress.id} instead of starting a new run`);
+    sse.writeDone({ draftId: inProgress.id, resumed: true });
+    sse.end();
+    return;
+  }
+  partnershipDeedRepo.markGenerating(draft.id, req.user.id, fileHash);
+
   try {
     const provider = pickChatProvider();
     const usage = await provider.streamChat(
@@ -320,7 +340,13 @@ router.post('/drafts/:id/generate', async (req: AuthRequest, res: Response) => {
     );
 
     if (fullResponse) {
+      // updateGeneratedContent flips status='generating' → 'generated'.
       partnershipDeedRepo.updateGeneratedContent(draft.id, req.user!.id, fullResponse);
+    } else {
+      partnershipDeedRepo.setError(draft.id, req.user!.id, 'Model returned an empty response');
+      sse.writeError('Failed to generate partnership deed — empty model response. Please try again.');
+      sse.end();
+      return;
     }
 
     // Log TOTAL input tokens consumed (fresh + cache reads + cache writes).
@@ -345,6 +371,11 @@ router.post('/drafts/:id/generate', async (req: AuthRequest, res: Response) => {
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
     console.error(`[partnership-deeds] Generation error: ${errMsg.slice(0, 200)}`);
+    try {
+      partnershipDeedRepo.setError(draft.id, req.user!.id, errMsg);
+    } catch (e) {
+      console.error('[partnership-deeds] failed to mark draft as error:', e);
+    }
     sse.writeError('Failed to generate partnership deed. Please try again.');
   }
 

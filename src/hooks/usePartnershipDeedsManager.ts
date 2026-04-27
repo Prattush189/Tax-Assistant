@@ -46,6 +46,26 @@ export function usePartnershipDeedsManager(enabled: boolean) {
     loadList().finally(() => setIsLoading(false));
   }, [enabled, loadList]);
 
+  // Reload-resume polling. Server flips the draft row to status='generating'
+  // before the Gemini call and updates it on completion (Node keeps the
+  // handler running on tab close, so the row settles even if this manager
+  // never sees the SSE done event). Poll every 5 s while any draft is in
+  // 'generating' so the list refreshes and the active draft picks up the
+  // final generated_content.
+  useEffect(() => {
+    if (!enabled) return;
+    const hasInProgress = drafts.some(d => d.status === 'generating');
+    if (!hasInProgress) return;
+    const handle = setInterval(() => {
+      void loadList();
+      if (currentDraftId) void loadDraft(currentDraftId);
+    }, 5000);
+    return () => clearInterval(handle);
+    // loadDraft / loadList are stable useCallback refs; including them
+    // would re-create the interval on every render they fire in.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, drafts, currentDraftId]);
+
   const clearDraft = useCallback(() => {
     setCurrentDraftId(null);
     setCurrentDraft(null);
@@ -147,6 +167,12 @@ export function usePartnershipDeedsManager(enabled: boolean) {
     );
   }, [currentDraftId, loadDraft, loadList]);
 
+  // Any draft still being generated on the server, derived from the
+  // persisted status field rather than just this session's isGenerating
+  // (which resets on reload). UI consumers gate destructive actions on
+  // this so a tab close + reload + retry can't double-spend Gemini.
+  const hasInProgressJob = isGenerating || drafts.some(d => d.status === 'generating');
+
   return {
     drafts,
     usage,
@@ -155,6 +181,7 @@ export function usePartnershipDeedsManager(enabled: boolean) {
     generatedContent,
     setGeneratedContent,
     isGenerating,
+    hasInProgressJob,
     isLoading,
     error,
     errorKind,
