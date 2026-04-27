@@ -66,6 +66,15 @@ export function LedgerUploader({ manager }: Props) {
       toast.error('Ledger PDF exceeds the 3 MB size limit. Split the export and re-upload.');
       return;
     }
+    // Hard guard against starting a second audit while the first is
+    // still running. The server-side findInProgressByHashForUser would
+    // refuse a duplicate of the SAME file, but a different file would
+    // still spawn a parallel run that doubles cost. Front-end check is
+    // friendlier than waiting for the rejection.
+    if (manager.hasInProgressJob) {
+      toast.error('An audit is already running. Wait for it to finish before starting another.');
+      return;
+    }
 
     try {
       // Server now auto-chains extract → scrutiny inline, so a single upload
@@ -81,7 +90,11 @@ export function LedgerUploader({ manager }: Props) {
   };
 
   const currentStatus = manager.current?.job.status;
+  // `busy` covers both the in-flight upload AND any other in-progress job
+  // visible in the user's job list — so the upload zone is locked even
+  // if the user navigated away from the running audit's detail view.
   const busy = manager.isUploading
+    || manager.hasInProgressJob
     || currentStatus === 'extracting'
     || currentStatus === 'scrutinizing'
     || currentStatus === 'pending';

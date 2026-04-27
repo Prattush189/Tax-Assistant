@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import {
   AlertTriangle, AlertCircle, Info, ChevronDown, ChevronRight,
-  CheckCircle2, Trash2, Download, FileSearch,
+  CheckCircle2, Trash2, Download, FileSearch, Loader2,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { LedgerScrutinyManager } from '../../hooks/useLedgerScrutinyManager';
@@ -71,6 +71,14 @@ export function ScrutinyReport({ manager }: Props) {
   if (!detail) return null;
 
   const { job, accounts, observations } = detail;
+  // Job is still running on the server when status isn't `done` or `error`.
+  // The 5-s poll loop in useLedgerScrutinyManager refreshes `detail` while
+  // it's in this state, so the UI updates as the server transitions
+  // through extracting → scrutinizing → done. We disable destructive
+  // actions during the run so the user can't delete a job mid-audit or
+  // export an empty PDF.
+  const isRunning = job.status === 'extracting' || job.status === 'scrutinizing' || job.status === 'pending';
+  const isError = job.status === 'error';
   const openCount = observations.filter((o) => o.status === 'open');
   const high = openCount.filter((o) => o.severity === 'high').length;
   const warn = openCount.filter((o) => o.severity === 'warn').length;
@@ -132,7 +140,9 @@ export function ScrutinyReport({ manager }: Props) {
             <button
               type="button"
               onClick={handleExport}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-emerald-600 hover:bg-emerald-700 text-white"
+              disabled={isRunning}
+              title={isRunning ? 'Wait for the audit to finish before exporting' : undefined}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Download className="w-4 h-4" />
               Export PDF
@@ -140,13 +150,55 @@ export function ScrutinyReport({ manager }: Props) {
             <button
               type="button"
               onClick={handleDelete}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-rose-200 dark:border-rose-800/60 text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/20"
+              disabled={isRunning}
+              title={isRunning ? "Can't delete a job while it's running" : undefined}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-rose-200 dark:border-rose-800/60 text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/20 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Trash2 className="w-4 h-4" />
             </button>
           </div>
         </div>
       </div>
+
+      {/* In-progress banner. Drives off job.status which the 5 s poll
+          updates as the server transitions extracting → scrutinizing →
+          done. Tab close + reload during a run lands here showing live
+          status. */}
+      {isRunning && (
+        <div className="rounded-2xl border border-emerald-200 dark:border-emerald-800/60 bg-emerald-50/60 dark:bg-emerald-900/15 p-5">
+          <div className="flex items-center gap-3">
+            <Loader2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 animate-spin shrink-0" />
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold text-gray-900 dark:text-gray-100">
+                {job.status === 'extracting' && 'Extracting accounts and transactions…'}
+                {job.status === 'scrutinizing' && 'Auditing against §40A(3) / §269ST / TDS rubric…'}
+                {job.status === 'pending' && 'Queued — starting shortly…'}
+              </p>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                Long ledgers can take up to 20 minutes. The server keeps running even if you close this tab — just come back here to see the result.
+              </p>
+            </div>
+          </div>
+          {/* Indeterminate progress bar — we don't surface chunk counts
+              from the server yet, but the spinning gradient signals
+              activity while polling refreshes the detail behind it. */}
+          <div className="mt-3 h-1.5 w-full rounded-full bg-emerald-100 dark:bg-emerald-900/40 overflow-hidden">
+            <div className="h-full w-1/3 bg-emerald-500 dark:bg-emerald-400 animate-[ledgerProgress_1.6s_ease-in-out_infinite]" style={{
+              animation: 'ledgerProgress 1.6s ease-in-out infinite',
+            }} />
+          </div>
+          <style>{`@keyframes ledgerProgress { 0% { transform: translateX(-120%); } 50% { transform: translateX(120%); } 100% { transform: translateX(320%); } }`}</style>
+        </div>
+      )}
+
+      {isError && (
+        <div className="rounded-2xl border border-rose-200 dark:border-rose-800/60 bg-rose-50/60 dark:bg-rose-900/15 p-5">
+          <p className="font-semibold text-rose-800 dark:text-rose-200">Audit failed</p>
+          <p className="text-xs text-rose-700 dark:text-rose-300 mt-1">
+            {job.errorMessage ?? 'Unknown error. Try uploading the ledger again.'}
+          </p>
+        </div>
+      )}
 
       {/* Summary tiles */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">

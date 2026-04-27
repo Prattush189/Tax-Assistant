@@ -168,6 +168,14 @@ export function useLedgerScrutinyManager(enabled: boolean) {
     });
   }, [current]);
 
+  // Any job that's still running on the server. Disables new uploads and
+  // delete/export actions across the UI so a user can only have ONE
+  // ledger audit in flight at a time — keeps the cost ceiling tight and
+  // matches the server-side findInProgressByHashForUser guard which
+  // already refuses parallel runs of the same file.
+  const hasInProgressJob = jobs.some(j =>
+    j.status === 'extracting' || j.status === 'scrutinizing' || j.status === 'pending');
+
   return {
     jobs,
     usage,
@@ -176,6 +184,7 @@ export function useLedgerScrutinyManager(enabled: boolean) {
     isLoading,
     isUploading,
     isScrutinizing,
+    hasInProgressJob,
     streamBuffer,
     scrutinizeProgress,
     error,

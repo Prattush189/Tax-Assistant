@@ -46,38 +46,51 @@ export function LedgerScrutinyView({ manager }: Props) {
           </div>
 
           {(() => {
-            // "Recent scrutinies" is a quick-access tile, not a full history.
-            // Show only successfully-finished runs (status === 'done') and
-            // cap at 5 — errors and in-progress jobs clutter this view; they
-            // remain visible in the list view ("history") that the user can
-            // switch to from the sidebar.
-            const recent = manager.jobs.filter(j => j.status === 'done').slice(0, 5);
-            if (recent.length === 0) return null;
+            // "Recent scrutinies" is a quick-access tile. We show:
+            //   - all in-progress jobs at the top (so a tab close + reload
+            //     mid-audit always re-surfaces the running job and the
+            //     user can click into it to see live progress); plus
+            //   - up to 5 successfully-finished runs below.
+            // Errored jobs are kept out — they remain visible in the
+            // list view ("history") via the sidebar switcher.
+            const inProgress = manager.jobs.filter(j =>
+              j.status === 'extracting' || j.status === 'scrutinizing' || j.status === 'pending');
+            const done = manager.jobs.filter(j => j.status === 'done').slice(0, 5);
+            const rows = [...inProgress, ...done];
+            if (rows.length === 0) return null;
             return (
               <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900/40 p-5">
                 <h3 className="font-semibold text-gray-900 dark:text-gray-100 mb-3">Recent scrutinies</h3>
                 <ul className="divide-y divide-gray-100 dark:divide-gray-800">
-                  {recent.map((j) => (
-                    <li key={j.id}>
-                      <button
-                        type="button"
-                        onClick={() => void manager.load(j.id)}
-                        className="w-full py-3 flex items-center justify-between text-left hover:bg-gray-50 dark:hover:bg-gray-900/30 -mx-2 px-2 rounded-lg transition-colors"
-                      >
-                        <div className="min-w-0">
-                          <p className="font-medium text-gray-800 dark:text-gray-100 truncate">
-                            {j.partyName ?? j.name}
-                          </p>
-                          <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                            {j.periodFrom ?? '?'} – {j.periodTo ?? '?'} · {j.totalFlagsHigh} high · {j.totalFlagsWarn} warn · {j.totalFlagsInfo} info
-                          </p>
-                        </div>
-                        <span className="text-[11px] uppercase tracking-wider text-gray-400 dark:text-gray-500 font-medium ml-3 shrink-0">
-                          {j.status}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
+                  {rows.map((j) => {
+                    const running = j.status === 'extracting' || j.status === 'scrutinizing' || j.status === 'pending';
+                    return (
+                      <li key={j.id}>
+                        <button
+                          type="button"
+                          onClick={() => void manager.load(j.id)}
+                          className="w-full py-3 flex items-center justify-between text-left hover:bg-gray-50 dark:hover:bg-gray-900/30 -mx-2 px-2 rounded-lg transition-colors"
+                        >
+                          <div className="min-w-0 flex items-center gap-2">
+                            {running && <Loader2 className="w-4 h-4 text-emerald-500 animate-spin shrink-0" />}
+                            <div className="min-w-0">
+                              <p className="font-medium text-gray-800 dark:text-gray-100 truncate">
+                                {j.partyName ?? j.name}
+                              </p>
+                              <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                                {running
+                                  ? 'Audit in progress — click to view live status'
+                                  : `${j.periodFrom ?? '?'} – ${j.periodTo ?? '?'} · ${j.totalFlagsHigh} high · ${j.totalFlagsWarn} warn · ${j.totalFlagsInfo} info`}
+                              </p>
+                            </div>
+                          </div>
+                          <span className={`text-[11px] uppercase tracking-wider font-medium ml-3 shrink-0 ${running ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-400 dark:text-gray-500'}`}>
+                            {j.status}
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             );
