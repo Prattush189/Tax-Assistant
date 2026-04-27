@@ -67,7 +67,9 @@ export function BankStatementConditions({ manager }: Props) {
           <button
             type="button"
             onClick={() => setIsAdding(true)}
-            className="text-xs flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/30"
+            disabled={manager.hasInProgressJob}
+            title={manager.hasInProgressJob ? 'Wait for the current statement analysis to finish' : undefined}
+            className="text-xs flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Plus className="w-3.5 h-3.5" />
             Add condition
@@ -125,7 +127,9 @@ export function BankStatementConditions({ manager }: Props) {
               <button
                 type="button"
                 onClick={() => void remove(c.id)}
-                className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20"
+                disabled={manager.hasInProgressJob}
+                title={manager.hasInProgressJob ? "Can't edit conditions while a statement is being analyzed" : undefined}
+                className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-30 disabled:cursor-not-allowed"
                 aria-label="Delete condition"
               >
                 <X className="w-4 h-4" />

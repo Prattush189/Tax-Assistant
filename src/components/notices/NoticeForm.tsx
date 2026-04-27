@@ -5,6 +5,7 @@ import { LoadingAnimation } from '../ui/LoadingAnimation';
 import { LetterheadConfig } from '../../hooks/useNoticeDrafter';
 import { LoadFromProfile } from '../profile/shared/LoadFromProfile';
 import { profileToNoticeForm } from '../profile/lib/prefillAdapters';
+import { cn } from '../../lib/utils';
 
 const NOTICE_TYPES = [
   { value: 'income-tax', label: 'Income Tax' },
@@ -241,14 +242,22 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
             </button>
           </div>
         ) : (
-          <label className="flex items-center gap-2 px-3 py-2.5 border-2 border-dashed border-gray-200 dark:border-gray-700 rounded-lg cursor-pointer hover:border-[#059669] transition-colors">
+          <label className={cn(
+            "flex items-center gap-2 px-3 py-2.5 border-2 border-dashed rounded-lg transition-colors",
+            isGenerating
+              ? "border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 cursor-not-allowed opacity-60"
+              : "border-gray-200 dark:border-gray-700 cursor-pointer hover:border-[#059669]"
+          )}>
             <Upload className="w-4 h-4 text-gray-400" />
-            <span className="text-sm text-gray-500 dark:text-gray-400">PDF, JPEG, PNG (max 10 MB)</span>
+            <span className="text-sm text-gray-500 dark:text-gray-400">
+              {isGenerating ? 'Generation in progress…' : 'PDF, JPEG, PNG (max 10 MB)'}
+            </span>
             <input
               ref={noticeFileRef}
               type="file"
               accept=".pdf,image/jpeg,image/png,image/webp"
               onChange={handleFileUpload}
+              disabled={isGenerating}
               className="hidden"
             />
           </label>

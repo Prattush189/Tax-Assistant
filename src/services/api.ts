@@ -1494,6 +1494,8 @@ export async function acceptInvitation(input: {
 
 // ── Bank Statement Analyzer API ───────────────────────────────────────────
 
+export type BankStatementStatus = 'analyzing' | 'done' | 'error';
+
 export interface BankStatementSummary {
   id: string;
   name: string;
@@ -1506,6 +1508,8 @@ export interface BankStatementSummary {
   totalInflow: number;
   totalOutflow: number;
   txCount: number;
+  status: BankStatementStatus;
+  errorMessage: string | null;
   createdAt: string;
   updatedAt: string;
 }

@@ -91,6 +91,24 @@ export function useBankStatementManager(enabled: boolean) {
     }
   }, []);
 
+  // Reload-resume. Server now creates the bank_statements row UPFRONT with
+  // status='analyzing' before kicking off the Gemini pipeline; the express
+  // handler keeps running on tab close (Node default), so the row updates
+  // to 'done' on completion regardless of whether the original request
+  // socket is still open. Poll every 5 s while any statement is in
+  // 'analyzing' so a reload mid-run shows live status and the UI can
+  // disable buttons that mustn't fire during the generation.
+  useEffect(() => {
+    if (!enabled) return;
+    const hasInProgress = statements.some(s => s.status === 'analyzing');
+    if (!hasInProgress) return;
+    const handle = setInterval(() => {
+      void refresh();
+      if (currentId) void load(currentId);
+    }, 5000);
+    return () => clearInterval(handle);
+  }, [enabled, statements, currentId, refresh, load]);
+
   const analyzeFile = useCallback(async (file: File): Promise<BankStatementDetail> => {
     setIsAnalyzing(true);
     setAnalyzeProgress(null);
@@ -184,12 +202,19 @@ export function useBankStatementManager(enabled: boolean) {
     setConditions((prev) => prev.filter((c) => c.id !== id));
   }, []);
 
+  // Any analysis still running on the server, derived from the persisted
+  // status flag rather than the in-flight isAnalyzing boolean (which
+  // resets on tab reload). UI uses this to gate Add rule / Add condition
+  // / Choose file etc. so the user can't kick off a parallel run.
+  const hasInProgressJob = isAnalyzing || statements.some(s => s.status === 'analyzing');
+
   return {
     statements,
     currentId,
     current,
     isLoading,
     isAnalyzing,
+    hasInProgressJob,
     analyzeProgress,
     error,
     rules,

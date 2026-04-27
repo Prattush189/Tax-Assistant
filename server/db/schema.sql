@@ -254,6 +254,13 @@ CREATE TABLE IF NOT EXISTS bank_statements (
   total_outflow REAL NOT NULL DEFAULT 0,
   tx_count INTEGER NOT NULL DEFAULT 0,
   raw_extracted TEXT,
+  -- Reload-resume tracking. Row is created upfront with status='analyzing'
+  -- so the user can see the in-flight statement (and the dedup guard can
+  -- match against a re-upload of the same file_hash). Updated to 'done' on
+  -- success or 'error' on failure with error_message populated.
+  status TEXT NOT NULL DEFAULT 'done',
+  file_hash TEXT,
+  error_message TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
 );

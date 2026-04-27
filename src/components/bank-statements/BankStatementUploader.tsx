@@ -43,6 +43,14 @@ export function BankStatementUploader({ manager }: Props) {
     const file = files?.[0];
     if (!file) return;
 
+    // One analysis at a time. Server enforces the same via
+    // findInProgressByHashForUser, but the toast is friendlier than
+    // letting the request go through and bounce.
+    if (manager.hasInProgressJob) {
+      toast.error('A bank statement analysis is already running. Wait for it to finish.');
+      return;
+    }
+
     const isCsv = file.type === 'text/csv' || file.name.toLowerCase().endsWith('.csv');
     if (isCsv) {
       const text = await file.text();
@@ -113,7 +121,7 @@ export function BankStatementUploader({ manager }: Props) {
       </div>
       <button
         type="button"
-        disabled={manager.isAnalyzing}
+        disabled={manager.hasInProgressJob}
         onClick={() => inputRef.current?.click()}
         className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
       >

@@ -1,4 +1,5 @@
 // server/routes/bankStatements.ts
+import crypto from 'crypto';
 import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
 import Papa from 'papaparse';
@@ -490,12 +491,15 @@ function enforceQuota(req: AuthRequest, res: Response): { ok: true; billingUserI
   return { ok: true, billingUserId, plan };
 }
 
-/** Shared persistence path after we have a structured extraction. */
+/** Persist a completed analysis into a placeholder row created upfront.
+ *  Two-phase: createPlaceholder (status='analyzing') happens at request
+ *  start so the row is visible to a tab-close-and-reload, then this fills
+ *  in extracted metadata + transactions and flips status to 'done'. */
 function persistStatement(
   userId: string,
-  billingUserId: string,
+  statementId: string,
   data: ExtractedStatement,
-  meta: { filename: string | null; mimeType: string | null; fallbackName: string },
+  fallbackName: string,
 ) {
   const rawTxs = normalizeTransactions(data.transactions ?? []);
   const rules = bankStatementRuleRepo.listByUser(userId);
@@ -504,21 +508,21 @@ function persistStatement(
   const periodLabel = data.periodFrom && data.periodTo
     ? `${data.periodFrom} – ${data.periodTo}`
     : new Date().toISOString().slice(0, 10);
-  const name = [data.bankName, periodLabel].filter(Boolean).join(' · ') || meta.fallbackName;
+  const name = [data.bankName, periodLabel].filter(Boolean).join(' · ') || fallbackName;
 
-  const statement = bankStatementRepo.create(userId, billingUserId, {
+  bankStatementRepo.updateAfterAnalyze(statementId, userId, {
     name,
     bankName: data.bankName ?? null,
     accountNumberMasked: data.accountNumberMasked ?? null,
     periodFrom: data.periodFrom ?? null,
     periodTo: data.periodTo ?? null,
-    sourceFilename: meta.filename,
-    sourceMime: meta.mimeType,
+    sourceFilename: null,  // already set on placeholder
+    sourceMime: null,
     rawExtracted: JSON.stringify(data),
   });
-  bankTransactionRepo.bulkInsert(statement.id, txs);
-  bankStatementRepo.updateTotals(statement.id, inflow, outflow, txs.length);
-  return { statement, txCount: txs.length };
+  bankTransactionRepo.bulkInsert(statementId, txs);
+  bankStatementRepo.updateTotals(statementId, inflow, outflow, txs.length);
+  return { txCount: txs.length };
 }
 
 function serializeStatement(row: ReturnType<typeof bankStatementRepo.findByIdForUser>) {
@@ -535,6 +539,8 @@ function serializeStatement(row: ReturnType<typeof bankStatementRepo.findByIdFor
     totalInflow: row.total_inflow,
     totalOutflow: row.total_outflow,
     txCount: row.tx_count,
+    status: row.status,
+    errorMessage: row.error_message,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -706,6 +712,47 @@ router.post(
       });
       sseOpen = true;
     }
+
+    // Compute a fingerprint of the input so we can:
+    //   1. Refuse a duplicate analysis if one's already running for this
+    //      file (tab close + retry would otherwise fire a parallel run).
+    //   2. Persist a status='analyzing' row UPFRONT — Node doesn't abort
+    //      handlers on client disconnect, so the analysis keeps going even
+    //      if the user reloads, and the row's there for them to find when
+    //      they come back.
+    let fileHash: string | null = null;
+    if (req.file) {
+      fileHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
+    } else if (isPdfText) {
+      fileHash = crypto.createHash('sha256').update(String(req.body.pdfText)).digest('hex');
+    } else if (isCsv) {
+      fileHash = crypto.createHash('sha256').update(String(req.body.csvText)).digest('hex');
+    }
+
+    if (fileHash) {
+      const inProgress = bankStatementRepo.findInProgressByHashForUser(req.user.id, fileHash);
+      if (inProgress) {
+        console.log(`[bank-statements] re-attaching to in-progress statement ${inProgress.id} instead of starting a new run`);
+        const txs = bankTransactionRepo.listByStatement(inProgress.id).map(serializeTransaction);
+        const payload = { statement: serializeStatement(inProgress), transactions: txs, txCount: txs.length, resumed: true };
+        if (sseOpen) { sendSse({ type: 'done', ...payload }); res.end(); }
+        else res.status(200).json(payload);
+        return;
+      }
+    }
+
+    // Upfront placeholder. Visible to any subsequent /api/bank-statements
+    // GET while the analysis runs, even after this connection closes.
+    const placeholderFilename = req.file?.originalname
+      ?? (typeof req.body?.filename === 'string' ? req.body.filename : null)
+      ?? (isCsv ? 'statement.csv' : 'statement.pdf');
+    const placeholderMime = req.file?.mimetype ?? (isCsv ? 'text/csv' : 'application/pdf');
+    const placeholder = bankStatementRepo.createPlaceholder(req.user.id, quota.billingUserId, {
+      name: placeholderFilename.replace(/\.(pdf|csv|jpe?g|png|webp)$/i, '') || 'Bank Statement',
+      sourceFilename: placeholderFilename,
+      sourceMime: placeholderMime,
+      fileHash,
+    });
 
     try {
       let extracted: ExtractedStatement;
@@ -953,11 +1000,7 @@ router.post(
         }];
       }
 
-      const { statement, txCount } = persistStatement(req.user.id, quota.billingUserId, extracted, {
-        filename,
-        mimeType,
-        fallbackName: filename ?? 'Bank Statement',
-      });
+      const { txCount } = persistStatement(req.user.id, placeholder.id, extracted, filename ?? 'Bank Statement');
 
       try {
         featureUsageRepo.logWithBilling(req.user.id, quota.billingUserId, 'bank_statement_analyze');
@@ -984,10 +1027,10 @@ router.post(
         console.error('[bank-statements] Failed to log cost:', err);
       }
 
-      const transactions = bankTransactionRepo.listByStatement(statement.id).map(serializeTransaction);
+      const transactions = bankTransactionRepo.listByStatement(placeholder.id).map(serializeTransaction);
       const warning = (res.locals as Record<string, unknown>).analyzerWarning as string | undefined;
       const payload = {
-        statement: serializeStatement(bankStatementRepo.findByIdForUser(statement.id, req.user.id)),
+        statement: serializeStatement(bankStatementRepo.findByIdForUser(placeholder.id, req.user.id)),
         transactions,
         txCount,
         ...(warning ? { warning } : {}),
@@ -1001,9 +1044,19 @@ router.post(
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       console.error('[bank-statements] analyze error:', errMsg);
+      // Mark the placeholder row as 'error' so the user sees it in the list
+      // (and the polling loop stops) rather than a row stuck on 'analyzing'
+      // forever. Leave the row in place — deleting would lose the error
+      // message and prevent the user from understanding what went wrong.
+      try {
+        bankStatementRepo.setError(placeholder.id, req.user.id, errMsg);
+      } catch (e) {
+        console.error('[bank-statements] failed to mark statement as error:', e);
+      }
       const body = {
         error: 'Failed to analyze statement.',
         detail: errMsg.slice(0, 400),
+        statementId: placeholder.id,
         hint: 'If this is a large statement (150+ pages), try a CSV export instead. Scanned / image PDFs may also fail — re-save as a digital PDF and retry.',
       };
       if (sseOpen) {

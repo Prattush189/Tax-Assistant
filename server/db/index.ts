@@ -182,6 +182,26 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_bank_tx_statement_id ON bank_transaction
 db.exec("CREATE INDEX IF NOT EXISTS idx_bank_tx_category ON bank_transactions(category)");
 db.exec("CREATE INDEX IF NOT EXISTS idx_bank_rules_user_id ON bank_statement_rules(user_id)");
 
+// Reload-resume support for bank_statements: status / file_hash / error_message
+// columns so a row can be created upfront with status='analyzing', survive
+// tab close, and be picked up via the same hash on retry. Mirrors the ledger
+// scrutiny pattern. Existing rows default to 'done' so they show up as
+// finished in the list view immediately.
+{
+  const cs = db.prepare("PRAGMA table_info(bank_statements)").all() as Array<{ name: string }>;
+  const names = cs.map(c => c.name);
+  if (!names.includes('status')) {
+    db.exec("ALTER TABLE bank_statements ADD COLUMN status TEXT NOT NULL DEFAULT 'done'");
+  }
+  if (!names.includes('file_hash')) {
+    db.exec("ALTER TABLE bank_statements ADD COLUMN file_hash TEXT");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_bank_statements_user_hash ON bank_statements(user_id, file_hash)");
+  }
+  if (!names.includes('error_message')) {
+    db.exec("ALTER TABLE bank_statements ADD COLUMN error_message TEXT");
+  }
+}
+
 // Indexes for ledger_scrutiny_* (AI ledger scrutiny analyzer)
 db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_jobs_user_id ON ledger_scrutiny_jobs(user_id)");
 db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_jobs_billing ON ledger_scrutiny_jobs(billing_user_id)");

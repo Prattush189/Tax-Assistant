@@ -819,6 +819,8 @@ export function Sidebar({
               <div className="space-y-0.5">
                 {bankStatementList.map((stmt) => {
                   const isActive = currentBankStatementId === stmt.id;
+                  const isAnalyzing = stmt.status === 'analyzing';
+                  const isError = stmt.status === 'error';
                   return (
                     <div key={stmt.id} className="relative group">
                       <button
@@ -837,9 +839,18 @@ export function Sidebar({
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium truncate">{stmt.name}</p>
                           <div className="flex items-center gap-1.5">
-                            <span className="text-[10px] font-medium uppercase text-emerald-600/70 dark:text-emerald-400/70 truncate">
-                              {stmt.txCount} txns
-                            </span>
+                            {isAnalyzing ? (
+                              <span className="text-[10px] font-medium uppercase text-emerald-600/80 dark:text-emerald-400/80 truncate flex items-center gap-1">
+                                <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                analyzing
+                              </span>
+                            ) : isError ? (
+                              <span className="text-[10px] font-medium uppercase text-rose-600/80 dark:text-rose-400/80 truncate">error</span>
+                            ) : (
+                              <span className="text-[10px] font-medium uppercase text-emerald-600/70 dark:text-emerald-400/70 truncate">
+                                {stmt.txCount} txns
+                              </span>
+                            )}
                             <span className="text-[11px] text-gray-400 dark:text-gray-500">·</span>
                             <p className="text-[11px] text-gray-400 dark:text-gray-500">{timeAgo(stmt.updatedAt)}</p>
                           </div>
@@ -847,8 +858,9 @@ export function Sidebar({
                       </button>
                       <button
                         onClick={(e) => handleDeleteBankStatement(e, stmt.id)}
-                        disabled={deletingId === stmt.id}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all"
+                        disabled={deletingId === stmt.id || isAnalyzing}
+                        title={isAnalyzing ? "Can't delete a statement while it's being analyzed" : undefined}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
                       >
                         <Trash2 className="w-3.5 h-3.5 text-red-500" />
                       </button>
