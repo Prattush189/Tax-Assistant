@@ -45,34 +45,43 @@ export function LedgerScrutinyView({ manager }: Props) {
             <span className="ml-1 font-semibold text-gray-700 dark:text-gray-200">{manager.usage.limit}</span> this month
           </div>
 
-          {manager.jobs.length > 0 && (
-            <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900/40 p-5">
-              <h3 className="font-semibold text-gray-900 dark:text-gray-100 mb-3">Recent scrutinies</h3>
-              <ul className="divide-y divide-gray-100 dark:divide-gray-800">
-                {manager.jobs.map((j) => (
-                  <li key={j.id}>
-                    <button
-                      type="button"
-                      onClick={() => void manager.load(j.id)}
-                      className="w-full py-3 flex items-center justify-between text-left hover:bg-gray-50 dark:hover:bg-gray-900/30 -mx-2 px-2 rounded-lg transition-colors"
-                    >
-                      <div className="min-w-0">
-                        <p className="font-medium text-gray-800 dark:text-gray-100 truncate">
-                          {j.partyName ?? j.name}
-                        </p>
-                        <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                          {j.periodFrom ?? '?'} – {j.periodTo ?? '?'} · {j.totalFlagsHigh} high · {j.totalFlagsWarn} warn · {j.totalFlagsInfo} info
-                        </p>
-                      </div>
-                      <span className="text-[11px] uppercase tracking-wider text-gray-400 dark:text-gray-500 font-medium ml-3 shrink-0">
-                        {j.status}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+          {(() => {
+            // "Recent scrutinies" is a quick-access tile, not a full history.
+            // Show only successfully-finished runs (status === 'done') and
+            // cap at 5 — errors and in-progress jobs clutter this view; they
+            // remain visible in the list view ("history") that the user can
+            // switch to from the sidebar.
+            const recent = manager.jobs.filter(j => j.status === 'done').slice(0, 5);
+            if (recent.length === 0) return null;
+            return (
+              <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900/40 p-5">
+                <h3 className="font-semibold text-gray-900 dark:text-gray-100 mb-3">Recent scrutinies</h3>
+                <ul className="divide-y divide-gray-100 dark:divide-gray-800">
+                  {recent.map((j) => (
+                    <li key={j.id}>
+                      <button
+                        type="button"
+                        onClick={() => void manager.load(j.id)}
+                        className="w-full py-3 flex items-center justify-between text-left hover:bg-gray-50 dark:hover:bg-gray-900/30 -mx-2 px-2 rounded-lg transition-colors"
+                      >
+                        <div className="min-w-0">
+                          <p className="font-medium text-gray-800 dark:text-gray-100 truncate">
+                            {j.partyName ?? j.name}
+                          </p>
+                          <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                            {j.periodFrom ?? '?'} – {j.periodTo ?? '?'} · {j.totalFlagsHigh} high · {j.totalFlagsWarn} warn · {j.totalFlagsInfo} info
+                          </p>
+                        </div>
+                        <span className="text-[11px] uppercase tracking-wider text-gray-400 dark:text-gray-500 font-medium ml-3 shrink-0">
+                          {j.status}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })()}
         </div>
       </motion.div>
     );
