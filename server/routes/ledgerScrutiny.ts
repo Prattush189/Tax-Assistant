@@ -20,8 +20,11 @@ import { extractWithRetry } from '../lib/documentExtract.js';
 import { safeParseJson } from '../lib/geminiJson.js';
 import { pickChatProvider } from '../lib/chatProvider.js';
 import { SseWriter } from '../lib/sseStream.js';
+import { gemini, GEMINI_CHAT_MODEL_THINK_FB, GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST } from '../lib/gemini.js';
+import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import {
   LEDGER_EXTRACT_PROMPT,
+  LEDGER_EXTRACT_TSV_PROMPT,
   LEDGER_SCRUTINY_SYSTEM_PROMPT,
   LEDGER_SCRUTINY_USER_PROMPT_HEAD,
 } from '../lib/ledgerScrutinyPrompt.js';
@@ -34,7 +37,6 @@ import {
 import { userRepo } from '../db/repositories/userRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
-import { GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST } from '../lib/gemini.js';
 import { getBillingUser } from '../lib/billing.js';
 import { getUserLimits } from '../lib/planLimits.js';
 import { AuthRequest } from '../types.js';
@@ -248,6 +250,437 @@ function serializeObservation(row: ReturnType<typeof ledgerScrutinyRepo.listObse
   };
 }
 
+// ── TSV extraction (mirrors the bank-statement pipeline) ──────────────────
+// The original ledger flow asked Gemini for one giant nested-JSON object over
+// the whole PDF in a single vision call. That worked for short test ledgers
+// and broke immediately on real year-long Tally / Busy exports: when the
+// response truncated mid-JSON, `safeParseJson` silently failed and we
+// surfaced "Failed to parse Gemini JSON response" with no diagnostic.
+//
+// The bank-statement analyzer hits the same shape of problem (50+ pages,
+// many rows) and solves it with a chunked TSV pipeline + `---END:N---`
+// trailer for truncation detection. We reuse the same approach here.
+
+interface LedgerTsvAccount {
+  name: string;
+  accountType: string | null;
+  opening: number | null;
+  closing: number | null;
+  totalDebit: number | null;
+  totalCredit: number | null;
+}
+
+interface LedgerTsvTransaction {
+  accountName: string;
+  date: string | null;
+  narration: string | null;
+  voucher: string | null;
+  debit: number;
+  credit: number;
+  balance: number | null;
+}
+
+interface LedgerTsvChunkResult {
+  partyName: string | null;
+  gstin: string | null;
+  periodFrom: string | null;
+  periodTo: string | null;
+  accounts: LedgerTsvAccount[];
+  transactions: LedgerTsvTransaction[];
+  declaredCount: number;
+  actualCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  modelUsed: string;
+}
+
+function cleanTsvCell(s: string): string {
+  const t = s.trim();
+  if (t === '' || t.toLowerCase() === 'null') return '';
+  return t;
+}
+
+function parseTsvNumber(s: string): number | null {
+  const t = cleanTsvCell(s);
+  if (t === '') return null;
+  const n = Number(t.replace(/[,\s]/g, ''));
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseLedgerTsvResponse(raw: string): Omit<LedgerTsvChunkResult, 'inputTokens' | 'outputTokens' | 'modelUsed'> & { droppedReasons: string[] } {
+  // Strip accidental code fences — the prompt forbids them but models slip.
+  const text = raw.replace(/^```[a-z]*\n?/im, '').replace(/\n?```\s*$/m, '').trim();
+  const lines = text.split(/\r?\n/);
+
+  let partyName: string | null = null;
+  let gstin: string | null = null;
+  let periodFrom: string | null = null;
+  let periodTo: string | null = null;
+  const accounts: LedgerTsvAccount[] = [];
+  const transactions: LedgerTsvTransaction[] = [];
+  const droppedReasons: string[] = [];
+  let declaredCount = -1;
+
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const endMatch = /^---END:(\d+)---$/.exec(line.trim());
+    if (endMatch) {
+      declaredCount = parseInt(endMatch[1], 10);
+      break;
+    }
+    if (line.startsWith('HEADER\t')) {
+      const h = line.split('\t');
+      partyName = cleanTsvCell(h[1] ?? '') || null;
+      gstin = cleanTsvCell(h[2] ?? '') || null;
+      periodFrom = cleanTsvCell(h[3] ?? '') || null;
+      periodTo = cleanTsvCell(h[4] ?? '') || null;
+      continue;
+    }
+    if (line.startsWith('ACCOUNT\t')) {
+      const a = line.split('\t');
+      if (a.length < 7) {
+        droppedReasons.push(`account-fields=${a.length}`);
+        continue;
+      }
+      const name = cleanTsvCell(a[1]);
+      if (!name) {
+        droppedReasons.push('account-no-name');
+        continue;
+      }
+      accounts.push({
+        name,
+        accountType: cleanTsvCell(a[2]) || null,
+        opening: parseTsvNumber(a[3]),
+        closing: parseTsvNumber(a[4]),
+        totalDebit: parseTsvNumber(a[5]),
+        totalCredit: parseTsvNumber(a[6]),
+      });
+      continue;
+    }
+    if (line.startsWith('TX\t')) {
+      const t = line.split('\t');
+      if (t.length < 8) {
+        droppedReasons.push(`tx-fields=${t.length}`);
+        continue;
+      }
+      const accountName = cleanTsvCell(t[1]);
+      if (!accountName) {
+        droppedReasons.push('tx-no-account');
+        continue;
+      }
+      const debitStr = cleanTsvCell(t[5]);
+      const creditStr = cleanTsvCell(t[6]);
+      const debit = debitStr === '' ? 0 : Number(debitStr.replace(/[,\s]/g, ''));
+      const credit = creditStr === '' ? 0 : Number(creditStr.replace(/[,\s]/g, ''));
+      if (!Number.isFinite(debit) || !Number.isFinite(credit)) {
+        droppedReasons.push('tx-NaN-amount');
+        continue;
+      }
+      // EXACTLY one of debit/credit must be populated. Both populated is
+      // almost always a misplaced balance; both empty means the row carries
+      // no monetary value (extraction error). Skip rather than fail the
+      // chunk — the trailer count check is the one that protects integrity.
+      if (debit > 0 && credit > 0) {
+        droppedReasons.push('tx-both-debit-credit');
+        continue;
+      }
+      if (debit === 0 && credit === 0) {
+        droppedReasons.push('tx-no-amount');
+        continue;
+      }
+      transactions.push({
+        accountName,
+        date: cleanTsvCell(t[2]) || null,
+        narration: cleanTsvCell(t[3]) || null,
+        voucher: cleanTsvCell(t[4]) || null,
+        debit,
+        credit,
+        balance: parseTsvNumber(t[7]),
+      });
+    }
+  }
+
+  return {
+    partyName,
+    gstin,
+    periodFrom,
+    periodTo,
+    accounts,
+    transactions,
+    declaredCount,
+    actualCount: transactions.length,
+    droppedReasons,
+  };
+}
+
+async function extractLedgerTsvOnce(
+  chunkText: string,
+  model: string,
+  maxTokens: number,
+  reasoningEffort: 'none' | 'low' | 'medium' | 'high',
+): Promise<LedgerTsvChunkResult> {
+  const messages: ChatCompletionMessageParam[] = [{
+    role: 'user',
+    content: `${LEDGER_EXTRACT_TSV_PROMPT}\n\nINPUT_TEXT:\n${chunkText}`,
+  }];
+  // `reasoning_effort: 'none'` zeroes Gemini's thinking budget — without it
+  // the model burns most of `max_tokens` reasoning before emitting any TSV
+  // and finishes with finish_reason=length at a few rows. Transcribing rows
+  // from already-extracted text needs no reasoning. `temperature: 0` makes
+  // the extraction deterministic so the same ledger run twice produces the
+  // same accounts and transactions.
+  const response = await gemini.chat.completions.create({
+    model,
+    max_tokens: maxTokens,
+    messages,
+    stream: false,
+    reasoning_effort: reasoningEffort,
+    temperature: 0,
+  });
+  const raw = response.choices[0]?.message?.content ?? '';
+  const finishReason = response.choices[0]?.finish_reason ?? 'unknown';
+  const parsed = parseLedgerTsvResponse(raw);
+
+  // Integrity check #1: trailer MUST be present. Its absence means either
+  // the model output truncated mid-stream (hit max_tokens) OR the model
+  // returned a short prose / refusal response. Log a preview + finish_reason
+  // so the next occurrence tells us which case it is.
+  if (parsed.declaredCount < 0) {
+    const preview = raw.slice(0, 300).replace(/\n/g, '\\n');
+    console.warn(`[ledger-scrutiny] ${model} truncated (finish_reason=${finishReason}, got ${parsed.actualCount} TX). Raw preview: ${preview}`);
+    throw new Error(`TSV response was truncated: missing ---END:N--- trailer (got ${parsed.actualCount} TX, finish_reason=${finishReason})`);
+  }
+
+  // Integrity check #2: parsed rows MUST NOT be fewer than the trailer
+  // count. If we parsed fewer than declared, we silently dropped some
+  // (malformed lines, wrong field count) — fail loudly. If we parsed MORE
+  // than declared, the model miscounted its own trailer (an empirically
+  // common Gemini quirk on dense input); the rows themselves are fine so
+  // accept the parsed count.
+  if (parsed.actualCount < parsed.declaredCount) {
+    const reasonCounts = parsed.droppedReasons.reduce<Record<string, number>>((acc, r) => {
+      acc[r] = (acc[r] ?? 0) + 1;
+      return acc;
+    }, {});
+    const reasonStr = Object.entries(reasonCounts).map(([k, v]) => `${k}=${v}`).join(',') || 'unknown';
+    throw new Error(`TSV row-count mismatch: trailer claims ${parsed.declaredCount}, parsed ${parsed.actualCount} (dropped: ${reasonStr})`);
+  }
+  if (parsed.actualCount > parsed.declaredCount) {
+    console.warn(`[ledger-scrutiny] ${model} trailer undercount: claimed ${parsed.declaredCount}, parsed ${parsed.actualCount} — accepting parsed count`);
+  }
+
+  return {
+    ...parsed,
+    inputTokens: response.usage?.prompt_tokens ?? 0,
+    outputTokens: response.usage?.completion_tokens ?? 0,
+    modelUsed: model,
+  };
+}
+
+/**
+ * Retry + fallback wrapper. Mirrors the bank-statement two-tier cascade:
+ *   - Primary : gemini-2.5-flash       — stable GA, most reliable on long TSV.
+ *   - Fallback: gemini-3-flash-preview — stronger on dense chunks but flakier;
+ *                                        only invoked when the GA model fails.
+ *
+ * Truncation / trailer-mismatch errors break out of the current tier
+ * immediately — retrying the same params on the same model can't fix a
+ * truncated response, but the fallback's doubled output ceiling can.
+ */
+async function extractLedgerTsv(chunkText: string, maxTokens: number): Promise<LedgerTsvChunkResult> {
+  const MAX_PRIMARY_ATTEMPTS = 4;
+  const MAX_FALLBACK_ATTEMPTS = 3;
+  let lastErr: unknown;
+
+  const jitter = () => 300 + Math.floor(Math.random() * 600);
+  const isRetryableStatus = (s: number) =>
+    s === 429 || s === 500 || s === 502 || s === 503 || s === 504;
+  const tierDone = (err: unknown): boolean => {
+    const msg = (err as Error).message ?? '';
+    const status = (err as { status?: number })?.status ?? 0;
+    if (/trailer|mismatch|truncated/i.test(msg)) return true;
+    if (status === 400) return true;
+    if (!isRetryableStatus(status) && status !== 0) return true;
+    return false;
+  };
+
+  const PRIMARY_BACKOFFS_MS = [2_000, 5_000, 12_000];
+  for (let attempt = 0; attempt < MAX_PRIMARY_ATTEMPTS; attempt++) {
+    try {
+      return await extractLedgerTsvOnce(chunkText, 'gemini-2.5-flash', maxTokens, 'none');
+    } catch (err) {
+      lastErr = err;
+      const status = (err as { status?: number })?.status ?? 0;
+      const msg = (err as Error).message?.slice(0, 140) ?? '';
+      if (tierDone(err)) {
+        console.warn(`[ledger-scrutiny] primary gemini-2.5-flash giving up after attempt ${attempt + 1}: ${status || 'no status'} — ${msg}`);
+        break;
+      }
+      if (attempt < MAX_PRIMARY_ATTEMPTS - 1) {
+        const wait = (PRIMARY_BACKOFFS_MS[attempt] ?? 12_000) + jitter();
+        console.warn(`[ledger-scrutiny] primary attempt ${attempt + 1}/${MAX_PRIMARY_ATTEMPTS} failed (${status || 'no status'}); retrying in ${wait}ms`);
+        await new Promise(r => setTimeout(r, wait));
+      }
+    }
+  }
+
+  for (let attempt = 0; attempt < MAX_FALLBACK_ATTEMPTS; attempt++) {
+    try {
+      return await extractLedgerTsvOnce(chunkText, GEMINI_CHAT_MODEL_THINK_FB, maxTokens * 2, 'low');
+    } catch (err) {
+      lastErr = err;
+      const status = (err as { status?: number })?.status ?? 0;
+      const msg = (err as Error).message?.slice(0, 140) ?? '';
+      if (tierDone(err)) {
+        console.warn(`[ledger-scrutiny] fallback ${GEMINI_CHAT_MODEL_THINK_FB} giving up after attempt ${attempt + 1}: ${status || 'no status'} — ${msg}`);
+        break;
+      }
+      if (attempt < MAX_FALLBACK_ATTEMPTS - 1) {
+        const wait = 3_000 + jitter();
+        console.warn(`[ledger-scrutiny] fallback attempt ${attempt + 1}/${MAX_FALLBACK_ATTEMPTS} failed (${status || 'no status'}); retrying in ${wait}ms`);
+        await new Promise(r => setTimeout(r, wait));
+      }
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
+/** Bounded-concurrency map. Lets us run chunk extractions in parallel
+ *  without firing 6+ concurrent Gemini calls per request, which routinely
+ *  trips per-key rate limits on long ledgers. */
+async function mapWithConcurrency<T, U>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, idx: number) => Promise<U>,
+): Promise<U[]> {
+  const results: U[] = new Array(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (true) {
+      const idx = cursor++;
+      if (idx >= items.length) return;
+      results[idx] = await fn(items[idx], idx);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+/** Rough lower-bound on transaction count by counting dates in the raw text.
+ *  Used as a cross-check to catch cases where every chunk emitted a valid
+ *  trailer but the model still skipped rows. Conservative — we only fail
+ *  if the delta is large. */
+function countLikelyDates(text: string): number {
+  const patterns = [
+    /\b\d{2}\/\d{2}\/\d{4}\b/g,
+    /\b\d{2}-\d{2}-\d{4}\b/g,
+    /\b\d{4}-\d{2}-\d{2}\b/g,
+    /\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+\d{2,4}\b/gi,
+  ];
+  const seen = new Set<string>();
+  for (const re of patterns) {
+    const matches = text.match(re);
+    if (matches) for (const m of matches) seen.add(m.toLowerCase() + '@' + (text.indexOf(m)));
+  }
+  return seen.size;
+}
+
+/** Pack `--- PAGE BREAK ---` separated pages into chunks under the char
+ *  budget. A 10-page ledger becomes ONE chunk; a 60-page ledger ~7 chunks. */
+function chunkLedgerText(rawText: string, maxCharsPerChunk: number, maxChunks: number): string[] {
+  const pages = rawText.split(/\n?---\s*PAGE BREAK\s*---\n?/).map(p => p.trim()).filter(Boolean);
+  const chunks: string[] = [];
+  let buf: string[] = [];
+  let bufLen = 0;
+  for (let i = 0; i < pages.length; i++) {
+    const p = pages[i];
+    if (buf.length > 0 && bufLen + p.length > maxCharsPerChunk) {
+      chunks.push(buf.join('\n\n'));
+      buf = [];
+      bufLen = 0;
+      if (chunks.length >= maxChunks) break;
+    }
+    buf.push(p);
+    bufLen += p.length + 2;
+  }
+  if (buf.length > 0 && chunks.length < maxChunks) chunks.push(buf.join('\n\n'));
+  if (chunks.length === 0) chunks.push(rawText.slice(0, maxCharsPerChunk));
+  return chunks;
+}
+
+/** Merge per-chunk results into a single ExtractedLedger. Account totals
+ *  are recomputed from the actual transactions (the model's per-chunk
+ *  totals are unreliable when an account is split across chunks). Account
+ *  metadata (type, opening, closing) is taken from the first / last chunk
+ *  that surfaced it. */
+function mergeLedgerChunks(chunkResults: LedgerTsvChunkResult[]): ExtractedLedger {
+  const partyName = chunkResults.map(r => r.partyName).find(v => !!v) ?? null;
+  const gstin = chunkResults.map(r => r.gstin).find(v => !!v) ?? null;
+  const periodFrom = chunkResults.map(r => r.periodFrom).find(v => !!v) ?? null;
+  const periodTo = chunkResults.map(r => r.periodTo).find(v => !!v) ?? null;
+
+  // Group transactions by lowercase account name. Preserve insertion order
+  // so the first time we see an account in a chunk fixes its display order.
+  const accountOrder: string[] = [];
+  const accountMeta = new Map<string, { name: string; accountType: string | null; opening: number | null; closing: number | null }>();
+  const txByAccount = new Map<string, ExtractedTransaction[]>();
+
+  const ensureAccount = (name: string, accountType: string | null) => {
+    const key = name.toLowerCase();
+    if (!accountMeta.has(key)) {
+      accountOrder.push(key);
+      accountMeta.set(key, { name, accountType, opening: null, closing: null });
+      txByAccount.set(key, []);
+    } else if (accountType && !accountMeta.get(key)!.accountType) {
+      accountMeta.get(key)!.accountType = accountType;
+    }
+  };
+
+  for (const chunk of chunkResults) {
+    for (const a of chunk.accounts) {
+      ensureAccount(a.name, a.accountType);
+      const meta = accountMeta.get(a.name.toLowerCase())!;
+      // Opening balance: take the FIRST non-null value seen across chunks
+      // (the chunk that actually contained the opening balance line).
+      if (meta.opening === null && a.opening !== null) meta.opening = a.opening;
+      // Closing balance: take the LAST non-null value (the chunk that
+      // actually contained the closing balance line is usually the last
+      // chunk in which the account appears).
+      if (a.closing !== null) meta.closing = a.closing;
+    }
+    for (const t of chunk.transactions) {
+      ensureAccount(t.accountName, null);
+      const key = t.accountName.toLowerCase();
+      txByAccount.get(key)!.push({
+        date: t.date,
+        narration: t.narration,
+        voucher: t.voucher,
+        debit: t.debit,
+        credit: t.credit,
+        balance: t.balance,
+      });
+    }
+  }
+
+  const accounts: ExtractedAccount[] = accountOrder.map((key) => {
+    const meta = accountMeta.get(key)!;
+    const txs = txByAccount.get(key) ?? [];
+    const totalDebit = txs.reduce((s, t) => s + (t.debit || 0), 0);
+    const totalCredit = txs.reduce((s, t) => s + (t.credit || 0), 0);
+    return {
+      name: meta.name,
+      accountType: meta.accountType,
+      opening: meta.opening ?? 0,
+      closing: meta.closing ?? 0,
+      totalDebit,
+      totalCredit,
+      transactions: txs,
+    };
+  });
+
+  return { partyName, gstin, periodFrom, periodTo, accounts };
+}
+
 // ── Routes ──────────────────────────────────────────────────────────────
 
 // GET /api/ledger-scrutiny — list jobs (with usage counter)
@@ -312,19 +745,32 @@ router.patch('/:id/observations/:obsId', (req: AuthRequest, res: Response) => {
   res.json({ observation: obs ? serializeObservation(obs) : null });
 });
 
-// POST /api/ledger-scrutiny/upload — multipart PDF upload + extract pass
+// POST /api/ledger-scrutiny/upload — accepts EITHER:
+//   - multipart/form-data with a PDF file (vision path; used for scanned
+//     ledgers without a text layer), OR
+//   - application/json with `{ pdfText, filename? }` (TSV chunked path; the
+//     frontend extracts the PDF text via pdfjs-dist and sends it here. This
+//     mirrors the bank-statement analyzer and is what makes the feature work
+//     reliably on 50+ page ledgers).
 router.post(
   '/upload',
   (req: Request, res: Response, next: NextFunction) => {
-    upload.single('file')(req, res, (err) => {
-      if (err) return next(err);
+    const ct = req.headers['content-type'] ?? '';
+    if (typeof ct === 'string' && ct.startsWith('multipart/form-data')) {
+      upload.single('file')(req, res, (err) => {
+        if (err) return next(err);
+        next();
+      });
+    } else {
       next();
-    });
+    }
   },
   async (req: AuthRequest, res: Response) => {
     if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
-    if (!req.file) {
-      res.status(400).json({ error: 'No file uploaded. Attach a ledger PDF as "file".' });
+
+    const isPdfText = !req.file && typeof req.body?.pdfText === 'string' && req.body.pdfText.length > 0;
+    if (!req.file && !isPdfText) {
+      res.status(400).json({ error: 'No file uploaded. Attach a ledger PDF as "file" or send pdfText JSON.' });
       return;
     }
 
@@ -334,12 +780,28 @@ router.post(
     const quota = enforceQuota(req, res);
     if (!quota.ok) return;
 
-    const filename = req.file.originalname;
-    const mimeType = req.file.mimetype;
-    const fileHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
+    let filename: string;
+    let mimeType: string;
+    let fileHash: string;
+    let pdfText: string | null = null;
+
+    if (req.file) {
+      filename = req.file.originalname;
+      mimeType = req.file.mimetype;
+      fileHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
+    } else {
+      pdfText = String(req.body.pdfText);
+      filename = typeof req.body?.filename === 'string' && req.body.filename.trim()
+        ? String(req.body.filename)
+        : 'ledger.pdf';
+      mimeType = 'application/pdf';
+      // Hash the text content — re-extracting the same digital ledger
+      // produces byte-identical text from pdfjs, so the cache still works.
+      fileHash = crypto.createHash('sha256').update(pdfText).digest('hex');
+    }
 
     // If the user uploaded the same file before, reuse the extraction —
-    // creates a fresh job row but skips re-running the vision pass.
+    // creates a fresh job row but skips re-running the extract pass.
     const cached = ledgerScrutinyRepo.findByHashForUser(req.user.id, fileHash);
 
     const job = ledgerScrutinyRepo.createJob(req.user.id, quota.billingUserId, {
@@ -361,9 +823,87 @@ router.post(
         rawJson = cached.raw_extracted;
         const parsed = safeParseJson<ExtractedLedger>(rawJson);
         extracted = normalizeExtraction(parsed);
-      } else {
+      } else if (pdfText !== null) {
+        // ── TSV chunked path (digital PDFs) ─────────────────────────────
+        // Sized to mirror the bank-statement pipeline. 8K-char chunks fit
+        // comfortably inside gemini-2.5-flash with a 16K-token output
+        // budget once thinking is disabled (~500 TSV rows of headroom),
+        // which leaves enough slack for dense Tally exports where a single
+        // narration can run 200+ chars. 50 chunks covers ~150 pages.
         ledgerScrutinyRepo.setStatus(job.id, req.user.id, 'extracting');
-        const base64 = req.file.buffer.toString('base64');
+        const MAX_CHARS_PER_CHUNK = 8_000;
+        const MAX_OUTPUT_TOKENS = 16_384;
+        const MAX_CHUNKS = 50;
+        const CHUNK_CONCURRENCY = 4;
+
+        const chunks = chunkLedgerText(pdfText, MAX_CHARS_PER_CHUNK, MAX_CHUNKS);
+        const dateCount = countLikelyDates(pdfText);
+        console.log(`[ledger-scrutiny] pdfText: ${chunks.length} chunk(s), ~${dateCount} candidate dates`);
+
+        const chunkResults = await mapWithConcurrency(
+          chunks,
+          CHUNK_CONCURRENCY,
+          async (chunk, idx) => {
+            const t0 = Date.now();
+            try {
+              const r = await extractLedgerTsv(chunk, MAX_OUTPUT_TOKENS);
+              console.log(`[ledger-scrutiny] chunk ${idx + 1}/${chunks.length} ✓ ${r.accounts.length} accounts, ${r.actualCount} TX in ${Date.now() - t0}ms`);
+              return r;
+            } catch (e) {
+              const msg = (e as Error).message ?? String(e);
+              console.error(`[ledger-scrutiny] chunk ${idx + 1}/${chunks.length} ✗ ${msg}`);
+              throw new Error(`Section ${idx + 1}/${chunks.length}: ${msg}`);
+            }
+          },
+        );
+
+        extracted = mergeLedgerChunks(chunkResults);
+        const totalTx = extracted.accounts.reduce((s, a) => s + a.transactions.length, 0);
+
+        // Cross-check: candidate-date count vs extracted transaction count.
+        // dateCount is noisy (period headers, voucher dates not in tx rows,
+        // running-balance "As at" lines all match), so we anchor the floor
+        // at 50% — same threshold the bank-statement analyzer uses. Catches
+        // wholesale chunk loss without false-failing legitimate ledgers.
+        if (dateCount > 0 && totalTx < dateCount * 0.5) {
+          throw new Error(
+            `Transaction count sanity check failed: extracted ${totalTx} TX rows but found ~${dateCount} date-like markers in the ledger text. ` +
+            `Rather than persist a likely-incomplete extraction, we're bailing.`,
+          );
+        }
+
+        extracted = normalizeExtraction(extracted);
+        rawJson = JSON.stringify(extracted);
+
+        // Aggregate cost across all chunks.
+        try {
+          const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
+          const inputTok = chunkResults.reduce((s, r) => s + r.inputTokens, 0);
+          const outputTok = chunkResults.reduce((s, r) => s + r.outputTokens, 0);
+          const cost = inputTok * GEMINI_T2_INPUT_COST + outputTok * GEMINI_T2_OUTPUT_COST;
+          const modelUsed = chunkResults[0]?.modelUsed ?? 'gemini-2.5-flash';
+          usageRepo.logWithBilling(
+            clientIp,
+            req.user.id,
+            quota.billingUserId,
+            inputTok,
+            outputTok,
+            cost,
+            false,
+            modelUsed,
+            false,
+            'ledger_extract',
+          );
+        } catch (err) {
+          console.error('[ledger-scrutiny] cost log failed', err);
+        }
+      } else {
+        // ── Vision path (scanned PDFs without a text layer) ─────────────
+        // The legacy single-call JSON extraction. Kept as a fallback for
+        // image-only PDFs where pdfjs can't recover any text. Less reliable
+        // on long ledgers — the frontend should prefer the pdfText path.
+        ledgerScrutinyRepo.setStatus(job.id, req.user.id, 'extracting');
+        const base64 = req.file!.buffer.toString('base64');
         const dataUrl = `data:${mimeType};base64,${base64}`;
         const result = await extractWithRetry<ExtractedLedger>(dataUrl, LEDGER_EXTRACT_PROMPT, {
           maxTokens: 16384,
@@ -371,7 +911,6 @@ router.post(
         extracted = normalizeExtraction(result.data);
         rawJson = JSON.stringify(extracted);
 
-        // Log the vision-extract cost so it shows up in admin api-cost dashboards.
         try {
           const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
           const cost = result.inputTokens * GEMINI_T2_INPUT_COST + result.outputTokens * GEMINI_T2_OUTPUT_COST;

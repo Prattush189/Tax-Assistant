@@ -90,8 +90,12 @@ app.use(
 //     and sets req._body = true so express.json() skips re-parsing this route.
 app.use('/api/webhooks', express.raw({ type: 'application/json' }), webhooksRouter);
 
-// 3b. Body parsing for all other routes
-app.use(express.json({ limit: '1mb' }));
+// 3b. Body parsing for all other routes. 5 MB headroom is needed for the
+// ledger-scrutiny pdfText path: a 1 MB compressed Tally / Busy PDF can
+// expand to 3-5 MB of plain text after pdfjs extraction, and we send that
+// as JSON. Bank statements use the same pdfText pattern with smaller files
+// and stay well under the limit.
+app.use(express.json({ limit: '5mb' }));
 
 // 4. API routes
 // Auth routes — public, with brute-force protection

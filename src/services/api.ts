@@ -1933,6 +1933,24 @@ export async function fetchLedgerScrutinyJob(id: string): Promise<LedgerScrutiny
 }
 
 export async function uploadLedgerScrutinyPdf(file: File): Promise<LedgerScrutinyDetail> {
+  // Fast / reliable path: digital Tally / Busy / Marg PDFs already carry a
+  // text layer. Extract it in the browser and send text-only JSON; the
+  // server runs the chunked TSV pipeline that handles 50+ pages cleanly.
+  // Scanned image-only PDFs (no text layer) fall through to multipart and
+  // get the legacy single-call vision pass.
+  if (file.type === 'application/pdf') {
+    try {
+      const { extractPdfTextClient } = await import('../lib/pdfText');
+      const text = await extractPdfTextClient(file);
+      if (text) {
+        return uploadLedgerScrutinyPdfText(text, file.name);
+      }
+    } catch (err) {
+      // Text extraction is best-effort — fall back to vision on any failure.
+      console.warn('[uploadLedgerScrutinyPdf] text extract failed, falling back to vision:', err);
+    }
+  }
+
   const formData = new FormData();
   formData.append('file', file);
   const controller = new AbortController();
@@ -1941,6 +1959,41 @@ export async function uploadLedgerScrutinyPdf(file: File): Promise<LedgerScrutin
     method: 'POST',
     headers: { ...getAuthHeaders() },
     body: formData,
+    signal: controller.signal,
+  });
+  try {
+    let res = await doFetch();
+    if (res.status === 401) {
+      const refreshed = await tryRefreshToken();
+      if (refreshed) res = await doFetch();
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const parts = [data.error ?? 'Failed to upload ledger'];
+      if (data.hint) parts.push(data.hint);
+      if (data.detail) parts.push(`(${data.detail})`);
+      throw new Error(parts.join(' — '));
+    }
+    return data;
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('Ledger extract timed out — try a smaller export or split the year.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function uploadLedgerScrutinyPdfText(pdfText: string, filename: string): Promise<LedgerScrutinyDetail> {
+  // Long ledgers run chunked Gemini calls in parallel; allow 4 minutes
+  // before the client kills the request, matching the multipart timeout.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 240_000);
+  const doFetch = () => fetch('/api/ledger-scrutiny/upload', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    body: JSON.stringify({ pdfText, filename }),
     signal: controller.signal,
   });
   try {
