@@ -21,7 +21,7 @@ import { extractWithRetry } from '../lib/documentExtract.js';
 import { safeParseJson } from '../lib/geminiJson.js';
 import { pickChatProvider } from '../lib/chatProvider.js';
 import { SseWriter } from '../lib/sseStream.js';
-import { gemini, GEMINI_CHAT_MODEL_THINK_FB, GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST } from '../lib/gemini.js';
+import { gemini, GEMINI_CHAT_MODEL_THINK_FB, costForModel } from '../lib/gemini.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import {
   LEDGER_EXTRACT_PROMPT,
@@ -422,11 +422,20 @@ function parseLedgerTsvResponse(raw: string): Omit<LedgerTsvChunkResult, 'inputT
   };
 }
 
+/** Records the token usage of a Gemini call regardless of whether the
+ *  response parsed cleanly. The route supplies a closure that captures
+ *  user/billing identifiers and writes through usageRepo with category
+ *  `_failed` for thrown attempts. Lets the admin dashboard distinguish
+ *  productive from wasted spend instead of silently under-counting. */
+type RecordAttempt = (input: { failed: boolean; inputTokens: number; outputTokens: number; model: string }) => void;
+const NOOP_RECORD: RecordAttempt = () => {};
+
 async function extractLedgerTsvOnce(
   chunkText: string,
   model: string,
   maxTokens: number,
   reasoningEffort: 'none' | 'low' | 'medium' | 'high',
+  recordAttempt: RecordAttempt = NOOP_RECORD,
 ): Promise<LedgerTsvChunkResult> {
   const messages: ChatCompletionMessageParam[] = [{
     role: 'user',
@@ -448,48 +457,64 @@ async function extractLedgerTsvOnce(
   });
   const raw = response.choices[0]?.message?.content ?? '';
   const finishReason = response.choices[0]?.finish_reason ?? 'unknown';
-  const parsed = parseLedgerTsvResponse(raw);
+  const inputTokens = response.usage?.prompt_tokens ?? 0;
+  const outputTokens = response.usage?.completion_tokens ?? 0;
+  // Capture usage immediately. If any of the validation steps below throw,
+  // the caller still gets the cost reported via the recordAttempt closure.
+  // Mark `failed: true` until we know parsing succeeded.
+  let succeeded = false;
+  try {
+    const parsed = parseLedgerTsvResponse(raw);
 
-  // Integrity check #1: trailer MUST be present. Its absence means either
-  // the model output truncated mid-stream (hit max_tokens) OR the model
-  // returned a short prose / refusal response. Log a preview + finish_reason
-  // so the next occurrence tells us which case it is.
-  if (parsed.declaredCount < 0) {
-    const preview = raw.slice(0, 300).replace(/\n/g, '\\n');
-    console.warn(`[ledger-scrutiny] ${model} truncated (finish_reason=${finishReason}, got ${parsed.actualCount} TX). Raw preview: ${preview}`);
-    throw new Error(`TSV response was truncated: missing ---END:N--- trailer (got ${parsed.actualCount} TX, finish_reason=${finishReason})`);
-  }
-
-  // Integrity check #2: parsed rows MUST NOT be fewer than the trailer
-  // count. If we parsed fewer than declared we usually dropped some
-  // (malformed lines, wrong field count). But Gemini also empirically
-  // miscounts its own trailer by 1-2 on dense input even when nothing
-  // was dropped (`dropped: unknown`), so we tolerate a small delta —
-  // ≤ max(2, 2% of declared) — rather than throwing away a 80-row
-  // chunk because the trailer said 84 and we got 83 cleanly.
-  if (parsed.actualCount < parsed.declaredCount) {
-    const delta = parsed.declaredCount - parsed.actualCount;
-    const tolerance = Math.max(2, Math.floor(parsed.declaredCount * 0.02));
-    const reasonCounts = parsed.droppedReasons.reduce<Record<string, number>>((acc, r) => {
-      acc[r] = (acc[r] ?? 0) + 1;
-      return acc;
-    }, {});
-    const reasonStr = Object.entries(reasonCounts).map(([k, v]) => `${k}=${v}`).join(',') || 'unknown';
-    if (delta > tolerance) {
-      throw new Error(`TSV row-count mismatch: trailer claims ${parsed.declaredCount}, parsed ${parsed.actualCount} (dropped: ${reasonStr})`);
+    // Integrity check #1: trailer MUST be present. Its absence means either
+    // the model output truncated mid-stream (hit max_tokens) OR the model
+    // returned a short prose / refusal response. Log a preview + finish_reason
+    // so the next occurrence tells us which case it is.
+    if (parsed.declaredCount < 0) {
+      const preview = raw.slice(0, 300).replace(/\n/g, '\\n');
+      console.warn(`[ledger-scrutiny] ${model} truncated (finish_reason=${finishReason}, got ${parsed.actualCount} TX). Raw preview: ${preview}`);
+      throw new Error(`TSV response was truncated: missing ---END:N--- trailer (got ${parsed.actualCount} TX, finish_reason=${finishReason})`);
     }
-    console.warn(`[ledger-scrutiny] ${model} small trailer undercount within tolerance: claimed ${parsed.declaredCount}, parsed ${parsed.actualCount} (dropped: ${reasonStr}) — accepting`);
-  }
-  if (parsed.actualCount > parsed.declaredCount) {
-    console.warn(`[ledger-scrutiny] ${model} trailer undercount: claimed ${parsed.declaredCount}, parsed ${parsed.actualCount} — accepting parsed count`);
-  }
 
-  return {
-    ...parsed,
-    inputTokens: response.usage?.prompt_tokens ?? 0,
-    outputTokens: response.usage?.completion_tokens ?? 0,
-    modelUsed: model,
-  };
+    // Integrity check #2: parsed rows MUST NOT be fewer than the trailer
+    // count. If we parsed fewer than declared we usually dropped some
+    // (malformed lines, wrong field count). But Gemini also empirically
+    // miscounts its own trailer by 1-2 on dense input even when nothing
+    // was dropped (`dropped: unknown`), so we tolerate a small delta —
+    // ≤ max(2, 2% of declared) — rather than throwing away a 80-row
+    // chunk because the trailer said 84 and we got 83 cleanly.
+    if (parsed.actualCount < parsed.declaredCount) {
+      const delta = parsed.declaredCount - parsed.actualCount;
+      const tolerance = Math.max(2, Math.floor(parsed.declaredCount * 0.02));
+      const reasonCounts = parsed.droppedReasons.reduce<Record<string, number>>((acc, r) => {
+        acc[r] = (acc[r] ?? 0) + 1;
+        return acc;
+      }, {});
+      const reasonStr = Object.entries(reasonCounts).map(([k, v]) => `${k}=${v}`).join(',') || 'unknown';
+      if (delta > tolerance) {
+        throw new Error(`TSV row-count mismatch: trailer claims ${parsed.declaredCount}, parsed ${parsed.actualCount} (dropped: ${reasonStr})`);
+      }
+      console.warn(`[ledger-scrutiny] ${model} small trailer undercount within tolerance: claimed ${parsed.declaredCount}, parsed ${parsed.actualCount} (dropped: ${reasonStr}) — accepting`);
+    }
+    if (parsed.actualCount > parsed.declaredCount) {
+      console.warn(`[ledger-scrutiny] ${model} trailer undercount: claimed ${parsed.declaredCount}, parsed ${parsed.actualCount} — accepting parsed count`);
+    }
+
+    succeeded = true;
+    return {
+      ...parsed,
+      inputTokens,
+      outputTokens,
+      modelUsed: model,
+    };
+  } finally {
+    // Record this attempt's cost. Successful attempts are still aggregated
+    // and logged at the route level so we can attribute them to features —
+    // `failed: false` here is a no-op for the cost dashboard. Failed
+    // attempts (truncation / trailer mismatch / row-count mismatch) get
+    // logged with category `_failed` so wasted spend is visible.
+    recordAttempt({ failed: !succeeded, inputTokens, outputTokens, model });
+  }
 }
 
 /**
@@ -502,7 +527,7 @@ async function extractLedgerTsvOnce(
  * immediately — retrying the same params on the same model can't fix a
  * truncated response, but the fallback's doubled output ceiling can.
  */
-async function extractLedgerTsv(chunkText: string, maxTokens: number): Promise<LedgerTsvChunkResult> {
+async function extractLedgerTsv(chunkText: string, maxTokens: number, recordAttempt: RecordAttempt = NOOP_RECORD): Promise<LedgerTsvChunkResult> {
   const MAX_PRIMARY_ATTEMPTS = 4;
   const MAX_FALLBACK_ATTEMPTS = 3;
   let lastErr: unknown;
@@ -522,7 +547,7 @@ async function extractLedgerTsv(chunkText: string, maxTokens: number): Promise<L
   const PRIMARY_BACKOFFS_MS = [2_000, 5_000, 12_000];
   for (let attempt = 0; attempt < MAX_PRIMARY_ATTEMPTS; attempt++) {
     try {
-      return await extractLedgerTsvOnce(chunkText, 'gemini-2.5-flash', maxTokens, 'none');
+      return await extractLedgerTsvOnce(chunkText, 'gemini-2.5-flash', maxTokens, 'none', recordAttempt);
     } catch (err) {
       lastErr = err;
       const status = (err as { status?: number })?.status ?? 0;
@@ -541,7 +566,7 @@ async function extractLedgerTsv(chunkText: string, maxTokens: number): Promise<L
 
   for (let attempt = 0; attempt < MAX_FALLBACK_ATTEMPTS; attempt++) {
     try {
-      return await extractLedgerTsvOnce(chunkText, GEMINI_CHAT_MODEL_THINK_FB, maxTokens * 2, 'low');
+      return await extractLedgerTsvOnce(chunkText, GEMINI_CHAT_MODEL_THINK_FB, maxTokens * 2, 'low', recordAttempt);
     } catch (err) {
       lastErr = err;
       const status = (err as { status?: number })?.status ?? 0;
@@ -581,9 +606,10 @@ async function extractLedgerTsvWithBisect(
   depth: number,
   maxDepth: number,
   label: string,
+  recordAttempt: RecordAttempt = NOOP_RECORD,
 ): Promise<LedgerTsvChunkResult[]> {
   try {
-    const r = await extractLedgerTsv(chunkText, maxTokens);
+    const r = await extractLedgerTsv(chunkText, maxTokens, recordAttempt);
     return [r];
   } catch (err) {
     const msg = (err as Error).message ?? String(err);
@@ -613,8 +639,8 @@ async function extractLedgerTsvWithBisect(
     if (!left || !right) throw err;
 
     const [leftRes, rightRes] = await Promise.all([
-      extractLedgerTsvWithBisect(left, maxTokens, depth + 1, maxDepth, `${label}.L`),
-      extractLedgerTsvWithBisect(right, maxTokens, depth + 1, maxDepth, `${label}.R`),
+      extractLedgerTsvWithBisect(left, maxTokens, depth + 1, maxDepth, `${label}.L`, recordAttempt),
+      extractLedgerTsvWithBisect(right, maxTokens, depth + 1, maxDepth, `${label}.R`, recordAttempt),
     ]);
     return [...leftRes, ...rightRes];
   }
@@ -875,6 +901,27 @@ router.post(
       fileHash = crypto.createHash('sha256').update(pdfText).digest('hex');
     }
 
+    // Refuse to start a parallel extraction if one is still running for
+    // this exact file. A tab close + retry used to fire a fresh Gemini
+    // run while the previous one was still going, doubling cost for no
+    // benefit. The in-progress job stays alive on the server (Node.js
+    // doesn't abort handlers when the client disconnects), so handing
+    // back its id lets the UI re-attach via GET /api/ledger-scrutiny/:id
+    // instead of paying for the same work twice.
+    const inProgress = ledgerScrutinyRepo.findInProgressByHashForUser(req.user.id, fileHash);
+    if (inProgress) {
+      console.log(`[ledger-scrutiny] re-attaching to in-progress job ${inProgress.id} (status=${inProgress.status}) instead of starting a new run`);
+      const accounts = ledgerScrutinyRepo.listAccounts(inProgress.id).map(serializeAccount);
+      const observations = ledgerScrutinyRepo.listObservations(inProgress.id).map(serializeObservation);
+      res.status(200).json({
+        job: serializeJob(inProgress),
+        accounts,
+        observations,
+        resumed: true,
+      });
+      return;
+    }
+
     // If the user uploaded the same file before, reuse the extraction —
     // creates a fresh job row but skips re-running the extract pass.
     const cached = ledgerScrutinyRepo.findByHashForUser(req.user.id, fileHash);
@@ -932,6 +979,37 @@ router.post(
         const dateCount = countLikelyDates(pdfText);
         console.log(`[ledger-scrutiny] pdfText path: ${chunks.length} chunk(s), ~${dateCount} candidate dates`);
 
+        // Closure that fires for every Gemini attempt — successful or
+        // not. Failed attempts get logged immediately at category
+        // `ledger_extract_failed` so the admin dashboard reflects wasted
+        // spend; successful attempts are aggregated and logged as
+        // `ledger_extract` after merge so the per-feature totals stay
+        // tidy. Without this, retries / truncations / trailer mismatches
+        // burned billable tokens that never showed up in our tracking
+        // (production: $7 spend vs $1.59 logged on a 33-chunk run).
+        const ledgerClientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
+        const recordLedgerAttempt: RecordAttempt = ({ failed, inputTokens, outputTokens, model }) => {
+          if (!failed) return;
+          if (inputTokens === 0 && outputTokens === 0) return;
+          try {
+            const cost = costForModel(model, inputTokens, outputTokens);
+            usageRepo.logWithBilling(
+              ledgerClientIp,
+              req.user!.id,
+              quota.billingUserId,
+              inputTokens,
+              outputTokens,
+              cost,
+              false,
+              model,
+              false,
+              'ledger_extract_failed',
+            );
+          } catch (e) {
+            console.error('[ledger-scrutiny] failed-attempt cost log error', e);
+          }
+        };
+
         const chunkResultLists = await mapWithConcurrency(
           chunks,
           CHUNK_CONCURRENCY,
@@ -940,7 +1018,7 @@ router.post(
             const label = `chunk ${idx + 1}/${chunks.length}`;
             try {
               // depth 0 → can recursively split up to depth 2 (4 sub-chunks).
-              const results = await extractLedgerTsvWithBisect(chunk, MAX_OUTPUT_TOKENS, 0, 2, label);
+              const results = await extractLedgerTsvWithBisect(chunk, MAX_OUTPUT_TOKENS, 0, 2, label, recordLedgerAttempt);
               const totalTx = results.reduce((s, r) => s + r.actualCount, 0);
               const totalAcct = results.reduce((s, r) => s + r.accounts.length, 0);
               const note = results.length > 1 ? ` (bisected into ${results.length})` : '';
@@ -976,15 +1054,19 @@ router.post(
         extracted = normalizeExtraction(extracted);
         rawJson = JSON.stringify(extracted);
 
-        // Aggregate cost across all chunks.
+        // Aggregate cost across all successful chunks. Price each chunk
+        // by the model that actually produced it (gemini-2.5-flash on the
+        // primary path, gemini-3-flash-preview on the fallback) — using a
+        // flat T2 / Flash-Lite rate here was under-counting by 3-6x
+        // because the chunks never run on Flash-Lite. Failed attempts
+        // are already logged separately via recordLedgerAttempt.
         try {
-          const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
           const inputTok = chunkResults.reduce((s, r) => s + r.inputTokens, 0);
           const outputTok = chunkResults.reduce((s, r) => s + r.outputTokens, 0);
-          const cost = inputTok * GEMINI_T2_INPUT_COST + outputTok * GEMINI_T2_OUTPUT_COST;
+          const cost = chunkResults.reduce((s, r) => s + costForModel(r.modelUsed, r.inputTokens, r.outputTokens), 0);
           const modelUsed = chunkResults[0]?.modelUsed ?? 'gemini-2.5-flash';
           usageRepo.logWithBilling(
-            clientIp,
+            ledgerClientIp,
             req.user.id,
             quota.billingUserId,
             inputTok,
@@ -1016,7 +1098,7 @@ router.post(
 
         try {
           const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
-          const cost = result.inputTokens * GEMINI_T2_INPUT_COST + result.outputTokens * GEMINI_T2_OUTPUT_COST;
+          const cost = costForModel(result.modelUsed, result.inputTokens, result.outputTokens);
           usageRepo.logWithBilling(
             clientIp,
             req.user.id,

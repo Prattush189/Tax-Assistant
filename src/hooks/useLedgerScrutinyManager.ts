@@ -73,6 +73,23 @@ export function useLedgerScrutinyManager(enabled: boolean) {
     }
   }, []);
 
+  // Resume polling for in-progress jobs across reloads. Server-side, Node
+  // does NOT abort handlers when the client disconnects — an extraction
+  // started in a tab that the user closed keeps running and persists its
+  // result via setStatus / saveExtraction. Poll every 5 s while any job
+  // is in `extracting` or `scrutinizing`, refreshing the list (and the
+  // currently-loaded detail) until the in-progress jobs settle. This way
+  // a reload mid-run shows the correct progress instead of a stale state,
+  // and the upload route's in-progress guard prevents the user from
+  // accidentally firing a duplicate run.
+  useEffect(() => {
+    if (!enabled) return;
+    const hasInProgress = jobs.some(j => j.status === 'extracting' || j.status === 'scrutinizing');
+    if (!hasInProgress) return;
+    const handle = setInterval(() => { void refresh(); if (currentId) void load(currentId); }, 5000);
+    return () => clearInterval(handle);
+  }, [enabled, jobs, currentId, refresh, load]);
+
   const upload = useCallback(async (file: File): Promise<LedgerScrutinyDetail> => {
     setIsUploading(true);
     setError(null);

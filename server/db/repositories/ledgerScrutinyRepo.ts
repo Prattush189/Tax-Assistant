@@ -100,6 +100,15 @@ const stmts = {
   jobByHashForUser: db.prepare(
     'SELECT * FROM ledger_scrutiny_jobs WHERE user_id = ? AND file_hash = ? ORDER BY created_at DESC LIMIT 1'
   ),
+  // Used to refuse a duplicate extract when one is still running for the
+  // same file. Without this, a user reload-and-retry triggers a parallel
+  // extraction that burns Gemini tokens for work the previous request is
+  // still finishing on the server.
+  inProgressJobByHashForUser: db.prepare(
+    `SELECT * FROM ledger_scrutiny_jobs
+       WHERE user_id = ? AND file_hash = ? AND status IN ('extracting','scrutinizing','pending')
+       ORDER BY created_at DESC LIMIT 1`
+  ),
   insertJob: db.prepare(
     `INSERT INTO ledger_scrutiny_jobs (
       id, user_id, billing_user_id, name,
@@ -179,6 +188,10 @@ export const ledgerScrutinyRepo = {
 
   findByHashForUser(userId: string, fileHash: string): LedgerJobRow | undefined {
     return stmts.jobByHashForUser.get(userId, fileHash) as LedgerJobRow | undefined;
+  },
+
+  findInProgressByHashForUser(userId: string, fileHash: string): LedgerJobRow | undefined {
+    return stmts.inProgressJobByHashForUser.get(userId, fileHash) as LedgerJobRow | undefined;
   },
 
   createJob(userId: string, billingUserId: string, input: LedgerJobCreateInput): LedgerJobRow {

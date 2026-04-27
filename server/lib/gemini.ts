@@ -50,3 +50,27 @@ export const geminiConfigured = !!GEMINI_API_KEY;
 // Primary model: flash-lite is cheaper and faster. Fallback to full flash if it fails.
 export const GEMINI_MODEL = 'gemini-2.5-flash-lite';
 export const GEMINI_FALLBACK_MODEL = 'gemini-2.5-flash';
+
+/**
+ * Per-model cost calculator. Routes used to flat-rate every chunk at
+ * GEMINI_T2 (Flash-Lite) regardless of which model actually ran, which
+ * under-attributed ledger and bank-statement TSV runs by 3-6x because
+ * those chunks routinely escalate to gemini-2.5-flash or
+ * gemini-3-flash-preview. Now every cost log resolves the rate from the
+ * model name returned by Gemini, so the admin dashboard reflects what
+ * the key was actually charged.
+ */
+export function costForModel(model: string, inputTokens: number, outputTokens: number): number {
+  if (model === GEMINI_CHAT_MODEL_THINK_FB || model === 'gemini-3-flash-preview') {
+    return inputTokens * GEMINI_THINK_FB_INPUT_COST + outputTokens * GEMINI_THINK_FB_OUTPUT_COST;
+  }
+  if (model === 'gemini-2.5-flash' || model === GEMINI_FALLBACK_MODEL) {
+    return inputTokens * GEMINI_THINK_INPUT_COST + outputTokens * GEMINI_THINK_OUTPUT_COST;
+  }
+  if (model === GEMINI_CHAT_MODEL_T1 || model === 'gemini-3.1-flash-lite-preview') {
+    return inputTokens * GEMINI_T1_INPUT_COST + outputTokens * GEMINI_T1_OUTPUT_COST;
+  }
+  // Default: Flash-Lite pricing. Used for unknown models so we
+  // under-attribute slightly rather than fabricate higher pricing.
+  return inputTokens * GEMINI_T2_INPUT_COST + outputTokens * GEMINI_T2_OUTPUT_COST;
+}

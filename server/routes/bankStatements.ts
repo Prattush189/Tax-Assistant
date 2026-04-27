@@ -5,7 +5,7 @@ import Papa from 'papaparse';
 import { extractWithRetry } from '../lib/documentExtract.js';
 import { callGeminiJson } from '../lib/geminiJson.js';
 import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_TSV_PROMPT, BANK_STATEMENT_CATEGORIES, buildConditionsBlock, countWords, MAX_CONDITION_WORDS } from '../lib/bankStatementPrompt.js';
-import { gemini, GEMINI_CHAT_MODEL_THINK_FB } from '../lib/gemini.js';
+import { gemini, GEMINI_CHAT_MODEL_THINK_FB, costForModel } from '../lib/gemini.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { bankStatementRepo } from '../db/repositories/bankStatementRepo.js';
 import { bankTransactionRepo, BankTransactionInput } from '../db/repositories/bankTransactionRepo.js';
@@ -14,7 +14,6 @@ import { bankStatementConditionRepo, BankStatementConditionRow } from '../db/rep
 import { userRepo } from '../db/repositories/userRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
-import { GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST } from '../lib/gemini.js';
 import { getBillingUser } from '../lib/billing.js';
 import { getUserLimits } from '../lib/planLimits.js';
 import { AuthRequest } from '../types.js';
@@ -159,12 +158,16 @@ function parseTsvResponse(raw: string): Omit<TsvExtractResult, 'inputTokens' | '
   };
 }
 
+type BankRecordAttempt = (input: { failed: boolean; inputTokens: number; outputTokens: number; model: string }) => void;
+const BANK_NOOP_RECORD: BankRecordAttempt = () => {};
+
 async function extractBankStatementTsvOnce(
   chunkText: string,
   model: string,
   maxTokens: number,
   reasoningEffort: 'none' | 'low' | 'medium' | 'high',
   conditionsBlock: string,
+  recordAttempt: BankRecordAttempt = BANK_NOOP_RECORD,
 ): Promise<TsvExtractResult> {
   const messages: ChatCompletionMessageParam[] = [{
     role: 'user',
@@ -192,46 +195,58 @@ async function extractBankStatementTsvOnce(
   });
   const raw = response.choices[0]?.message?.content ?? '';
   const finishReason = response.choices[0]?.finish_reason ?? 'unknown';
-  const parsed = parseTsvResponse(raw);
+  const inputTokens = response.usage?.prompt_tokens ?? 0;
+  const outputTokens = response.usage?.completion_tokens ?? 0;
+  // Capture usage immediately so a parse-failure throw still reports
+  // wasted spend via recordAttempt. Without this, retries / truncations
+  // / trailer mismatches burned billable tokens that never landed in
+  // usageRepo (the same blind spot as ledger extract).
+  let succeeded = false;
+  try {
+    const parsed = parseTsvResponse(raw);
 
-  // Integrity check #1: trailer MUST be present. Its absence means either
-  // the model's output was truncated mid-stream (hit max_tokens) OR the
-  // model returned a short prose reply / refusal that happens to contain
-  // a couple of tab-separated lines. Log the raw preview + finish_reason
-  // so the logs tell us which case it is on the next occurrence.
-  if (parsed.declaredCount < 0) {
-    const preview = raw.slice(0, 300).replace(/\n/g, '\\n');
-    console.warn(`[bank-statements] ${model} truncated (finish_reason=${finishReason}, got ${parsed.actualCount} rows). Raw preview: ${preview}`);
-    throw new Error(`TSV response was truncated: missing ---END:N--- trailer (got ${parsed.actualCount} rows, finish_reason=${finishReason})`);
-  }
+    // Integrity check #1: trailer MUST be present. Its absence means either
+    // the model's output was truncated mid-stream (hit max_tokens) OR the
+    // model returned a short prose reply / refusal that happens to contain
+    // a couple of tab-separated lines. Log the raw preview + finish_reason
+    // so the logs tell us which case it is on the next occurrence.
+    if (parsed.declaredCount < 0) {
+      const preview = raw.slice(0, 300).replace(/\n/g, '\\n');
+      console.warn(`[bank-statements] ${model} truncated (finish_reason=${finishReason}, got ${parsed.actualCount} rows). Raw preview: ${preview}`);
+      throw new Error(`TSV response was truncated: missing ---END:N--- trailer (got ${parsed.actualCount} rows, finish_reason=${finishReason})`);
+    }
 
-  // Integrity check #2: parsed rows MUST NOT be fewer than the trailer count.
-  // If we parsed fewer rows than the model says it emitted, we silently dropped
-  // some (malformed lines, wrong field count) — fail loudly. If we parsed MORE
-  // than declared, the model miscounted its own trailer (an empirically common
-  // Gemini quirk on dense statements); the rows themselves are fine so accept
-  // the parsed count. The statement-level countLikelyDates cross-check still
-  // catches wholesale row loss.
-  if (parsed.actualCount < parsed.declaredCount) {
-    // Summarize why rows were dropped so the logs tell us whether to relax
-    // the parser, retune the prompt, or investigate a specific statement.
-    const reasonCounts = parsed.droppedReasons.reduce<Record<string, number>>((acc, r) => {
-      acc[r] = (acc[r] ?? 0) + 1;
-      return acc;
-    }, {});
-    const reasonStr = Object.entries(reasonCounts).map(([k, v]) => `${k}=${v}`).join(',') || 'unknown';
-    throw new Error(`TSV row-count mismatch: trailer claims ${parsed.declaredCount}, parsed ${parsed.actualCount} (dropped: ${reasonStr})`);
-  }
-  if (parsed.actualCount > parsed.declaredCount) {
-    console.warn(`[bank-statements] ${model} trailer undercount: claimed ${parsed.declaredCount}, parsed ${parsed.actualCount} — accepting parsed count`);
-  }
+    // Integrity check #2: parsed rows MUST NOT be fewer than the trailer count.
+    // If we parsed fewer rows than the model says it emitted, we silently dropped
+    // some (malformed lines, wrong field count) — fail loudly. If we parsed MORE
+    // than declared, the model miscounted its own trailer (an empirically common
+    // Gemini quirk on dense statements); the rows themselves are fine so accept
+    // the parsed count. The statement-level countLikelyDates cross-check still
+    // catches wholesale row loss.
+    if (parsed.actualCount < parsed.declaredCount) {
+      // Summarize why rows were dropped so the logs tell us whether to relax
+      // the parser, retune the prompt, or investigate a specific statement.
+      const reasonCounts = parsed.droppedReasons.reduce<Record<string, number>>((acc, r) => {
+        acc[r] = (acc[r] ?? 0) + 1;
+        return acc;
+      }, {});
+      const reasonStr = Object.entries(reasonCounts).map(([k, v]) => `${k}=${v}`).join(',') || 'unknown';
+      throw new Error(`TSV row-count mismatch: trailer claims ${parsed.declaredCount}, parsed ${parsed.actualCount} (dropped: ${reasonStr})`);
+    }
+    if (parsed.actualCount > parsed.declaredCount) {
+      console.warn(`[bank-statements] ${model} trailer undercount: claimed ${parsed.declaredCount}, parsed ${parsed.actualCount} — accepting parsed count`);
+    }
 
-  return {
-    ...parsed,
-    inputTokens: response.usage?.prompt_tokens ?? 0,
-    outputTokens: response.usage?.completion_tokens ?? 0,
-    modelUsed: model,
-  };
+    succeeded = true;
+    return {
+      ...parsed,
+      inputTokens,
+      outputTokens,
+      modelUsed: model,
+    };
+  } finally {
+    recordAttempt({ failed: !succeeded, inputTokens, outputTokens, model });
+  }
 }
 
 /**
@@ -264,7 +279,7 @@ async function extractBankStatementTsvOnce(
  *     exactly what resolves truncation, so we don't waste another 30-50s
  *     retrying the same params on the same model.
  */
-async function extractBankStatementTsv(chunkText: string, maxTokens: number, conditionsBlock: string): Promise<TsvExtractResult> {
+async function extractBankStatementTsv(chunkText: string, maxTokens: number, conditionsBlock: string, recordAttempt: BankRecordAttempt = BANK_NOOP_RECORD): Promise<TsvExtractResult> {
   const MAX_PRIMARY_ATTEMPTS = 4;
   const MAX_FALLBACK_ATTEMPTS = 3;
   let lastErr: unknown;
@@ -291,7 +306,7 @@ async function extractBankStatementTsv(chunkText: string, maxTokens: number, con
   for (let attempt = 0; attempt < MAX_PRIMARY_ATTEMPTS; attempt++) {
     try {
       // gemini-2.5-flash supports thinking_budget=0 (reasoning_effort='none').
-      return await extractBankStatementTsvOnce(chunkText, 'gemini-2.5-flash', maxTokens, 'none', conditionsBlock);
+      return await extractBankStatementTsvOnce(chunkText, 'gemini-2.5-flash', maxTokens, 'none', conditionsBlock, recordAttempt);
     } catch (err) {
       lastErr = err;
       const status = (err as { status?: number })?.status ?? 0;
@@ -316,7 +331,7 @@ async function extractBankStatementTsv(chunkText: string, maxTokens: number, con
     try {
       // gemini-3-flash-preview can't fully disable thinking but accepts 'low',
       // which is still dramatically cheaper than the default 'medium' budget.
-      return await extractBankStatementTsvOnce(chunkText, GEMINI_CHAT_MODEL_THINK_FB, maxTokens * 2, 'low', conditionsBlock);
+      return await extractBankStatementTsvOnce(chunkText, GEMINI_CHAT_MODEL_THINK_FB, maxTokens * 2, 'low', conditionsBlock, recordAttempt);
     } catch (err) {
       lastErr = err;
       const status = (err as { status?: number })?.status ?? 0;
@@ -816,6 +831,34 @@ router.post(
 
         sendSse({ type: 'start', totalChunks: chunks.length, pages: pages.length });
 
+        // Failed-attempt cost logging closure. Production logs across the
+        // chunked TSV pipeline showed retries / truncations / trailer
+        // mismatches burning Gemini tokens that never landed in
+        // usageRepo. This makes wasted spend visible in the admin
+        // dashboard under category `bank_statement_failed`.
+        const bankClientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
+        const recordBankAttempt: BankRecordAttempt = ({ failed, inputTokens, outputTokens, model }) => {
+          if (!failed) return;
+          if (inputTokens === 0 && outputTokens === 0) return;
+          try {
+            const cost = costForModel(model, inputTokens, outputTokens);
+            usageRepo.logWithBilling(
+              bankClientIp,
+              req.user!.id,
+              quota.billingUserId,
+              inputTokens,
+              outputTokens,
+              cost,
+              false,
+              model,
+              false,
+              'bank_statement_failed',
+            );
+          } catch (e) {
+            console.error('[bank-statements] failed-attempt cost log error', e);
+          }
+        };
+
         // Bounded-concurrency: we still need every chunk to succeed (silently
         // dropping transactions is unacceptable for a tax feature) but firing
         // all chunks at Gemini simultaneously produces 429s on a single
@@ -828,7 +871,7 @@ router.post(
           async (chunk, idx) => {
             const t0 = Date.now();
             try {
-              const r = await extractBankStatementTsv(chunk, MAX_OUTPUT_TOKENS, conditionsBlock);
+              const r = await extractBankStatementTsv(chunk, MAX_OUTPUT_TOKENS, conditionsBlock, recordBankAttempt);
               console.log(`[bank-statements] chunk ${idx + 1}/${chunks.length} (pages ${chunkPageRanges[idx][0]}-${chunkPageRanges[idx][1]}) ✓ ${r.actualCount} tx in ${Date.now() - t0}ms`);
               completedCount += 1;
               sendSse({
@@ -931,7 +974,10 @@ router.post(
         if (usages && usages.length > 0) {
           const inputTok = usages.reduce((a, u) => a + u.inputTokens, 0);
           const outputTok = usages.reduce((a, u) => a + u.outputTokens, 0);
-          const cost = inputTok * GEMINI_T2_INPUT_COST + outputTok * GEMINI_T2_OUTPUT_COST;
+          // Price each call by its actual model. The chunked TSV path
+          // runs on gemini-2.5-flash / gemini-3-flash-preview; flat T2
+          // rates were under-counting by 3-6x.
+          const cost = usages.reduce((a, u) => a + costForModel(u.modelUsed, u.inputTokens, u.outputTokens), 0);
           usageRepo.logWithBilling(clientIp, req.user.id, quota.billingUserId, inputTok, outputTok, cost, false, usages[0].modelUsed, false, 'bank_statement');
         }
       } catch (err) {
