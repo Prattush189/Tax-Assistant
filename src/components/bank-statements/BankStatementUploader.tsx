@@ -94,11 +94,21 @@ export function BankStatementUploader({ manager }: Props) {
           {manager.isAnalyzing ? 'Analyzing your statement…' : 'Drop your bank statement here'}
         </p>
         {manager.isAnalyzing && manager.analyzeProgress ? (
-          <AnalyzeProgressBar progress={manager.analyzeProgress} />
+          <>
+            <AnalyzeProgressBar progress={manager.analyzeProgress} />
+            <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+              Long statements (50+ pages) can take up to 5 minutes — keep this tab open.
+            </p>
+          </>
         ) : (
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-            PDF, JPG, PNG, WebP up to 500 KB — or a CSV export from your bank
-          </p>
+          <>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+              PDF, JPG, PNG, WebP up to 500 KB — or a CSV export from your bank
+            </p>
+            <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+              Long statements (50+ pages) can take up to 5 minutes to analyse.
+            </p>
+          </>
         )}
       </div>
       <button

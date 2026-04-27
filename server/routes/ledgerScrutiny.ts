@@ -815,15 +815,23 @@ router.post(
       fileHash,
     });
 
+    // Declared outside the try so the catch block can include them in the
+    // error response — lets the user (and us in logs) see whether chunking
+    // was attempted at all when extraction fails.
+    let extractPath: 'cache' | 'tsv-chunked' | 'vision' = 'vision';
+    let chunkCount = 0;
+
     try {
       let extracted: ExtractedLedger;
       let rawJson: string;
 
       if (cached?.raw_extracted) {
+        extractPath = 'cache';
         rawJson = cached.raw_extracted;
         const parsed = safeParseJson<ExtractedLedger>(rawJson);
         extracted = normalizeExtraction(parsed);
       } else if (pdfText !== null) {
+        extractPath = 'tsv-chunked';
         // ── TSV chunked path (digital PDFs) ─────────────────────────────
         // Sized to mirror the bank-statement pipeline. 8K-char chunks fit
         // comfortably inside gemini-2.5-flash with a 16K-token output
@@ -837,8 +845,9 @@ router.post(
         const CHUNK_CONCURRENCY = 4;
 
         const chunks = chunkLedgerText(pdfText, MAX_CHARS_PER_CHUNK, MAX_CHUNKS);
+        chunkCount = chunks.length;
         const dateCount = countLikelyDates(pdfText);
-        console.log(`[ledger-scrutiny] pdfText: ${chunks.length} chunk(s), ~${dateCount} candidate dates`);
+        console.log(`[ledger-scrutiny] pdfText path: ${chunks.length} chunk(s), ~${dateCount} candidate dates`);
 
         const chunkResults = await mapWithConcurrency(
           chunks,
@@ -898,10 +907,12 @@ router.post(
           console.error('[ledger-scrutiny] cost log failed', err);
         }
       } else {
+        extractPath = 'vision';
         // ── Vision path (scanned PDFs without a text layer) ─────────────
         // The legacy single-call JSON extraction. Kept as a fallback for
         // image-only PDFs where pdfjs can't recover any text. Less reliable
         // on long ledgers — the frontend should prefer the pdfText path.
+        console.log(`[ledger-scrutiny] vision path: scanned PDF, no text layer`);
         ledgerScrutinyRepo.setStatus(job.id, req.user.id, 'extracting');
         const base64 = req.file!.buffer.toString('base64');
         const dataUrl = `data:${mimeType};base64,${base64}`;
@@ -952,19 +963,34 @@ router.post(
       ledgerScrutinyRepo.setStatus(job.id, req.user.id, 'pending');
 
       const accounts = ledgerScrutinyRepo.listAccounts(job.id);
+      const totalTx = extracted.accounts.reduce((s, a) => s + a.transactions.length, 0);
+      console.log(`[ledger-scrutiny] extract done via ${extractPath}: ${accounts.length} accounts, ${totalTx} TX${chunkCount ? `, ${chunkCount} chunk(s)` : ''}`);
       res.status(200).json({
         job: serializeJob(ledgerScrutinyRepo.findByIdForUser(job.id, req.user.id)),
         accounts: accounts.map(serializeAccount),
         observations: [],
+        extractPath,
+        chunkCount,
       });
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      console.error('[ledger-scrutiny] extract error:', errMsg);
+      console.error(`[ledger-scrutiny] extract error (path=${extractPath}, chunks=${chunkCount}):`, errMsg);
       ledgerScrutinyRepo.setStatus(job.id, req.user.id, 'error', errMsg.slice(0, 500));
+      // Tailor the hint to the path that was attempted. Telling a user with a
+      // 100-page digital PDF to "split the year" is misleading once chunking
+      // is in play — chunked failures usually mean a chunk consistently
+      // truncated or sanity-failed, which a smaller export won't fix.
+      const hint = extractPath === 'tsv-chunked'
+        ? `Failed in the chunked extractor (${chunkCount} chunk(s) attempted). If a section keeps timing out, retry — Gemini may have been throttling. If the error mentions "trailer" or "truncated", a single chunk genuinely overflowed and you'll need a smaller export.`
+        : extractPath === 'vision'
+          ? 'Vision extractor used (PDF has no text layer or text extraction failed in the browser). Re-save the PDF as a digital export rather than a scan, or split the year into halves.'
+          : 'Re-export from Tally / Busy with smaller account groups, or split the year into halves.';
       res.status(500).json({
         error: 'Failed to extract ledger.',
         detail: errMsg.slice(0, 400),
-        hint: 'Re-export from Tally / Busy with smaller account groups, or split the year into halves.',
+        extractPath,
+        chunkCount,
+        hint,
       });
     }
   },
@@ -1052,7 +1078,13 @@ router.post('/:id/scrutinize', async (req: AuthRequest, res: Response) => {
 
     const parsed = safeParseJson<ScrutinyResultRaw>(fullResponse);
     if (!parsed || !Array.isArray(parsed.observations)) {
-      throw new Error('Scrutiny response was not valid JSON.');
+      // Truncated JSON (the most common cause) is invisible from a generic
+      // "not valid JSON" error. Capture the response length and tail so the
+      // logs reveal whether the model hit max_tokens mid-array vs returned
+      // a non-JSON refusal.
+      const tail = fullResponse.slice(-200).replace(/\n/g, '\\n');
+      console.warn(`[ledger-scrutiny] scrutiny JSON parse failed: ${fullResponse.length} chars, tail: ${tail}`);
+      throw new Error(`Scrutiny response was not valid JSON (${fullResponse.length} chars streamed; likely truncated mid-output for a ledger with many findings).`);
     }
 
     const observationInputs: LedgerObservationCreateInput[] = parsed.observations.map((o) => {

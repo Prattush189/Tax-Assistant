@@ -1576,7 +1576,10 @@ export async function analyzeBankStatementFile(
   const formData = new FormData();
   formData.append('file', file);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 180_000);
+  // Long statements (50+ pages) on the chunked TSV pipeline can run close to
+  // 5 minutes end-to-end. The vision fallback (image PDFs) is single-call
+  // but still benefits from headroom on slow Gemini bursts.
+  const timer = setTimeout(() => controller.abort(), 360_000);
   const doFetch = () => fetch('/api/bank-statements/analyze', {
     method: 'POST',
     headers: { ...getAuthHeaders() },
@@ -1612,12 +1615,11 @@ async function analyzeBankStatementPdfText(
   filename: string,
   onProgress?: (p: BankStatementAnalyzeProgress) => void,
 ): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[]; warning?: string }> {
-  // Large multi-chunk statements (40+ pages) can take 2-3 minutes of parallel
-  // Gemini calls. We bump the abort well past that so the server gets a
-  // chance to return a partial result with a warning rather than the client
-  // killing the request.
+  // Large multi-chunk statements (50+ pages) can take 4-5 minutes of parallel
+  // Gemini calls. Cap at 6 min so a slow-but-progressing run completes rather
+  // than the client killing it just before the server returns.
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 240_000);
+  const timer = setTimeout(() => controller.abort(), 360_000);
   // Stream mode only when a progress sink is provided — otherwise use the
   // simpler JSON response so callers that don't care about progress stay on
   // the single code path.
@@ -1953,8 +1955,11 @@ export async function uploadLedgerScrutinyPdf(file: File): Promise<LedgerScrutin
 
   const formData = new FormData();
   formData.append('file', file);
+  // Long Tally / Busy ledgers run dozens of chunked Gemini calls in parallel
+  // and can legitimately take 5-10 minutes end-to-end. Cap at 10 min so a
+  // genuine slow-but-progressing extraction completes rather than aborting.
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 240_000);
+  const timer = setTimeout(() => controller.abort(), 600_000);
   const doFetch = () => fetch('/api/ledger-scrutiny/upload', {
     method: 'POST',
     headers: { ...getAuthHeaders() },
@@ -1977,7 +1982,7 @@ export async function uploadLedgerScrutinyPdf(file: File): Promise<LedgerScrutin
     return data;
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error('Ledger extract timed out — try a smaller export or split the year.');
+      throw new Error('Ledger extract took longer than 10 minutes — try a smaller export or split the year.');
     }
     throw err;
   } finally {
@@ -1988,8 +1993,11 @@ export async function uploadLedgerScrutinyPdf(file: File): Promise<LedgerScrutin
 async function uploadLedgerScrutinyPdfText(pdfText: string, filename: string): Promise<LedgerScrutinyDetail> {
   // Long ledgers run chunked Gemini calls in parallel; allow 4 minutes
   // before the client kills the request, matching the multipart timeout.
+  // Long Tally / Busy ledgers run dozens of chunked Gemini calls in parallel
+  // and can legitimately take 5-10 minutes end-to-end. Cap at 10 min so a
+  // genuine slow-but-progressing extraction completes rather than aborting.
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 240_000);
+  const timer = setTimeout(() => controller.abort(), 600_000);
   const doFetch = () => fetch('/api/ledger-scrutiny/upload', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
@@ -2012,7 +2020,7 @@ async function uploadLedgerScrutinyPdfText(pdfText: string, filename: string): P
     return data;
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error('Ledger extract timed out — try a smaller export or split the year.');
+      throw new Error('Ledger extract took longer than 10 minutes — try a smaller export or split the year.');
     }
     throw err;
   } finally {

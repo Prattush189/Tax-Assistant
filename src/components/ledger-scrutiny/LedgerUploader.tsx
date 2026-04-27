@@ -110,14 +110,24 @@ export function LedgerUploader({ manager }: Props) {
       <div className="text-center w-full max-w-md">
         <p className="font-semibold text-gray-800 dark:text-gray-100">{stage}</p>
         {busy ? (
-          <ScrutinyProgressBar
-            phase={manager.isUploading ? 'extracting' : 'scrutinizing'}
-            progress={manager.scrutinizeProgress}
-          />
+          <>
+            <ScrutinyProgressBar
+              phase={manager.isUploading ? 'extracting' : 'scrutinizing'}
+              progress={manager.scrutinizeProgress}
+            />
+            <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+              Long ledgers (50+ pages) can take up to 10 minutes — keep this tab open.
+            </p>
+          </>
         ) : (
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-            Tally / Busy / Marg PDF export · max 1 MB
-          </p>
+          <>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+              Tally / Busy / Marg PDF export · max 1 MB
+            </p>
+            <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+              Long ledgers (50+ pages) can take up to 10 minutes to extract and audit.
+            </p>
+          </>
         )}
       </div>
       <button
