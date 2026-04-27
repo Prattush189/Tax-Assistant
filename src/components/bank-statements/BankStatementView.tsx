@@ -123,7 +123,7 @@ export function BankStatementView({ manager }: Props) {
                 type="button"
                 onClick={async () => {
                   if (!manager.current) return;
-                  if (!confirm("Cancel this analysis? It will count toward your monthly limit — Gemini has already done partial work and we can't refund the slot.")) return;
+                  if (!confirm('Cancel this analysis? It will still count toward your monthly limit.')) return;
                   try { await manager.cancel(manager.current.statement.id); toast.success('Cancelled'); }
                   catch (e) { toast.error(e instanceof Error ? e.message : 'Cancel failed'); }
                 }}
@@ -150,7 +150,7 @@ export function BankStatementView({ manager }: Props) {
           <div className="rounded-2xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/30 p-5">
             <p className="font-semibold text-gray-800 dark:text-gray-200">Cancelled</p>
             <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
-              You cancelled this analysis. The slot was counted toward your monthly limit because Gemini had already done partial work.
+              You cancelled this analysis. The slot was counted toward your monthly limit.
             </p>
           </div>
         )}

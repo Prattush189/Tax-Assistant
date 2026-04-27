@@ -181,7 +181,7 @@ export function ScrutinyReport({ manager }: Props) {
             <button
               type="button"
               onClick={async () => {
-                if (!confirm("Cancel this scrutiny? It will count toward your monthly limit — Gemini has already done partial work and we can't refund the slot.")) return;
+                if (!confirm('Cancel this scrutiny? It will still count toward your monthly limit.')) return;
                 try { await manager.cancel(job.id); toast.success('Cancelled'); }
                 catch (e) { toast.error(e instanceof Error ? e.message : 'Cancel failed'); }
               }}

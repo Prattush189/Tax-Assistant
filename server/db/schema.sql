@@ -329,7 +329,7 @@ CREATE TABLE IF NOT EXISTS ledger_scrutiny_jobs (
   source_filename TEXT,
   source_mime TEXT,
   file_hash TEXT,
-  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'extracting', 'scrutinizing', 'done', 'error')),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'extracting', 'scrutinizing', 'done', 'error', 'cancelled')),
   total_flags_high INTEGER NOT NULL DEFAULT 0,
   total_flags_warn INTEGER NOT NULL DEFAULT 0,
   total_flags_info INTEGER NOT NULL DEFAULT 0,
