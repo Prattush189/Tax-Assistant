@@ -123,6 +123,11 @@ ACCOUNT\tCASH\tcash\t50000.00\t12000.00\t300000.00\t338000.00
 TX\tCASH\t2024-04-02\tCash deposit ICICI\tCR/01\t\t100000.00\t150000.00
 ---END:3---
 
+CRITICAL FIELD-COUNT RULES:
+- ACCOUNT lines MUST emit ALL 7 fields = 6 tabs per line, including trailing empty fields. Do NOT trim trailing empty fields.
+- TX lines MUST emit ALL 8 fields = 7 tabs per line, including trailing empty fields. Do NOT trim the balance column when it's empty — emit a final empty cell after credit. The example above already shows this pattern; ALWAYS replicate it.
+- A row that omits trailing tabs is DROPPED by the parser, so trimming "looks cleaner" but silently breaks the extraction.
+
 Account-type rules (apply the FIRST match against the account name, case-insensitive):
 - "BANK" / "<BANK NAME> A/C" / "CURRENT A/C" → "bank"
 - "CASH" → "cash"

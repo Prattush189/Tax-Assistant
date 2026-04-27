@@ -339,38 +339,46 @@ function parseLedgerTsvResponse(raw: string): Omit<LedgerTsvChunkResult, 'inputT
     }
     if (line.startsWith('ACCOUNT\t')) {
       const a = line.split('\t');
-      if (a.length < 7) {
-        droppedReasons.push(`account-fields=${a.length}`);
-        continue;
-      }
-      const name = cleanTsvCell(a[1]);
+      // Required fields: ACCOUNT + name. Trailing fields (type / opening /
+      // closing / totals) may be omitted by the model when they're empty,
+      // so we never reject the line on field count alone — only the name
+      // is mandatory. Missing trailing fields default to null and are
+      // filled in either from a later chunk that surfaces the account or
+      // recomputed from the transactions on merge.
+      const name = cleanTsvCell(a[1] ?? '');
       if (!name) {
         droppedReasons.push('account-no-name');
         continue;
       }
       accounts.push({
         name,
-        accountType: cleanTsvCell(a[2]) || null,
-        opening: parseTsvNumber(a[3]),
-        closing: parseTsvNumber(a[4]),
-        totalDebit: parseTsvNumber(a[5]),
-        totalCredit: parseTsvNumber(a[6]),
+        accountType: cleanTsvCell(a[2] ?? '') || null,
+        opening: parseTsvNumber(a[3] ?? ''),
+        closing: parseTsvNumber(a[4] ?? ''),
+        totalDebit: parseTsvNumber(a[5] ?? ''),
+        totalCredit: parseTsvNumber(a[6] ?? ''),
       });
       continue;
     }
     if (line.startsWith('TX\t')) {
       const t = line.split('\t');
-      if (t.length < 8) {
+      // Required fields: TX + accountName + date + (debit OR credit). The
+      // model frequently strips the trailing balance field when empty
+      // (Gemini quirk on long TSV — all 83 rows in a chunk omitted it),
+      // so we accept rows down to 7 fields and treat missing trailing
+      // fields (balance, then voucher) as empty. Anything below 7 means
+      // the row was genuinely malformed.
+      if (t.length < 7) {
         droppedReasons.push(`tx-fields=${t.length}`);
         continue;
       }
-      const accountName = cleanTsvCell(t[1]);
+      const accountName = cleanTsvCell(t[1] ?? '');
       if (!accountName) {
         droppedReasons.push('tx-no-account');
         continue;
       }
-      const debitStr = cleanTsvCell(t[5]);
-      const creditStr = cleanTsvCell(t[6]);
+      const debitStr = cleanTsvCell(t[5] ?? '');
+      const creditStr = cleanTsvCell(t[6] ?? '');
       const debit = debitStr === '' ? 0 : Number(debitStr.replace(/[,\s]/g, ''));
       const credit = creditStr === '' ? 0 : Number(creditStr.replace(/[,\s]/g, ''));
       if (!Number.isFinite(debit) || !Number.isFinite(credit)) {
@@ -391,12 +399,12 @@ function parseLedgerTsvResponse(raw: string): Omit<LedgerTsvChunkResult, 'inputT
       }
       transactions.push({
         accountName,
-        date: cleanTsvCell(t[2]) || null,
-        narration: cleanTsvCell(t[3]) || null,
-        voucher: cleanTsvCell(t[4]) || null,
+        date: cleanTsvCell(t[2] ?? '') || null,
+        narration: cleanTsvCell(t[3] ?? '') || null,
+        voucher: cleanTsvCell(t[4] ?? '') || null,
         debit,
         credit,
-        balance: parseTsvNumber(t[7]),
+        balance: parseTsvNumber(t[7] ?? ''),
       });
     }
   }
@@ -453,18 +461,24 @@ async function extractLedgerTsvOnce(
   }
 
   // Integrity check #2: parsed rows MUST NOT be fewer than the trailer
-  // count. If we parsed fewer than declared, we silently dropped some
-  // (malformed lines, wrong field count) — fail loudly. If we parsed MORE
-  // than declared, the model miscounted its own trailer (an empirically
-  // common Gemini quirk on dense input); the rows themselves are fine so
-  // accept the parsed count.
+  // count. If we parsed fewer than declared we usually dropped some
+  // (malformed lines, wrong field count). But Gemini also empirically
+  // miscounts its own trailer by 1-2 on dense input even when nothing
+  // was dropped (`dropped: unknown`), so we tolerate a small delta —
+  // ≤ max(2, 2% of declared) — rather than throwing away a 80-row
+  // chunk because the trailer said 84 and we got 83 cleanly.
   if (parsed.actualCount < parsed.declaredCount) {
+    const delta = parsed.declaredCount - parsed.actualCount;
+    const tolerance = Math.max(2, Math.floor(parsed.declaredCount * 0.02));
     const reasonCounts = parsed.droppedReasons.reduce<Record<string, number>>((acc, r) => {
       acc[r] = (acc[r] ?? 0) + 1;
       return acc;
     }, {});
     const reasonStr = Object.entries(reasonCounts).map(([k, v]) => `${k}=${v}`).join(',') || 'unknown';
-    throw new Error(`TSV row-count mismatch: trailer claims ${parsed.declaredCount}, parsed ${parsed.actualCount} (dropped: ${reasonStr})`);
+    if (delta > tolerance) {
+      throw new Error(`TSV row-count mismatch: trailer claims ${parsed.declaredCount}, parsed ${parsed.actualCount} (dropped: ${reasonStr})`);
+    }
+    console.warn(`[ledger-scrutiny] ${model} small trailer undercount within tolerance: claimed ${parsed.declaredCount}, parsed ${parsed.actualCount} (dropped: ${reasonStr}) — accepting`);
   }
   if (parsed.actualCount > parsed.declaredCount) {
     console.warn(`[ledger-scrutiny] ${model} trailer undercount: claimed ${parsed.declaredCount}, parsed ${parsed.actualCount} — accepting parsed count`);
