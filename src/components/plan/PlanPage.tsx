@@ -127,7 +127,6 @@ const plans = [
       '50 board resolutions/month',
       '50 partnership deeds/month',
       '20 AI ledger scrutinies/month',
-      'Multi-user team accounts (10 seats)',
       'Year-over-year trends dashboard',
       'Priority support & SLA',
     ],
