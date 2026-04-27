@@ -116,7 +116,7 @@ export function LedgerUploader({ manager }: Props) {
               progress={manager.scrutinizeProgress}
             />
             <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-              Long ledgers (50+ pages) can take up to 10 minutes — keep this tab open.
+              Long ledgers (50+ pages) can take up to 15 minutes — keep this tab open.
             </p>
           </>
         ) : (
@@ -125,7 +125,7 @@ export function LedgerUploader({ manager }: Props) {
               Tally / Busy / Marg PDF export · max 3 MB
             </p>
             <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-              Long ledgers (50+ pages) can take up to 10 minutes to extract and audit.
+              Long ledgers (50+ pages) can take up to 15 minutes to extract and audit.
             </p>
           </>
         )}

@@ -1956,10 +1956,12 @@ export async function uploadLedgerScrutinyPdf(file: File): Promise<LedgerScrutin
   const formData = new FormData();
   formData.append('file', file);
   // Long Tally / Busy ledgers run dozens of chunked Gemini calls in parallel
-  // and can legitimately take 5-10 minutes end-to-end. Cap at 10 min so a
-  // genuine slow-but-progressing extraction completes rather than aborting.
+  // and on a Gemini-503 burst can legitimately take 11-13 minutes end-to-end
+  // (observed: 33-chunk run completed in ~10 min 30 s when most chunks
+  // retried twice). Cap at 15 min so the server isn't racing the client
+  // close-event for an extraction that's actually finishing.
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 600_000);
+  const timer = setTimeout(() => controller.abort(), 900_000);
   const doFetch = () => fetch('/api/ledger-scrutiny/upload', {
     method: 'POST',
     headers: { ...getAuthHeaders() },
@@ -1982,7 +1984,7 @@ export async function uploadLedgerScrutinyPdf(file: File): Promise<LedgerScrutin
     return data;
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error('Ledger extract took longer than 10 minutes — try a smaller export or split the year.');
+      throw new Error('Ledger extract took longer than 15 minutes — try a smaller export or split the year.');
     }
     throw err;
   } finally {
@@ -1994,10 +1996,12 @@ async function uploadLedgerScrutinyPdfText(pdfText: string, filename: string): P
   // Long ledgers run chunked Gemini calls in parallel; allow 4 minutes
   // before the client kills the request, matching the multipart timeout.
   // Long Tally / Busy ledgers run dozens of chunked Gemini calls in parallel
-  // and can legitimately take 5-10 minutes end-to-end. Cap at 10 min so a
-  // genuine slow-but-progressing extraction completes rather than aborting.
+  // and on a Gemini-503 burst can legitimately take 11-13 minutes end-to-end
+  // (observed: 33-chunk run completed in ~10 min 30 s when most chunks
+  // retried twice). Cap at 15 min so the server isn't racing the client
+  // close-event for an extraction that's actually finishing.
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 600_000);
+  const timer = setTimeout(() => controller.abort(), 900_000);
   const doFetch = () => fetch('/api/ledger-scrutiny/upload', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
@@ -2020,7 +2024,7 @@ async function uploadLedgerScrutinyPdfText(pdfText: string, filename: string): P
     return data;
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error('Ledger extract took longer than 10 minutes — try a smaller export or split the year.');
+      throw new Error('Ledger extract took longer than 15 minutes — try a smaller export or split the year.');
     }
     throw err;
   } finally {

@@ -56,7 +56,7 @@ const ALLOWED_MIME_TYPES = [
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 500 * 1024 }, // 500 KB
+  limits: { fileSize: Math.round(1.5 * 1024 * 1024) }, // 1.5 MB
   fileFilter: (_req, file, cb) => {
     if ((ALLOWED_MIME_TYPES as readonly string[]).includes(file.mimetype)) {
       cb(null, true);
@@ -162,7 +162,7 @@ router.post(
 router.use('/upload', (err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (err instanceof MulterError) {
     if (err.code === 'LIMIT_FILE_SIZE') {
-      res.status(400).json({ error: 'File exceeds the 500 KB size limit.' });
+      res.status(400).json({ error: 'File exceeds the 1.5 MB size limit.' });
       return;
     }
     res.status(400).json({ error: `Upload error: ${err.message}` });

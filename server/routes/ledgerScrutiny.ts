@@ -917,7 +917,15 @@ router.post(
         const MAX_CHARS_PER_CHUNK = 8_000;
         const MAX_OUTPUT_TOKENS = 16_384;
         const MAX_CHUNKS = 50;
-        const CHUNK_CONCURRENCY = 4;
+        // Concurrency 2 (was 4): production logs show that running 4
+        // simultaneous gemini-2.5-flash calls per request triggers a
+        // sustained 503 wave on a single key, with most chunks retrying
+        // 2-3 times before succeeding (110-180 s per chunk vs 25-50 s
+        // when not throttled). Each retry burns input tokens we can't
+        // bill back, so the cost-per-success multiplies. Two concurrent
+        // calls keeps a 33-chunk ledger inside the 15 min frontend
+        // timeout without paying the retry tax.
+        const CHUNK_CONCURRENCY = 2;
 
         const chunks = chunkLedgerText(pdfText, MAX_CHARS_PER_CHUNK, MAX_CHUNKS);
         chunkCount = chunks.length;
