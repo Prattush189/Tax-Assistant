@@ -4,7 +4,7 @@
 // for a PDF/image data URL and delegates to `callGeminiJson` for the actual
 // retry-with-fallback loop. Used by /api/upload, /api/form-16-import, and
 // /api/bank-statements.
-import { callGeminiJson, type GeminiJsonResult } from './geminiJson.js';
+import { callGeminiJson, type GeminiJsonResult, type GeminiJsonOptions } from './geminiJson.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 
 export { safeParseJson } from './geminiJson.js'; // re-export for backward compat
@@ -16,6 +16,8 @@ export interface ExtractOptions {
   primaryModel?: string;
   /** Override the fallback model. */
   fallbackModel?: string;
+  /** Pass-through to callGeminiJson for failed-attempt cost logging. */
+  recordAttempt?: GeminiJsonOptions['recordAttempt'];
 }
 
 /**

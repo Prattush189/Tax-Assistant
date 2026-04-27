@@ -782,6 +782,203 @@ function mergeLedgerChunks(chunkResults: LedgerTsvChunkResult[]): ExtractedLedge
   return { partyName, gstin, periodFrom, periodTo, accounts };
 }
 
+// ── Chunked scrutiny pass ────────────────────────────────────────────────
+// The single-call scrutiny was hitting `Scrutiny response was not valid
+// JSON (49549 chars streamed; likely truncated mid-output)` on a 174-
+// account ledger because the audit JSON for that many accounts blew past
+// the 16K-token output budget. Solution: split accounts into groups,
+// audit each group in a separate Gemini call, merge observations.
+
+interface ScrutinyChunkResult {
+  observations: ScrutinyObservationRaw[];
+  inputTokens: number;
+  outputTokens: number;
+  modelUsed: string;
+}
+
+/** One scrutiny call covering a subset of accounts. Mirrors the extract
+ *  pipeline's structure (recordAttempt, manual cost capture) so failed
+ *  attempts get logged under `ledger_scrutiny_failed` instead of vanishing. */
+async function scrutinizeAccountGroupOnce(
+  extracted: ExtractedLedger,
+  groupAccounts: ExtractedAccount[],
+  txPerAccount: number,
+  totalAccounts: number,
+  model: string,
+  maxTokens: number,
+  recordAttempt: RecordAttempt = NOOP_RECORD,
+): Promise<ScrutinyChunkResult> {
+  const ledgerForPrompt = {
+    partyName: extracted.partyName,
+    gstin: extracted.gstin,
+    periodFrom: extracted.periodFrom,
+    periodTo: extracted.periodTo,
+    accounts: groupAccounts.map((a) => ({
+      name: a.name,
+      accountType: a.accountType,
+      opening: a.opening,
+      closing: a.closing,
+      totalDebit: a.totalDebit,
+      totalCredit: a.totalCredit,
+      transactions: (a.transactions ?? []).slice(0, txPerAccount),
+    })),
+  };
+  const userMessage = `${LEDGER_SCRUTINY_USER_PROMPT_HEAD}This is a SUBSET of ${groupAccounts.length} accounts out of ${totalAccounts} in the full ledger. Apply the rubric and emit observations only for the accounts shown below. Skip cross-ledger reconciliation findings (those are computed server-side from totals). Do NOT fabricate accounts not shown.\n\n${JSON.stringify(ledgerForPrompt, null, 2)}`;
+
+  const response = await gemini.chat.completions.create({
+    model,
+    max_tokens: maxTokens,
+    messages: [
+      { role: 'system', content: LEDGER_SCRUTINY_SYSTEM_PROMPT },
+      { role: 'user', content: userMessage },
+    ],
+    stream: false,
+    response_format: { type: 'json_object' },
+    temperature: 0,
+  });
+  const raw = response.choices[0]?.message?.content ?? '{}';
+  const finishReason = response.choices[0]?.finish_reason ?? 'unknown';
+  const inputTokens = response.usage?.prompt_tokens ?? 0;
+  const outputTokens = response.usage?.completion_tokens ?? 0;
+  let succeeded = false;
+  try {
+    const parsed = safeParseJson<ScrutinyResultRaw>(raw);
+    if (!parsed || !Array.isArray(parsed.observations)) {
+      const tail = raw.slice(-200).replace(/\n/g, '\\n');
+      console.warn(`[ledger-scrutiny] ${model} scrutiny chunk parse failed (finish_reason=${finishReason}, ${raw.length} chars). Tail: ${tail}`);
+      throw new Error(`Scrutiny chunk JSON parse failed (${raw.length} chars, finish_reason=${finishReason})`);
+    }
+    succeeded = true;
+    return { observations: parsed.observations, inputTokens, outputTokens, modelUsed: model };
+  } finally {
+    recordAttempt({ failed: !succeeded, inputTokens, outputTokens, model });
+  }
+}
+
+/** Two-tier retry mirroring the extract pipeline. */
+async function scrutinizeAccountGroup(
+  extracted: ExtractedLedger,
+  groupAccounts: ExtractedAccount[],
+  txPerAccount: number,
+  totalAccounts: number,
+  recordAttempt: RecordAttempt,
+): Promise<ScrutinyChunkResult> {
+  const MAX_PRIMARY_ATTEMPTS = 3;
+  const MAX_FALLBACK_ATTEMPTS = 2;
+  let lastErr: unknown;
+  const jitter = () => 300 + Math.floor(Math.random() * 600);
+  const isRetryableStatus = (s: number) =>
+    s === 429 || s === 500 || s === 502 || s === 503 || s === 504;
+  const PRIMARY_BACKOFFS_MS = [2_000, 5_000];
+
+  for (let attempt = 0; attempt < MAX_PRIMARY_ATTEMPTS; attempt++) {
+    try {
+      return await scrutinizeAccountGroupOnce(extracted, groupAccounts, txPerAccount, totalAccounts, 'gemini-2.5-flash', 8192, recordAttempt);
+    } catch (err) {
+      lastErr = err;
+      const status = (err as { status?: number })?.status ?? 0;
+      const msg = (err as Error).message ?? '';
+      if (/parse failed/i.test(msg) || (status !== 0 && !isRetryableStatus(status))) break;
+      if (attempt < MAX_PRIMARY_ATTEMPTS - 1) {
+        await new Promise(r => setTimeout(r, (PRIMARY_BACKOFFS_MS[attempt] ?? 5_000) + jitter()));
+      }
+    }
+  }
+  for (let attempt = 0; attempt < MAX_FALLBACK_ATTEMPTS; attempt++) {
+    try {
+      return await scrutinizeAccountGroupOnce(extracted, groupAccounts, txPerAccount, totalAccounts, GEMINI_CHAT_MODEL_THINK_FB, 16384, recordAttempt);
+    } catch (err) {
+      lastErr = err;
+      if (attempt < MAX_FALLBACK_ATTEMPTS - 1) {
+        await new Promise(r => setTimeout(r, 3_000 + jitter()));
+      }
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
+/**
+ * Run scrutiny across an entire ledger by chunking accounts. Each group
+ * gets its own Gemini call, observations are merged, and per-account
+ * totals plus reconciliation flags are computed server-side.
+ *
+ * Returns the prepared LedgerObservationCreateInput[] ready to persist
+ * plus aggregated usage for cost logging.
+ */
+async function runChunkedScrutiny(
+  extracted: ExtractedLedger,
+  accountIdByName: Map<string, string>,
+  recordAttempt: RecordAttempt,
+  onChunkDone: (completed: number, total: number) => void = () => {},
+): Promise<{
+  observations: LedgerObservationCreateInput[];
+  inputTokens: number;
+  outputTokens: number;
+  modelUsed: string;
+}> {
+  // 60 tx per account is enough to surface §40A(3), §269ST, TDS-scope,
+  // personal-expense and round-tripping signals for the rubric. The old
+  // 200-row digest was paying input cost without proportional accuracy.
+  const TX_PER_ACCOUNT = 60;
+  // 15 accounts × 60 tx ≈ 35K input tokens — comfortably under the
+  // gemini-2.5-flash window — and the 8K output ceiling holds 25-30
+  // observations easily, which is more than any single 15-account
+  // group ever produces in practice.
+  const ACCOUNTS_PER_CHUNK = 15;
+  const SCRUTINY_CONCURRENCY = 2;
+
+  const accounts = extracted.accounts;
+  if (accounts.length === 0) {
+    return { observations: [], inputTokens: 0, outputTokens: 0, modelUsed: 'gemini-2.5-flash' };
+  }
+  const groups: ExtractedAccount[][] = [];
+  for (let i = 0; i < accounts.length; i += ACCOUNTS_PER_CHUNK) {
+    groups.push(accounts.slice(i, i + ACCOUNTS_PER_CHUNK));
+  }
+  console.log(`[ledger-scrutiny] chunked scrutiny: ${accounts.length} accounts → ${groups.length} group(s)`);
+
+  let completed = 0;
+  let totalInput = 0;
+  let totalOutput = 0;
+  let modelUsed = '';
+  const allObservations: ScrutinyObservationRaw[] = [];
+
+  await mapWithConcurrency(groups, SCRUTINY_CONCURRENCY, async (group, idx) => {
+    const t0 = Date.now();
+    try {
+      const r = await scrutinizeAccountGroup(extracted, group, TX_PER_ACCOUNT, accounts.length, recordAttempt);
+      console.log(`[ledger-scrutiny] scrutiny group ${idx + 1}/${groups.length} ✓ ${r.observations.length} observations in ${Date.now() - t0}ms`);
+      allObservations.push(...r.observations);
+      totalInput += r.inputTokens;
+      totalOutput += r.outputTokens;
+      modelUsed = r.modelUsed || modelUsed;
+    } catch (e) {
+      const msg = (e as Error).message ?? String(e);
+      console.error(`[ledger-scrutiny] scrutiny group ${idx + 1}/${groups.length} ✗ ${msg}`);
+      throw new Error(`Scrutiny group ${idx + 1}/${groups.length}: ${msg}`);
+    } finally {
+      completed += 1;
+      onChunkDone(completed, groups.length);
+    }
+  });
+
+  const observationInputs: LedgerObservationCreateInput[] = allObservations.map((o) => {
+    const accountId = o.accountName ? accountIdByName.get(o.accountName.toLowerCase()) ?? null : null;
+    return {
+      accountId,
+      accountName: o.accountName ?? null,
+      code: typeof o.code === 'string' ? o.code.slice(0, 64) : 'GENERIC',
+      severity: normalizeSeverity(o.severity),
+      message: typeof o.message === 'string' ? o.message.slice(0, 1000) : '',
+      amount: o.amount === null || o.amount === undefined ? null : toNumber(o.amount),
+      dateRef: typeof o.dateRef === 'string' ? o.dateRef : null,
+      suggestedAction: typeof o.suggestedAction === 'string' ? o.suggestedAction.slice(0, 500) : null,
+    };
+  }).filter((o) => o.message);
+
+  return { observations: observationInputs, inputTokens: totalInput, outputTokens: totalOutput, modelUsed: modelUsed || 'gemini-2.5-flash' };
+}
+
 // ── Routes ──────────────────────────────────────────────────────────────
 
 // GET /api/ledger-scrutiny — list jobs (with usage counter)
@@ -942,6 +1139,10 @@ router.post(
     // was attempted at all when extraction fails.
     let extractPath: 'cache' | 'tsv-chunked' | 'vision' = 'vision';
     let chunkCount = 0;
+    // Captured up here so the auto-chain block (which runs after both the
+    // pdfText and vision branches) can use the same client IP for cost
+    // logging without recomputing it.
+    const ledgerClientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
 
     try {
       let extracted: ExtractedLedger;
@@ -987,7 +1188,6 @@ router.post(
         // tidy. Without this, retries / truncations / trailer mismatches
         // burned billable tokens that never showed up in our tracking
         // (production: $7 spend vs $1.59 logged on a 33-chunk run).
-        const ledgerClientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
         const recordLedgerAttempt: RecordAttempt = ({ failed, inputTokens, outputTokens, model }) => {
           if (!failed) return;
           if (inputTokens === 0 && outputTokens === 0) return;
@@ -1134,15 +1334,90 @@ router.post(
         sortIndex: idx,
       }));
       ledgerScrutinyRepo.replaceAccounts(job.id, accountInputs);
-      ledgerScrutinyRepo.setStatus(job.id, req.user.id, 'pending');
 
       const accounts = ledgerScrutinyRepo.listAccounts(job.id);
       const totalTx = extracted.accounts.reduce((s, a) => s + a.transactions.length, 0);
       console.log(`[ledger-scrutiny] extract done via ${extractPath}: ${accounts.length} accounts, ${totalTx} TX${chunkCount ? `, ${chunkCount} chunk(s)` : ''}`);
+
+      // ── Auto-chain into the audit pass ────────────────────────────────
+      // Runs the chunked scrutiny inline so the user sees a single end-to-
+      // end progress bar instead of "extract done, click Run scrutiny".
+      // The job's `pending` state never surfaces externally — we go
+      // straight from `extracting` → `scrutinizing` → `done`. The 5-second
+      // poll loop on the manager picks up status transitions live, so a
+      // tab close + reload during scrutiny re-attaches to the in-progress
+      // run and the upload route's `findInProgressByHashForUser` guard
+      // refuses any duplicate retry.
+      ledgerScrutinyRepo.setStatus(job.id, req.user.id, 'scrutinizing');
+      const accountIdByName = new Map<string, string>();
+      for (const a of accounts) accountIdByName.set(a.name.toLowerCase(), a.id);
+
+      const recordScrutinyAttempt: RecordAttempt = ({ failed, inputTokens, outputTokens, model }) => {
+        if (!failed) return;
+        if (inputTokens === 0 && outputTokens === 0) return;
+        try {
+          const cost = costForModel(model, inputTokens, outputTokens);
+          usageRepo.logWithBilling(
+            ledgerClientIp,
+            req.user!.id,
+            quota.billingUserId,
+            inputTokens,
+            outputTokens,
+            cost,
+            false,
+            model,
+            false,
+            'ledger_scrutiny_failed',
+          );
+        } catch (e) {
+          console.error('[ledger-scrutiny] scrutiny failed-attempt cost log error', e);
+        }
+      };
+
+      const scrutinyResult = await runChunkedScrutiny(extracted, accountIdByName, recordScrutinyAttempt);
+      ledgerScrutinyRepo.replaceObservations(job.id, scrutinyResult.observations);
+
+      let high = 0, warn = 0, info = 0, flaggedAmount = 0;
+      for (const o of scrutinyResult.observations) {
+        if (o.severity === 'high') high += 1;
+        else if (o.severity === 'warn') warn += 1;
+        else info += 1;
+        if (typeof o.amount === 'number') flaggedAmount += Math.abs(o.amount);
+      }
+      ledgerScrutinyRepo.updateTotals(job.id, high, warn, info, flaggedAmount);
+      ledgerScrutinyRepo.setStatus(job.id, req.user.id, 'done');
+
+      // Bill the monthly quota now that both passes succeeded.
+      try {
+        featureUsageRepo.logWithBilling(req.user.id, quota.billingUserId, 'ledger_scrutiny');
+      } catch (err) {
+        console.error('[ledger-scrutiny] feature usage log failed', err);
+      }
+      // Cost log for the (successful) scrutiny pass.
+      try {
+        const cost = costForModel(scrutinyResult.modelUsed, scrutinyResult.inputTokens, scrutinyResult.outputTokens);
+        usageRepo.logWithBilling(
+          ledgerClientIp,
+          req.user.id,
+          quota.billingUserId,
+          scrutinyResult.inputTokens,
+          scrutinyResult.outputTokens,
+          cost,
+          false,
+          scrutinyResult.modelUsed,
+          false,
+          'ledger_scrutiny',
+        );
+      } catch (err) {
+        console.error('[ledger-scrutiny] scrutiny cost log failed', err);
+      }
+      console.log(`[ledger-scrutiny] scrutiny done: ${scrutinyResult.observations.length} observations (${high} high, ${warn} warn, ${info} info)`);
+
+      const observations = ledgerScrutinyRepo.listObservations(job.id).map(serializeObservation);
       res.status(200).json({
         job: serializeJob(ledgerScrutinyRepo.findByIdForUser(job.id, req.user.id)),
         accounts: accounts.map(serializeAccount),
-        observations: [],
+        observations,
         extractPath,
         chunkCount,
       });

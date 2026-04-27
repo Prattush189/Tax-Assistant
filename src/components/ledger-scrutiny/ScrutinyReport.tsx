@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import {
   AlertTriangle, AlertCircle, Info, ChevronDown, ChevronRight,
-  CheckCircle2, Trash2, Download, FileSearch, RefreshCw,
+  CheckCircle2, Trash2, Download, FileSearch,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { LedgerScrutinyManager } from '../../hooks/useLedgerScrutinyManager';
@@ -94,15 +94,6 @@ export function ScrutinyReport({ manager }: Props) {
     }
   };
 
-  const handleRescrutinize = async () => {
-    try {
-      await manager.scrutinize(job.id);
-      toast.success('Re-scrutinized');
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Re-scrutiny failed');
-    }
-  };
-
   const handleExport = () => {
     try {
       renderLedgerScrutinyPdf(detail);
@@ -138,15 +129,6 @@ export function ScrutinyReport({ manager }: Props) {
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={handleRescrutinize}
-              disabled={manager.isScrutinizing}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800/60 disabled:opacity-60"
-            >
-              <RefreshCw className={cn('w-4 h-4', manager.isScrutinizing && 'animate-spin')} />
-              Re-scrutinize
-            </button>
             <button
               type="button"
               onClick={handleExport}

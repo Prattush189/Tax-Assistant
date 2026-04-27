@@ -68,22 +68,25 @@ export function LedgerUploader({ manager }: Props) {
     }
 
     try {
+      // Server now auto-chains extract → scrutiny inline, so a single upload
+      // call returns the fully-audited result with observations populated.
+      // No separate "Run scrutiny" button or trigger — the user just sees
+      // continuous progress (extracting → scrutinizing → done) and the
+      // final report.
       const result = await manager.upload(file);
-      toast.success(`Extracted ${result.accounts.length} accounts — running scrutiny…`);
-      try {
-        await manager.scrutinize(result.job.id);
-        toast.success('Scrutiny complete');
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : 'Scrutiny failed');
-      }
+      toast.success(`Audit complete: ${result.observations.length} observation${result.observations.length === 1 ? '' : 's'} across ${result.accounts.length} accounts`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Upload failed');
     }
   };
 
-  const busy = manager.isUploading || manager.isScrutinizing;
-  const stage = manager.isUploading ? 'Extracting accounts…'
-    : manager.isScrutinizing ? 'Auditing for tax exposure…'
+  const currentStatus = manager.current?.job.status;
+  const busy = manager.isUploading
+    || currentStatus === 'extracting'
+    || currentStatus === 'scrutinizing'
+    || currentStatus === 'pending';
+  const stage = currentStatus === 'scrutinizing' ? 'Auditing for tax exposure…'
+    : currentStatus === 'extracting' || manager.isUploading ? 'Extracting accounts…'
     : 'Drop your ledger PDF here';
 
   return (
@@ -112,11 +115,11 @@ export function LedgerUploader({ manager }: Props) {
         {busy ? (
           <>
             <ScrutinyProgressBar
-              phase={manager.isUploading ? 'extracting' : 'scrutinizing'}
+              phase={currentStatus === 'scrutinizing' ? 'scrutinizing' : 'extracting'}
               progress={manager.scrutinizeProgress}
             />
             <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-              Long ledgers (50+ pages) can take up to 15 minutes — keep this tab open.
+              Long ledgers (50+ pages) can take up to 20 minutes — you can close this tab and come back. The audit keeps running.
             </p>
           </>
         ) : (
@@ -125,7 +128,7 @@ export function LedgerUploader({ manager }: Props) {
               Tally / Busy / Marg PDF export · max 3 MB
             </p>
             <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-              Long ledgers (50+ pages) can take up to 15 minutes to extract and audit.
+              Extract + audit run as one step — no buttons to click after upload. Long ledgers can take up to 20 minutes.
             </p>
           </>
         )}

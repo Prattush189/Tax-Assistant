@@ -1955,13 +1955,14 @@ export async function uploadLedgerScrutinyPdf(file: File): Promise<LedgerScrutin
 
   const formData = new FormData();
   formData.append('file', file);
-  // Long Tally / Busy ledgers run dozens of chunked Gemini calls in parallel
-  // and on a Gemini-503 burst can legitimately take 11-13 minutes end-to-end
-  // (observed: 33-chunk run completed in ~10 min 30 s when most chunks
-  // retried twice). Cap at 15 min so the server isn't racing the client
-  // close-event for an extraction that's actually finishing.
+  // Server now auto-chains extract → chunked scrutiny inline, so a single
+  // upload covers BOTH passes end-to-end (extract ~5-10 min, audit ~2-5 min
+  // for 170+ account ledgers, 7-15 min total typical). Cap at 20 min so a
+  // genuine slow-but-progressing run isn't killed by the client close-event
+  // mid-audit. The server keeps running even if the tab closes — the
+  // resumability poll picks the result back up on reload.
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 900_000);
+  const timer = setTimeout(() => controller.abort(), 1_200_000);
   const doFetch = () => fetch('/api/ledger-scrutiny/upload', {
     method: 'POST',
     headers: { ...getAuthHeaders() },
@@ -1984,7 +1985,7 @@ export async function uploadLedgerScrutinyPdf(file: File): Promise<LedgerScrutin
     return data;
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error('Ledger extract took longer than 15 minutes — try a smaller export or split the year.');
+      throw new Error('Ledger extract + audit took longer than 20 minutes — the run is still going server-side; reload to pick it up, or split the year and try again.');
     }
     throw err;
   } finally {
@@ -1995,13 +1996,14 @@ export async function uploadLedgerScrutinyPdf(file: File): Promise<LedgerScrutin
 async function uploadLedgerScrutinyPdfText(pdfText: string, filename: string): Promise<LedgerScrutinyDetail> {
   // Long ledgers run chunked Gemini calls in parallel; allow 4 minutes
   // before the client kills the request, matching the multipart timeout.
-  // Long Tally / Busy ledgers run dozens of chunked Gemini calls in parallel
-  // and on a Gemini-503 burst can legitimately take 11-13 minutes end-to-end
-  // (observed: 33-chunk run completed in ~10 min 30 s when most chunks
-  // retried twice). Cap at 15 min so the server isn't racing the client
-  // close-event for an extraction that's actually finishing.
+  // Server now auto-chains extract → chunked scrutiny inline, so a single
+  // upload covers BOTH passes end-to-end (extract ~5-10 min, audit ~2-5 min
+  // for 170+ account ledgers, 7-15 min total typical). Cap at 20 min so a
+  // genuine slow-but-progressing run isn't killed by the client close-event
+  // mid-audit. The server keeps running even if the tab closes — the
+  // resumability poll picks the result back up on reload.
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 900_000);
+  const timer = setTimeout(() => controller.abort(), 1_200_000);
   const doFetch = () => fetch('/api/ledger-scrutiny/upload', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
@@ -2024,7 +2026,7 @@ async function uploadLedgerScrutinyPdfText(pdfText: string, filename: string): P
     return data;
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error('Ledger extract took longer than 15 minutes — try a smaller export or split the year.');
+      throw new Error('Ledger extract + audit took longer than 20 minutes — the run is still going server-side; reload to pick it up, or split the year and try again.');
     }
     throw err;
   } finally {

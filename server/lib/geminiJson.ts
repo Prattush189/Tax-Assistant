@@ -17,6 +17,15 @@ export interface GeminiJsonOptions {
   fallbackModel?: string;
   /** Pass through to OpenAI SDK — defaults to `{ type: 'json_object' }`. Set to `null` to omit. */
   responseFormat?: { type: 'json_object' } | null;
+  /**
+   * Fires once per Gemini API call with the token usage and a `failed`
+   * flag. Lets the caller log wasted spend (parse failures / truncations
+   * / retries that exhausted) under a `_failed` category in usageRepo
+   * without each route having to wrap callGeminiJson in its own try/catch.
+   * Successful attempts also fire — the route can choose whether to
+   * aggregate under the productive category or ignore.
+   */
+  recordAttempt?: (input: { failed: boolean; inputTokens: number; outputTokens: number; model: string }) => void;
 }
 
 /** Parse JSON safely — strips markdown fences and attempts recovery on truncated strings. */
@@ -74,6 +83,7 @@ async function callOnce<T>(
   model: string,
   maxTokens: number,
   responseFormat: GeminiJsonOptions['responseFormat'],
+  recordAttempt?: GeminiJsonOptions['recordAttempt'],
 ): Promise<GeminiJsonResult<T>> {
   // Pass `stream: false` explicitly so TypeScript narrows the return type
   // to ChatCompletion (the SDK overloads on the `stream` literal).
@@ -85,14 +95,24 @@ async function callOnce<T>(
     ...(responseFormat === null ? {} : { response_format: responseFormat ?? { type: 'json_object' } }),
   });
   const raw = response.choices[0]?.message?.content ?? '{}';
-  const parsed = safeParseJson<T>(raw);
-  if (parsed === null) throw new Error('Failed to parse Gemini JSON response');
-  return {
-    data: parsed,
-    inputTokens: response.usage?.prompt_tokens ?? 0,
-    outputTokens: response.usage?.completion_tokens ?? 0,
-    modelUsed: model,
-  };
+  const inputTokens = response.usage?.prompt_tokens ?? 0;
+  const outputTokens = response.usage?.completion_tokens ?? 0;
+  // Capture usage before parse so a `Failed to parse Gemini JSON response`
+  // throw still reports the wasted Gemini spend through recordAttempt.
+  let succeeded = false;
+  try {
+    const parsed = safeParseJson<T>(raw);
+    if (parsed === null) throw new Error('Failed to parse Gemini JSON response');
+    succeeded = true;
+    return {
+      data: parsed,
+      inputTokens,
+      outputTokens,
+      modelUsed: model,
+    };
+  } finally {
+    recordAttempt?.({ failed: !succeeded, inputTokens, outputTokens, model });
+  }
 }
 
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
@@ -112,6 +132,7 @@ export async function callGeminiJson<T = unknown>(
   const primary = opts.primaryModel ?? GEMINI_MODEL;
   const fallback = opts.fallbackModel ?? GEMINI_FALLBACK_MODEL;
   const responseFormat = opts.responseFormat;
+  const recordAttempt = opts.recordAttempt;
 
   // Circuit-breaker wraps the WHOLE retry-and-fallback ladder for this provider.
   // If Gemini is genuinely down, the breaker opens after a handful of failures
@@ -122,7 +143,7 @@ export async function callGeminiJson<T = unknown>(
 
     for (let attempt = 0; attempt < MAX_PRIMARY_ATTEMPTS; attempt++) {
       try {
-        return await callOnce<T>(messages, primary, maxTokens, responseFormat);
+        return await callOnce<T>(messages, primary, maxTokens, responseFormat, recordAttempt);
       } catch (err) {
         lastErr = err;
         const status = (err as { status?: number })?.status ?? 0;
@@ -136,7 +157,7 @@ export async function callGeminiJson<T = unknown>(
 
     console.warn(`[geminiJson] ${primary} exhausted, falling back to ${fallback}`);
     try {
-      return await callOnce<T>(messages, fallback, maxTokens, responseFormat);
+      return await callOnce<T>(messages, fallback, maxTokens, responseFormat, recordAttempt);
     } catch (err) {
       lastErr = err;
     }
