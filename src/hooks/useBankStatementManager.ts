@@ -24,6 +24,11 @@ import {
 export type BankStatementDetail = {
   statement: BankStatementSummary;
   transactions: BankTransaction[];
+  /** True when the server short-circuited because this exact file was
+   *  already analyzed successfully — we surface a different toast
+   *  ("opened the existing one") so the user understands no new
+   *  Gemini call was made. */
+  alreadyAnalyzed?: boolean;
 };
 
 /**

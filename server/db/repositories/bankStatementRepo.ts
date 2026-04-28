@@ -94,6 +94,15 @@ const stmts = {
        WHERE user_id = ? AND file_hash = ? AND status = 'analyzing'
        ORDER BY created_at DESC LIMIT 1`
   ),
+  // Used to dedupe SUCCESSFUL re-uploads of the same file. Without this,
+  // a second upload of the same statement re-runs Gemini and (because
+  // even at temperature: 0 the fallback model can land on different
+  // chunks across runs) produces different totals — confusing the user.
+  doneByHashForUser: db.prepare(
+    `SELECT * FROM bank_statements
+       WHERE user_id = ? AND file_hash = ? AND status = 'done'
+       ORDER BY created_at DESC LIMIT 1`
+  ),
   updateName: db.prepare(
     "UPDATE bank_statements SET name = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ? AND user_id = ?"
   ),
@@ -187,6 +196,10 @@ export const bankStatementRepo = {
 
   findInProgressByHashForUser(userId: string, fileHash: string): BankStatementRow | undefined {
     return stmts.inProgressByHashForUser.get(userId, fileHash) as BankStatementRow | undefined;
+  },
+
+  findDoneByHashForUser(userId: string, fileHash: string): BankStatementRow | undefined {
+    return stmts.doneByHashForUser.get(userId, fileHash) as BankStatementRow | undefined;
   },
 
   updateName(id: string, userId: string, name: string): boolean {

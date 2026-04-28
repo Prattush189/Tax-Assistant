@@ -1553,7 +1553,7 @@ export async function fetchBankStatements(): Promise<{ statements: BankStatement
   return authFetch('/api/bank-statements');
 }
 
-export async function fetchBankStatement(id: string): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[] }> {
+export async function fetchBankStatement(id: string): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[]; alreadyAnalyzed?: boolean }> {
   return authFetch(`/api/bank-statements/${id}`);
 }
 
@@ -1566,7 +1566,7 @@ export interface BankStatementAnalyzeProgress {
 export async function analyzeBankStatementFile(
   file: File,
   onProgress?: (p: BankStatementAnalyzeProgress) => void,
-): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[] }> {
+): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[]; alreadyAnalyzed?: boolean }> {
   // Fast path: if this is a digitally-generated PDF, extract the text layer
   // in the browser and send text-only to the server. The server skips the
   // Gemini vision pass and completes in ~10-15s instead of 30-60s. Scanned
@@ -1630,7 +1630,7 @@ async function analyzeBankStatementPdfText(
   pdfText: string,
   filename: string,
   onProgress?: (p: BankStatementAnalyzeProgress) => void,
-): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[]; warning?: string }> {
+): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[]; warning?: string; alreadyAnalyzed?: boolean }> {
   // Large multi-chunk statements (50+ pages) can take 4-5 minutes of parallel
   // Gemini calls. Cap at 6 min so a slow-but-progressing run completes rather
   // than the client killing it just before the server returns.
@@ -1699,7 +1699,7 @@ async function analyzeBankStatementPdfText(
 async function consumeAnalyzeStream(
   body: ReadableStream<Uint8Array>,
   onProgress: (p: BankStatementAnalyzeProgress) => void,
-): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[]; warning?: string }> {
+): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[]; warning?: string; alreadyAnalyzed?: boolean }> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -1771,7 +1771,7 @@ async function consumeAnalyzeStream(
   return finalPayload;
 }
 
-export async function analyzeBankStatementCsv(csvText: string, filename?: string): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[] }> {
+export async function analyzeBankStatementCsv(csvText: string, filename?: string): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[]; alreadyAnalyzed?: boolean }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 120_000);
   const doFetch = () => fetch('/api/bank-statements/analyze', {

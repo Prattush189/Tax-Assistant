@@ -746,6 +746,25 @@ router.post(
         else res.status(200).json(payload);
         return;
       }
+      // Same-hash dedup for SUCCESSFULLY-completed runs. Without this, a
+      // second upload of the same file re-runs Gemini and produces
+      // slightly different totals than the first run because
+      //   - chunks that 503 on one run vs the next get routed to the
+      //     fallback model with different reasoning_effort,
+      //   - the per-row salvage logic (both-debit-credit, trailer-undercount
+      //     accept) makes interpretation calls that aren't bit-stable.
+      // Reusing the existing row keeps the user's view consistent and
+      // saves the duplicate Gemini spend. They can always delete the
+      // existing one if they want a fresh analysis.
+      const previouslyDone = bankStatementRepo.findDoneByHashForUser(req.user.id, fileHash);
+      if (previouslyDone) {
+        console.log(`[bank-statements] reusing existing successful analysis ${previouslyDone.id} for hash ${fileHash.slice(0, 12)}…`);
+        const txs = bankTransactionRepo.listByStatement(previouslyDone.id).map(serializeTransaction);
+        const payload = { statement: serializeStatement(previouslyDone), transactions: txs, txCount: txs.length, resumed: true, alreadyAnalyzed: true };
+        if (sseOpen) { sendSse({ type: 'done', ...payload }); res.end(); }
+        else res.status(200).json(payload);
+        return;
+      }
     }
 
     // Upfront placeholder. Visible to any subsequent /api/bank-statements

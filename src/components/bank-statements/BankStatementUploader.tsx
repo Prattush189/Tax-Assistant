@@ -61,7 +61,9 @@ export function BankStatementUploader({ manager }: Props) {
       }
       try {
         const result = await manager.analyzeCsv(text, file.name);
-        toast.success(`Analyzed ${result.transactions.length} transactions`);
+        toast.success(result.alreadyAnalyzed
+          ? `This statement was already analyzed earlier — opened the existing one (${result.transactions.length} transactions).`
+          : `Analyzed ${result.transactions.length} transactions`);
       } catch (e) {
         toast.error(e instanceof Error ? e.message : 'Analysis failed');
       }
@@ -70,7 +72,9 @@ export function BankStatementUploader({ manager }: Props) {
 
     try {
       const result = await manager.analyzeFile(file);
-      toast.success(`Analyzed ${result.transactions.length} transactions`);
+      toast.success(result.alreadyAnalyzed
+        ? `This statement was already analyzed earlier — opened the existing one (${result.transactions.length} transactions).`
+        : `Analyzed ${result.transactions.length} transactions`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Analysis failed');
     }
