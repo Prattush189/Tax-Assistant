@@ -30,6 +30,7 @@ import { authMiddleware, adminMiddleware, trialCheckMiddleware } from './middlew
 import { authLimiter, chatLimiter, uploadLimiter } from './middleware/rateLimiter.js';
 import { warmupRazorpayPlans } from './lib/razorpayPlans.js';
 import { startRenewalReminderJob } from './jobs/renewalReminder.js';
+import { startStuckJobSweeper } from './lib/sweepStuckJobs.js';
 import helmet from 'helmet';
 import cors from 'cors';
 import path from 'path';
@@ -175,6 +176,13 @@ app.listen(PORT, () => {
 
   // Start 48-hour renewal reminder email job (runs hourly)
   startRenewalReminderJob();
+
+  // Sweep stuck AI jobs (ledger / bank statement / notice / partnership
+  // deed rows that got orphaned by a crash, redeploy, or runaway
+  // Gemini retry loop). Runs once now and every 5 min thereafter so a
+  // reload or a new login doesn't leave the user staring at a forever-
+  // 'generating' row.
+  startStuckJobSweeper();
 });
 
 export default app;
