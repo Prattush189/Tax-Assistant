@@ -47,7 +47,20 @@ interface RawItem {
 
 const Y_TOLERANCE = 2.5;       // PDF user-space units. Items within this
                                // y-distance belong to the same row.
-const X_CLUSTER_TOLERANCE = 8; // Items within this x-distance share a column.
+// Max GAP between consecutive sorted x-positions for two items to be
+// in the same column. This is single-linkage clustering — a column can
+// span any width as long as items within it are densely packed. Set
+// to 12 units because:
+//   - intra-column gaps are typically <1 unit (right-aligned numeric
+//     columns have many rows piling at similar x-positions; left-aligned
+//     text columns share an exact x for every row),
+//   - inter-column gaps are typically 30-100 units,
+//   - 12 sits comfortably in the middle.
+// An earlier "max cluster width" formulation collapsed close-but-distinct
+// columns (e.g. Canara's Withdrawal/Deposit pair) because right-aligned
+// amounts in a single column can span 30+ units of leftmost-x due to
+// varying digit widths.
+const X_GAP_TOLERANCE = 12;
 
 /**
  * Extract a 2D grid from a digital PDF. Returns null when the PDF
@@ -109,33 +122,41 @@ export async function extractPdfGrid(file: File): Promise<PdfGrid | null> {
     }
     if (currentRow.length) rowBuckets.push(currentRow);
 
-    // Phase 3 — discover canonical column x-positions. Pool every item's
-    // x across every row, cluster by X_CLUSTER_TOLERANCE, take cluster
-    // centers as column anchors. Banks tend to right-align numeric
-    // columns and left-align text, so cluster on the LEFT edge — that's
-    // what stays stable across rows of different widths.
+    // Phase 3 — discover canonical column x-positions. Pool every
+    // item's left-edge x across every row, sort ascending, and walk
+    // through splitting at any gap > X_GAP_TOLERANCE. Each resulting
+    // bucket is one column; its mean x is the column anchor.
+    //
+    // Banks tend to right-align numeric columns and left-align text,
+    // but we cluster on the LEFT edge because that's what stays
+    // densely packed (most items in a column share an exact x).
+    // Right-aligned columns produce a wider left-edge range, but
+    // single-linkage gap clustering handles that — the items inside
+    // one column are still within X_GAP_TOLERANCE of each other,
+    // while the gap to the next column is much larger.
     const xs = allItems.map(i => i.x).sort((a, b) => a - b);
     const columnXs: number[] = [];
-    let clusterStart = xs[0];
+    const minDensity = Math.max(3, Math.floor(rowBuckets.length * 0.05));
     let clusterSum = xs[0];
     let clusterCount = 1;
+    let prevX = xs[0];
     for (let i = 1; i < xs.length; i++) {
-      if (xs[i] - clusterStart <= X_CLUSTER_TOLERANCE) {
+      if (xs[i] - prevX <= X_GAP_TOLERANCE) {
         clusterSum += xs[i];
         clusterCount++;
       } else {
         // Only keep clusters with enough density to be a real column —
         // single-stray items (page numbers, watermarks) shouldn't get
         // their own column. Threshold at 5% of row count.
-        if (clusterCount >= Math.max(3, Math.floor(rowBuckets.length * 0.05))) {
+        if (clusterCount >= minDensity) {
           columnXs.push(clusterSum / clusterCount);
         }
-        clusterStart = xs[i];
         clusterSum = xs[i];
         clusterCount = 1;
       }
+      prevX = xs[i];
     }
-    if (clusterCount >= Math.max(3, Math.floor(rowBuckets.length * 0.05))) {
+    if (clusterCount >= minDensity) {
       columnXs.push(clusterSum / clusterCount);
     }
 
