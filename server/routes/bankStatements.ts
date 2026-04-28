@@ -1151,14 +1151,17 @@ router.post(
         // CSV path: client posted parsed CSV text; we already know the
         // structure (date / narration / debit / credit / balance), so the
         // only AI work is enrichment — categorise each row and fill in
-        // bankName / period / counterparty if visible. No chunking when
-        // the row count fits in one call's output budget; chunked above
-        // ~120 rows because the prompt asks Gemini to return the full
-        // schema for every row, and 16 K output tokens (the practical
-        // ceiling on flash-lite without truncation) cover roughly that
-        // many rows comfortably. The wizard path commonly ships 300+
-        // rows from a Canara-style statement, which used to truncate
-        // silently and produce "Failed to parse Gemini JSON response".
+        // bankName / period / counterparty if visible.
+        //
+        // Output shape: instead of asking Gemini to echo the full
+        // ExtractedStatement schema (10 fields per row, ~250 chars),
+        // we ask for a compact enrichment array (5 fields, ~80 chars
+        // per row) and merge it server-side with the deterministic
+        // input. That's a ~3× output shrink, which matters because
+        // Gemini's practical output ceiling on flash-lite is ~16 K
+        // tokens, and verbose UPI narrations on a 300-row Canara
+        // statement push the full-schema response past that easily —
+        // the model truncates and the JSON parse fails.
         filename = typeof req.body?.filename === 'string' ? req.body.filename : 'statement.csv';
         mimeType = 'text/csv';
         const parsed = Papa.parse(String(req.body.csvText), { header: true, skipEmptyLines: true });
@@ -1180,39 +1183,126 @@ router.post(
           };
         });
 
-        const CSV_BATCH_SIZE = 120;
+        const CSV_BATCH_SIZE = 80;
         const CSV_BATCH_CONCURRENCY = 3;
         const CSV_MAX_OUTPUT_TOKENS = 16_384;
-        const buildPrompt = (batch: typeof normalized, isFirst: boolean) =>
-          `${conditionsBlock}${BANK_STATEMENT_PROMPT}\n\n` +
-          `The transactions array has already been extracted and is given below as JSON. ` +
-          `Return the same schema, ` +
-          (isFirst
-            ? `filling bankName/accountNumberMasked/periodFrom/periodTo from context if obvious (else null) `
-            : `setting bankName/accountNumberMasked/periodFrom/periodTo to null (this is a continuation batch) `) +
-          `and adding category / subcategory / counterparty / reference / isRecurring to each row. ` +
-          `Preserve the given amount signs.\n\nINPUT_ROWS:\n${JSON.stringify(batch)}`;
+
+        interface EnrichmentResponse {
+          bankName: string | null;
+          accountNumberMasked: string | null;
+          periodFrom: string | null;
+          periodTo: string | null;
+          currency: string | null;
+          enrichments: Array<{
+            category: string | null;
+            subcategory: string | null;
+            counterparty: string | null;
+            reference: string | null;
+            isRecurring: boolean | null;
+          }>;
+        }
+
+        // Compact prompt: ask only for the fields the wizard / CSV
+        // doesn't already have. Categorisation rules + counterparty
+        // extraction rules are inlined from BANK_STATEMENT_PROMPT —
+        // we don't include the schema header for the full transaction
+        // because we don't want Gemini echoing date/amount/balance.
+        const buildEnrichmentPrompt = (batch: typeof normalized, isFirst: boolean) => `${conditionsBlock}You are enriching pre-extracted bank-statement transactions. Read the input rows below and return ONE JSON object — no markdown fences, no prose:
+
+{
+  "bankName": "string or null",
+  "accountNumberMasked": "XXXXNNNN (last 4) or null",
+  "periodFrom": "YYYY-MM-DD or null",
+  "periodTo": "YYYY-MM-DD or null",
+  "currency": "INR",
+  "enrichments": [
+    { "category": "...", "subcategory": "string or null", "counterparty": "string or null", "reference": "string or null", "isRecurring": false }
+  ]
+}
+
+CRITICAL:
+- enrichments MUST be the same length as INPUT_ROWS and in the same order. One enrichment object per input row, no skipping, no reordering.
+- Do NOT echo date / amount / balance / narration — they come from the input as-is.
+${isFirst
+  ? '- Set bankName / accountNumberMasked / periodFrom / periodTo from context if you can read them in the narrations; null otherwise.'
+  : '- Set bankName / accountNumberMasked / periodFrom / periodTo to null (this is a continuation batch).'}
+
+category MUST be one of: ${BANK_STATEMENT_CATEGORIES.map(c => `"${c}"`).join(' | ')}.
+
+Categorisation rules (apply the FIRST match to the input row's narration):
+- "SALARY" / "SAL CREDIT" → Salary
+- "RENT" as a credit → Rent Received
+- "INT.", "INTEREST PAID", "SB INT", "FD INT" → Interest Income
+- "DIV", "DIVIDEND" → Dividends
+- "GSTN", "GSTIN", "GST PMT" → GST Payments
+- "TDS", "26Q", "26QB" → TDS
+- "ADV TAX", "SELF ASMNT", "CHALLAN 280" → Taxes Paid
+- "EMI", "LOAN", "HDFC HL", "HOUSING LOAN" → Loan EMI
+- "SIP", "MUTUAL FUND", "MF ", "ZERODHA", "GROWW", "UPSTOX" → Investments
+- "NEFT", "IMPS", "UPI", "RTGS" with personal counterparty → Transfers
+- Debits to vendors (rent, utilities, office, travel, ads) → Business Expenses
+- Credits from customers to a business account → Business Income
+- Grocery, shopping, restaurants, personal consumption → Personal
+- Otherwise → Other
+
+Counterparty extraction:
+- UPI "UPI/<refno>/<note>/<vpa>/..." → VPA or payee name
+- NEFT/IMPS/RTGS "...-NAME-REF" → NAME segment
+- POS → merchant (SWIGGY / AMAZON / ZOMATO)
+- Cheque / cash → "Cheque" / "Cash deposit"
+- Bank charges → charge type
+- If nothing identifiable, null. Never copy the entire narration.
+
+reference: pull UTR / cheque / txn ref (10-16 digit alphanumeric token) into reference, or null.
+
+isRecurring: true if the same narration pattern appears at least twice with similar amounts (salary / EMI / SIP / rent).
+
+INPUT_ROWS (${batch.length} rows):
+${JSON.stringify(batch)}`;
+
+        // Zip Gemini's enrichments back onto the deterministic input
+        // to build the full transaction array. If Gemini returned
+        // fewer enrichments than rows (truncation we couldn't detect),
+        // default the missing ones to category=Other so we don't drop
+        // rows silently.
+        const zipBatch = (
+          batch: typeof normalized,
+          enrichments: EnrichmentResponse['enrichments'],
+        ): unknown[] => batch.map((row, i) => {
+          const e = enrichments[i] ?? {};
+          return {
+            date: row.date,
+            narration: row.narration,
+            amount: row.amount,
+            type: row.type,
+            balance: row.balance,
+            category: typeof e.category === 'string' && e.category.trim() ? e.category : 'Other',
+            subcategory: typeof e.subcategory === 'string' ? e.subcategory : null,
+            counterparty: typeof e.counterparty === 'string' ? e.counterparty : null,
+            reference: typeof e.reference === 'string' ? e.reference : null,
+            isRecurring: e.isRecurring === true,
+          };
+        });
 
         if (normalized.length <= CSV_BATCH_SIZE) {
-          // Single-call fast path. Bumped to 16 K to match the chunked
-          // path's per-call budget and absorb verbose narrations.
-          const csvResult = await callGeminiJson<ExtractedStatement>(
-            [{ role: 'user', content: buildPrompt(normalized, true) }],
+          const csvResult = await callGeminiJson<EnrichmentResponse>(
+            [{ role: 'user', content: buildEnrichmentPrompt(normalized, true) }],
             { maxTokens: CSV_MAX_OUTPUT_TOKENS },
           );
-          extracted = csvResult.data;
+          extracted = {
+            bankName: csvResult.data.bankName ?? null,
+            accountNumberMasked: csvResult.data.accountNumberMasked ?? null,
+            periodFrom: csvResult.data.periodFrom ?? null,
+            periodTo: csvResult.data.periodTo ?? null,
+            currency: csvResult.data.currency ?? 'INR',
+            transactions: zipBatch(normalized, csvResult.data.enrichments ?? []),
+          };
           (res.locals as Record<string, unknown>).geminiUsages = [{
             inputTokens: csvResult.inputTokens,
             outputTokens: csvResult.outputTokens,
             modelUsed: csvResult.modelUsed,
           }];
         } else {
-          // Chunked path. Each batch only categorises its own rows;
-          // the first batch additionally returns statement metadata
-          // (bankName / period). Merge by concat — input order is
-          // preserved within each batch, and batches are submitted in
-          // index order, so the resulting transactions[] matches the
-          // original CSV row order.
           const batches: Array<typeof normalized> = [];
           for (let i = 0; i < normalized.length; i += CSV_BATCH_SIZE) {
             batches.push(normalized.slice(i, i + CSV_BATCH_SIZE));
@@ -1225,40 +1315,37 @@ router.post(
             CSV_BATCH_CONCURRENCY,
             async (batch, idx) => {
               const t0 = Date.now();
-              const result = await callGeminiJson<ExtractedStatement>(
-                [{ role: 'user', content: buildPrompt(batch, idx === 0) }],
+              const result = await callGeminiJson<EnrichmentResponse>(
+                [{ role: 'user', content: buildEnrichmentPrompt(batch, idx === 0) }],
                 { maxTokens: CSV_MAX_OUTPUT_TOKENS },
               );
-              console.log(`[bank-statements] csv batch ${idx + 1}/${batches.length} ✓ ${result.data.transactions?.length ?? 0} rows in ${Date.now() - t0}ms`);
-              sendSse({ type: 'progress', completed: idx + 1, total: batches.length, txInChunk: result.data.transactions?.length ?? 0 });
-              return result;
+              const enrichments = result.data.enrichments ?? [];
+              if (enrichments.length < batch.length * 0.95) {
+                throw new Error(`csv batch ${idx + 1}/${batches.length}: enrichments undercount (${enrichments.length} of ${batch.length}) — likely truncation`);
+              }
+              console.log(`[bank-statements] csv batch ${idx + 1}/${batches.length} ✓ ${enrichments.length} enrichments in ${Date.now() - t0}ms`);
+              sendSse({ type: 'progress', completed: idx + 1, total: batches.length, txInChunk: enrichments.length });
+              return { batch, result, enrichments };
             },
           );
 
-          const merged: ExtractedStatement = {
-            bankName: batchResults[0]?.data.bankName ?? null,
-            accountNumberMasked: batchResults[0]?.data.accountNumberMasked ?? null,
-            periodFrom: batchResults[0]?.data.periodFrom ?? null,
-            periodTo: batchResults[0]?.data.periodTo ?? null,
-            currency: batchResults[0]?.data.currency ?? 'INR',
-            transactions: batchResults.flatMap(r => r.data.transactions ?? []),
-          };
-
-          // If a batch came back short, count-mismatch fail loudly rather
-          // than silently dropping rows. Categorisation can drop a row if
-          // Gemini truncated; we'd rather error than persist incomplete.
-          if (merged.transactions.length < normalized.length * 0.95) {
-            throw new Error(
-              `Categorisation produced ${merged.transactions.length} rows but expected ~${normalized.length}. ` +
-              `One or more batches likely truncated. Retry, and if it persists raise CSV_BATCH_SIZE downward.`,
-            );
+          const allTransactions: unknown[] = [];
+          for (const { batch, enrichments } of batchResults) {
+            allTransactions.push(...zipBatch(batch, enrichments));
           }
 
-          extracted = merged;
-          (res.locals as Record<string, unknown>).geminiUsages = batchResults.map(r => ({
-            inputTokens: r.inputTokens,
-            outputTokens: r.outputTokens,
-            modelUsed: r.modelUsed,
+          extracted = {
+            bankName: batchResults[0]?.result.data.bankName ?? null,
+            accountNumberMasked: batchResults[0]?.result.data.accountNumberMasked ?? null,
+            periodFrom: batchResults[0]?.result.data.periodFrom ?? null,
+            periodTo: batchResults[0]?.result.data.periodTo ?? null,
+            currency: batchResults[0]?.result.data.currency ?? 'INR',
+            transactions: allTransactions,
+          };
+          (res.locals as Record<string, unknown>).geminiUsages = batchResults.map(({ result }) => ({
+            inputTokens: result.inputTokens,
+            outputTokens: result.outputTokens,
+            modelUsed: result.modelUsed,
           }));
         }
       }
