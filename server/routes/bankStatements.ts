@@ -1151,10 +1151,14 @@ router.post(
         // CSV path: client posted parsed CSV text; we already know the
         // structure (date / narration / debit / credit / balance), so the
         // only AI work is enrichment — categorise each row and fill in
-        // bankName / period / counterparty if visible. One JSON call,
-        // no chunking, no vision (data:text/plain data URLs are NOT
-        // accepted by Gemini's vision endpoint — sending them returns a
-        // 400 that surfaced earlier as "CSV doesn't work").
+        // bankName / period / counterparty if visible. No chunking when
+        // the row count fits in one call's output budget; chunked above
+        // ~120 rows because the prompt asks Gemini to return the full
+        // schema for every row, and 16 K output tokens (the practical
+        // ceiling on flash-lite without truncation) cover roughly that
+        // many rows comfortably. The wizard path commonly ships 300+
+        // rows from a Canara-style statement, which used to truncate
+        // silently and produce "Failed to parse Gemini JSON response".
         filename = typeof req.body?.filename === 'string' ? req.body.filename : 'statement.csv';
         mimeType = 'text/csv';
         const parsed = Papa.parse(String(req.body.csvText), { header: true, skipEmptyLines: true });
@@ -1175,18 +1179,88 @@ router.post(
             balance: balance ? toNumber(balance) : null,
           };
         });
-        const csvSnippet = JSON.stringify(normalized).slice(0, 80000);
-        const csvPrompt = `${conditionsBlock}${BANK_STATEMENT_PROMPT}\n\nThe transactions array has already been extracted and is given below as JSON. Return the same schema, filling bankName/period from context if obvious (else null) and adding category / subcategory / isRecurring to each row. Preserve the given amount signs.\n\nINPUT_ROWS:\n${csvSnippet}`;
-        const csvResult = await callGeminiJson<ExtractedStatement>(
-          [{ role: 'user', content: csvPrompt }],
-          { maxTokens: 8192 },
-        );
-        extracted = csvResult.data;
-        (res.locals as Record<string, unknown>).geminiUsages = [{
-          inputTokens: csvResult.inputTokens,
-          outputTokens: csvResult.outputTokens,
-          modelUsed: csvResult.modelUsed,
-        }];
+
+        const CSV_BATCH_SIZE = 120;
+        const CSV_BATCH_CONCURRENCY = 3;
+        const CSV_MAX_OUTPUT_TOKENS = 16_384;
+        const buildPrompt = (batch: typeof normalized, isFirst: boolean) =>
+          `${conditionsBlock}${BANK_STATEMENT_PROMPT}\n\n` +
+          `The transactions array has already been extracted and is given below as JSON. ` +
+          `Return the same schema, ` +
+          (isFirst
+            ? `filling bankName/accountNumberMasked/periodFrom/periodTo from context if obvious (else null) `
+            : `setting bankName/accountNumberMasked/periodFrom/periodTo to null (this is a continuation batch) `) +
+          `and adding category / subcategory / counterparty / reference / isRecurring to each row. ` +
+          `Preserve the given amount signs.\n\nINPUT_ROWS:\n${JSON.stringify(batch)}`;
+
+        if (normalized.length <= CSV_BATCH_SIZE) {
+          // Single-call fast path. Bumped to 16 K to match the chunked
+          // path's per-call budget and absorb verbose narrations.
+          const csvResult = await callGeminiJson<ExtractedStatement>(
+            [{ role: 'user', content: buildPrompt(normalized, true) }],
+            { maxTokens: CSV_MAX_OUTPUT_TOKENS },
+          );
+          extracted = csvResult.data;
+          (res.locals as Record<string, unknown>).geminiUsages = [{
+            inputTokens: csvResult.inputTokens,
+            outputTokens: csvResult.outputTokens,
+            modelUsed: csvResult.modelUsed,
+          }];
+        } else {
+          // Chunked path. Each batch only categorises its own rows;
+          // the first batch additionally returns statement metadata
+          // (bankName / period). Merge by concat — input order is
+          // preserved within each batch, and batches are submitted in
+          // index order, so the resulting transactions[] matches the
+          // original CSV row order.
+          const batches: Array<typeof normalized> = [];
+          for (let i = 0; i < normalized.length; i += CSV_BATCH_SIZE) {
+            batches.push(normalized.slice(i, i + CSV_BATCH_SIZE));
+          }
+          console.log(`[bank-statements] csv path: ${normalized.length} rows → ${batches.length} batch(es) of up to ${CSV_BATCH_SIZE}`);
+          sendSse({ type: 'start', totalChunks: batches.length, pages: batches.length });
+
+          const batchResults = await mapWithConcurrency(
+            batches,
+            CSV_BATCH_CONCURRENCY,
+            async (batch, idx) => {
+              const t0 = Date.now();
+              const result = await callGeminiJson<ExtractedStatement>(
+                [{ role: 'user', content: buildPrompt(batch, idx === 0) }],
+                { maxTokens: CSV_MAX_OUTPUT_TOKENS },
+              );
+              console.log(`[bank-statements] csv batch ${idx + 1}/${batches.length} ✓ ${result.data.transactions?.length ?? 0} rows in ${Date.now() - t0}ms`);
+              sendSse({ type: 'progress', completed: idx + 1, total: batches.length, txInChunk: result.data.transactions?.length ?? 0 });
+              return result;
+            },
+          );
+
+          const merged: ExtractedStatement = {
+            bankName: batchResults[0]?.data.bankName ?? null,
+            accountNumberMasked: batchResults[0]?.data.accountNumberMasked ?? null,
+            periodFrom: batchResults[0]?.data.periodFrom ?? null,
+            periodTo: batchResults[0]?.data.periodTo ?? null,
+            currency: batchResults[0]?.data.currency ?? 'INR',
+            transactions: batchResults.flatMap(r => r.data.transactions ?? []),
+          };
+
+          // If a batch came back short, count-mismatch fail loudly rather
+          // than silently dropping rows. Categorisation can drop a row if
+          // Gemini truncated; we'd rather error than persist incomplete.
+          if (merged.transactions.length < normalized.length * 0.95) {
+            throw new Error(
+              `Categorisation produced ${merged.transactions.length} rows but expected ~${normalized.length}. ` +
+              `One or more batches likely truncated. Retry, and if it persists raise CSV_BATCH_SIZE downward.`,
+            );
+          }
+
+          extracted = merged;
+          (res.locals as Record<string, unknown>).geminiUsages = batchResults.map(r => ({
+            inputTokens: r.inputTokens,
+            outputTokens: r.outputTokens,
+            modelUsed: r.modelUsed,
+          }));
+        }
       }
 
       // Honor a mid-flight cancel. If the user clicked Cancel while
