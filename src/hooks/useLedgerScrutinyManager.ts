@@ -17,7 +17,7 @@ import {
 
 export function useLedgerScrutinyManager(enabled: boolean) {
   const [jobs, setJobs] = useState<LedgerScrutinyJob[]>([]);
-  const [usage, setUsage] = useState<{ used: number; limit: number; creditsUsed: number; creditsLimit: number; pagesPerCredit: number }>({ used: 0, limit: 0, creditsUsed: 0, creditsLimit: 0, pagesPerCredit: 10 });
+  const [usage, setUsage] = useState<{ used: number; limit: number; creditsUsed: number; creditsLimit: number; pagesPerCredit: number; csvRowsPerCredit: number }>({ used: 0, limit: 0, creditsUsed: 0, creditsLimit: 0, pagesPerCredit: 10, csvRowsPerCredit: 100 });
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [current, setCurrent] = useState<LedgerScrutinyDetail | null>(null);
   const [isLoading, setIsLoading] = useState(false);

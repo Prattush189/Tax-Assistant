@@ -1970,6 +1970,7 @@ export async function fetchLedgerScrutinyJobs(): Promise<{
     creditsUsed: number;
     creditsLimit: number;
     pagesPerCredit: number;
+    csvRowsPerCredit: number;
   };
 }> {
   return authFetch('/api/ledger-scrutiny');

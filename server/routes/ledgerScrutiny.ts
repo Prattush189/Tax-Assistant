@@ -22,7 +22,7 @@ import { safeParseJson } from '../lib/geminiJson.js';
 import { pickChatProvider } from '../lib/chatProvider.js';
 import { SseWriter } from '../lib/sseStream.js';
 import { gemini, GEMINI_CHAT_MODEL_THINK_FB, costForModel } from '../lib/gemini.js';
-import { creditsForPages, PAGES_PER_CREDIT } from '../lib/creditPolicy.js';
+import { creditsForPages, creditsForCsvRows, PAGES_PER_CREDIT, CSV_ROWS_PER_CREDIT } from '../lib/creditPolicy.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import {
   LEDGER_EXTRACT_PROMPT,
@@ -1016,6 +1016,7 @@ router.get('/', (req: AuthRequest, res: Response) => {
       creditsUsed,
       creditsLimit,
       pagesPerCredit: PAGES_PER_CREDIT.ledger_scrutiny,
+      csvRowsPerCredit: CSV_ROWS_PER_CREDIT.ledger_scrutiny ?? 0,
     },
   });
 });
@@ -1165,34 +1166,44 @@ router.post(
     // and refuse the upload if the user's remaining credits don't cover
     // the file. 1 credit = 10 ledger pages.
     let ledgerPagesTotal = 0;
+    let ledgerRowsTotal = 0;
+    let ledgerUnit: 'pages' | 'rows' = 'pages';
     if (pdfText !== null) {
       ledgerPagesTotal = pdfText.split(/\n?---\s*PAGE BREAK\s*---\n?/).filter(p => p.trim()).length;
       if (ledgerPagesTotal === 0) ledgerPagesTotal = 1;
     } else if (isPreExtracted) {
-      // Pre-extracted: charge by transaction count rounded into pages
-      // (~50 TX per page is a fair Tally export density).
-      const totalTx = Array.isArray(req.body.preExtracted?.accounts)
+      // Pre-extracted: bill by transaction count via CSV_ROWS_PER_CREDIT
+      // (same per-row rate as bank statements). The wizard already gave
+      // us a deterministic count, so there's no reason to round up to a
+      // page-equivalent like the vision/TSV paths have to.
+      ledgerRowsTotal = Array.isArray(req.body.preExtracted?.accounts)
         ? req.body.preExtracted.accounts.reduce(
             (s: number, a: { transactions?: unknown[] }) => s + (Array.isArray(a.transactions) ? a.transactions.length : 0),
             0,
           )
         : 0;
-      ledgerPagesTotal = Math.max(1, Math.ceil(totalTx / 50));
+      if (ledgerRowsTotal === 0) ledgerRowsTotal = 1;
+      ledgerUnit = 'rows';
     } else {
       // Vision path on a scanned PDF — page count from raw bytes is
       // expensive to compute here; charge minimum 1 credit (10 pages
       // of headroom) and reconcile via pages_processed at finish time.
       ledgerPagesTotal = PAGES_PER_CREDIT.ledger_scrutiny;
     }
-    const ledgerCreditsNeeded = creditsForPages('ledger_scrutiny', ledgerPagesTotal);
+    const ledgerCreditsNeeded = ledgerUnit === 'rows'
+      ? creditsForCsvRows('ledger_scrutiny', ledgerRowsTotal)
+      : creditsForPages('ledger_scrutiny', ledgerPagesTotal);
     if (ledgerCreditsNeeded > quota.creditsRemaining) {
       const excessPct = quota.creditsRemaining > 0
         ? Math.ceil(((ledgerCreditsNeeded - quota.creditsRemaining) / quota.creditsRemaining) * 100)
         : 100;
-      const remainingPages = quota.creditsRemaining * PAGES_PER_CREDIT.ledger_scrutiny;
+      const remainingHeadline = ledgerUnit === 'rows'
+        ? `${quota.creditsRemaining * (CSV_ROWS_PER_CREDIT.ledger_scrutiny ?? 0)} rows`
+        : `${quota.creditsRemaining * PAGES_PER_CREDIT.ledger_scrutiny} pages`;
+      const fileSize = ledgerUnit === 'rows' ? `${ledgerRowsTotal} rows` : `${ledgerPagesTotal} pages`;
       const errorMsg = quota.creditsRemaining === 0
         ? `You've already used 100% of your monthly ledger allowance. Upgrade your plan or wait until next month.`
-        : `This ledger (${ledgerPagesTotal} pages) exceeds your remaining monthly allowance by ~${excessPct}%. You have room for about ${remainingPages} pages this month.`;
+        : `This ledger (${fileSize}) exceeds your remaining monthly allowance by ~${excessPct}%. You have room for about ${remainingHeadline} this month.`;
       res.status(413).json({
         error: errorMsg,
         excessPct,
@@ -1501,14 +1512,21 @@ router.post(
       }
       ledgerScrutinyRepo.setStatus(job.id, req.user.id, 'done');
 
-      // Bill credits = ceil(pages / 10). On a clean success
-      // pages_processed is roughly equal to pagesTotal — use the
-      // larger of the two so an under-counted chunk approximation
-      // doesn't accidentally undercharge.
+      // Bill credits — by deterministic row count for the wizard /
+      // pre-extracted path (no variable consumption; the count we
+      // accepted at pre-flight is exactly what we processed), and by
+      // pages for the vision/TSV paths (use the larger of
+      // pages_processed and pagesTotal so an under-counted chunk
+      // approximation doesn't undercharge).
       try {
-        const pages = ledgerScrutinyRepo.getPagesTotals(job.id, req.user.id);
-        const billedPages = Math.max(pages?.pages_processed ?? 0, ledgerPagesTotal);
-        const ledgerCredits = creditsForPages('ledger_scrutiny', billedPages);
+        let ledgerCredits: number;
+        if (ledgerUnit === 'rows') {
+          ledgerCredits = creditsForCsvRows('ledger_scrutiny', ledgerRowsTotal);
+        } else {
+          const pages = ledgerScrutinyRepo.getPagesTotals(job.id, req.user.id);
+          const billedPages = Math.max(pages?.pages_processed ?? 0, ledgerPagesTotal);
+          ledgerCredits = creditsForPages('ledger_scrutiny', billedPages);
+        }
         featureUsageRepo.logWithBilling(req.user.id, quota.billingUserId, 'ledger_scrutiny', ledgerCredits);
       } catch (err) {
         console.error('[ledger-scrutiny] feature usage log failed', err);
@@ -1691,11 +1709,17 @@ router.post('/:id/scrutinize', async (req: AuthRequest, res: Response) => {
     }
     ledgerScrutinyRepo.setStatus(job.id, req.user.id, 'done');
 
-    // Bill credits proportional to the pages this scrutiny covered.
+    // Bill credits proportional to what we processed — rows for the
+    // wizard / pre-extracted path, pages for the vision / TSV paths.
     try {
-      const pages = ledgerScrutinyRepo.getPagesTotals(job.id, req.user.id);
-      const billedPages = Math.max(pages?.pages_processed ?? 0, pages?.pages_total ?? 0);
-      const ledgerCredits = creditsForPages('ledger_scrutiny', billedPages || PAGES_PER_CREDIT.ledger_scrutiny);
+      let ledgerCredits: number;
+      if (ledgerUnit === 'rows') {
+        ledgerCredits = creditsForCsvRows('ledger_scrutiny', ledgerRowsTotal);
+      } else {
+        const pages = ledgerScrutinyRepo.getPagesTotals(job.id, req.user.id);
+        const billedPages = Math.max(pages?.pages_processed ?? 0, pages?.pages_total ?? 0);
+        ledgerCredits = creditsForPages('ledger_scrutiny', billedPages || PAGES_PER_CREDIT.ledger_scrutiny);
+      }
       featureUsageRepo.logWithBilling(req.user.id, quota.billingUserId, 'ledger_scrutiny', ledgerCredits);
     } catch (err) {
       console.error('[ledger-scrutiny] feature usage log failed', err);

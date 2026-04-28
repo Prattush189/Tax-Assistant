@@ -15,12 +15,19 @@
 // formats consume credits at different rates because their actual
 // Gemini cost differs:
 //
-//   Bank statement PDF: 5 pages = 1 credit
-//   Bank statement CSV: 100 rows = 1 credit
+//   Bank statement PDF (vision/TSV path): 5 pages = 1 credit
+//   Bank statement CSV / wizard-mapped:   100 rows = 1 credit
 //                       (≈20 rows/page → 5 pages = 100 rows = 1 credit)
-//   Ledger scrutiny:    10 pages = 1 credit
+//   Ledger scrutiny PDF (vision/TSV path): 10 pages = 1 credit
 //                       (extract + chunked audit, more total Gemini work
 //                        per page than a bank statement chunk).
+//   Ledger scrutiny wizard-mapped:        100 rows = 1 credit
+//                       (extract pass is skipped — only the audit runs —
+//                        so we bill by deterministic transaction count.
+//                        Same row-ratio as bank statements; the audit
+//                        pass is heavier per row than a bank-categorise
+//                        call but still much cheaper than the legacy
+//                        extract + audit, so users come out ahead.)
 //
 // Cancellation only debits credits for pages PROCESSED so far (chunks
 // that finished before the cancel landed). Failure / timeout debits
@@ -34,11 +41,16 @@ export const PAGES_PER_CREDIT: Record<CreditFeature, number> = {
   ledger_scrutiny: 10,
 };
 
-/** CSV rows per credit. Only bank statement currently accepts CSV
- *  input; future ledger-CSV support can plug in here without changing
- *  the call sites. */
+/** Row-based billing rate, used by:
+ *    - bank statement: CSV uploads + the column-mapping wizard
+ *      (both ship deterministic row data; no vision/TSV pass).
+ *    - ledger scrutiny: the column-mapping wizard's pre-extracted
+ *      path (extract pass skipped — we only run the audit).
+ *  Anything routed through vision or chunked-TSV still bills by
+ *  PDF pages via PAGES_PER_CREDIT. */
 export const CSV_ROWS_PER_CREDIT: Partial<Record<CreditFeature, number>> = {
   bank_statement: 100,
+  ledger_scrutiny: 100,
 };
 
 /** Convert pages to credits, rounded UP so a 6-page bank statement
