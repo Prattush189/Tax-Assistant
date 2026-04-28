@@ -122,42 +122,66 @@ export async function extractPdfGrid(file: File): Promise<PdfGrid | null> {
     }
     if (currentRow.length) rowBuckets.push(currentRow);
 
-    // Phase 3 — discover canonical column x-positions. Pool every
-    // item's left-edge x across every row, sort ascending, and walk
-    // through splitting at any gap > X_GAP_TOLERANCE. Each resulting
-    // bucket is one column; its mean x is the column anchor.
+    // Phase 3 — discover canonical column x-positions.
     //
-    // Banks tend to right-align numeric columns and left-align text,
-    // but we cluster on the LEFT edge because that's what stays
-    // densely packed (most items in a column share an exact x).
-    // Right-aligned columns produce a wider left-edge range, but
-    // single-linkage gap clustering handles that — the items inside
-    // one column are still within X_GAP_TOLERANCE of each other,
-    // while the gap to the next column is much larger.
-    const xs = allItems.map(i => i.x).sort((a, b) => a - b);
-    const columnXs: number[] = [];
-    const minDensity = Math.max(3, Math.floor(rowBuckets.length * 0.05));
-    let clusterSum = xs[0];
-    let clusterCount = 1;
-    let prevX = xs[0];
-    for (let i = 1; i < xs.length; i++) {
-      if (xs[i] - prevX <= X_GAP_TOLERANCE) {
-        clusterSum += xs[i];
-        clusterCount++;
-      } else {
-        // Only keep clusters with enough density to be a real column —
-        // single-stray items (page numbers, watermarks) shouldn't get
-        // their own column. Threshold at 5% of row count.
-        if (clusterCount >= minDensity) {
-          columnXs.push(clusterSum / clusterCount);
+    // First-choice strategy: find the table's header row in the raw
+    // row buckets (the row containing "Date" / "Narration" / "Debit"
+    // / "Credit" / "Balance" / "Particulars" / "Withdrawal" / etc.)
+    // and use its words' x-positions as column anchors. This is far
+    // more reliable than statistical clustering because:
+    //   - the header is short, distinct words at consistent x
+    //     positions (no character-overlap noise),
+    //   - we already know semantically that these ARE the columns,
+    //   - we don't have to guess gap thresholds that vary per bank.
+    //
+    // Fallback: if no header row matches (rare — table starts on
+    // page 2, scanned-then-OCR'd PDFs, non-standard layouts), we
+    // fall back to single-linkage gap clustering on all items'
+    // left edges, which handles right-aligned numeric columns
+    // because items inside one column pack densely while inter-
+    // column gaps are 30-100 units.
+    const HEADER_WORD = /^(date|narration|particulars|description|details|withdraw\w*|deposit\w*|debit|credit|balance|chq|cheque|voucher|amount|reference|ref|utr|type)$/i;
+    let columnXs: number[] = [];
+    for (const bucket of rowBuckets) {
+      const headerItems = bucket.filter(it => HEADER_WORD.test(it.text.trim()));
+      // Need at least 3 distinct header words to consider this a real
+      // table-header row (filters out a stray "Balance" in narration).
+      if (headerItems.length >= 3) {
+        // Sort by x and dedup near-duplicates (some PDFs split a
+        // header word like "Withdrawal Amt." across two text items).
+        const sorted = [...headerItems].sort((a, b) => a.x - b.x);
+        for (const it of sorted) {
+          if (columnXs.length === 0 || it.x - columnXs[columnXs.length - 1] > 12) {
+            columnXs.push(it.x);
+          }
         }
-        clusterSum = xs[i];
-        clusterCount = 1;
+        break;
       }
-      prevX = xs[i];
     }
-    if (clusterCount >= minDensity) {
-      columnXs.push(clusterSum / clusterCount);
+
+    if (columnXs.length < 2) {
+      // Fallback: gap-based clustering of all items' left-edges.
+      const xs = allItems.map(i => i.x).sort((a, b) => a - b);
+      const minDensity = Math.max(3, Math.floor(rowBuckets.length * 0.05));
+      let clusterSum = xs[0];
+      let clusterCount = 1;
+      let prevX = xs[0];
+      for (let i = 1; i < xs.length; i++) {
+        if (xs[i] - prevX <= X_GAP_TOLERANCE) {
+          clusterSum += xs[i];
+          clusterCount++;
+        } else {
+          if (clusterCount >= minDensity) {
+            columnXs.push(clusterSum / clusterCount);
+          }
+          clusterSum = xs[i];
+          clusterCount = 1;
+        }
+        prevX = xs[i];
+      }
+      if (clusterCount >= minDensity) {
+        columnXs.push(clusterSum / clusterCount);
+      }
     }
 
     if (columnXs.length < 2) return null; // not enough column structure
