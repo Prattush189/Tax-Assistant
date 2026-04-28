@@ -47,7 +47,7 @@ export const PLAN_DEFAULTS: Record<PlanId, UserLimits> = {
     boardResolutions: 3,
     partnershipDeeds: 3,
     bankStatements: 3,
-    ledgerScrutiny: 1,
+    ledgerScrutiny: 3,
   },
   pro: {
     messages: { limit: 1500, period: 'month' },
@@ -58,7 +58,7 @@ export const PLAN_DEFAULTS: Record<PlanId, UserLimits> = {
     boardResolutions: 15,
     partnershipDeeds: 15,
     bankStatements: 15,
-    ledgerScrutiny: 3,
+    ledgerScrutiny: 50,
   },
   enterprise: {
     messages: { limit: 3000, period: 'month' },
@@ -69,7 +69,7 @@ export const PLAN_DEFAULTS: Record<PlanId, UserLimits> = {
     boardResolutions: 50,
     partnershipDeeds: 50,
     bankStatements: 50,
-    ledgerScrutiny: 8,
+    ledgerScrutiny: 250,
   },
 };
 
