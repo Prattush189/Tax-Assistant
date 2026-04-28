@@ -329,6 +329,14 @@ export async function adminChangePlan(userId: string, plan: 'free' | 'pro' | 'en
   });
 }
 
+/** Admin self-service: wipe THIS month's feature_usage rows for the
+ *  calling admin's own billing user. Resets every quota bar to 0%
+ *  without waiting for the calendar rollover. Cannot be used to
+ *  reset another user — the server route ignores any param. */
+export async function adminResetOwnUsage(): Promise<{ success: true; cleared: number; billingUserId: string }> {
+  return authFetch('/api/admin/usage/reset-self', { method: 'POST' });
+}
+
 export async function adminFetchTrend() {
   return authFetch('/api/admin/stats/trend');
 }

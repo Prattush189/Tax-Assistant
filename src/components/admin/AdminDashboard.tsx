@@ -1,13 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Users, Activity, DollarSign, Shield, CheckCircle, RefreshCw, ShieldOff, BarChart3, Cpu, Clock } from 'lucide-react';
+import { Users, Activity, DollarSign, Shield, CheckCircle, RefreshCw, ShieldOff, BarChart3, Cpu, Clock, RotateCcw } from 'lucide-react';
 import { ApiCostDashboard } from './ApiCostDashboard';
 import { ModelUsageDashboard } from './ModelUsageDashboard';
 import { RecentApiCallsDashboard } from './RecentApiCallsDashboard';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
-import { adminFetchStats, adminFetchUsers, adminSuspendUser, adminUnsuspendUser, adminChangePlan, adminFetchTrend, adminFetchPlans } from '../../services/api';
+import { adminFetchStats, adminFetchUsers, adminSuspendUser, adminUnsuspendUser, adminChangePlan, adminFetchTrend, adminFetchPlans, adminResetOwnUsage } from '../../services/api';
 import { LoadingAnimation } from '../ui/LoadingAnimation';
 import toast from 'react-hot-toast';
 import { cn } from '../../lib/utils';
+import { ConfirmDialog } from '../ui/ConfirmDialog';
 
 type AdminTab = 'overview' | 'users' | 'api-costs' | 'recent-calls' | 'model-usage';
 
@@ -90,6 +91,8 @@ export function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [trend, setTrend] = useState<TrendPoint[]>([]);
   const [plans, setPlans] = useState<PlanCount[]>([]);
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetPending, setResetPending] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -172,6 +175,18 @@ export function AdminDashboard() {
             </select>
             <button onClick={loadData} disabled={loading} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors">
               {loading ? <LoadingAnimation size="xs" /> : <RefreshCw className="w-4 h-4 text-gray-500" />}
+            </button>
+            {/* Self-only quota reset. Only clears the calling admin's
+                own monthly feature_usage rows (server enforces;
+                button just dispatches the request). */}
+            <button
+              onClick={() => setResetOpen(true)}
+              disabled={resetPending}
+              title="Reset my own monthly usage counters to 0%"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-amber-200 dark:border-amber-800/60 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-900/20 rounded-lg transition-colors disabled:opacity-50"
+            >
+              <RotateCcw className={cn('w-3.5 h-3.5', resetPending && 'animate-spin')} />
+              Reset my usage
             </button>
           </div>
         </div>
@@ -395,6 +410,29 @@ export function AdminDashboard() {
         </>
         )}
       </div>
+      <ConfirmDialog
+        open={resetOpen}
+        title="Reset your monthly usage?"
+        description="This wipes THIS month's quota counters for your account only — all bars will return to 0%. Cost history, transactions, and saved drafts are untouched. Use for testing or after hitting a limit during QA."
+        confirmLabel="Reset usage"
+        cancelLabel="Keep current"
+        destructive
+        pending={resetPending}
+        onConfirm={async () => {
+          setResetPending(true);
+          try {
+            const r = await adminResetOwnUsage();
+            toast.success(`Usage reset (${r.cleared} row${r.cleared === 1 ? '' : 's'} cleared)`);
+            setResetOpen(false);
+            await loadData();
+          } catch (e) {
+            toast.error(e instanceof Error ? e.message : 'Reset failed');
+          } finally {
+            setResetPending(false);
+          }
+        }}
+        onCancel={() => setResetOpen(false)}
+      />
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { userRepo } from '../db/repositories/userRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { AuthRequest } from '../types.js';
 import db from '../db/index.js';
+import { getBillingUser } from '../lib/billing.js';
 
 const router = Router();
 
@@ -55,6 +56,47 @@ router.get('/usage', (req: AuthRequest, res: Response) => {
   const period = (req.query.period as string) ?? 'month';
   const usage = usageRepo.getByIp(period);
   res.json(usage);
+});
+
+// POST /api/admin/usage/reset-self — admin-only, scoped to the
+// admin's OWN billing user. Wipes the current month's feature_usage
+// rows so the calling admin's quota counters reset to 0 without
+// waiting for the calendar rollover. Useful for testing and for the
+// admin's own self-service when they hit a limit while QA-ing.
+//
+// Hard rules:
+//   - This route ONLY clears rows for `billing_user_id = <admin's
+//     own billing user>`. Cannot be used to reset another user's
+//     quota — there's no `:userId` param on purpose.
+//   - Only deletes feature_usage rows (the quota source). Does NOT
+//     touch api_usage (the cost ledger), bank_statements / ledger_
+//     scrutiny_jobs row history, or the per-key Gemini search quota.
+//   - adminMiddleware on the parent /api/admin mount is the auth
+//     gate; non-admin requests never reach this handler.
+router.post('/usage/reset-self', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const actor = userRepo.findById(req.user.id);
+  if (!actor) { res.status(404).json({ error: 'User not found' }); return; }
+  const billingUser = getBillingUser(actor);
+
+  // Same start-of-month-IST cutoff used by featureUsageRepo's read
+  // queries — keeps the reset semantically equivalent to the calendar
+  // rollover (everything from the 1st of the IST month, inclusive).
+  const now = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+  const start = new Date(now.getFullYear(), now.getMonth(), 1);
+  const since = start.toISOString().replace('Z', '');
+
+  let cleared = 0;
+  try {
+    const result = db.prepare('DELETE FROM feature_usage WHERE billing_user_id = ? AND created_at >= ?').run(billingUser.id, since);
+    cleared = result.changes;
+  } catch (err) {
+    console.error('[admin] usage reset-self failed', err);
+    res.status(500).json({ error: 'Reset failed', detail: (err as Error).message?.slice(0, 200) });
+    return;
+  }
+  console.log(`[admin] ${actor.email ?? actor.id} reset their own monthly usage (${cleared} rows cleared)`);
+  res.json({ success: true, cleared, billingUserId: billingUser.id });
 });
 
 // POST /api/admin/users/:id/plan — change user's plan
