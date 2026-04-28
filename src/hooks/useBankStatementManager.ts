@@ -133,7 +133,15 @@ export function useBankStatementManager(enabled: boolean) {
     setError(null);
     try {
       const result = await analyzeBankStatementFile(file, (p) => setAnalyzeProgress(p));
-      setStatements((prev) => [result.statement, ...prev]);
+      // Replace if the row already exists in the list (server returned
+      // an existing analysis via the file_hash dedup, OR the polling
+      // loop has already added it). Without this guard a re-upload of
+      // the same file produced two visually identical sidebar entries
+      // pointing at one row.
+      setStatements((prev) => {
+        const filtered = prev.filter((s) => s.id !== result.statement.id);
+        return [result.statement, ...filtered];
+      });
       setCurrentId(result.statement.id);
       setCurrent(result);
       return result;
@@ -151,7 +159,10 @@ export function useBankStatementManager(enabled: boolean) {
     setError(null);
     try {
       const result = await analyzeBankStatementCsv(csvText, filename);
-      setStatements((prev) => [result.statement, ...prev]);
+      setStatements((prev) => {
+        const filtered = prev.filter((s) => s.id !== result.statement.id);
+        return [result.statement, ...filtered];
+      });
       setCurrentId(result.statement.id);
       setCurrent(result);
       return result;
