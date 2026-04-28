@@ -476,25 +476,45 @@ function computeTotals(txs: BankTransactionInput[]): { inflow: number; outflow: 
   return { inflow, outflow };
 }
 
+interface BalanceMismatch {
+  index: number;
+  date: string | null;
+  narration: string | null;
+  expectedDelta: number;
+  actualDelta: number;
+}
+
 /**
- * Cross-check the model's per-row credit/debit classification against
- * the running balance the bank prints on each row. For row N where
- * balance(N) and balance(N-1) are both extracted:
+ * Reconcile each row's signed amount against the bank's printed
+ * running balance. For row N with both balance(N) and balance(N-1)
+ * extracted, balance(N) - balance(N-1) pins the row's signed amount
+ * exactly — the bank's printed number is authoritative, the AI's
+ * credit/debit classification is not.
  *
- *   expectedDelta = balance(N) - balance(N-1)
- *   actualDelta   = tx.amount   (positive = credit / inflow, negative = debit / outflow)
+ * Two outcomes per mismatched row:
  *
- * If they disagree by more than ₹1 (handles rounding) the model
- * misread the row — usually a sign flip (credit ↔ debit). We can't
- * silently fix it from one side, so we surface a warning listing
- * the rows so the user can spot-check and reassign categories
- * manually if needed. Catches the symmetric "inflow undercounts by
- * X, outflow overcounts by X" pattern (production: 1 % drift on a
- * 337-row Canara statement which corresponds to ~1 misclassified
- * row at ₹16K).
+ *   - Pure sign flip (|expected| ≈ |actual|, signs differ): the AI
+ *     got the rupee amount right but put it on the wrong side of the
+ *     ledger. We overwrite tx.amount with the printed delta. This
+ *     is the dominant failure mode and produces the symmetric
+ *     "inflow undercounts by X, outflow overcounts by X" drift
+ *     pattern (e.g. 16-row Canara mismatch → ₹62K each-way drift,
+ *     ₹1.23L net error).
+ *
+ *   - Magnitudes also disagree: real extraction error (AI misread
+ *     a digit, missed a row, etc.). We can't pick a correct value
+ *     from one side, so we surface it for human review and leave
+ *     tx.amount alone.
+ *
+ * Mutates txs in-place. Skips rows where either balance is null
+ * (page boundaries, banks that don't print a per-row balance).
  */
-function findBalanceMismatches(txs: BankTransactionInput[]): Array<{ index: number; date: string | null; narration: string | null; expectedDelta: number; actualDelta: number }> {
-  const mismatches: Array<{ index: number; date: string | null; narration: string | null; expectedDelta: number; actualDelta: number }> = [];
+function reconcileBalances(txs: BankTransactionInput[]): {
+  autoCorrected: number;
+  mismatches: BalanceMismatch[];
+} {
+  let autoCorrected = 0;
+  const mismatches: BalanceMismatch[] = [];
   for (let i = 1; i < txs.length; i++) {
     const prev = txs[i - 1];
     const cur = txs[i];
@@ -504,17 +524,24 @@ function findBalanceMismatches(txs: BankTransactionInput[]): Array<{ index: numb
     // Tolerance: ₹1 absolute or 0.5% of the larger value (covers
     // rounding in printed balances).
     const tol = Math.max(1, Math.abs(actualDelta) * 0.005, Math.abs(expectedDelta) * 0.005);
-    if (Math.abs(expectedDelta - actualDelta) > tol) {
-      mismatches.push({
-        index: i,
-        date: cur.date,
-        narration: cur.narration,
-        expectedDelta,
-        actualDelta,
-      });
+    if (Math.abs(expectedDelta - actualDelta) <= tol) continue;
+
+    if (Math.abs(Math.abs(expectedDelta) - Math.abs(actualDelta)) <= tol) {
+      // Sign flip — printed balance is ground truth, overwrite.
+      cur.amount = expectedDelta;
+      autoCorrected++;
+      continue;
     }
+
+    mismatches.push({
+      index: i,
+      date: cur.date,
+      narration: cur.narration,
+      expectedDelta,
+      actualDelta,
+    });
   }
-  return mismatches;
+  return { autoCorrected, mismatches };
 }
 
 function enforceQuota(req: AuthRequest, res: Response): { ok: true; billingUserId: string; plan: string; creditsLimit: number; creditsUsed: number; creditsRemaining: number } | { ok: false } {
@@ -558,6 +585,14 @@ function persistStatement(
   const rawTxs = normalizeTransactions(data.transactions ?? []);
   const rules = bankStatementRuleRepo.listByUser(userId);
   const txs = applyUserRules(rawTxs, rules);
+
+  // Auto-correct sign flips against the bank's printed running
+  // balance BEFORE summing. A single misclassified row contributes
+  // 2× its amount to the inflow/outflow drift (it's on the wrong
+  // side of the ledger), so reconciling first is what makes the
+  // dashboard totals match a hand-tied calculation.
+  const { autoCorrected, mismatches } = reconcileBalances(txs);
+
   const { inflow, outflow } = computeTotals(txs);
   const periodLabel = data.periodFrom && data.periodTo
     ? `${data.periodFrom} – ${data.periodTo}`
@@ -577,12 +612,7 @@ function persistStatement(
   bankTransactionRepo.bulkInsert(statementId, txs);
   bankStatementRepo.updateTotals(statementId, inflow, outflow, txs.length);
 
-  // Reconciliation check: surface any rows where the printed balance
-  // delta disagrees with the credit/debit classification we extracted.
-  // Doesn't auto-fix — sign flips are 50/50 from one side, so we let
-  // the user confirm by re-categorising the flagged rows.
-  const mismatches = findBalanceMismatches(txs);
-  return { txCount: txs.length, mismatches };
+  return { txCount: txs.length, autoCorrected, mismatches };
 }
 
 function serializeStatement(row: ReturnType<typeof bankStatementRepo.findByIdForUser>) {
@@ -1175,7 +1205,7 @@ router.post(
         else res.status(200).json(cancelledPayload);
         return;
       }
-      const { txCount, mismatches } = persistStatement(req.user.id, placeholder.id, extracted, filename ?? 'Bank Statement');
+      const { txCount, autoCorrected, mismatches } = persistStatement(req.user.id, placeholder.id, extracted, filename ?? 'Bank Statement');
 
       // Bill credits based on the actual file size processed. For PDF
       // paths pages_processed reflects chunks completed; for CSV the
@@ -1211,12 +1241,20 @@ router.post(
 
       const transactions = bankTransactionRepo.listByStatement(placeholder.id).map(serializeTransaction);
       const warning = (res.locals as Record<string, unknown>).analyzerWarning as string | undefined;
-      // Reconciliation warning. If any rows had a balance-delta vs
-      // credit/debit mismatch, surface a count + the worst-drift row
-      // so the UI can show "X rows may be misclassified — verify".
-      const reconciliationWarning = mismatches && mismatches.length > 0
-        ? `${mismatches.length} row${mismatches.length === 1 ? '' : 's'} may be mis-classified — the running balance doesn't match the credit/debit value the AI assigned. Verify and re-categorise from the transaction table if needed.`
-        : null;
+      // Reconciliation banner. We auto-fix sign flips against the
+      // printed running balance (totals are already correct in that
+      // case); we only ask the user to review rows where the
+      // magnitude also disagrees.
+      const reconciliationWarning = (() => {
+        const parts: string[] = [];
+        if (autoCorrected > 0) {
+          parts.push(`Auto-corrected ${autoCorrected} row${autoCorrected === 1 ? '' : 's'} where the AI's credit/debit sign disagreed with the printed running balance — totals below reflect the corrected values.`);
+        }
+        if (mismatches.length > 0) {
+          parts.push(`${mismatches.length} row${mismatches.length === 1 ? '' : 's'} still need${mismatches.length === 1 ? 's' : ''} manual review — the running balance doesn't match the AI's amount and we couldn't determine the correct value automatically.`);
+        }
+        return parts.length > 0 ? parts.join(' ') : null;
+      })();
       const payload = {
         statement: serializeStatement(bankStatementRepo.findByIdForUser(placeholder.id, req.user.id)),
         transactions,
