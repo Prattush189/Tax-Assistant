@@ -12,6 +12,7 @@ import type {
 } from '../../services/api';
 import { cn } from '../../lib/utils';
 import { renderLedgerScrutinyPdf } from './ScrutinyExportPdf';
+import { ConfirmDialog } from '../ui/ConfirmDialog';
 
 interface Props {
   manager: LedgerScrutinyManager;
@@ -54,6 +55,8 @@ function fmtINR(n: number | null | undefined): string {
 
 export function ScrutinyReport({ manager }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelPending, setCancelPending] = useState(false);
   const detail = manager.current;
 
   const grouped = useMemo(() => {
@@ -180,11 +183,7 @@ export function ScrutinyReport({ manager }: Props) {
             </div>
             <button
               type="button"
-              onClick={async () => {
-                if (!confirm('Cancel this scrutiny? It will still count toward your monthly limit.')) return;
-                try { await manager.cancel(job.id); toast.success('Cancelled'); }
-                catch (e) { toast.error(e instanceof Error ? e.message : 'Cancel failed'); }
-              }}
+              onClick={() => setCancelOpen(true)}
               className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-rose-300 dark:border-rose-700 text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/20"
             >
               Cancel
@@ -294,6 +293,28 @@ export function ScrutinyReport({ manager }: Props) {
           );
         })}
       </div>
+      <ConfirmDialog
+        open={cancelOpen}
+        title="Cancel this scrutiny?"
+        description="It will still count toward your monthly limit. The audit run can't be resumed once cancelled."
+        confirmLabel="Cancel scrutiny"
+        cancelLabel="Keep running"
+        destructive
+        pending={cancelPending}
+        onConfirm={async () => {
+          setCancelPending(true);
+          try {
+            await manager.cancel(job.id);
+            toast.success('Scrutiny cancelled');
+            setCancelOpen(false);
+          } catch (e) {
+            toast.error(e instanceof Error ? e.message : 'Cancel failed');
+          } finally {
+            setCancelPending(false);
+          }
+        }}
+        onCancel={() => setCancelOpen(false)}
+      />
     </div>
   );
 }

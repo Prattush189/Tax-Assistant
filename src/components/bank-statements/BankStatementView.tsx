@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Landmark, Loader2 } from 'lucide-react';
 import { motion } from 'motion/react';
 import toast from 'react-hot-toast';
@@ -9,12 +10,16 @@ import { CounterpartySummary } from './CounterpartySummary';
 import { TransactionTable } from './TransactionTable';
 import { BankStatementRules } from './BankStatementRules';
 import { BankStatementConditions } from './BankStatementConditions';
+import { ConfirmDialog } from '../ui/ConfirmDialog';
 
 interface Props {
   manager: BankStatementManager;
 }
 
 export function BankStatementView({ manager }: Props) {
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelPending, setCancelPending] = useState(false);
+
   const handleDelete = async () => {
     if (!manager.current) return;
     if (!confirm('Delete this statement? This cannot be undone.')) return;
@@ -121,12 +126,7 @@ export function BankStatementView({ manager }: Props) {
               </div>
               <button
                 type="button"
-                onClick={async () => {
-                  if (!manager.current) return;
-                  if (!confirm('Cancel this analysis? It will still count toward your monthly limit.')) return;
-                  try { await manager.cancel(manager.current.statement.id); toast.success('Cancelled'); }
-                  catch (e) { toast.error(e instanceof Error ? e.message : 'Cancel failed'); }
-                }}
+                onClick={() => setCancelOpen(true)}
                 className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-rose-300 dark:border-rose-700 text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/20"
               >
                 Cancel
@@ -164,6 +164,29 @@ export function BankStatementView({ manager }: Props) {
           </>
         )}
       </div>
+      <ConfirmDialog
+        open={cancelOpen}
+        title="Cancel this analysis?"
+        description="It will still count toward your monthly limit. The analysis can't be resumed once cancelled."
+        confirmLabel="Cancel analysis"
+        cancelLabel="Keep running"
+        destructive
+        pending={cancelPending}
+        onConfirm={async () => {
+          if (!manager.current) return;
+          setCancelPending(true);
+          try {
+            await manager.cancel(manager.current.statement.id);
+            toast.success('Analysis cancelled');
+            setCancelOpen(false);
+          } catch (e) {
+            toast.error(e instanceof Error ? e.message : 'Cancel failed');
+          } finally {
+            setCancelPending(false);
+          }
+        }}
+        onCancel={() => setCancelOpen(false)}
+      />
     </motion.div>
   );
 }

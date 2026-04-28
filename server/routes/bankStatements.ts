@@ -990,9 +990,13 @@ router.post(
           inputTokens: r.inputTokens, outputTokens: r.outputTokens, modelUsed: r.modelUsed,
         }));
       } else {
-        // CSV path: parse client-provided CSV to a compact text block and ask
-        // Gemini to categorize (structure already known, only categorization
-        // is LLM-driven). Cheaper than the vision path.
+        // CSV path: client posted parsed CSV text; we already know the
+        // structure (date / narration / debit / credit / balance), so the
+        // only AI work is enrichment — categorise each row and fill in
+        // bankName / period / counterparty if visible. One JSON call,
+        // no chunking, no vision (data:text/plain data URLs are NOT
+        // accepted by Gemini's vision endpoint — sending them returns a
+        // 400 that surfaced earlier as "CSV doesn't work").
         filename = typeof req.body?.filename === 'string' ? req.body.filename : 'statement.csv';
         mimeType = 'text/csv';
         const parsed = Papa.parse(String(req.body.csvText), { header: true, skipEmptyLines: true });
@@ -1015,9 +1019,10 @@ router.post(
         });
         const csvSnippet = JSON.stringify(normalized).slice(0, 80000);
         const csvPrompt = `${conditionsBlock}${BANK_STATEMENT_PROMPT}\n\nThe transactions array has already been extracted and is given below as JSON. Return the same schema, filling bankName/period from context if obvious (else null) and adding category / subcategory / isRecurring to each row. Preserve the given amount signs.\n\nINPUT_ROWS:\n${csvSnippet}`;
-        // Send as a tiny data URL with plain text — reuse the pipeline.
-        const dataUrl = `data:text/plain;base64,${Buffer.from(csvPrompt).toString('base64')}`;
-        const csvResult = await extractWithRetry<ExtractedStatement>(dataUrl, csvPrompt, { maxTokens: 8192 });
+        const csvResult = await callGeminiJson<ExtractedStatement>(
+          [{ role: 'user', content: csvPrompt }],
+          { maxTokens: 8192 },
+        );
         extracted = csvResult.data;
         (res.locals as Record<string, unknown>).geminiUsages = [{
           inputTokens: csvResult.inputTokens,
