@@ -150,6 +150,11 @@ export function useBankStatementManager(enabled: boolean) {
       });
       setCurrentId(result.statement.id);
       setCurrent(result);
+      // Refresh usage — credits were just debited server-side, and
+      // without this the on-page % bar stays at its pre-analysis value
+      // until the user reloads (which makes Settings and the bank/
+      // ledger pages disagree on the same number).
+      void refresh();
       return result;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Analysis failed');
@@ -158,7 +163,7 @@ export function useBankStatementManager(enabled: boolean) {
       setIsAnalyzing(false);
       setAnalyzeProgress(null);
     }
-  }, []);
+  }, [refresh]);
 
   const analyzeCsv = useCallback(async (csvText: string, filename?: string): Promise<BankStatementDetail> => {
     setIsAnalyzing(true);
@@ -171,6 +176,7 @@ export function useBankStatementManager(enabled: boolean) {
       });
       setCurrentId(result.statement.id);
       setCurrent(result);
+      void refresh();
       return result;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Analysis failed');
@@ -178,7 +184,7 @@ export function useBankStatementManager(enabled: boolean) {
     } finally {
       setIsAnalyzing(false);
     }
-  }, []);
+  }, [refresh]);
 
   const rename = useCallback(async (id: string, name: string) => {
     const { statement } = await renameBankStatement(id, name);
@@ -201,7 +207,10 @@ export function useBankStatementManager(enabled: boolean) {
       setStatements((prev) => prev.map((s) => (s.id === id ? statement : s)));
       setCurrent((prev) => (prev && prev.statement.id === id ? { ...prev, statement } : prev));
     }
-  }, []);
+    // Cancel debits credits for the chunks that finished pre-cancel,
+    // so refresh usage to keep the % bar honest.
+    void refresh();
+  }, [refresh]);
 
   const reassignCategory = useCallback(
     async (txId: string, category: string, subcategory?: string | null) => {

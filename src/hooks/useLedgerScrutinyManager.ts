@@ -101,6 +101,9 @@ export function useLedgerScrutinyManager(enabled: boolean) {
       setCurrentId(result.job.id);
       setCurrent(result);
       setStreamBuffer('');
+      // Refresh usage so the on-page % bar reflects the credits the
+      // server just debited; otherwise it lags Settings until reload.
+      void refresh();
       return result;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Upload failed');
@@ -108,7 +111,7 @@ export function useLedgerScrutinyManager(enabled: boolean) {
     } finally {
       setIsUploading(false);
     }
-  }, []);
+  }, [refresh]);
 
   const uploadMapped = useCallback(async (preExtracted: unknown, filename: string): Promise<LedgerScrutinyDetail> => {
     setIsUploading(true);
@@ -119,6 +122,7 @@ export function useLedgerScrutinyManager(enabled: boolean) {
       setCurrentId(result.job.id);
       setCurrent(result);
       setStreamBuffer('');
+      void refresh();
       return result;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Upload failed');
@@ -126,7 +130,7 @@ export function useLedgerScrutinyManager(enabled: boolean) {
     } finally {
       setIsUploading(false);
     }
-  }, []);
+  }, [refresh]);
 
   const scrutinize = useCallback(async (jobId: string): Promise<void> => {
     setIsScrutinizing(true);
@@ -183,7 +187,10 @@ export function useLedgerScrutinyManager(enabled: boolean) {
       setJobs((prev) => prev.map((j) => (j.id === id ? job : j)));
       setCurrent((prev) => (prev && prev.job.id === id ? { ...prev, job } : prev));
     }
-  }, []);
+    // Cancel debits credits for the chunks that finished pre-cancel,
+    // so refresh usage to keep the % bar honest.
+    void refresh();
+  }, [refresh]);
 
   const setObservationStatus = useCallback(async (
     obsId: string,
