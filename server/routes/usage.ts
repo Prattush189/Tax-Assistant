@@ -89,20 +89,24 @@ router.get('/', (req: AuthRequest, res: Response) => {
     console.error('[usage] partnership deeds count failed', err);
   }
 
-  // Bank statement analyses (monthly)
+  // Bank statement analyses — credits, not run count. The plan limit
+  // is interpreted as a credit cap (1 credit = 5 PDF pages OR 100 CSV
+  // rows), so the Settings panel must sum credits_used to match what
+  // the bank-statement landing page shows. Otherwise a 30-page run
+  // counts as 1 here but 6 there, and the percentages disagree.
   let bankStatementsUsed = 0;
   try {
-    bankStatementsUsed = featureUsageRepo.countThisMonthByBillingUser(billingUser.id, 'bank_statement_analyze');
+    bankStatementsUsed = featureUsageRepo.sumCreditsThisMonthByBillingUser(billingUser.id, 'bank_statement_analyze');
   } catch (err) {
-    console.error('[usage] bank statements count failed', err);
+    console.error('[usage] bank statements credit sum failed', err);
   }
 
-  // Ledger scrutiny (monthly)
+  // Ledger scrutiny — also credit-based (1 credit = 10 ledger pages).
   let ledgerScrutinyUsed = 0;
   try {
-    ledgerScrutinyUsed = featureUsageRepo.countThisMonthByBillingUser(billingUser.id, 'ledger_scrutiny');
+    ledgerScrutinyUsed = featureUsageRepo.sumCreditsThisMonthByBillingUser(billingUser.id, 'ledger_scrutiny');
   } catch (err) {
-    console.error('[usage] ledger scrutiny count failed', err);
+    console.error('[usage] ledger scrutiny credit sum failed', err);
   }
 
   // Saved profiles (count — not period based)
