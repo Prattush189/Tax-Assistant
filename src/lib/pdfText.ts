@@ -25,6 +25,24 @@ if (typeof window !== 'undefined' && !pdfjs.GlobalWorkerOptions.workerSrc) {
 const TEXT_RICH_THRESHOLD = 300;
 
 /**
+ * Lightweight page-count probe — opens the PDF metadata only, no
+ * text extraction. Used by features that gate uploads on page count
+ * (notice drafter at the moment) without paying the full text-pull
+ * cost. Returns null if the file isn't a valid PDF.
+ */
+export async function countPdfPagesClient(file: File): Promise<number | null> {
+  if (file.type !== 'application/pdf') return null;
+  try {
+    const buf = await file.arrayBuffer();
+    const pdf = await pdfjs.getDocument({ data: new Uint8Array(buf) }).promise;
+    return pdf.numPages;
+  } catch (err) {
+    console.warn('[pdfText] page count failed:', err);
+    return null;
+  }
+}
+
+/**
  * Extract concatenated text from every page of a PDF file. Returns null
  * if the PDF has less than ~300 characters of extractable text (almost
  * always means it's a scanned image) or if parsing fails outright.

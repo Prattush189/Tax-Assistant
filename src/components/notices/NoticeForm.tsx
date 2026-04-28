@@ -144,7 +144,7 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
   const ALLOWED_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
   const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB — match server limit
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
@@ -157,6 +157,24 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
       setFileError('File exceeds the 10 MB size limit.');
       setNoticeFile(null);
       return;
+    }
+    // PDF page-count gate. Notices are short (a tax-department reply
+    // usually fits on 1-3 pages), so refusing dense exports keeps the
+    // Gemini cost bounded. Wording stays generic ("PDF too large") so
+    // we can tune the page ceiling later without lying to users.
+    if (file.type === 'application/pdf') {
+      try {
+        const { countPdfPagesClient } = await import('../../lib/pdfText');
+        const pages = await countPdfPagesClient(file);
+        if (pages !== null && pages > 10) {
+          setFileError('PDF too large — please attach a shorter document.');
+          setNoticeFile(null);
+          return;
+        }
+      } catch {
+        // Counting failed — let the upload through; the server-side
+        // page check will catch a too-large PDF as a backup.
+      }
     }
     setFileError(null);
     setNoticeFile(file);

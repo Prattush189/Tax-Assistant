@@ -228,6 +228,22 @@ router.post(
   // Cost is logged to usageRepo under feature='notice' so it appears alongside
   // the draft cost in the admin dashboard, but the chat attachment_upload
   // counter is intentionally NOT incremented here.
+  // PDF page-count gate. Server-side backstop for the client check in
+  // NoticeForm — protects against direct API uploads that bypass the
+  // browser. Counts `/Type /Page` markers in the PDF binary; cheap
+  // (no pdfjs dependency on the server) and accurate enough for the
+  // 10-page ceiling. Buffer is already in memory via multer.memoryStorage.
+  if (req.file && req.file.mimetype === 'application/pdf') {
+    const pdfStr = req.file.buffer.toString('latin1');
+    // `/Type /Page` (with optional whitespace) but NOT `/Type /Pages`
+    // (the page-tree node) — negative-lookahead on the trailing 's'.
+    const matches = pdfStr.match(/\/Type\s*\/Page(?![s\w])/g);
+    const pageCount = matches ? matches.length : 0;
+    if (pageCount > 10) {
+      res.status(413).json({ error: 'PDF too large — please attach a shorter document.' });
+      return;
+    }
+  }
   let extractionMeta: { mergedNoticeNumber?: string; mergedNoticeDate?: string; mergedSection?: string; mergedAssessmentYear?: string; mergedDin?: string } = {};
   if (req.file) {
     try {
