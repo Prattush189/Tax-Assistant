@@ -29,6 +29,12 @@ export type BankStatementDetail = {
    *  ("opened the existing one") so the user understands no new
    *  Gemini call was made. */
   alreadyAnalyzed?: boolean;
+  /** Server-side reconciliation flag: rows whose printed balance delta
+   *  doesn't match the credit/debit value the AI extracted. Populated
+   *  on the analyze response only — fetchBankStatement returns just
+   *  the persisted shape, so this drops to undefined on a later page
+   *  reload. UI shows it as an amber heads-up next to the totals. */
+  reconciliationWarning?: string;
 };
 
 /**

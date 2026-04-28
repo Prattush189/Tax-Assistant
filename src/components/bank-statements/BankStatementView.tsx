@@ -168,6 +168,11 @@ export function BankStatementView({ manager }: Props) {
     >
       <div className="max-w-5xl mx-auto p-6 space-y-5">
         <BankStatementSummary detail={manager.current} onDelete={handleDelete} />
+        {manager.current.reconciliationWarning && (
+          <div className="rounded-2xl border border-amber-200 dark:border-amber-800/60 bg-amber-50/60 dark:bg-amber-900/15 p-4 text-sm text-amber-800 dark:text-amber-200">
+            <span className="font-semibold">Heads up:</span> {manager.current.reconciliationWarning}
+          </div>
+        )}
         {isAnalyzing && (
           <div className="rounded-2xl border border-blue-200 dark:border-blue-800/60 bg-blue-50/60 dark:bg-blue-900/15 p-5">
             <div className="flex items-start gap-3">

@@ -476,6 +476,47 @@ function computeTotals(txs: BankTransactionInput[]): { inflow: number; outflow: 
   return { inflow, outflow };
 }
 
+/**
+ * Cross-check the model's per-row credit/debit classification against
+ * the running balance the bank prints on each row. For row N where
+ * balance(N) and balance(N-1) are both extracted:
+ *
+ *   expectedDelta = balance(N) - balance(N-1)
+ *   actualDelta   = tx.amount   (positive = credit / inflow, negative = debit / outflow)
+ *
+ * If they disagree by more than ₹1 (handles rounding) the model
+ * misread the row — usually a sign flip (credit ↔ debit). We can't
+ * silently fix it from one side, so we surface a warning listing
+ * the rows so the user can spot-check and reassign categories
+ * manually if needed. Catches the symmetric "inflow undercounts by
+ * X, outflow overcounts by X" pattern (production: 1 % drift on a
+ * 337-row Canara statement which corresponds to ~1 misclassified
+ * row at ₹16K).
+ */
+function findBalanceMismatches(txs: BankTransactionInput[]): Array<{ index: number; date: string | null; narration: string | null; expectedDelta: number; actualDelta: number }> {
+  const mismatches: Array<{ index: number; date: string | null; narration: string | null; expectedDelta: number; actualDelta: number }> = [];
+  for (let i = 1; i < txs.length; i++) {
+    const prev = txs[i - 1];
+    const cur = txs[i];
+    if (prev.balance == null || cur.balance == null) continue;
+    const expectedDelta = cur.balance - prev.balance;
+    const actualDelta = cur.amount;
+    // Tolerance: ₹1 absolute or 0.5% of the larger value (covers
+    // rounding in printed balances).
+    const tol = Math.max(1, Math.abs(actualDelta) * 0.005, Math.abs(expectedDelta) * 0.005);
+    if (Math.abs(expectedDelta - actualDelta) > tol) {
+      mismatches.push({
+        index: i,
+        date: cur.date,
+        narration: cur.narration,
+        expectedDelta,
+        actualDelta,
+      });
+    }
+  }
+  return mismatches;
+}
+
 function enforceQuota(req: AuthRequest, res: Response): { ok: true; billingUserId: string; plan: string; creditsLimit: number; creditsUsed: number; creditsRemaining: number } | { ok: false } {
   const actor = userRepo.findById(req.user!.id);
   const billingUser = actor ? getBillingUser(actor) : undefined;
@@ -535,7 +576,13 @@ function persistStatement(
   });
   bankTransactionRepo.bulkInsert(statementId, txs);
   bankStatementRepo.updateTotals(statementId, inflow, outflow, txs.length);
-  return { txCount: txs.length };
+
+  // Reconciliation check: surface any rows where the printed balance
+  // delta disagrees with the credit/debit classification we extracted.
+  // Doesn't auto-fix — sign flips are 50/50 from one side, so we let
+  // the user confirm by re-categorising the flagged rows.
+  const mismatches = findBalanceMismatches(txs);
+  return { txCount: txs.length, mismatches };
 }
 
 function serializeStatement(row: ReturnType<typeof bankStatementRepo.findByIdForUser>) {
@@ -1114,7 +1161,7 @@ router.post(
         else res.status(200).json(cancelledPayload);
         return;
       }
-      const { txCount } = persistStatement(req.user.id, placeholder.id, extracted, filename ?? 'Bank Statement');
+      const { txCount, mismatches } = persistStatement(req.user.id, placeholder.id, extracted, filename ?? 'Bank Statement');
 
       // Bill credits based on the actual file size processed. For PDF
       // paths pages_processed reflects chunks completed; for CSV the
@@ -1150,11 +1197,19 @@ router.post(
 
       const transactions = bankTransactionRepo.listByStatement(placeholder.id).map(serializeTransaction);
       const warning = (res.locals as Record<string, unknown>).analyzerWarning as string | undefined;
+      // Reconciliation warning. If any rows had a balance-delta vs
+      // credit/debit mismatch, surface a count + the worst-drift row
+      // so the UI can show "X rows may be misclassified — verify".
+      const reconciliationWarning = mismatches && mismatches.length > 0
+        ? `${mismatches.length} row${mismatches.length === 1 ? '' : 's'} may be mis-classified — the running balance doesn't match the credit/debit value the AI assigned. Verify and re-categorise from the transaction table if needed.`
+        : null;
       const payload = {
         statement: serializeStatement(bankStatementRepo.findByIdForUser(placeholder.id, req.user.id)),
         transactions,
         txCount,
         ...(warning ? { warning } : {}),
+        ...(reconciliationWarning ? { reconciliationWarning } : {}),
+        ...(mismatches && mismatches.length > 0 ? { mismatches: mismatches.slice(0, 20) } : {}),
       };
       if (sseOpen) {
         sendSse({ type: 'done', ...payload });

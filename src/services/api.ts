@@ -1638,7 +1638,7 @@ async function analyzeBankStatementPdfText(
   pdfText: string,
   filename: string,
   onProgress?: (p: BankStatementAnalyzeProgress) => void,
-): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[]; warning?: string; alreadyAnalyzed?: boolean }> {
+): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[]; warning?: string; reconciliationWarning?: string; alreadyAnalyzed?: boolean }> {
   // Large multi-chunk statements (50+ pages) can take 4-5 minutes of parallel
   // Gemini calls. Cap at 6 min so a slow-but-progressing run completes rather
   // than the client killing it just before the server returns.
@@ -1707,11 +1707,11 @@ async function analyzeBankStatementPdfText(
 async function consumeAnalyzeStream(
   body: ReadableStream<Uint8Array>,
   onProgress: (p: BankStatementAnalyzeProgress) => void,
-): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[]; warning?: string; alreadyAnalyzed?: boolean }> {
+): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[]; warning?: string; reconciliationWarning?: string; alreadyAnalyzed?: boolean }> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
-  let finalPayload: { statement: BankStatementSummary; transactions: BankTransaction[]; warning?: string } | null = null;
+  let finalPayload: { statement: BankStatementSummary; transactions: BankTransaction[]; warning?: string; reconciliationWarning?: string } | null = null;
   let errorPayload: { error?: string; detail?: string; hint?: string } | null = null;
 
   while (true) {
@@ -1753,6 +1753,7 @@ async function consumeAnalyzeStream(
             statement: evt.statement as BankStatementSummary,
             transactions: evt.transactions as BankTransaction[],
             warning: evt.warning as string | undefined,
+            reconciliationWarning: evt.reconciliationWarning as string | undefined,
           };
         } else if (evt.type === 'error') {
           errorPayload = {

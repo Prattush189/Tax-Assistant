@@ -119,8 +119,20 @@ where <N> is the total count of transaction rows you just emitted. This is requi
 
 BEFORE the first transaction row, emit exactly one header line with the statement metadata, tab-separated with 5 fields:
 HEADER<TAB>bankName<TAB>accountNumberMasked<TAB>periodFrom<TAB>periodTo
+
+CRITICAL — periodFrom and periodTo:
+- Read these from the EXPLICIT statement period line in the header (printed by the bank as "Statement Period: 01-Apr-2024 to 31-Mar-2025" / "Period: From 01/04/2024 To 31/03/2025" / similar).
+- Do NOT use the date of the first transaction or last transaction. The statement's printed period is often wider (e.g., it includes a closing balance line dated after the last transaction, or starts a day before the first).
+- Convert DD/MM/YYYY → YYYY-MM-DD. Use the literal string "null" only if no period header exists in this chunk.
+
 Use null (the literal string "null") for any field you can't determine. Example:
 HEADER\tHDFC Bank\tXXXX1234\t2024-04-01\t2024-04-30
+
+CRITICAL — debit and credit fidelity:
+- Read each digit of the amount column directly from the statement; do NOT recompute, round, or guess.
+- The DEBIT column on Indian bank statements lives in either a "Withdrawal" / "Dr" / left-most amount slot. The CREDIT column lives in "Deposit" / "Cr" / right-most amount slot. Check the column header before assigning.
+- If a single row shows both a debit AND a credit (typical for contra entries or bank-charge-and-tax pairs), emit them as TWO separate rows in the order they appear, NOT one row with both populated.
+- If the row has a single amount with a "Dr" / "Cr" suffix or marker, route to the matching column.
 
 Categorization rules (apply the FIRST match):
 - "SALARY" / "SAL CREDIT" → Salary
