@@ -10,6 +10,7 @@ import {
   applyMapping,
   extractPdfGrid,
   mappedRowsToBankCsv,
+  rowsToFakeGrid,
   type ColumnMapping,
   type PdfGrid,
 } from '../../lib/pdfGrid';
@@ -75,20 +76,25 @@ export function BankStatementUploader({ manager }: Props) {
     }
 
     if (isCsv) {
+      // Route CSVs through the same column-mapping wizard PDFs use,
+      // not directly to the server CSV path. The server's CSV path
+      // falls back to hardcoded header guesses
+      // (r.date ?? r.Date ?? r['Txn Date'] ?? ...), and any CSV that
+      // doesn't match one of those guesses ends up with the wrong
+      // signed amount on some rows — the same sign-flip class of
+      // failure the wizard was built to eliminate. Going through
+      // applyMapping → mappedRowsToBankCsv normalizes to the canonical
+      // header set the server expects, so the deterministic
+      // categorisation pass produces totals that match the PDF path
+      // exactly.
       const text = await file.text();
-      const preview = Papa.parse(text, { header: true, skipEmptyLines: true, preview: 1 });
-      if (!preview.data.length) {
-        toast.error('CSV appears empty or has no header row.');
+      const parsed = Papa.parse<string[]>(text, { skipEmptyLines: true });
+      const grid = rowsToFakeGrid(parsed.data as string[][]);
+      if (!grid) {
+        toast.error('CSV appears empty or has no data rows.');
         return;
       }
-      try {
-        const result = await manager.analyzeCsv(text, file.name);
-        toast.success(result.alreadyAnalyzed
-          ? `This statement was already analyzed earlier — opened the existing one (${result.transactions.length} transactions).`
-          : `Analyzed ${result.transactions.length} transactions`);
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : 'Analysis failed');
-      }
+      setPendingGrid({ grid, filename: file.name });
       return;
     }
 
@@ -165,21 +171,11 @@ export function BankStatementUploader({ manager }: Props) {
           {manager.isAnalyzing ? 'Analyzing your statement…' : 'Drop your bank statement here'}
         </p>
         {manager.isAnalyzing && manager.analyzeProgress ? (
-          <>
-            <AnalyzeProgressBar progress={manager.analyzeProgress} />
-            <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-              Long statements (50+ pages) can take up to 5 minutes — keep this tab open.
-            </p>
-          </>
+          <AnalyzeProgressBar progress={manager.analyzeProgress} />
         ) : (
-          <>
-            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-              PDF up to 500 KB — or a CSV export from your bank
-            </p>
-            <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-              Long statements (50+ pages) can take up to 5 minutes to analyse.
-            </p>
-          </>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+            PDF up to 500 KB — or a CSV export from your bank
+          </p>
         )}
       </div>
       <button

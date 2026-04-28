@@ -10,33 +10,10 @@ import {
   applyMapping,
   extractPdfGrid,
   mappedRowsToExtractedLedger,
+  rowsToFakeGrid,
   type ColumnMapping,
   type PdfGrid,
 } from '../../lib/pdfGrid';
-
-/** Wrap a parsed CSV into the same PdfGrid shape the wizard expects.
- *  We don't have x/y coordinates but the wizard only uses .rows for
- *  preview and .columnCount for the dropdown count, so synthesizing
- *  the rest with placeholder values is fine. */
-function csvToFakeGrid(csvText: string): PdfGrid | null {
-  const parsed = Papa.parse<string[]>(csvText, { skipEmptyLines: true });
-  const rows = (parsed.data as string[][]).filter(r => Array.isArray(r) && r.some(c => (c ?? '').trim()));
-  if (rows.length < 2) return null;
-  const columnCount = Math.max(...rows.map(r => r.length));
-  // Pad short rows so columns line up across the preview.
-  const padded = rows.map(r => {
-    const out = [...r];
-    while (out.length < columnCount) out.push('');
-    return out;
-  });
-  return {
-    rows: padded,
-    columnCount,
-    columnXs: Array.from({ length: columnCount }, (_, i) => i * 100),
-    pageBreaks: [],
-    pageCount: 1,
-  };
-}
 
 interface Props {
   manager: LedgerScrutinyManager;
@@ -118,7 +95,8 @@ export function LedgerUploader({ manager }: Props) {
     // the mapping wizard isn't optional even here.
     if (isCsv) {
       const text = await file.text();
-      const grid = csvToFakeGrid(text);
+      const parsed = Papa.parse<string[]>(text, { skipEmptyLines: true });
+      const grid = rowsToFakeGrid(parsed.data as string[][]);
       if (!grid) {
         toast.error('CSV appears empty or has no data rows.');
         return;
@@ -205,22 +183,17 @@ export function LedgerUploader({ manager }: Props) {
       <div className="text-center w-full max-w-md">
         <p className="font-semibold text-gray-800 dark:text-gray-100">{stage}</p>
         {busy ? (
-          <>
-            <ScrutinyProgressBar
-              phase={currentStatus === 'scrutinizing' ? 'scrutinizing' : 'extracting'}
-              progress={manager.scrutinizeProgress}
-            />
-            <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-              Long ledgers (50+ pages) can take up to 20 minutes — you can close this tab and come back. The audit keeps running.
-            </p>
-          </>
+          <ScrutinyProgressBar
+            phase={currentStatus === 'scrutinizing' ? 'scrutinizing' : 'extracting'}
+            progress={manager.scrutinizeProgress}
+          />
         ) : (
           <>
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
               Tally / Busy / Marg PDF or CSV export · max 3 MB
             </p>
             <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-              Extract + audit run as one step — no buttons to click after upload. Long ledgers can take up to 20 minutes.
+              Extract + audit run as one step — no buttons to click after upload.
             </p>
           </>
         )}

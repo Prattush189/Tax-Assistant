@@ -538,6 +538,31 @@ export function findTableStart(grid: PdfGrid, dateCol: number | null): {
   };
 }
 
+/** Wrap a parsed CSV into the same PdfGrid shape the wizard expects.
+ *  We don't have x/y coordinates but the wizard only uses .rows for
+ *  preview and .columnCount for the dropdown count, so synthesizing
+ *  the rest with placeholder values is fine. Caller is responsible
+ *  for parsing CSV text into rows (e.g. via Papa.parse without
+ *  header: true, since the wizard treats the first matching row as
+ *  the header). */
+export function rowsToFakeGrid(rows: string[][]): PdfGrid | null {
+  const filtered = rows.filter(r => Array.isArray(r) && r.some(c => (c ?? '').trim()));
+  if (filtered.length < 2) return null;
+  const columnCount = Math.max(...filtered.map(r => r.length));
+  const padded = filtered.map(r => {
+    const out = [...r];
+    while (out.length < columnCount) out.push('');
+    return out;
+  });
+  return {
+    rows: padded,
+    columnCount,
+    columnXs: Array.from({ length: columnCount }, (_, i) => i * 100),
+    pageBreaks: [],
+    pageCount: 1,
+  };
+}
+
 /** Heuristic — guess each column's role from the first 3 rows and
  *  the column's median content. The wizard pre-fills with this and
  *  the user adjusts. Mandatory confirm step still applies — we never

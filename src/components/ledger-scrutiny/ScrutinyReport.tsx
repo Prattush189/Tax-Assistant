@@ -178,7 +178,7 @@ export function ScrutinyReport({ manager }: Props) {
                 {job.status === 'pending' && 'Queued — starting shortly…'}
               </p>
               <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                Long ledgers can take up to 20 minutes. The server keeps running even if you close this tab — just come back here to see the result.
+                The server keeps running even if you close this tab — just come back here to see the result.
               </p>
             </div>
             <button
