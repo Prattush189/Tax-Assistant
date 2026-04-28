@@ -2038,6 +2038,46 @@ export async function uploadLedgerScrutinyPdf(file: File): Promise<LedgerScrutin
   }
 }
 
+/** Pre-extracted upload: the user ran the column-mapping wizard, so we
+ *  ship a ready-built ExtractedLedger to the server which skips Gemini
+ *  extraction and goes straight to the audit pass. Tokens saved (no
+ *  extract) and credit/debit signs are deterministic from the wizard. */
+export async function uploadLedgerScrutinyPreExtracted(
+  preExtracted: unknown,
+  filename: string,
+): Promise<LedgerScrutinyDetail> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 1_200_000);
+  const doFetch = () => fetch('/api/ledger-scrutiny/upload', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    body: JSON.stringify({ preExtracted, filename }),
+    signal: controller.signal,
+  });
+  try {
+    let res = await doFetch();
+    if (res.status === 401) {
+      const refreshed = await tryRefreshToken();
+      if (refreshed) res = await doFetch();
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const parts = [data.error ?? 'Failed to upload ledger'];
+      if (data.hint) parts.push(data.hint);
+      if (data.detail) parts.push(`(${data.detail})`);
+      throw new Error(parts.join(' — '));
+    }
+    return data;
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('Audit took longer than 20 minutes — the run is still going server-side; reload to pick it up.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function uploadLedgerScrutinyPdfText(pdfText: string, filename: string): Promise<LedgerScrutinyDetail> {
   // Long ledgers run chunked Gemini calls in parallel; allow 4 minutes
   // before the client kills the request, matching the multipart timeout.

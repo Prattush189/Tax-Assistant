@@ -3,6 +3,7 @@ import {
   fetchLedgerScrutinyJobs,
   fetchLedgerScrutinyJob,
   uploadLedgerScrutinyPdf,
+  uploadLedgerScrutinyPreExtracted,
   scrutinizeLedger,
   renameLedgerScrutinyJob,
   deleteLedgerScrutinyJob,
@@ -96,6 +97,24 @@ export function useLedgerScrutinyManager(enabled: boolean) {
     setError(null);
     try {
       const result = await uploadLedgerScrutinyPdf(file);
+      setJobs((prev) => [result.job, ...prev.filter((j) => j.id !== result.job.id)]);
+      setCurrentId(result.job.id);
+      setCurrent(result);
+      setStreamBuffer('');
+      return result;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Upload failed');
+      throw e;
+    } finally {
+      setIsUploading(false);
+    }
+  }, []);
+
+  const uploadMapped = useCallback(async (preExtracted: unknown, filename: string): Promise<LedgerScrutinyDetail> => {
+    setIsUploading(true);
+    setError(null);
+    try {
+      const result = await uploadLedgerScrutinyPreExtracted(preExtracted, filename);
       setJobs((prev) => [result.job, ...prev.filter((j) => j.id !== result.job.id)]);
       setCurrentId(result.job.id);
       setCurrent(result);
@@ -205,6 +224,7 @@ export function useLedgerScrutinyManager(enabled: boolean) {
     clear,
     load,
     upload,
+    uploadMapped,
     scrutinize,
     rename,
     remove,

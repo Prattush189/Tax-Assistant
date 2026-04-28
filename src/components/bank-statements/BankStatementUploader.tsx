@@ -5,6 +5,14 @@ import toast from 'react-hot-toast';
 import { BankStatementManager } from '../../hooks/useBankStatementManager';
 import type { BankStatementAnalyzeProgress } from '../../services/api';
 import { cn } from '../../lib/utils';
+import { ColumnMappingWizard } from '../shared/ColumnMappingWizard';
+import {
+  applyMapping,
+  extractPdfGrid,
+  mappedRowsToBankCsv,
+  type ColumnMapping,
+  type PdfGrid,
+} from '../../lib/pdfGrid';
 
 function AnalyzeProgressBar({ progress }: { progress: BankStatementAnalyzeProgress }) {
   // While the first `start` event is in flight the server hasn't reported
@@ -38,6 +46,9 @@ const ACCEPT = '.pdf,.jpg,.jpeg,.png,.webp,.csv,application/pdf,image/jpeg,image
 export function BankStatementUploader({ manager }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
+  // Wizard state. When set, the user is mid-mapping for a digital PDF;
+  // we hold onto the grid + filename until they confirm or cancel.
+  const [pendingGrid, setPendingGrid] = useState<{ grid: PdfGrid; filename: string } | null>(null);
 
   const handleFiles = async (files: FileList | null) => {
     const file = files?.[0];
@@ -70,11 +81,49 @@ export function BankStatementUploader({ manager }: Props) {
       return;
     }
 
+    // Digital PDF → extract a structured 2D grid and route through the
+    // mandatory column-mapping wizard. The wizard maps user → CSV → the
+    // existing CSV path, which builds signed amounts deterministically
+    // (no LLM in the credit/debit decision). Scanned/image PDFs and
+    // direct images have no text grid and fall through to the legacy
+    // vision path.
+    if (file.type === 'application/pdf') {
+      try {
+        const grid = await extractPdfGrid(file);
+        if (grid && grid.rows.length >= 3) {
+          setPendingGrid({ grid, filename: file.name });
+          return;
+        }
+      } catch (err) {
+        console.warn('[BankStatementUploader] grid extraction failed; falling back to vision:', err);
+      }
+    }
+
     try {
       const result = await manager.analyzeFile(file);
       toast.success(result.alreadyAnalyzed
         ? `This statement was already analyzed earlier — opened the existing one (${result.transactions.length} transactions).`
         : `Analyzed ${result.transactions.length} transactions`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Analysis failed');
+    }
+  };
+
+  const handleMappingConfirm = async (mapping: ColumnMapping) => {
+    if (!pendingGrid) return;
+    const { grid, filename } = pendingGrid;
+    setPendingGrid(null);
+    const mapped = applyMapping(grid, mapping);
+    if (mapped.length === 0) {
+      toast.error('No transaction rows found after applying the mapping. Re-check the Date column.');
+      return;
+    }
+    const csv = mappedRowsToBankCsv(mapped);
+    try {
+      const result = await manager.analyzeCsv(csv, filename);
+      toast.success(result.alreadyAnalyzed
+        ? `This statement was already analyzed earlier — opened the existing one (${result.transactions.length} transactions).`
+        : `Analyzed ${result.transactions.length} transactions deterministically (no AI sign assignment).`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Analysis failed');
     }
@@ -142,6 +191,15 @@ export function BankStatementUploader({ manager }: Props) {
       <p className="text-xs text-gray-400 dark:text-gray-500 max-w-md text-center">
         Transactions are categorised automatically — you can reassign any row before exporting.
       </p>
+      {pendingGrid && (
+        <ColumnMappingWizard
+          kind="bank"
+          grid={pendingGrid.grid}
+          filename={pendingGrid.filename}
+          onConfirm={handleMappingConfirm}
+          onCancel={() => setPendingGrid(null)}
+        />
+      )}
     </div>
   );
 }

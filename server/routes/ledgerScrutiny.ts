@@ -1090,8 +1090,18 @@ router.post(
     if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
 
     const isPdfText = !req.file && typeof req.body?.pdfText === 'string' && req.body.pdfText.length > 0;
-    if (!req.file && !isPdfText) {
-      res.status(400).json({ error: 'No file uploaded. Attach a ledger PDF as "file" or send pdfText JSON.' });
+    // Pre-extracted path: the frontend ran the column-mapping wizard on a
+    // digital PDF and already produced an ExtractedLedger structure. We
+    // skip Gemini extraction entirely and go straight to audit. Eliminates
+    // sign-flip risk (debit/credit assignment is deterministic from the
+    // user's column mapping, not an LLM guess) and saves the extract-pass
+    // tokens (typically ~70-90% of total Gemini spend on a ledger run).
+    const isPreExtracted = !req.file && !isPdfText
+      && typeof req.body?.preExtracted === 'object'
+      && req.body.preExtracted !== null
+      && Array.isArray(req.body.preExtracted.accounts);
+    if (!req.file && !isPdfText && !isPreExtracted) {
+      res.status(400).json({ error: 'No file uploaded. Attach a ledger PDF as "file", send pdfText JSON, or send preExtracted accounts.' });
       return;
     }
 
@@ -1106,10 +1116,18 @@ router.post(
     let fileHash: string;
     let pdfText: string | null = null;
 
+    let preExtractedJson: string | null = null;
     if (req.file) {
       filename = req.file.originalname;
       mimeType = req.file.mimetype;
       fileHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
+    } else if (isPreExtracted) {
+      preExtractedJson = JSON.stringify(req.body.preExtracted);
+      filename = typeof req.body?.filename === 'string' && req.body.filename.trim()
+        ? String(req.body.filename)
+        : 'ledger.pdf';
+      mimeType = 'application/pdf';
+      fileHash = crypto.createHash('sha256').update(preExtractedJson).digest('hex');
     } else {
       pdfText = String(req.body.pdfText);
       filename = typeof req.body?.filename === 'string' && req.body.filename.trim()
@@ -1150,6 +1168,16 @@ router.post(
     if (pdfText !== null) {
       ledgerPagesTotal = pdfText.split(/\n?---\s*PAGE BREAK\s*---\n?/).filter(p => p.trim()).length;
       if (ledgerPagesTotal === 0) ledgerPagesTotal = 1;
+    } else if (isPreExtracted) {
+      // Pre-extracted: charge by transaction count rounded into pages
+      // (~50 TX per page is a fair Tally export density).
+      const totalTx = Array.isArray(req.body.preExtracted?.accounts)
+        ? req.body.preExtracted.accounts.reduce(
+            (s: number, a: { transactions?: unknown[] }) => s + (Array.isArray(a.transactions) ? a.transactions.length : 0),
+            0,
+          )
+        : 0;
+      ledgerPagesTotal = Math.max(1, Math.ceil(totalTx / 50));
     } else {
       // Vision path on a scanned PDF — page count from raw bytes is
       // expensive to compute here; charge minimum 1 credit (10 pages
@@ -1194,7 +1222,7 @@ router.post(
     // Declared outside the try so the catch block can include them in the
     // error response — lets the user (and us in logs) see whether chunking
     // was attempted at all when extraction fails.
-    let extractPath: 'cache' | 'tsv-chunked' | 'vision' = 'vision';
+    let extractPath: 'cache' | 'tsv-chunked' | 'vision' | 'pre-extracted' = 'vision';
     let chunkCount = 0;
     // Captured up here so the auto-chain block (which runs after both the
     // pdfText and vision branches) can use the same client IP for cost
@@ -1208,6 +1236,14 @@ router.post(
       if (cached?.raw_extracted) {
         extractPath = 'cache';
         rawJson = cached.raw_extracted;
+        const parsed = safeParseJson<ExtractedLedger>(rawJson);
+        extracted = normalizeExtraction(parsed);
+      } else if (preExtractedJson !== null) {
+        // Pre-extracted path: frontend ran the column-mapping wizard and
+        // already produced an ExtractedLedger from pdfjs coords. Skip
+        // Gemini extraction entirely — we only run the audit pass below.
+        extractPath = 'pre-extracted';
+        rawJson = preExtractedJson;
         const parsed = safeParseJson<ExtractedLedger>(rawJson);
         extracted = normalizeExtraction(parsed);
       } else if (pdfText !== null) {

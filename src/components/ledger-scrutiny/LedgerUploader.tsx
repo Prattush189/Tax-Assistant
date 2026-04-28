@@ -4,6 +4,14 @@ import toast from 'react-hot-toast';
 import type { LedgerScrutinyManager } from '../../hooks/useLedgerScrutinyManager';
 import type { LedgerScrutinyProgress } from '../../services/api';
 import { cn } from '../../lib/utils';
+import { ColumnMappingWizard } from '../shared/ColumnMappingWizard';
+import {
+  applyMapping,
+  extractPdfGrid,
+  mappedRowsToExtractedLedger,
+  type ColumnMapping,
+  type PdfGrid,
+} from '../../lib/pdfGrid';
 
 interface Props {
   manager: LedgerScrutinyManager;
@@ -53,6 +61,7 @@ const MAX_BYTES = 3 * 1024 * 1024;
 export function LedgerUploader({ manager }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [pendingGrid, setPendingGrid] = useState<{ grid: PdfGrid; filename: string } | null>(null);
 
   const handleFiles = async (files: FileList | null) => {
     const file = files?.[0];
@@ -76,13 +85,41 @@ export function LedgerUploader({ manager }: Props) {
       return;
     }
 
+    // Digital PDF → extract grid + run column-mapping wizard. Skips
+    // Gemini extraction entirely (server runs only the audit pass) and
+    // makes credit/debit signs deterministic from the user's mapping.
+    // Scanned PDFs without a text layer fall through to the legacy
+    // vision path.
     try {
-      // Server now auto-chains extract → scrutiny inline, so a single upload
-      // call returns the fully-audited result with observations populated.
-      // No separate "Run scrutiny" button or trigger — the user just sees
-      // continuous progress (extracting → scrutinizing → done) and the
-      // final report.
+      const grid = await extractPdfGrid(file);
+      if (grid && grid.rows.length >= 3) {
+        setPendingGrid({ grid, filename: file.name });
+        return;
+      }
+    } catch (err) {
+      console.warn('[LedgerUploader] grid extraction failed; falling back to vision:', err);
+    }
+
+    try {
       const result = await manager.upload(file);
+      toast.success(`Audit complete: ${result.observations.length} observation${result.observations.length === 1 ? '' : 's'} across ${result.accounts.length} accounts`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Upload failed');
+    }
+  };
+
+  const handleMappingConfirm = async (mapping: ColumnMapping) => {
+    if (!pendingGrid) return;
+    const { grid, filename } = pendingGrid;
+    setPendingGrid(null);
+    const mapped = applyMapping(grid, mapping);
+    if (mapped.length === 0) {
+      toast.error('No transaction rows found after applying the mapping. Re-check the Date column.');
+      return;
+    }
+    const extracted = mappedRowsToExtractedLedger(mapped);
+    try {
+      const result = await manager.uploadMapped(extracted, filename);
       toast.success(`Audit complete: ${result.observations.length} observation${result.observations.length === 1 ? '' : 's'} across ${result.accounts.length} accounts`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Upload failed');
@@ -165,6 +202,15 @@ export function LedgerUploader({ manager }: Props) {
       <p className="text-xs text-gray-400 dark:text-gray-500 max-w-md text-center">
         Every account is graded against §40A(3), §269ST/SS/T, TDS scope, RCM cues, and reconciliation — observations cite the section so a CA can quote them directly.
       </p>
+      {pendingGrid && (
+        <ColumnMappingWizard
+          kind="ledger"
+          grid={pendingGrid.grid}
+          filename={pendingGrid.filename}
+          onConfirm={handleMappingConfirm}
+          onCancel={() => setPendingGrid(null)}
+        />
+      )}
     </div>
   );
 }
