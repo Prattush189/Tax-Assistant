@@ -1158,8 +1158,18 @@ router.post(
     }
     const ledgerCreditsNeeded = creditsForPages('ledger_scrutiny', ledgerPagesTotal);
     if (ledgerCreditsNeeded > quota.creditsRemaining) {
+      const excessPct = quota.creditsRemaining > 0
+        ? Math.ceil(((ledgerCreditsNeeded - quota.creditsRemaining) / quota.creditsRemaining) * 100)
+        : 100;
+      const remainingPages = quota.creditsRemaining * PAGES_PER_CREDIT.ledger_scrutiny;
+      const errorMsg = quota.creditsRemaining === 0
+        ? `You've already used 100% of your monthly ledger allowance. Upgrade your plan or wait until next month.`
+        : `This ledger (${ledgerPagesTotal} pages) exceeds your remaining monthly allowance by ~${excessPct}%. You have room for about ${remainingPages} pages this month.`;
       res.status(413).json({
-        error: `This ledger has ${ledgerPagesTotal} pages and would cost ${ledgerCreditsNeeded} credit${ledgerCreditsNeeded === 1 ? '' : 's'}, but you have only ${quota.creditsRemaining} credit${quota.creditsRemaining === 1 ? '' : 's'} (${quota.creditsRemaining * PAGES_PER_CREDIT.ledger_scrutiny} pages) left this month.`,
+        error: errorMsg,
+        excessPct,
+        creditsNeeded: ledgerCreditsNeeded,
+        creditsRemaining: quota.creditsRemaining,
         upgrade: quota.plan !== 'enterprise',
       });
       return;
