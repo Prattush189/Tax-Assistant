@@ -229,7 +229,7 @@ function parseNumber(raw: string): number | null {
 /** Normalize various Indian date formats to YYYY-MM-DD. Returns null
  *  when the cell isn't a parseable date — caller treats those rows
  *  as headers / footers / continuation lines and skips them. */
-function parseDate(raw: string): string | null {
+export function parseDate(raw: string): string | null {
   if (!raw) return null;
   const cleaned = raw.trim();
   if (!cleaned) return null;
@@ -435,6 +435,62 @@ export function mappedRowsToBankCsv(rows: MappedRow[]): string {
     ].join(',');
   });
   return [header, ...lines].join('\n');
+}
+
+/**
+ * Find where the actual transaction table starts in the grid.
+ *
+ * Indian bank statements (and Tally / Busy ledger exports) print a
+ * meta block before the data: customer name, address, IFSC code,
+ * account type, statement period, etc. — typically 8-20 rows. The
+ * wizard's preview is useless if it shows those rows instead of
+ * actual transactions, and the user can't verify their column
+ * mapping until they see real data.
+ *
+ * Strategy:
+ *   1. Look for a row that contains 2+ recognisable column-header
+ *      words ("Date", "Narration", "Particulars", "Withdrawal",
+ *      "Deposit", "Debit", "Credit", "Balance", "Chq", "Voucher").
+ *      That's the table header row.
+ *   2. If a date column is mapped, the first transaction row is
+ *      the first row after the header where that column parses
+ *      as a date. Otherwise it's the row right after the header.
+ *   3. If no header row matches (uncommon — usually means the table
+ *      starts on page 2), fall back to the first row whose date
+ *      column parses as a date.
+ *
+ * Returns null when neither approach finds a transaction table —
+ * the caller renders a friendly "couldn't auto-detect" hint and
+ * shows the raw grid.
+ */
+export function findTableStart(grid: PdfGrid, dateCol: number | null): {
+  headerRowIndex: number | null;
+  firstDataRowIndex: number;
+  skippedCount: number;
+} | null {
+  const HEADER_TOKENS = /\b(date|narration|particulars|description|withdraw\w*|deposit\w*|debit|credit|balance|chq|cheque|voucher|amount)\b/i;
+  let headerRowIndex: number | null = null;
+  for (let i = 0; i < grid.rows.length; i++) {
+    const matches = grid.rows[i].filter(c => c && HEADER_TOKENS.test(c)).length;
+    if (matches >= 2) { headerRowIndex = i; break; }
+  }
+
+  let firstDataRowIndex = headerRowIndex !== null ? headerRowIndex + 1 : 0;
+  if (dateCol !== null) {
+    for (let i = firstDataRowIndex; i < grid.rows.length; i++) {
+      if (parseDate(grid.rows[i][dateCol] ?? '')) {
+        firstDataRowIndex = i;
+        break;
+      }
+    }
+  }
+
+  if (firstDataRowIndex >= grid.rows.length) return null;
+  return {
+    headerRowIndex,
+    firstDataRowIndex,
+    skippedCount: firstDataRowIndex,
+  };
 }
 
 /** Heuristic — guess each column's role from the first 3 rows and

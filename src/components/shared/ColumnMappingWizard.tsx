@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, X, AlertTriangle } from 'lucide-react';
 import type { ColumnMapping, ColumnRole, PdfGrid } from '../../lib/pdfGrid';
-import { suggestMapping } from '../../lib/pdfGrid';
+import { findTableStart, suggestMapping } from '../../lib/pdfGrid';
 
 interface Props {
   /** "bank" hides voucher/account, "ledger" exposes them. */
@@ -47,7 +47,24 @@ export function ColumnMappingWizard({ kind, grid, filename, onConfirm, onCancel 
   );
 
   const validation = useMemo(() => validate(mapping, kind), [mapping, kind]);
-  const previewRows = grid.rows.slice(0, PREVIEW_ROWS);
+
+  // Skip past the metadata block at the top of bank/ledger PDFs
+  // (Customer Id / Branch / Address rows etc.) so the preview shows
+  // actual transactions — that's the only way the user can verify
+  // their column mapping is right. Re-runs whenever the user changes
+  // the date column, since the data-row detection depends on it.
+  const tableStart = useMemo(() => {
+    const dateCol = mapping.roles.indexOf('date');
+    return findTableStart(grid, dateCol >= 0 ? dateCol : null);
+  }, [grid, mapping]);
+  const previewRows = useMemo(() => {
+    if (!tableStart) return grid.rows.slice(0, PREVIEW_ROWS);
+    return grid.rows.slice(tableStart.firstDataRowIndex, tableStart.firstDataRowIndex + PREVIEW_ROWS);
+  }, [grid, tableStart]);
+  const headerHintRow = useMemo(() => {
+    if (!tableStart || tableStart.headerRowIndex === null) return null;
+    return grid.rows[tableStart.headerRowIndex];
+  }, [grid, tableStart]);
 
   const setRole = (col: number, role: ColumnRole) => {
     setMapping(m => {
@@ -110,6 +127,15 @@ export function ColumnMappingWizard({ kind, grid, filename, onConfirm, onCancel 
                 </tr>
               </thead>
               <tbody>
+                {headerHintRow && (
+                  <tr className="border-t border-gray-100 dark:border-gray-800/60 bg-blue-50/40 dark:bg-blue-900/10">
+                    {mapping.roles.map((_, c) => (
+                      <td key={c} className="p-2 text-blue-700 dark:text-blue-300 font-medium whitespace-nowrap max-w-[18rem] overflow-hidden text-ellipsis">
+                        {headerHintRow[c] ?? ''}
+                      </td>
+                    ))}
+                  </tr>
+                )}
                 {previewRows.map((row, r) => (
                   <tr key={r} className="border-t border-gray-100 dark:border-gray-800/60">
                     {mapping.roles.map((_, c) => (
@@ -123,7 +149,11 @@ export function ColumnMappingWizard({ kind, grid, filename, onConfirm, onCancel 
             </table>
           </div>
           <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-            Showing first {previewRows.length} of {grid.rows.length} rows · {grid.columnCount} columns detected · {grid.pageCount} pages
+            {tableStart && tableStart.skippedCount > 0
+              ? `Skipped ${tableStart.skippedCount} metadata row${tableStart.skippedCount === 1 ? '' : 's'} above the transaction table (Customer Id, Branch, Address, etc.). Showing the next ${previewRows.length} of ${grid.rows.length - tableStart.firstDataRowIndex} transaction-area rows.`
+              : `Showing first ${previewRows.length} of ${grid.rows.length} rows.`}
+            {' '}{grid.columnCount} columns detected · {grid.pageCount} pages.
+            {headerHintRow ? ' Highlighted row shows the column labels detected in the PDF.' : ''}
           </p>
 
           {!validation.ok && (
