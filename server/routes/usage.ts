@@ -7,6 +7,7 @@ import { profileRepoV2 } from '../db/repositories/profileRepoV2.js';
 import { AuthRequest } from '../types.js';
 import { getUserLimits, getEffectivePlan, getTrialEndsAt, isTrialExpired, TRIAL_DAYS } from '../lib/planLimits.js';
 import { getBillingUser, countSeats, SEAT_CAP } from '../lib/billing.js';
+import { CSV_ROWS_PER_CREDIT } from '../lib/creditPolicy.js';
 
 const router = Router();
 
@@ -186,13 +187,21 @@ router.get('/', (req: AuthRequest, res: Response) => {
         used: bankStatementsUsed,
         limit: limits.bankStatements,
         period: 'month',
-        label: 'Bank Statements',
+        label: 'Bank Statement Transactions',
+        // Display unit conversion: credits → transactions. UI multiplies
+        // both used and limit by this so users see "2,200 / 5,000
+        // transactions" instead of "22 / 50 credits". The internal
+        // accounting stays in credits because vision/TSV fallbacks
+        // bill by pages, not rows — but ~all wizard uploads are
+        // row-priced, so the row-equivalent is the meaningful headline.
+        rowsPerCredit: CSV_ROWS_PER_CREDIT.bank_statement ?? 100,
       },
       ledgerScrutiny: {
         used: ledgerScrutinyUsed,
         limit: limits.ledgerScrutiny,
         period: 'month',
-        label: 'Ledger Scrutinies',
+        label: 'Ledger Transactions',
+        rowsPerCredit: CSV_ROWS_PER_CREDIT.ledger_scrutiny ?? 100,
       },
       profiles: {
         used: profilesUsed,

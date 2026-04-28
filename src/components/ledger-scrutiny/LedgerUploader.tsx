@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { Upload, FileText, Loader2 } from 'lucide-react';
+import Papa from 'papaparse';
 import toast from 'react-hot-toast';
 import type { LedgerScrutinyManager } from '../../hooks/useLedgerScrutinyManager';
 import type { LedgerScrutinyProgress } from '../../services/api';
@@ -12,6 +13,30 @@ import {
   type ColumnMapping,
   type PdfGrid,
 } from '../../lib/pdfGrid';
+
+/** Wrap a parsed CSV into the same PdfGrid shape the wizard expects.
+ *  We don't have x/y coordinates but the wizard only uses .rows for
+ *  preview and .columnCount for the dropdown count, so synthesizing
+ *  the rest with placeholder values is fine. */
+function csvToFakeGrid(csvText: string): PdfGrid | null {
+  const parsed = Papa.parse<string[]>(csvText, { skipEmptyLines: true });
+  const rows = (parsed.data as string[][]).filter(r => Array.isArray(r) && r.some(c => (c ?? '').trim()));
+  if (rows.length < 2) return null;
+  const columnCount = Math.max(...rows.map(r => r.length));
+  // Pad short rows so columns line up across the preview.
+  const padded = rows.map(r => {
+    const out = [...r];
+    while (out.length < columnCount) out.push('');
+    return out;
+  });
+  return {
+    rows: padded,
+    columnCount,
+    columnXs: Array.from({ length: columnCount }, (_, i) => i * 100),
+    pageBreaks: [],
+    pageCount: 1,
+  };
+}
 
 interface Props {
   manager: LedgerScrutinyManager;
@@ -55,7 +80,7 @@ function ScrutinyProgressBar({
   );
 }
 
-const ACCEPT = '.pdf,application/pdf';
+const ACCEPT = '.pdf,.csv,application/pdf,text/csv';
 const MAX_BYTES = 3 * 1024 * 1024;
 
 export function LedgerUploader({ manager }: Props) {
@@ -67,12 +92,14 @@ export function LedgerUploader({ manager }: Props) {
     const file = files?.[0];
     if (!file) return;
 
-    if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
-      toast.error('Please upload a PDF ledger export.');
+    const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+    const isCsv = file.type === 'text/csv' || file.name.toLowerCase().endsWith('.csv');
+    if (!isPdf && !isCsv) {
+      toast.error('Only PDF and CSV ledger exports are accepted.');
       return;
     }
     if (file.size > MAX_BYTES) {
-      toast.error('Ledger PDF exceeds the 3 MB size limit. Split the export and re-upload.');
+      toast.error('Ledger file exceeds the 3 MB size limit. Split the export and re-upload.');
       return;
     }
     // Hard guard against starting a second audit while the first is
@@ -82,6 +109,21 @@ export function LedgerUploader({ manager }: Props) {
     // friendlier than waiting for the rejection.
     if (manager.hasInProgressJob) {
       toast.error('An audit is already running. Wait for it to finish before starting another.');
+      return;
+    }
+
+    // CSV → wrap into the same grid shape the wizard expects, then
+    // run through the same wizard → preExtracted → audit pipeline as
+    // PDFs. Tally / Busy CSV exports have varying column orders so
+    // the mapping wizard isn't optional even here.
+    if (isCsv) {
+      const text = await file.text();
+      const grid = csvToFakeGrid(text);
+      if (!grid) {
+        toast.error('CSV appears empty or has no data rows.');
+        return;
+      }
+      setPendingGrid({ grid, filename: file.name });
       return;
     }
 
@@ -175,7 +217,7 @@ export function LedgerUploader({ manager }: Props) {
         ) : (
           <>
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-              Tally / Busy / Marg PDF export · max 3 MB
+              Tally / Busy / Marg PDF or CSV export · max 3 MB
             </p>
             <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
               Extract + audit run as one step — no buttons to click after upload. Long ledgers can take up to 20 minutes.

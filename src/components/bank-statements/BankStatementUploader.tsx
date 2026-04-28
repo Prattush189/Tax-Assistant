@@ -41,7 +41,7 @@ interface Props {
   manager: BankStatementManager;
 }
 
-const ACCEPT = '.pdf,.jpg,.jpeg,.png,.webp,.csv,application/pdf,image/jpeg,image/png,image/webp,text/csv';
+const ACCEPT = '.pdf,.csv,application/pdf,text/csv';
 
 export function BankStatementUploader({ manager }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -54,6 +54,18 @@ export function BankStatementUploader({ manager }: Props) {
     const file = files?.[0];
     if (!file) return;
 
+    // Reject anything that isn't PDF or CSV — image upload was the
+    // legacy vision path, but the wizard now handles digital PDFs
+    // deterministically and the practical accuracy on cellphone-scan
+    // images was poor anyway. Scanned PDFs that have no text layer
+    // still fall through to the multipart vision path below.
+    const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+    const isCsv = file.type === 'text/csv' || file.name.toLowerCase().endsWith('.csv');
+    if (!isPdf && !isCsv) {
+      toast.error('Only PDF and CSV statements are accepted.');
+      return;
+    }
+
     // One analysis at a time. Server enforces the same via
     // findInProgressByHashForUser, but the toast is friendlier than
     // letting the request go through and bounce.
@@ -62,7 +74,6 @@ export function BankStatementUploader({ manager }: Props) {
       return;
     }
 
-    const isCsv = file.type === 'text/csv' || file.name.toLowerCase().endsWith('.csv');
     if (isCsv) {
       const text = await file.text();
       const preview = Papa.parse(text, { header: true, skipEmptyLines: true, preview: 1 });
@@ -84,10 +95,9 @@ export function BankStatementUploader({ manager }: Props) {
     // Digital PDF → extract a structured 2D grid and route through the
     // mandatory column-mapping wizard. The wizard maps user → CSV → the
     // existing CSV path, which builds signed amounts deterministically
-    // (no LLM in the credit/debit decision). Scanned/image PDFs and
-    // direct images have no text grid and fall through to the legacy
-    // vision path.
-    if (file.type === 'application/pdf') {
+    // (no LLM in the credit/debit decision). Scanned PDFs with no text
+    // layer fall through to the legacy multipart vision path.
+    if (isPdf) {
       try {
         const grid = await extractPdfGrid(file);
         if (grid && grid.rows.length >= 3) {
@@ -164,7 +174,7 @@ export function BankStatementUploader({ manager }: Props) {
         ) : (
           <>
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-              PDF, JPG, PNG, WebP up to 500 KB — or a CSV export from your bank
+              PDF up to 500 KB — or a CSV export from your bank
             </p>
             <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
               Long statements (50+ pages) can take up to 5 minutes to analyse.

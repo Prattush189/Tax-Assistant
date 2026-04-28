@@ -103,11 +103,15 @@ function Toggle({ enabled, onChange }: { enabled: boolean; onChange: (v: boolean
 // ── UsageBar ──────────────────────────────────────────────────────────────────
 
 function UsageBar({
-  icon: Icon, label, used, limit, period,
+  icon: Icon, label, used, limit, period, displayMultiplier,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   label: string; used: number; limit: number;
   period?: 'day' | 'month' | 'total';
+  /** Multiplies used/limit at display time only — used to render
+   *  credit-based features as transactions (50 credits → 5,000 txns).
+   *  Percentage is based on the raw used/limit so the bar is honest. */
+  displayMultiplier?: number;
 }) {
   const pct = limit > 0 ? Math.min(100, (used / limit) * 100) : 0;
   const barColor =
@@ -116,6 +120,9 @@ function UsageBar({
     pct >= 50 ? 'bg-yellow-500' :
     'bg-[#0D9668] dark:bg-[#2DD4A0]';
   const periodLabel = period === 'day' ? '/day' : '';
+  const m = displayMultiplier && displayMultiplier > 0 ? displayMultiplier : 1;
+  const usedDisplay = used * m;
+  const limitDisplay = limit * m;
 
   return (
     <div className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-4">
@@ -126,7 +133,7 @@ function UsageBar({
         <div className="flex-1 min-w-0">
           <p className="text-xs font-medium text-gray-600 dark:text-gray-400 truncate">{label}</p>
           <p className="text-sm font-bold text-gray-800 dark:text-white">
-            {used.toLocaleString('en-IN')} / {limit.toLocaleString('en-IN')}
+            {usedDisplay.toLocaleString('en-IN')} / {limitDisplay.toLocaleString('en-IN')}
             <span className="text-xs font-normal text-gray-400 ml-1">{periodLabel}</span>
           </p>
         </div>
@@ -437,8 +444,8 @@ function BillingTab({ userName, userEmail }: { userName: string; userEmail: stri
             <UsageBar icon={FileText}      label={usage.usage.notices.label}         used={usage.usage.notices.used}         limit={usage.usage.notices.limit}         period={usage.usage.notices.period} />
             <UsageBar icon={FileSignature} label={usage.usage.boardResolutions.label} used={usage.usage.boardResolutions.used} limit={usage.usage.boardResolutions.limit} period={usage.usage.boardResolutions.period} />
             <UsageBar icon={ScrollText}    label={usage.usage.partnershipDeeds.label} used={usage.usage.partnershipDeeds.used} limit={usage.usage.partnershipDeeds.limit} period={usage.usage.partnershipDeeds.period} />
-            <UsageBar icon={Landmark}      label={usage.usage.bankStatements.label}  used={usage.usage.bankStatements.used}  limit={usage.usage.bankStatements.limit}  period={usage.usage.bankStatements.period} />
-            <UsageBar icon={BookOpenCheck} label={usage.usage.ledgerScrutiny.label}  used={usage.usage.ledgerScrutiny.used}  limit={usage.usage.ledgerScrutiny.limit}  period={usage.usage.ledgerScrutiny.period} />
+            <UsageBar icon={Landmark}      label={usage.usage.bankStatements.label}  used={usage.usage.bankStatements.used}  limit={usage.usage.bankStatements.limit}  period={usage.usage.bankStatements.period} displayMultiplier={usage.usage.bankStatements.rowsPerCredit} />
+            <UsageBar icon={BookOpenCheck} label={usage.usage.ledgerScrutiny.label}  used={usage.usage.ledgerScrutiny.used}  limit={usage.usage.ledgerScrutiny.limit}  period={usage.usage.ledgerScrutiny.period} displayMultiplier={usage.usage.ledgerScrutiny.rowsPerCredit} />
             <UsageBar icon={User}          label={usage.usage.profiles.label}        used={usage.usage.profiles.used}        limit={usage.usage.profiles.limit}        period={usage.usage.profiles.period} />
           </div>
         </div>

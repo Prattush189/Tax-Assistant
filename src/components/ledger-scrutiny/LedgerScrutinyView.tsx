@@ -83,11 +83,16 @@ export function LedgerScrutinyView({ manager }: Props) {
             const limit = manager.usage.creditsLimit || manager.usage.limit || 0;
             const used = manager.usage.creditsUsed || manager.usage.used || 0;
             const pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+            const m = manager.usage.csvRowsPerCredit || 100;
+            const usedTxns = (used * m).toLocaleString('en-IN');
+            const limitTxns = (limit * m).toLocaleString('en-IN');
             return (
               <div className="space-y-1">
-                <div className="text-xs text-gray-500 dark:text-gray-400 flex items-center justify-end">
+                <div className="text-xs text-gray-500 dark:text-gray-400 flex items-center justify-end gap-1.5">
+                  <span className="font-semibold text-gray-700 dark:text-gray-200">{usedTxns} / {limitTxns}</span>
+                  <span>transactions used this month</span>
+                  <span className="text-gray-400">·</span>
                   <span className="font-semibold text-gray-700 dark:text-gray-200">{pct}%</span>
-                  <span className="ml-1.5">of monthly ledger allowance used</span>
                 </div>
                 <div className="h-1.5 w-full rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
                   <div className="h-full bg-emerald-500 dark:bg-emerald-400 transition-all" style={{ width: `${pct}%` }} />

@@ -352,6 +352,10 @@ export interface UsageMetric {
   limit: number;
   period: 'day' | 'month' | 'total';
   label: string;
+  /** Optional unit-conversion multiplier (credits → user-visible unit
+   *  like transactions). When present, the UI multiplies used and
+   *  limit by this for display. */
+  rowsPerCredit?: number;
 }
 
 export interface UserUsageResponse {
