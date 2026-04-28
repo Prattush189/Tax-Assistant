@@ -15,6 +15,20 @@ export function formatINR(amount: number): string {
   }).format(amount);
 }
 
+/** Full Indian-format with paise — for headline numbers where the
+ *  user is reconciling against a bank/ledger statement and even a
+ *  rupee of drift matters. Compact L/Cr formatting hides up to ₹50K
+ *  of difference behind a "₹15.17L" label, which is the wrong UX
+ *  on a numbers-must-tie page. */
+export function formatINRPrecise(amount: number): string {
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(amount);
+}
+
 export function formatINRCompact(amount: number): string {
   if (amount >= 10000000) return `₹${(amount / 10000000).toFixed(2)}Cr`;
   if (amount >= 100000)   return `₹${(amount / 100000).toFixed(2)}L`;
