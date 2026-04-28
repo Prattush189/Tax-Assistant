@@ -63,6 +63,40 @@ export function BankStatementView({ manager }: Props) {
 
           <BankStatementUploader manager={manager} />
 
+          {/* In-progress banner: if any statement is being analyzed
+              (server still running, polling watching it), show a
+              prominent indeterminate bar above the credit usage so
+              the user knows a task is active. Clicking opens the
+              detail view with the live progress UI. Mirrors the
+              ledger landing pattern. */}
+          {(() => {
+            const inFlight = manager.statements.find(s => s.status === 'analyzing');
+            if (!inFlight) return null;
+            return (
+              <button
+                type="button"
+                onClick={() => void manager.load(inFlight.id)}
+                className="w-full text-left rounded-2xl border border-blue-200 dark:border-blue-800/60 bg-blue-50/60 dark:bg-blue-900/15 p-4 hover:bg-blue-50 dark:hover:bg-blue-900/25 transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  <Loader2 className="w-5 h-5 text-blue-600 dark:text-blue-400 animate-spin shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-sm text-gray-900 dark:text-gray-100 truncate">
+                      Analyzing: {inFlight.name}
+                    </p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      Click to view live progress · keeps running if you close this tab
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-2 h-1 w-full rounded-full bg-blue-100 dark:bg-blue-900/40 overflow-hidden">
+                  <div className="h-full w-1/3 bg-blue-500 dark:bg-blue-400" style={{ animation: 'bankBannerProgress 1.6s ease-in-out infinite' }} />
+                </div>
+                <style>{`@keyframes bankBannerProgress { 0% { transform: translateX(-120%); } 50% { transform: translateX(120%); } 100% { transform: translateX(320%); } }`}</style>
+              </button>
+            );
+          })()}
+
           {/* Credit usage as a percentage only — page counts hidden
               so the user focuses on % consumed. The same widget runs
               on the ledger landing page. */}
@@ -158,14 +192,26 @@ export function BankStatementView({ manager }: Props) {
             <style>{`@keyframes bankProgress { 0% { transform: translateX(-120%); } 50% { transform: translateX(120%); } 100% { transform: translateX(320%); } }`}</style>
           </div>
         )}
-        {isError && (
-          <div className="rounded-2xl border border-rose-200 dark:border-rose-800/60 bg-rose-50/60 dark:bg-rose-900/15 p-5">
-            <p className="font-semibold text-rose-800 dark:text-rose-200">Analysis failed</p>
-            <p className="text-xs text-rose-700 dark:text-rose-300 mt-1">
-              {manager.current.statement.errorMessage ?? 'Unknown error. Try uploading the statement again.'}
-            </p>
-          </div>
-        )}
+        {isError && (() => {
+          const raw = manager.current.statement.errorMessage ?? '';
+          // Friendly mapping for transient upstream errors. The raw
+          // upstream messages ("503 status code (no body)") are
+          // unhelpful for the end user — they imply something is
+          // broken in our app when actually Gemini just hiccuped.
+          const isTransient = /\b50[234]\b|service unavailable|no body|temporarily unavailable|ECONNRESET|ETIMEDOUT/i.test(raw);
+          const friendly = isTransient
+            ? "Gemini's API was temporarily unavailable. This usually clears in a minute — re-upload the same file to try again. The credit hasn't been charged."
+            : (raw || 'Unknown error. Try uploading the statement again.');
+          return (
+            <div className="rounded-2xl border border-rose-200 dark:border-rose-800/60 bg-rose-50/60 dark:bg-rose-900/15 p-5">
+              <p className="font-semibold text-rose-800 dark:text-rose-200">Analysis failed</p>
+              <p className="text-xs text-rose-700 dark:text-rose-300 mt-1">{friendly}</p>
+              {isTransient && raw && (
+                <p className="text-[10px] text-rose-600/70 dark:text-rose-400/70 mt-2 font-mono">{raw.slice(0, 200)}</p>
+              )}
+            </div>
+          );
+        })()}
         {isCancelled && (
           <div className="rounded-2xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/30 p-5">
             <p className="font-semibold text-gray-800 dark:text-gray-200">Cancelled</p>

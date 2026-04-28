@@ -40,6 +40,42 @@ export function LedgerScrutinyView({ manager }: Props) {
 
           <LedgerUploader manager={manager} />
 
+          {/* In-progress banner mirroring the bank-statement landing
+              page — even though Recent Scrutinies below shows the
+              running job too, this puts the live progress at the top
+              of the page so a freshly-uploaded ledger surfaces
+              immediately above the (now-disabled) uploader. */}
+          {(() => {
+            const inFlight = manager.jobs.find(j => j.status === 'extracting' || j.status === 'scrutinizing' || j.status === 'pending');
+            if (!inFlight) return null;
+            const phase = inFlight.status === 'scrutinizing' ? 'Auditing'
+              : inFlight.status === 'extracting' ? 'Extracting'
+              : 'Queued';
+            return (
+              <button
+                type="button"
+                onClick={() => void manager.load(inFlight.id)}
+                className="w-full text-left rounded-2xl border border-emerald-200 dark:border-emerald-800/60 bg-emerald-50/60 dark:bg-emerald-900/15 p-4 hover:bg-emerald-50 dark:hover:bg-emerald-900/25 transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  <Loader2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 animate-spin shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-sm text-gray-900 dark:text-gray-100 truncate">
+                      {phase}: {inFlight.partyName ?? inFlight.name}
+                    </p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      Click to view live progress · keeps running if you close this tab
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-2 h-1 w-full rounded-full bg-emerald-100 dark:bg-emerald-900/40 overflow-hidden">
+                  <div className="h-full w-1/3 bg-emerald-500 dark:bg-emerald-400" style={{ animation: 'ledgerBannerProgress 1.6s ease-in-out infinite' }} />
+                </div>
+                <style>{`@keyframes ledgerBannerProgress { 0% { transform: translateX(-120%); } 50% { transform: translateX(120%); } 100% { transform: translateX(320%); } }`}</style>
+              </button>
+            );
+          })()}
+
           {/* Credit usage as a percentage only — page counts are
               hidden per UI direction so users focus on % consumed
               rather than the page math. */}

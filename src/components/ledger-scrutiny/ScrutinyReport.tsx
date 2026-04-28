@@ -201,14 +201,22 @@ export function ScrutinyReport({ manager }: Props) {
         </div>
       )}
 
-      {isError && (
-        <div className="rounded-2xl border border-rose-200 dark:border-rose-800/60 bg-rose-50/60 dark:bg-rose-900/15 p-5">
-          <p className="font-semibold text-rose-800 dark:text-rose-200">Audit failed</p>
-          <p className="text-xs text-rose-700 dark:text-rose-300 mt-1">
-            {job.errorMessage ?? 'Unknown error. Try uploading the ledger again.'}
-          </p>
-        </div>
-      )}
+      {isError && (() => {
+        const raw = job.errorMessage ?? '';
+        const isTransient = /\b50[234]\b|service unavailable|no body|temporarily unavailable|ECONNRESET|ETIMEDOUT/i.test(raw);
+        const friendly = isTransient
+          ? "Gemini's API was temporarily unavailable. This usually clears in a minute — re-upload the same file to try again. The credit hasn't been charged."
+          : (raw || 'Unknown error. Try uploading the ledger again.');
+        return (
+          <div className="rounded-2xl border border-rose-200 dark:border-rose-800/60 bg-rose-50/60 dark:bg-rose-900/15 p-5">
+            <p className="font-semibold text-rose-800 dark:text-rose-200">Audit failed</p>
+            <p className="text-xs text-rose-700 dark:text-rose-300 mt-1">{friendly}</p>
+            {isTransient && raw && (
+              <p className="text-[10px] text-rose-600/70 dark:text-rose-400/70 mt-2 font-mono">{raw.slice(0, 200)}</p>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Summary tiles */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
