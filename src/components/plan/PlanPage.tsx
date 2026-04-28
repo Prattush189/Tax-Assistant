@@ -56,6 +56,10 @@ function yearlyDiscountPct(plan: 'pro' | 'enterprise'): number {
 
 // ── Plan definitions ──────────────────────────────────────────────────────────
 
+// Per-feature lines are kept short and scannable — one quota or
+// capability per bullet. Strings starting with "Everything in" get
+// rendered as a divider, not a bullet, so users see at a glance that
+// higher tiers stack on top of lower tiers.
 const plans = [
   {
     id: 'free' as const,
@@ -63,20 +67,15 @@ const plans = [
     description: '30-day trial — every feature included',
     icon: Sparkles,
     features: [
-      '50 chat messages (trial)',
+      '50 chat messages',
       '5 document uploads',
-      'Bank Statement Analyzer — up to 15 PDF pages or 300 CSV rows/month',
-      'All AI features included',
-      'All tax calculators (Income Tax, CG, GST, TDS)',
-      'Rent receipt & Challan 280 generator',
+      '300 bank statement transactions / month',
+      '100 ledger transactions / month',
       '20 AI suggestions',
-      'Income Tax Acts 1961 & 2025 references',
+      '3 each: notices, board resolutions, partnership deeds',
+      'All tax calculators (Income Tax, CG, GST, TDS)',
+      'Rent receipts + Challan 280',
       '1 saved profile',
-      '3 notice drafts',
-      '3 board resolutions',
-      '3 partnership deeds',
-      'AI Ledger Scrutiny — up to 10 pages/month',
-      'Valid for 30 days from signup',
     ],
     gradient: 'from-gray-500 to-gray-600',
     shadow: 'shadow-gray-500/20',
@@ -88,20 +87,15 @@ const plans = [
     description: 'For professionals who need more power',
     icon: Crown,
     features: [
-      '1,500 chat messages/month',
-      '30 document uploads/month',
       'Everything in Free, plus:',
-      'Bank Statement Analyzer — up to 75 PDF pages or 1,500 CSV rows/month',
-      'Salary Structure Optimizer',
-      'Tax Planning PDF report',
-      'PDF export of computations',
-      '100 AI suggestions/month',
-      '5 saved profiles',
-      '15 notice drafts/month',
-      '15 board resolutions/month',
-      '15 partnership deeds/month',
-      'AI Ledger Scrutiny — up to 30 pages/month',
-      'Writing style customization',
+      '1,500 chat messages / month',
+      '30 document uploads / month',
+      '1,500 bank statement transactions / month',
+      '300 ledger transactions / month',
+      '100 AI suggestions / month',
+      '15 each: notices, board resolutions, partnership deeds',
+      'Salary Structure Optimizer + Tax Planning PDF',
+      '5 saved profiles · Writing style customization',
       'Priority support',
     ],
     gradient: 'from-[#0D9668] to-[#0A7B55]',
@@ -115,20 +109,16 @@ const plans = [
     description: 'For CA firms and businesses',
     icon: Building2,
     features: [
-      '3,000 chat messages/month',
-      '200 document uploads/month',
       'Everything in Pro, plus:',
-      'Bank Statement Analyzer — up to 250 PDF pages or 5,000 CSV rows/month',
-      'Board resolution generator',
+      '3,000 chat messages / month',
+      '200 document uploads / month',
+      '5,000 bank statement transactions / month',
+      '800 ledger transactions / month',
+      '500 AI suggestions / month',
+      '50 each: notices, board resolutions, partnership deeds',
       'IT portal profile import',
-      '500 AI suggestions/month',
-      '25 saved profiles',
-      '50 notice drafts/month',
-      '50 board resolutions/month',
-      '50 partnership deeds/month',
-      'AI Ledger Scrutiny — up to 80 pages/month',
       'Year-over-year trends dashboard',
-      'Priority support & SLA',
+      '25 saved profiles · Priority support & SLA',
     ],
     gradient: 'from-indigo-500 to-purple-600',
     shadow: 'shadow-indigo-500/20',
@@ -591,17 +581,30 @@ export function PlanPage() {
                   </div>
                 )}
 
-                {/* Features */}
+                {/* Features. "Everything in X, plus:" lines render as
+                    a faint divider rather than a checkmark bullet so
+                    the eye can break the list into "inherited" vs
+                    "tier-specific" without rereading every item. */}
                 <ul className="space-y-2.5 mb-6 flex-1">
-                  {plan.features.map((feature, i) => (
-                    <li key={i} className="flex items-start gap-2 text-sm text-gray-600 dark:text-gray-300">
-                      <Check className={cn(
-                        'w-4 h-4 shrink-0 mt-0.5',
-                        isCurrent ? 'text-[#0D9668]' : 'text-gray-400'
-                      )} />
-                      <span>{feature}</span>
-                    </li>
-                  ))}
+                  {plan.features.map((feature, i) => {
+                    const isInheritance = /^Everything in /i.test(feature);
+                    if (isInheritance) {
+                      return (
+                        <li key={i} className="text-xs font-medium text-gray-400 dark:text-gray-500 italic pt-1 pb-0.5">
+                          {feature}
+                        </li>
+                      );
+                    }
+                    return (
+                      <li key={i} className="flex items-start gap-2 text-sm text-gray-600 dark:text-gray-300">
+                        <Check className={cn(
+                          'w-4 h-4 shrink-0 mt-0.5',
+                          isCurrent ? 'text-[#0D9668]' : 'text-gray-400'
+                        )} />
+                        <span>{feature}</span>
+                      </li>
+                    );
+                  })}
                 </ul>
 
                 {/* CTA Button */}
