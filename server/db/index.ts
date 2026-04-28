@@ -245,54 +245,141 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_obs_job_id ON ledger_observations
 db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_obs_account_id ON ledger_observations(account_id)");
 
 // Add 'cancelled' to the ledger_scrutiny_jobs CHECK constraint. SQLite
-// doesn't let us ALTER a CHECK in place, so we rebuild the table when
-// the existing definition doesn't include 'cancelled'. The 12-step
-// recipe in https://www.sqlite.org/lang_altertable.html is reduced to
-// rename → recreate → copy → drop because we don't have foreign keys
-// pointing INTO this table other than ledger_accounts / ledger_observations
-// (which both ON DELETE CASCADE — preserved when we keep the same name).
+// doesn't let us ALTER a CHECK in place, so we rebuild the table.
+//
+// CRITICAL: An earlier version of this migration used the naive
+// `ALTER RENAME old → _old, CREATE new, COPY, DROP _old` recipe.
+// SQLite auto-updates FK references when a table is renamed, so the
+// FKs in ledger_accounts / ledger_observations followed the rename to
+// `_ledger_scrutiny_jobs_old`, then went dangling when that table was
+// dropped — failing prepare-time at `INSERT INTO ledger_accounts` on
+// startup. The repair below detects that state and rebuilds the FK
+// tables before re-running the parent rebuild via the official
+// "create new under a temp name, swap" pattern with foreign_keys=OFF
+// (https://www.sqlite.org/lang_altertable.html — recipe step 4-9).
+{
+  const accountsTbl = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='ledger_accounts'").get() as { sql: string } | undefined;
+  const obsTbl = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='ledger_observations'").get() as { sql: string } | undefined;
+  const accountsBroken = !!(accountsTbl && accountsTbl.sql.includes('_ledger_scrutiny_jobs_old'));
+  const obsBroken = !!(obsTbl && obsTbl.sql.includes('_ledger_scrutiny_jobs_old'));
+
+  if (accountsBroken || obsBroken) {
+    console.warn('[db] detected dangling FK pointing at _ledger_scrutiny_jobs_old; rebuilding ledger_accounts / ledger_observations');
+    db.pragma('foreign_keys = OFF');
+    db.exec('BEGIN');
+    try {
+      if (accountsBroken) {
+        db.exec(`
+          CREATE TABLE _ledger_accounts_new (
+            id TEXT PRIMARY KEY,
+            job_id TEXT NOT NULL REFERENCES ledger_scrutiny_jobs(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            account_type TEXT,
+            opening REAL NOT NULL DEFAULT 0,
+            closing REAL NOT NULL DEFAULT 0,
+            total_debit REAL NOT NULL DEFAULT 0,
+            total_credit REAL NOT NULL DEFAULT 0,
+            tx_count INTEGER NOT NULL DEFAULT 0,
+            sort_index INTEGER NOT NULL DEFAULT 0
+          );
+          INSERT INTO _ledger_accounts_new SELECT
+            id, job_id, name, account_type, opening, closing, total_debit, total_credit, tx_count, sort_index
+          FROM ledger_accounts;
+          DROP TABLE ledger_accounts;
+          ALTER TABLE _ledger_accounts_new RENAME TO ledger_accounts;
+        `);
+      }
+      if (obsBroken) {
+        db.exec(`
+          CREATE TABLE _ledger_observations_new (
+            id TEXT PRIMARY KEY,
+            job_id TEXT NOT NULL REFERENCES ledger_scrutiny_jobs(id) ON DELETE CASCADE,
+            account_id TEXT REFERENCES ledger_accounts(id) ON DELETE CASCADE,
+            account_name TEXT,
+            code TEXT NOT NULL,
+            severity TEXT NOT NULL CHECK(severity IN ('info', 'warn', 'high')),
+            message TEXT NOT NULL,
+            amount REAL,
+            date_ref TEXT,
+            suggested_action TEXT,
+            status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'resolved')),
+            source TEXT NOT NULL DEFAULT 'ai',
+            created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+          );
+          INSERT INTO _ledger_observations_new SELECT
+            id, job_id, account_id, account_name, code, severity, message, amount,
+            date_ref, suggested_action, status, source, created_at
+          FROM ledger_observations;
+          DROP TABLE ledger_observations;
+          ALTER TABLE _ledger_observations_new RENAME TO ledger_observations;
+        `);
+      }
+      db.exec('COMMIT');
+      // Indexes follow tables on DROP — recreate.
+      db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_accounts_job_id ON ledger_accounts(job_id, sort_index)");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_obs_job_id ON ledger_observations(job_id, severity)");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_obs_account_id ON ledger_observations(account_id)");
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+    db.pragma('foreign_keys = ON');
+    console.log('[db] dangling FK repair complete');
+  }
+}
+
+// Now run the actual CHECK migration on ledger_scrutiny_jobs, but use the
+// official SQLite recipe — create-new-with-temp-name → copy → drop-old →
+// rename — wrapped in PRAGMA foreign_keys=OFF so child-table FKs don't
+// follow the intermediate names.
 {
   const tbl = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='ledger_scrutiny_jobs'").get() as { sql: string } | undefined;
   if (tbl && !tbl.sql.includes("'cancelled'")) {
-    db.exec(`
-      BEGIN;
-      ALTER TABLE ledger_scrutiny_jobs RENAME TO _ledger_scrutiny_jobs_old;
-      CREATE TABLE ledger_scrutiny_jobs (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        billing_user_id TEXT,
-        name TEXT NOT NULL,
-        party_name TEXT,
-        gstin TEXT,
-        period_from TEXT,
-        period_to TEXT,
-        source_filename TEXT,
-        source_mime TEXT,
-        file_hash TEXT,
-        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'extracting', 'scrutinizing', 'done', 'error', 'cancelled')),
-        total_flags_high INTEGER NOT NULL DEFAULT 0,
-        total_flags_warn INTEGER NOT NULL DEFAULT 0,
-        total_flags_info INTEGER NOT NULL DEFAULT 0,
-        total_flagged_amount REAL NOT NULL DEFAULT 0,
-        raw_extracted TEXT,
-        error_message TEXT,
-        created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
-        updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
-      );
-      INSERT INTO ledger_scrutiny_jobs SELECT
-        id, user_id, billing_user_id, name, party_name, gstin, period_from, period_to,
-        source_filename, source_mime, file_hash, status,
-        total_flags_high, total_flags_warn, total_flags_info, total_flagged_amount,
-        raw_extracted, error_message, created_at, updated_at
-      FROM _ledger_scrutiny_jobs_old;
-      DROP TABLE _ledger_scrutiny_jobs_old;
-      COMMIT;
-    `);
-    // Recreate the indexes that were dropped along with the old table.
-    db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_jobs_user_id ON ledger_scrutiny_jobs(user_id)");
-    db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_jobs_billing ON ledger_scrutiny_jobs(billing_user_id)");
-    db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_jobs_updated_at ON ledger_scrutiny_jobs(updated_at DESC)");
-    console.log("[db] migrated ledger_scrutiny_jobs.status CHECK to include 'cancelled'");
+    db.pragma('foreign_keys = OFF');
+    db.exec('BEGIN');
+    try {
+      db.exec(`
+        CREATE TABLE _ledger_scrutiny_jobs_new (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          billing_user_id TEXT,
+          name TEXT NOT NULL,
+          party_name TEXT,
+          gstin TEXT,
+          period_from TEXT,
+          period_to TEXT,
+          source_filename TEXT,
+          source_mime TEXT,
+          file_hash TEXT,
+          status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'extracting', 'scrutinizing', 'done', 'error', 'cancelled')),
+          total_flags_high INTEGER NOT NULL DEFAULT 0,
+          total_flags_warn INTEGER NOT NULL DEFAULT 0,
+          total_flags_info INTEGER NOT NULL DEFAULT 0,
+          total_flagged_amount REAL NOT NULL DEFAULT 0,
+          raw_extracted TEXT,
+          error_message TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+        );
+        INSERT INTO _ledger_scrutiny_jobs_new SELECT
+          id, user_id, billing_user_id, name, party_name, gstin, period_from, period_to,
+          source_filename, source_mime, file_hash, status,
+          total_flags_high, total_flags_warn, total_flags_info, total_flagged_amount,
+          raw_extracted, error_message, created_at, updated_at
+        FROM ledger_scrutiny_jobs;
+        DROP TABLE ledger_scrutiny_jobs;
+        ALTER TABLE _ledger_scrutiny_jobs_new RENAME TO ledger_scrutiny_jobs;
+      `);
+      db.exec('COMMIT');
+      db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_jobs_user_id ON ledger_scrutiny_jobs(user_id)");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_jobs_billing ON ledger_scrutiny_jobs(billing_user_id)");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_jobs_updated_at ON ledger_scrutiny_jobs(updated_at DESC)");
+      console.log("[db] migrated ledger_scrutiny_jobs.status CHECK to include 'cancelled'");
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+    db.pragma('foreign_keys = ON');
   }
 }
 
