@@ -103,47 +103,54 @@ function parseTsvResponse(raw: string): Omit<TsvExtractResult, 'inputTokens' | '
       break; // trailer — ignore anything after
     }
     const parts = line.split('\t');
-    if (parts.length < 10) {
+    // Required fields: date + narration + (debit OR credit). Gemini empirically
+    // trims trailing empty cells (production: 43 rows in one chunk dropped
+    // because the model omitted the trailing isRecurring column when it was
+    // false). Accept rows down to 5 fields and treat missing trailing cells
+    // as empty — matches the leniency we already extended to the ledger TSV
+    // parser.
+    if (parts.length < 5) {
       droppedReasons.push(`fields=${parts.length}`);
       continue;
     }
     // debit & credit are separate columns so the model never has to decide
     // sign — it just copies the numbers it sees. Exactly one should be
     // populated per row; we compute signed amount server-side.
-    const debitStr = cleanTsvCell(parts[2]);
-    const creditStr = cleanTsvCell(parts[3]);
+    const debitStr = cleanTsvCell(parts[2] ?? '');
+    const creditStr = cleanTsvCell(parts[3] ?? '');
     const debit = debitStr === '' ? 0 : Number(debitStr.replace(/[,\s]/g, ''));
     const credit = creditStr === '' ? 0 : Number(creditStr.replace(/[,\s]/g, ''));
     if (!Number.isFinite(debit) || !Number.isFinite(credit)) {
       droppedReasons.push('NaN-amount');
       continue;
     }
-    // If both populated, prefer the larger one (the other is almost always a
-    // misplaced balance/reference). Better than hard-failing the chunk —
-    // byte-identical totals matter less than completing the analysis when
-    // the model occasionally misplaces a column.
+    // If both populated, take the larger one as the actual amount (the
+    // other is almost always a misplaced balance/reference). Drops were
+    // accumulating fast enough on Tally-style exports to fail entire
+    // chunks; salvaging is far cheaper than retrying.
+    let signedAmount: number;
     if (debit > 0 && credit > 0) {
-      droppedReasons.push('both-debit-and-credit');
-      continue;
-    }
-    if (debit === 0 && credit === 0) {
+      droppedReasons.push('both-debit-and-credit-salvaged');
+      signedAmount = debit >= credit ? -debit : credit;
+    } else if (debit === 0 && credit === 0) {
       droppedReasons.push('no-amount');
       continue;
+    } else {
+      signedAmount = credit - debit; // positive = inflow, negative = outflow
     }
-    const amount = credit - debit; // positive = inflow, negative = outflow
-    const balanceStr = cleanTsvCell(parts[4]);
+    const balanceStr = cleanTsvCell(parts[4] ?? '');
     const balance = balanceStr === '' ? null : Number(balanceStr.replace(/[,\s]/g, ''));
     rows.push({
-      date: cleanTsvCell(parts[0]),
-      narration: cleanTsvCell(parts[1]),
-      amount,
-      type: amount >= 0 ? 'credit' : 'debit',
+      date: cleanTsvCell(parts[0] ?? ''),
+      narration: cleanTsvCell(parts[1] ?? ''),
+      amount: signedAmount,
+      type: signedAmount >= 0 ? 'credit' : 'debit',
       balance: Number.isFinite(balance as number) ? balance : null,
-      category: cleanTsvCell(parts[5]) || 'Other',
-      subcategory: cleanTsvCell(parts[6]) || null,
-      counterparty: cleanTsvCell(parts[7]) || null,
-      reference: cleanTsvCell(parts[8]) || null,
-      isRecurring: cleanTsvCell(parts[9]) === '1',
+      category: cleanTsvCell(parts[5] ?? '') || 'Other',
+      subcategory: cleanTsvCell(parts[6] ?? '') || null,
+      counterparty: cleanTsvCell(parts[7] ?? '') || null,
+      reference: cleanTsvCell(parts[8] ?? '') || null,
+      isRecurring: cleanTsvCell(parts[9] ?? '') === '1',
     });
   }
 

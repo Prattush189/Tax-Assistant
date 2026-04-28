@@ -385,15 +385,20 @@ function parseLedgerTsvResponse(raw: string): Omit<LedgerTsvChunkResult, 'inputT
         droppedReasons.push('tx-NaN-amount');
         continue;
       }
-      // EXACTLY one of debit/credit must be populated. Both populated is
-      // almost always a misplaced balance; both empty means the row carries
-      // no monetary value (extraction error). Skip rather than fail the
-      // chunk — the trailer count check is the one that protects integrity.
+      // Both debit AND credit populated is almost always the model
+      // confusing a paired DR/CR display row. Production logs showed
+      // 60-70 rows per chunk getting dropped this way, which tipped
+      // chunks past the trailer-mismatch tolerance and triggered
+      // expensive fallback retries. Salvage by taking the larger of
+      // the two as the actual amount and zeroing the other — better
+      // than dropping the row, and the parser warning still surfaces
+      // the imperfect classification.
+      let salvagedDebit = debit;
+      let salvagedCredit = credit;
       if (debit > 0 && credit > 0) {
-        droppedReasons.push('tx-both-debit-credit');
-        continue;
-      }
-      if (debit === 0 && credit === 0) {
+        droppedReasons.push('tx-both-debit-credit-salvaged');
+        if (debit >= credit) salvagedCredit = 0; else salvagedDebit = 0;
+      } else if (debit === 0 && credit === 0) {
         droppedReasons.push('tx-no-amount');
         continue;
       }
@@ -402,8 +407,8 @@ function parseLedgerTsvResponse(raw: string): Omit<LedgerTsvChunkResult, 'inputT
         date: cleanTsvCell(t[2] ?? '') || null,
         narration: cleanTsvCell(t[3] ?? '') || null,
         voucher: cleanTsvCell(t[4] ?? '') || null,
-        debit,
-        credit,
+        debit: salvagedDebit,
+        credit: salvagedCredit,
         balance: parseTsvNumber(t[7] ?? ''),
       });
     }
