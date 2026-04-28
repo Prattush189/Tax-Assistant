@@ -200,6 +200,37 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_bank_rules_user_id ON bank_statement_rul
   if (!names.includes('error_message')) {
     db.exec("ALTER TABLE bank_statements ADD COLUMN error_message TEXT");
   }
+  // Credit accounting columns (added together so existing DBs pick
+  // both up on the same restart). pages_total stays 0 for runs that
+  // started before this migration — they fall through to the legacy
+  // 1-credit-per-run accounting path.
+  if (!names.includes('pages_total')) {
+    db.exec("ALTER TABLE bank_statements ADD COLUMN pages_total INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!names.includes('pages_processed')) {
+    db.exec("ALTER TABLE bank_statements ADD COLUMN pages_processed INTEGER NOT NULL DEFAULT 0");
+  }
+}
+
+// Credit accounting for ledger_scrutiny_jobs (10 pages = 1 credit).
+{
+  const cs = db.prepare("PRAGMA table_info(ledger_scrutiny_jobs)").all() as Array<{ name: string }>;
+  const names = cs.map(c => c.name);
+  if (!names.includes('pages_total')) {
+    db.exec("ALTER TABLE ledger_scrutiny_jobs ADD COLUMN pages_total INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!names.includes('pages_processed')) {
+    db.exec("ALTER TABLE ledger_scrutiny_jobs ADD COLUMN pages_processed INTEGER NOT NULL DEFAULT 0");
+  }
+}
+
+// Credits column on feature_usage so the quota check can sum credits
+// rather than counting rows. Legacy rows default to 1 credit each.
+{
+  const cs = db.prepare("PRAGMA table_info(feature_usage)").all() as Array<{ name: string }>;
+  if (!cs.some(c => c.name === 'credits_used')) {
+    db.exec("ALTER TABLE feature_usage ADD COLUMN credits_used INTEGER NOT NULL DEFAULT 1");
+  }
 }
 
 // Reload-resume support for notices: file_hash + error_message (status

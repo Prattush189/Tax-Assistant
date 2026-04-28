@@ -1549,7 +1549,15 @@ export interface BankStatementCondition {
   createdAt: string;
 }
 
-export async function fetchBankStatements(): Promise<{ statements: BankStatementSummary[] }> {
+export async function fetchBankStatements(): Promise<{
+  statements: BankStatementSummary[];
+  usage: {
+    creditsUsed: number;
+    creditsLimit: number;
+    pagesPerCredit: number;
+    csvRowsPerCredit: number;
+  };
+}> {
   return authFetch('/api/bank-statements');
 }
 
@@ -1947,7 +1955,13 @@ export interface LedgerScrutinyDetail {
 
 export async function fetchLedgerScrutinyJobs(): Promise<{
   jobs: LedgerScrutinyJob[];
-  usage: { used: number; limit: number };
+  usage: {
+    used: number;
+    limit: number;
+    creditsUsed: number;
+    creditsLimit: number;
+    pagesPerCredit: number;
+  };
 }> {
   return authFetch('/api/ledger-scrutiny');
 }

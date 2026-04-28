@@ -7,6 +7,7 @@ import { extractWithRetry } from '../lib/documentExtract.js';
 import { callGeminiJson } from '../lib/geminiJson.js';
 import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_TSV_PROMPT, BANK_STATEMENT_CATEGORIES, buildConditionsBlock, countWords, MAX_CONDITION_WORDS } from '../lib/bankStatementPrompt.js';
 import { gemini, GEMINI_CHAT_MODEL_THINK_FB, costForModel } from '../lib/gemini.js';
+import { creditsForPages, creditsForCsvRows, PAGES_PER_CREDIT, CSV_ROWS_PER_CREDIT } from '../lib/creditPolicy.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { bankStatementRepo } from '../db/repositories/bankStatementRepo.js';
 import { bankTransactionRepo, BankTransactionInput } from '../db/repositories/bankTransactionRepo.js';
@@ -475,27 +476,32 @@ function computeTotals(txs: BankTransactionInput[]): { inflow: number; outflow: 
   return { inflow, outflow };
 }
 
-function enforceQuota(req: AuthRequest, res: Response): { ok: true; billingUserId: string; plan: string } | { ok: false } {
+function enforceQuota(req: AuthRequest, res: Response): { ok: true; billingUserId: string; plan: string; creditsLimit: number; creditsUsed: number; creditsRemaining: number } | { ok: false } {
   const actor = userRepo.findById(req.user!.id);
   const billingUser = actor ? getBillingUser(actor) : undefined;
   const billingUserId = billingUser?.id ?? req.user!.id;
   const plan = billingUser?.plan ?? actor?.plan ?? 'free';
   const limitSource = billingUser ?? actor;
-  const limit = limitSource ? getUserLimits(limitSource).bankStatements : 3;
-  let used = 0;
+  // The bank statement plan limit is now interpreted as a CREDIT cap.
+  // Same number as before (3 / 15 / 50) — but each credit buys 5 PDF
+  // pages or 100 CSV rows, so the user-facing capacity is far larger
+  // and rejection happens up-front based on file size, not run count.
+  const creditsLimit = limitSource ? getUserLimits(limitSource).bankStatements : 3;
+  let creditsUsed = 0;
   try {
-    used = featureUsageRepo.countThisMonthByBillingUser(billingUserId, 'bank_statement_analyze');
+    creditsUsed = featureUsageRepo.sumCreditsThisMonthByBillingUser(billingUserId, 'bank_statement_analyze');
   } catch (err) {
     console.error('[bank-statements] Failed to read usage:', err);
   }
-  if (used >= limit) {
+  const creditsRemaining = Math.max(0, creditsLimit - creditsUsed);
+  if (creditsRemaining <= 0) {
     res.status(429).json({
-      error: `You've reached your monthly bank statement analysis limit (${limit}). Upgrade your plan or wait until next month.`,
+      error: `You've reached your monthly bank statement credit allowance. Upgrade your plan or wait until next month.`,
       upgrade: plan !== 'enterprise',
     });
     return { ok: false };
   }
-  return { ok: true, billingUserId, plan };
+  return { ok: true, billingUserId, plan, creditsLimit, creditsUsed, creditsRemaining };
 }
 
 /** Persist a completed analysis into a placeholder row created upfront.
@@ -585,7 +591,21 @@ function serializeRule(row: BankStatementRuleRow) {
 router.get('/', (req: AuthRequest, res: Response) => {
   if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
   const rows = bankStatementRepo.findByUserId(req.user.id);
-  res.json({ statements: rows.map(serializeStatement) });
+  const actor = userRepo.findById(req.user.id);
+  const billingUser = actor ? getBillingUser(actor) : null;
+  const creditsLimit = (billingUser ?? actor) ? getUserLimits(billingUser ?? actor!).bankStatements : 3;
+  const creditsUsed = billingUser
+    ? featureUsageRepo.sumCreditsThisMonthByBillingUser(billingUser.id, 'bank_statement_analyze')
+    : 0;
+  res.json({
+    statements: rows.map(serializeStatement),
+    usage: {
+      creditsUsed,
+      creditsLimit,
+      pagesPerCredit: PAGES_PER_CREDIT.bank_statement,
+      csvRowsPerCredit: CSV_ROWS_PER_CREDIT.bank_statement ?? 0,
+    },
+  });
 });
 
 // GET /api/bank-statements/rules — list user-defined categorization rules.
@@ -767,6 +787,48 @@ router.post(
       }
     }
 
+    // Pre-flight credit check. Count the file's "size" up front in the
+    // same units the credit policy uses (PDF pages for vision/pdfText,
+    // CSV rows for csvText), translate to credits, and reject 4xx if
+    // the user doesn't have enough remaining for the month. Avoids
+    // starting an expensive run and then half-finishing when the cap
+    // hits mid-flight.
+    let pagesTotal = 0;
+    let creditsNeeded = 0;
+    let pagesUnit: 'pages' | 'rows' = 'pages';
+    if (isPdfText) {
+      const pages = String(req.body.pdfText).split(/\n?---\s*PAGE BREAK\s*---\n?/).filter(p => p.trim()).length;
+      pagesTotal = Math.max(1, pages);
+      creditsNeeded = creditsForPages('bank_statement', pagesTotal);
+    } else if (isCsv) {
+      // Rough count without re-parsing the whole CSV — header + non-empty
+      // lines. The full Papa.parse runs later in the CSV branch; close
+      // enough for the pre-flight gate.
+      const csvLines = String(req.body.csvText).split(/\r?\n/).filter(l => l.trim()).length;
+      pagesTotal = Math.max(0, csvLines - 1); // minus header
+      creditsNeeded = creditsForCsvRows('bank_statement', pagesTotal);
+      pagesUnit = 'rows';
+    } else if (req.file) {
+      // Vision path on a scanned/image PDF — we don't have a cheap page
+      // count from raw bytes here, so charge the minimum (1 credit /
+      // 5 pages of headroom). The actual page count gets reconciled at
+      // finish time via the chunk loop's pages_processed accumulator.
+      pagesTotal = PAGES_PER_CREDIT.bank_statement;
+      creditsNeeded = 1;
+    }
+    if (creditsNeeded > quota.creditsRemaining) {
+      const csvHint = isCsv ? '' : ' (CSV exports are billed at a much higher row-per-credit ratio — try that if available).';
+      const unit = pagesUnit === 'rows' ? 'rows' : 'pages';
+      const allowance = pagesUnit === 'rows'
+        ? `${(CSV_ROWS_PER_CREDIT.bank_statement ?? 0) * quota.creditsRemaining} rows`
+        : `${PAGES_PER_CREDIT.bank_statement * quota.creditsRemaining} pages`;
+      res.status(413).json({
+        error: `This file has ${pagesTotal} ${unit} and would cost ${creditsNeeded} credit${creditsNeeded === 1 ? '' : 's'}, but you have only ${quota.creditsRemaining} credit${quota.creditsRemaining === 1 ? '' : 's'} (${allowance}) left this month.${csvHint}`,
+        upgrade: quota.plan !== 'enterprise',
+      });
+      return;
+    }
+
     // Upfront placeholder. Visible to any subsequent /api/bank-statements
     // GET while the analysis runs, even after this connection closes.
     const placeholderFilename = req.file?.originalname
@@ -778,6 +840,7 @@ router.post(
       sourceFilename: placeholderFilename,
       sourceMime: placeholderMime,
       fileHash,
+      pagesTotal,
     });
 
     try {
@@ -946,6 +1009,10 @@ router.post(
             try {
               const r = await extractBankStatementTsv(chunk, MAX_OUTPUT_TOKENS, conditionsBlock, recordBankAttempt);
               console.log(`[bank-statements] chunk ${idx + 1}/${chunks.length} (pages ${chunkPageRanges[idx][0]}-${chunkPageRanges[idx][1]}) ✓ ${r.actualCount} tx in ${Date.now() - t0}ms`);
+              // Tick pages_processed so a cancel debits credits
+              // proportional to the work actually done.
+              const chunkPages = chunkPageRanges[idx][1] - chunkPageRanges[idx][0] + 1;
+              bankStatementRepo.bumpPagesProcessed(placeholder.id, req.user!.id, chunkPages);
               completedCount += 1;
               sendSse({
                 type: 'progress',
@@ -1049,8 +1116,15 @@ router.post(
       }
       const { txCount } = persistStatement(req.user.id, placeholder.id, extracted, filename ?? 'Bank Statement');
 
+      // Bill credits based on the actual file size processed. For PDF
+      // paths pages_processed reflects chunks completed; for CSV the
+      // route hasn't bumped it (single non-chunked Gemini call), so we
+      // fall through to the upfront pagesTotal which IS the row count.
       try {
-        featureUsageRepo.logWithBilling(req.user.id, quota.billingUserId, 'bank_statement_analyze');
+        const bankCredits = isCsv
+          ? creditsForCsvRows('bank_statement', pagesTotal)
+          : creditsForPages('bank_statement', pagesTotal);
+        featureUsageRepo.logWithBilling(req.user.id, quota.billingUserId, 'bank_statement_analyze', bankCredits);
       } catch (err) {
         console.error('[bank-statements] Failed to log usage:', err);
       }
@@ -1155,7 +1229,16 @@ router.post('/:id/cancel', (req: AuthRequest, res: Response) => {
   try {
     const actor = userRepo.findById(req.user.id);
     const billingUserId = actor ? getBillingUser(actor).id : req.user.id;
-    featureUsageRepo.logWithBilling(req.user.id, billingUserId, 'bank_statement_analyze');
+    // Cancel debits credits proportional to pages_processed (chunks
+    // that finished before the cancel). 0 chunks done = 0 credits =
+    // free retry, which is fair when the user catches a mis-upload
+    // immediately. If cancel beat the first chunk we still log a
+    // 0-credit row so the dashboard reflects the click.
+    const after = bankStatementRepo.findByIdForUser(stmt.id, req.user.id);
+    const cancelCredits = after && after.source_mime === 'text/csv'
+      ? creditsForCsvRows('bank_statement', after.pages_processed || 0)
+      : creditsForPages('bank_statement', after?.pages_processed || 0);
+    featureUsageRepo.logWithBilling(req.user.id, billingUserId, 'bank_statement_analyze', cancelCredits);
   } catch (err) {
     console.error('[bank-statements] cancel feature_usage log failed', err);
   }

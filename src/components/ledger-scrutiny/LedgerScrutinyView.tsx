@@ -40,10 +40,25 @@ export function LedgerScrutinyView({ manager }: Props) {
 
           <LedgerUploader manager={manager} />
 
-          <div className="text-xs text-gray-500 dark:text-gray-400 flex items-center justify-end">
-            Used <span className="mx-1 font-semibold text-gray-700 dark:text-gray-200">{manager.usage.used}</span> of{' '}
-            <span className="ml-1 font-semibold text-gray-700 dark:text-gray-200">{manager.usage.limit}</span> this month
-          </div>
+          {/* Credit usage as a percentage only — page counts are
+              hidden per UI direction so users focus on % consumed
+              rather than the page math. */}
+          {(() => {
+            const limit = manager.usage.creditsLimit || manager.usage.limit || 0;
+            const used = manager.usage.creditsUsed || manager.usage.used || 0;
+            const pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+            return (
+              <div className="space-y-1">
+                <div className="text-xs text-gray-500 dark:text-gray-400 flex items-center justify-end">
+                  <span className="font-semibold text-gray-700 dark:text-gray-200">{pct}%</span>
+                  <span className="ml-1.5">of monthly ledger allowance used</span>
+                </div>
+                <div className="h-1.5 w-full rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+                  <div className="h-full bg-emerald-500 dark:bg-emerald-400 transition-all" style={{ width: `${pct}%` }} />
+                </div>
+              </div>
+            );
+          })()}
 
           {(() => {
             // "Recent scrutinies" is a quick-access tile. We show:

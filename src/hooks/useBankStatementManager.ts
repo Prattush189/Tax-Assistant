@@ -36,8 +36,18 @@ export type BankStatementDetail = {
  * statement detail, upload + analyze, rename, delete, and per-transaction
  * category reassignment.
  */
+export interface BankStatementUsage {
+  creditsUsed: number;
+  creditsLimit: number;
+  pagesPerCredit: number;
+  csvRowsPerCredit: number;
+}
+
+const DEFAULT_USAGE: BankStatementUsage = { creditsUsed: 0, creditsLimit: 0, pagesPerCredit: 5, csvRowsPerCredit: 100 };
+
 export function useBankStatementManager(enabled: boolean) {
   const [statements, setStatements] = useState<BankStatementSummary[]>([]);
+  const [usage, setUsage] = useState<BankStatementUsage>(DEFAULT_USAGE);
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [current, setCurrent] = useState<BankStatementDetail | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -58,6 +68,7 @@ export function useBankStatementManager(enabled: boolean) {
           fetchBankStatementConditions(),
         ]);
         setStatements(list.statements);
+        if (list.usage) setUsage(list.usage);
         setRules(ruleList.rules);
         setConditions(condList.conditions);
       } catch (e) {
@@ -73,6 +84,7 @@ export function useBankStatementManager(enabled: boolean) {
     try {
       const data = await fetchBankStatements();
       setStatements(data.statements);
+      if (data.usage) setUsage(data.usage);
     } catch {
       // non-fatal
     }
@@ -227,6 +239,7 @@ export function useBankStatementManager(enabled: boolean) {
 
   return {
     statements,
+    usage,
     currentId,
     current,
     isLoading,

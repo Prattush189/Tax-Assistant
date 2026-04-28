@@ -22,6 +22,7 @@ import { safeParseJson } from '../lib/geminiJson.js';
 import { pickChatProvider } from '../lib/chatProvider.js';
 import { SseWriter } from '../lib/sseStream.js';
 import { gemini, GEMINI_CHAT_MODEL_THINK_FB, costForModel } from '../lib/gemini.js';
+import { creditsForPages, PAGES_PER_CREDIT } from '../lib/creditPolicy.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import {
   LEDGER_EXTRACT_PROMPT,
@@ -172,30 +173,36 @@ function normalizeSeverity(raw: unknown): LedgerObservationSeverity {
 function enforceQuota(
   req: AuthRequest,
   res: Response,
-): { ok: true; billingUserId: string; plan: string; limit: number } | { ok: false } {
+): { ok: true; billingUserId: string; plan: string; creditsLimit: number; creditsUsed: number; creditsRemaining: number } | { ok: false } {
   const actor = userRepo.findById(req.user!.id);
   if (!actor) {
     res.status(401).json({ error: 'User not found' });
     return { ok: false };
   }
   const billingUser = getBillingUser(actor);
-  const limit = getUserLimits(billingUser).ledgerScrutiny;
-  let used = 0;
+  // Plan limit is now interpreted as a credit cap (1 credit = 10
+  // ledger pages). Same number, far more capacity per credit since
+  // a typical ledger run is one job, but a 200-page export now spans
+  // 20 credits — preventing huge ledgers from consuming a whole
+  // month of allowance in one call.
+  const creditsLimit = getUserLimits(billingUser).ledgerScrutiny;
+  let creditsUsed = 0;
   try {
-    used = featureUsageRepo.countThisMonthByBillingUser(billingUser.id, 'ledger_scrutiny');
+    creditsUsed = featureUsageRepo.sumCreditsThisMonthByBillingUser(billingUser.id, 'ledger_scrutiny');
   } catch (err) {
     console.error('[ledger-scrutiny] usage read failed', err);
   }
-  if (used >= limit) {
+  const creditsRemaining = Math.max(0, creditsLimit - creditsUsed);
+  if (creditsRemaining <= 0) {
     res.status(429).json({
-      error: `You've reached your monthly ledger scrutiny limit (${limit}). Upgrade your plan or wait until next month.`,
+      error: `You've reached your monthly ledger scrutiny credit allowance. Upgrade your plan or wait until next month.`,
       upgrade: billingUser.plan !== 'enterprise',
-      used,
-      limit,
+      creditsUsed,
+      creditsLimit,
     });
     return { ok: false };
   }
-  return { ok: true, billingUserId: billingUser.id, plan: billingUser.plan, limit };
+  return { ok: true, billingUserId: billingUser.id, plan: billingUser.plan, creditsLimit, creditsUsed, creditsRemaining };
 }
 
 // ── Serializers ─────────────────────────────────────────────────────────
@@ -993,12 +1000,23 @@ router.get('/', (req: AuthRequest, res: Response) => {
   const actor = userRepo.findById(req.user.id);
   const billingUser = actor ? getBillingUser(actor) : null;
   const limits = billingUser ? getUserLimits(billingUser) : null;
-  const used = billingUser
-    ? featureUsageRepo.countThisMonthByBillingUser(billingUser.id, 'ledger_scrutiny')
+  const creditsUsed = billingUser
+    ? featureUsageRepo.sumCreditsThisMonthByBillingUser(billingUser.id, 'ledger_scrutiny')
     : 0;
+  const creditsLimit = limits?.ledgerScrutiny ?? 0;
   res.json({
     jobs: rows.map(serializeJob),
-    usage: { used, limit: limits?.ledgerScrutiny ?? 0 },
+    usage: {
+      // Legacy fields kept for any caller still reading them; both
+      // values now refer to credits, not run counts.
+      used: creditsUsed,
+      limit: creditsLimit,
+      // Credit accounting fields the UI uses to render the percentage
+      // bar and the "X / Y pages" / "X / Y rows" subtitle.
+      creditsUsed,
+      creditsLimit,
+      pagesPerCredit: PAGES_PER_CREDIT.ledger_scrutiny,
+    },
   });
 });
 
@@ -1124,6 +1142,29 @@ router.post(
       return;
     }
 
+    // Pre-flight credit check. Count pages up front (cheap — pdfText is
+    // already split, vision falls back to a 10-page minimum estimate)
+    // and refuse the upload if the user's remaining credits don't cover
+    // the file. 1 credit = 10 ledger pages.
+    let ledgerPagesTotal = 0;
+    if (pdfText !== null) {
+      ledgerPagesTotal = pdfText.split(/\n?---\s*PAGE BREAK\s*---\n?/).filter(p => p.trim()).length;
+      if (ledgerPagesTotal === 0) ledgerPagesTotal = 1;
+    } else {
+      // Vision path on a scanned PDF — page count from raw bytes is
+      // expensive to compute here; charge minimum 1 credit (10 pages
+      // of headroom) and reconcile via pages_processed at finish time.
+      ledgerPagesTotal = PAGES_PER_CREDIT.ledger_scrutiny;
+    }
+    const ledgerCreditsNeeded = creditsForPages('ledger_scrutiny', ledgerPagesTotal);
+    if (ledgerCreditsNeeded > quota.creditsRemaining) {
+      res.status(413).json({
+        error: `This ledger has ${ledgerPagesTotal} pages and would cost ${ledgerCreditsNeeded} credit${ledgerCreditsNeeded === 1 ? '' : 's'}, but you have only ${quota.creditsRemaining} credit${quota.creditsRemaining === 1 ? '' : 's'} (${quota.creditsRemaining * PAGES_PER_CREDIT.ledger_scrutiny} pages) left this month.`,
+        upgrade: quota.plan !== 'enterprise',
+      });
+      return;
+    }
+
     // If the user uploaded the same file before, reuse the extraction —
     // creates a fresh job row but skips re-running the extract pass.
     const cached = ledgerScrutinyRepo.findByHashForUser(req.user.id, fileHash);
@@ -1138,6 +1179,7 @@ router.post(
       sourceMime: mimeType,
       fileHash,
     });
+    ledgerScrutinyRepo.setPagesTotal(job.id, req.user.id, ledgerPagesTotal);
 
     // Declared outside the try so the catch block can include them in the
     // error response — lets the user (and us in logs) see whether chunking
@@ -1214,6 +1256,11 @@ router.post(
           }
         };
 
+        // Approximate pages per chunk for the credit accumulator. The
+        // actual chunker packs by char budget, so chunks have variable
+        // page counts; the average is close enough for partial-run
+        // billing on cancel.
+        const pagesPerChunk = Math.max(1, Math.ceil(ledgerPagesTotal / chunks.length));
         const chunkResultLists = await mapWithConcurrency(
           chunks,
           CHUNK_CONCURRENCY,
@@ -1227,6 +1274,7 @@ router.post(
               const totalAcct = results.reduce((s, r) => s + r.accounts.length, 0);
               const note = results.length > 1 ? ` (bisected into ${results.length})` : '';
               console.log(`[ledger-scrutiny] ${label} ✓ ${totalAcct} accounts, ${totalTx} TX in ${Date.now() - t0}ms${note}`);
+              ledgerScrutinyRepo.bumpPagesProcessed(job.id, req.user!.id, pagesPerChunk);
               return results;
             } catch (e) {
               const msg = (e as Error).message ?? String(e);
@@ -1407,9 +1455,15 @@ router.post(
       }
       ledgerScrutinyRepo.setStatus(job.id, req.user.id, 'done');
 
-      // Bill the monthly quota now that both passes succeeded.
+      // Bill credits = ceil(pages / 10). On a clean success
+      // pages_processed is roughly equal to pagesTotal — use the
+      // larger of the two so an under-counted chunk approximation
+      // doesn't accidentally undercharge.
       try {
-        featureUsageRepo.logWithBilling(req.user.id, quota.billingUserId, 'ledger_scrutiny');
+        const pages = ledgerScrutinyRepo.getPagesTotals(job.id, req.user.id);
+        const billedPages = Math.max(pages?.pages_processed ?? 0, ledgerPagesTotal);
+        const ledgerCredits = creditsForPages('ledger_scrutiny', billedPages);
+        featureUsageRepo.logWithBilling(req.user.id, quota.billingUserId, 'ledger_scrutiny', ledgerCredits);
       } catch (err) {
         console.error('[ledger-scrutiny] feature usage log failed', err);
       }
@@ -1591,9 +1645,12 @@ router.post('/:id/scrutinize', async (req: AuthRequest, res: Response) => {
     }
     ledgerScrutinyRepo.setStatus(job.id, req.user.id, 'done');
 
-    // Bill the monthly quota only on success.
+    // Bill credits proportional to the pages this scrutiny covered.
     try {
-      featureUsageRepo.logWithBilling(req.user.id, quota.billingUserId, 'ledger_scrutiny');
+      const pages = ledgerScrutinyRepo.getPagesTotals(job.id, req.user.id);
+      const billedPages = Math.max(pages?.pages_processed ?? 0, pages?.pages_total ?? 0);
+      const ledgerCredits = creditsForPages('ledger_scrutiny', billedPages || PAGES_PER_CREDIT.ledger_scrutiny);
+      featureUsageRepo.logWithBilling(req.user.id, quota.billingUserId, 'ledger_scrutiny', ledgerCredits);
     } catch (err) {
       console.error('[ledger-scrutiny] feature usage log failed', err);
     }
@@ -1652,13 +1709,16 @@ router.post('/:id/cancel', (req: AuthRequest, res: Response) => {
   }
   const ok = ledgerScrutinyRepo.cancelJob(job.id, req.user.id);
   if (!ok) { res.status(409).json({ error: 'Job already settled before cancel could apply.' }); return; }
-  // Charge the slot. The user got partial Gemini work whether we like it
-  // or not, and refunding here would create a "spam Generate, hit Cancel"
-  // loophole around the monthly limit. Surface this in the UI label.
+  // Charge credits proportional to pages_processed (partial-page
+  // billing). 0 chunks done = 0 credits; the slot is still logged
+  // so the dashboard reflects the click but the user gets a free
+  // retry for catching a mis-upload immediately.
   try {
     const actor = userRepo.findById(req.user.id);
     const billingUserId = actor ? getBillingUser(actor).id : req.user.id;
-    featureUsageRepo.logWithBilling(req.user.id, billingUserId, 'ledger_scrutiny');
+    const pages = ledgerScrutinyRepo.getPagesTotals(job.id, req.user.id);
+    const cancelCredits = creditsForPages('ledger_scrutiny', pages?.pages_processed ?? 0);
+    featureUsageRepo.logWithBilling(req.user.id, billingUserId, 'ledger_scrutiny', cancelCredits);
   } catch (err) {
     console.error('[ledger-scrutiny] cancel feature_usage log failed', err);
   }

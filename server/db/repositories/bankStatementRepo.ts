@@ -21,6 +21,8 @@ export interface BankStatementRow {
   status: BankStatementStatus;
   file_hash: string | null;
   error_message: string | null;
+  pages_total: number;
+  pages_processed: number;
   created_at: string;
   updated_at: string;
 }
@@ -41,6 +43,10 @@ export interface BankStatementPlaceholderInput {
   sourceFilename: string | null;
   sourceMime: string | null;
   fileHash: string | null;
+  /** Total page count (for PDF / vision) or row count (for CSV)
+   *  computed up front. Used by the quota pre-flight check + the
+   *  per-chunk pages_processed accumulator at finish time. */
+  pagesTotal: number;
 }
 
 const stmts = {
@@ -63,8 +69,17 @@ const stmts = {
   createPlaceholder: db.prepare(
     `INSERT INTO bank_statements (
       id, user_id, billing_user_id, name,
-      source_filename, source_mime, file_hash, status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'analyzing')`
+      source_filename, source_mime, file_hash, status, pages_total
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'analyzing', ?)`
+  ),
+  // Bumps pages_processed by the chunk's page count after each
+  // chunk completes. On cancel/finish we read this column and
+  // convert to credits via creditsForPages().
+  bumpPagesProcessed: db.prepare(
+    `UPDATE bank_statements
+       SET pages_processed = pages_processed + ?,
+           updated_at = datetime('now', '+5 hours', '+30 minutes')
+     WHERE id = ? AND user_id = ?`
   ),
   updateAfterAnalyze: db.prepare(
     `UPDATE bank_statements
@@ -158,8 +173,16 @@ export const bankStatementRepo = {
       input.sourceFilename,
       input.sourceMime,
       input.fileHash,
+      input.pagesTotal,
     );
     return this.findByIdForUser(id, userId)!;
+  },
+
+  /** Add to pages_processed after each successful chunk. Returns the
+   *  current accumulator so the caller can log progress. */
+  bumpPagesProcessed(id: string, userId: string, deltaPages: number): void {
+    if (deltaPages <= 0) return;
+    stmts.bumpPagesProcessed.run(deltaPages, id, userId);
   },
 
   /** Fill in extracted metadata + flip status to 'done'. Used after the

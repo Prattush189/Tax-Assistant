@@ -24,6 +24,8 @@ export interface LedgerJobRow {
   total_flagged_amount: number;
   raw_extracted: string | null;
   error_message: string | null;
+  pages_total: number;
+  pages_processed: number;
   created_at: string;
   updated_at: string;
 }
@@ -136,6 +138,26 @@ const stmts = {
   getStatus: db.prepare(
     'SELECT status FROM ledger_scrutiny_jobs WHERE id = ? AND user_id = ?'
   ),
+  // Set pages_total once at upload time (after we've counted PDF
+  // pages). Separate from the bump statement so the route can fail
+  // pre-flight without touching pages_processed.
+  setPagesTotal: db.prepare(
+    `UPDATE ledger_scrutiny_jobs
+       SET pages_total = ?,
+           updated_at = datetime('now', '+5 hours', '+30 minutes')
+     WHERE id = ? AND user_id = ?`
+  ),
+  // Bumps pages_processed as chunks complete. On cancel/finish we
+  // read pages_processed and convert to credits via creditsForPages().
+  bumpPagesProcessed: db.prepare(
+    `UPDATE ledger_scrutiny_jobs
+       SET pages_processed = pages_processed + ?,
+           updated_at = datetime('now', '+5 hours', '+30 minutes')
+     WHERE id = ? AND user_id = ?`
+  ),
+  getPagesTotals: db.prepare(
+    'SELECT pages_total, pages_processed FROM ledger_scrutiny_jobs WHERE id = ? AND user_id = ?'
+  ),
   updateJobExtraction: db.prepare(
     `UPDATE ledger_scrutiny_jobs
        SET raw_extracted = ?, party_name = COALESCE(?, party_name),
@@ -245,6 +267,20 @@ export const ledgerScrutinyRepo = {
   getStatus(id: string, userId: string): LedgerJobStatus | null {
     const row = stmts.getStatus.get(id, userId) as { status: LedgerJobStatus } | undefined;
     return row?.status ?? null;
+  },
+
+  setPagesTotal(id: string, userId: string, pagesTotal: number): void {
+    stmts.setPagesTotal.run(pagesTotal, id, userId);
+  },
+
+  bumpPagesProcessed(id: string, userId: string, deltaPages: number): void {
+    if (deltaPages <= 0) return;
+    stmts.bumpPagesProcessed.run(deltaPages, id, userId);
+  },
+
+  getPagesTotals(id: string, userId: string): { pages_total: number; pages_processed: number } | null {
+    const row = stmts.getPagesTotals.get(id, userId) as { pages_total: number; pages_processed: number } | undefined;
+    return row ?? null;
   },
 
   saveExtraction(

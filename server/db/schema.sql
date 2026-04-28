@@ -116,6 +116,13 @@ CREATE TABLE IF NOT EXISTS feature_usage (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   feature TEXT NOT NULL,
+  -- Credits consumed by this feature run. 1 credit = 5 bank-statement
+  -- pages OR 100 CSV rows OR 10 ledger pages. Cancelled runs log the
+  -- credits proportional to pages processed before the cancel landed.
+  -- Default 1 keeps existing rows reasonable on read (legacy run-count
+  -- = 1 credit each), and the migration in server/db/index.ts adds the
+  -- column with that default.
+  credits_used INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
 );
 CREATE INDEX IF NOT EXISTS idx_feature_usage_user_feature ON feature_usage(user_id, feature, created_at);
@@ -268,6 +275,14 @@ CREATE TABLE IF NOT EXISTS bank_statements (
   status TEXT NOT NULL DEFAULT 'done',
   file_hash TEXT,
   error_message TEXT,
+  -- Credit accounting. pages_total is the file's page count (or
+  -- CSV row count for the CSV path) computed up front; pages_processed
+  -- ticks up as chunks complete so a cancel debits only the pages
+  -- already processed. Both stay 0 for legacy rows that finished
+  -- before the credit policy existed — they cost 1 credit each by
+  -- default in feature_usage.
+  pages_total INTEGER NOT NULL DEFAULT 0,
+  pages_processed INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
 );
@@ -330,6 +345,9 @@ CREATE TABLE IF NOT EXISTS ledger_scrutiny_jobs (
   source_mime TEXT,
   file_hash TEXT,
   status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'extracting', 'scrutinizing', 'done', 'error', 'cancelled')),
+  -- Credit accounting (10 pages = 1 credit). Same shape as bank_statements.
+  pages_total INTEGER NOT NULL DEFAULT 0,
+  pages_processed INTEGER NOT NULL DEFAULT 0,
   total_flags_high INTEGER NOT NULL DEFAULT 0,
   total_flags_warn INTEGER NOT NULL DEFAULT 0,
   total_flags_info INTEGER NOT NULL DEFAULT 0,
