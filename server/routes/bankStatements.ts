@@ -4,7 +4,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
 import Papa from 'papaparse';
 import { extractWithRetry } from '../lib/documentExtract.js';
-import { callGeminiJson } from '../lib/geminiJson.js';
+import { callGeminiJson, type GeminiJsonResult } from '../lib/geminiJson.js';
 import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_TSV_PROMPT, BANK_STATEMENT_CATEGORIES, buildConditionsBlock, countWords, MAX_CONDITION_WORDS } from '../lib/bankStatementPrompt.js';
 import { gemini, GEMINI_CHAT_MODEL_THINK_FB, costForModel } from '../lib/gemini.js';
 import { creditsForPages, creditsForCsvRows, PAGES_PER_CREDIT, CSV_ROWS_PER_CREDIT } from '../lib/creditPolicy.js';
@@ -615,6 +615,10 @@ function persistStatement(
 
 function serializeStatement(row: ReturnType<typeof bankStatementRepo.findByIdForUser>) {
   if (!row) return null;
+  // Cast for ALTER-TABLE-added columns the inferred row type doesn't
+  // include yet. Frontend reads analyzeChunksTotal / Done while the
+  // wizard's CSV categorisation runs to render "3 of 5 batches done".
+  const r = row as unknown as Record<string, unknown>;
   return {
     id: row.id,
     name: row.name,
@@ -631,6 +635,8 @@ function serializeStatement(row: ReturnType<typeof bankStatementRepo.findByIdFor
     errorMessage: row.error_message,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    analyzeChunksTotal: typeof r.analyze_chunks_total === 'number' ? r.analyze_chunks_total : 0,
+    analyzeChunksDone: typeof r.analyze_chunks_done === 'number' ? r.analyze_chunks_done : 0,
   };
 }
 
@@ -1337,22 +1343,86 @@ ${JSON.stringify(batch)}`;
           console.log(`[bank-statements] csv path: ${normalized.length} rows → ${batches.length} batch(es) of up to ${CSV_BATCH_SIZE}`);
           sendSse({ type: 'start', totalChunks: batches.length, pages: batches.length });
 
-          const batchResults = await mapWithConcurrency(
-            batches,
-            CSV_BATCH_CONCURRENCY,
-            async (batch, idx) => {
-              const t0 = Date.now();
-              const result = await callGeminiJson<EnrichmentResponse>(
-                [{ role: 'user', content: buildEnrichmentPrompt(batch, idx === 0) }],
+          // Persist analyze-batch progress to bank_statements row so
+          // the frontend's 5s polling can read "3 of 5 batches done".
+          // Uses dedicated columns (analyze_chunks_total / done) so we
+          // don't conflict with the existing pages_total/processed
+          // columns that drive credit billing math.
+          try { bankStatementRepo.setAnalyzeChunksTotal(placeholder.id, req.user!.id, batches.length); } catch (e) { console.error('[bank-statements] set chunks total failed', e); }
+
+          // Recursive bisect for CSV batches. When a batch's enrichments
+          // come back short (Gemini truncated mid-array on a chunk that
+          // happened to have especially verbose narrations), halve the
+          // batch and retry. Same pattern as the ledger scrutiny
+          // bisect — without it, one truncating batch failed the entire
+          // analysis and the user lost the run.
+          const categorizeWithSplit = async (
+            batch: typeof normalized,
+            label: string,
+            depth: number,
+          ): Promise<{ batch: typeof normalized; enrichments: EnrichmentResponse['enrichments']; meta: EnrichmentResponse; inputTokens: number; outputTokens: number; modelUsed: string }> => {
+            const t0 = Date.now();
+            let result: GeminiJsonResult<EnrichmentResponse> | null = null;
+            try {
+              result = await callGeminiJson<EnrichmentResponse>(
+                [{ role: 'user', content: buildEnrichmentPrompt(batch, label.endsWith('/0')) }],
                 { maxTokens: CSV_MAX_OUTPUT_TOKENS },
               );
               const enrichments = result.data.enrichments ?? [];
               if (enrichments.length < batch.length * 0.95) {
-                throw new Error(`csv batch ${idx + 1}/${batches.length}: enrichments undercount (${enrichments.length} of ${batch.length}) — likely truncation`);
+                throw new Error(`csv ${label}: enrichments undercount (${enrichments.length} of ${batch.length}) — likely truncation`);
               }
-              console.log(`[bank-statements] csv batch ${idx + 1}/${batches.length} ✓ ${enrichments.length} enrichments in ${Date.now() - t0}ms`);
-              sendSse({ type: 'progress', completed: idx + 1, total: batches.length, txInChunk: enrichments.length });
-              return { batch, result, enrichments };
+              console.log(`[bank-statements] csv ${label} ✓ ${enrichments.length} enrichments in ${Date.now() - t0}ms`);
+              return {
+                batch,
+                enrichments,
+                meta: result.data,
+                inputTokens: result.inputTokens,
+                outputTokens: result.outputTokens,
+                modelUsed: result.modelUsed,
+              };
+            } catch (err) {
+              const msg = (err as Error).message ?? String(err);
+              const truncationLike = /undercount|parse failed|finish_reason=length|JSON/i.test(msg);
+              // Log the failed attempt to api_usage with status='failed'
+              // so the admin dashboard sees the wasted spend; user not
+              // billed against their token budget.
+              if (result) {
+                try {
+                  const failedCost = costForModel(result.modelUsed, result.inputTokens, result.outputTokens);
+                  usageRepo.logWithBilling(bankClientIp, req.user!.id, quota.billingUserId, result.inputTokens, result.outputTokens, failedCost, false, result.modelUsed, false, 'bank_statement', 0, 'failed');
+                } catch (e) {
+                  console.error('[bank-statements] failed-batch log error', e);
+                }
+              }
+              if (!truncationLike || depth >= 3 || batch.length <= 1) throw err;
+              const mid = Math.ceil(batch.length / 2);
+              const a = batch.slice(0, mid);
+              const b = batch.slice(mid);
+              console.warn(`[bank-statements] csv ${label} too dense (${batch.length} rows at depth ${depth}), bisecting → [${a.length}, ${b.length}]`);
+              const [ra, rb] = await Promise.all([
+                categorizeWithSplit(a, `${label}.a`, depth + 1),
+                categorizeWithSplit(b, `${label}.b`, depth + 1),
+              ]);
+              return {
+                batch: [...ra.batch, ...rb.batch],
+                enrichments: [...ra.enrichments, ...rb.enrichments],
+                meta: ra.meta,
+                inputTokens: ra.inputTokens + rb.inputTokens,
+                outputTokens: ra.outputTokens + rb.outputTokens,
+                modelUsed: ra.modelUsed || rb.modelUsed,
+              };
+            }
+          };
+
+          const batchResults = await mapWithConcurrency(
+            batches,
+            CSV_BATCH_CONCURRENCY,
+            async (batch, idx) => {
+              const result = await categorizeWithSplit(batch, `batch ${idx + 1}/${batches.length}/0`, 0);
+              try { bankStatementRepo.bumpAnalyzeChunksDone(placeholder.id, req.user!.id); } catch (e) { console.error('[bank-statements] bump chunks done failed', e); }
+              sendSse({ type: 'progress', completed: idx + 1, total: batches.length, txInChunk: result.enrichments.length });
+              return result;
             },
           );
 
@@ -1362,17 +1432,17 @@ ${JSON.stringify(batch)}`;
           }
 
           extracted = {
-            bankName: batchResults[0]?.result.data.bankName ?? null,
-            accountNumberMasked: batchResults[0]?.result.data.accountNumberMasked ?? null,
-            periodFrom: batchResults[0]?.result.data.periodFrom ?? null,
-            periodTo: batchResults[0]?.result.data.periodTo ?? null,
-            currency: batchResults[0]?.result.data.currency ?? 'INR',
+            bankName: batchResults[0]?.meta.bankName ?? null,
+            accountNumberMasked: batchResults[0]?.meta.accountNumberMasked ?? null,
+            periodFrom: batchResults[0]?.meta.periodFrom ?? null,
+            periodTo: batchResults[0]?.meta.periodTo ?? null,
+            currency: batchResults[0]?.meta.currency ?? 'INR',
             transactions: allTransactions,
           };
-          (res.locals as Record<string, unknown>).geminiUsages = batchResults.map(({ result }) => ({
-            inputTokens: result.inputTokens,
-            outputTokens: result.outputTokens,
-            modelUsed: result.modelUsed,
+          (res.locals as Record<string, unknown>).geminiUsages = batchResults.map(r => ({
+            inputTokens: r.inputTokens,
+            outputTokens: r.outputTokens,
+            modelUsed: r.modelUsed,
           }));
         }
       }

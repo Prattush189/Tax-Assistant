@@ -1543,6 +1543,10 @@ export interface BankStatementSummary {
   errorMessage: string | null;
   createdAt: string;
   updatedAt: string;
+  /** CSV-batch progress while the wizard's categorisation runs.
+   *  Both 0 on direct CSV uploads / vision path / completed runs. */
+  analyzeChunksTotal: number;
+  analyzeChunksDone: number;
 }
 
 export interface BankTransaction {
@@ -1949,6 +1953,11 @@ export interface LedgerScrutinyJob {
    *  on jobs that haven't reached the audit phase yet. */
   scrutinyChunksTotal: number;
   scrutinyChunksDone: number;
+  /** Extract-phase progress (TSV chunked path). Pages_total / processed
+   *  on the server; surfaces "12 of 33 chunks extracted" during the
+   *  extract phase, before scrutiny starts. */
+  extractChunksTotal: number;
+  extractChunksDone: number;
 }
 
 export interface LedgerScrutinyAccount {

@@ -81,6 +81,21 @@ const stmts = {
            updated_at = datetime('now', '+5 hours', '+30 minutes')
      WHERE id = ? AND user_id = ?`
   ),
+  // CSV-batch progress (separate from page-based billing). Used by
+  // the wizard's categorisation path so frontend can show
+  // "3 of 5 batches" via the 5s polling loop.
+  setAnalyzeChunksTotal: db.prepare(
+    `UPDATE bank_statements
+       SET analyze_chunks_total = ?, analyze_chunks_done = 0,
+           updated_at = datetime('now', '+5 hours', '+30 minutes')
+     WHERE id = ? AND user_id = ?`
+  ),
+  bumpAnalyzeChunksDone: db.prepare(
+    `UPDATE bank_statements
+       SET analyze_chunks_done = analyze_chunks_done + 1,
+           updated_at = datetime('now', '+5 hours', '+30 minutes')
+     WHERE id = ? AND user_id = ?`
+  ),
   updateAfterAnalyze: db.prepare(
     `UPDATE bank_statements
        SET name = ?, bank_name = ?, account_number_masked = ?,
@@ -183,6 +198,15 @@ export const bankStatementRepo = {
   bumpPagesProcessed(id: string, userId: string, deltaPages: number): void {
     if (deltaPages <= 0) return;
     stmts.bumpPagesProcessed.run(deltaPages, id, userId);
+  },
+
+  /** CSV-batch progress (used by the wizard's categorisation path). */
+  setAnalyzeChunksTotal(id: string, userId: string, total: number): void {
+    stmts.setAnalyzeChunksTotal.run(total, id, userId);
+  },
+
+  bumpAnalyzeChunksDone(id: string, userId: string): void {
+    stmts.bumpAnalyzeChunksDone.run(id, userId);
   },
 
   /** Fill in extracted metadata + flip status to 'done'. Used after the

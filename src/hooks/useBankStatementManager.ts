@@ -158,6 +158,9 @@ export function useBankStatementManager(enabled: boolean) {
       return result;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Analysis failed');
+      // Refresh sidebar so the failed placeholder row picks up its
+      // 'error' status and any partial-chunk credits get reflected.
+      void refresh();
       throw e;
     } finally {
       setIsAnalyzing(false);
@@ -180,6 +183,9 @@ export function useBankStatementManager(enabled: boolean) {
       return result;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Analysis failed');
+      // Refresh sidebar so the failed placeholder row picks up its
+      // 'error' status and any partial-chunk credits get reflected.
+      void refresh();
       throw e;
     } finally {
       setIsAnalyzing(false);

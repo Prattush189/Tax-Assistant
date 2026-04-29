@@ -210,6 +210,15 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_bank_rules_user_id ON bank_statement_rul
   if (!names.includes('pages_processed')) {
     db.exec("ALTER TABLE bank_statements ADD COLUMN pages_processed INTEGER NOT NULL DEFAULT 0");
   }
+  // CSV-batch progress (separate from page-based billing math). Lets
+  // the frontend poll show "3 of 5 batches done" while the wizard's
+  // categorisation runs.
+  if (!names.includes('analyze_chunks_total')) {
+    db.exec("ALTER TABLE bank_statements ADD COLUMN analyze_chunks_total INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!names.includes('analyze_chunks_done')) {
+    db.exec("ALTER TABLE bank_statements ADD COLUMN analyze_chunks_done INTEGER NOT NULL DEFAULT 0");
+  }
 }
 
 // Credit accounting for ledger_scrutiny_jobs (10 pages = 1 credit).

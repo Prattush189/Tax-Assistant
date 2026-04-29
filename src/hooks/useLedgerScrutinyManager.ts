@@ -107,6 +107,7 @@ export function useLedgerScrutinyManager(enabled: boolean) {
       return result;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Upload failed');
+      void refresh();
       throw e;
     } finally {
       setIsUploading(false);
@@ -126,6 +127,7 @@ export function useLedgerScrutinyManager(enabled: boolean) {
       return result;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Upload failed');
+      void refresh();
       throw e;
     } finally {
       setIsUploading(false);

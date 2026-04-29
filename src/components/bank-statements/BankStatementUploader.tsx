@@ -15,14 +15,41 @@ import {
   type PdfGrid,
 } from '../../lib/pdfGrid';
 
-function AnalyzeProgressBar({ progress }: { progress: BankStatementAnalyzeProgress }) {
-  // While the first `start` event is in flight the server hasn't reported
-  // chunk count yet — show an indeterminate hint rather than a 0/0 bar.
-  const total = progress.total || 0;
-  const pct = total > 0 ? Math.min(100, Math.round((progress.completed / total) * 100)) : 0;
+function AnalyzeProgressBar({
+  progress,
+  chunksDone,
+  chunksTotal,
+  startedAt,
+}: {
+  progress: BankStatementAnalyzeProgress;
+  /** From the polled statement row — surfaces the wizard CSV path's
+   *  per-batch progress (TSV chunked path uses `progress` from SSE). */
+  chunksDone?: number;
+  chunksTotal?: number;
+  startedAt?: number;
+}) {
+  // Prefer DB-polled chunk progress (wizard CSV path). Fall back to
+  // SSE-streamed progress (TSV chunked path).
+  const usingChunks = (chunksTotal ?? 0) > 0;
+  const total = usingChunks ? chunksTotal! : (progress.total || 0);
+  const completed = usingChunks ? (chunksDone ?? 0) : progress.completed;
+  const pct = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : 0;
+
+  let eta: string | null = null;
+  if (usingChunks && completed > 0 && startedAt && completed < total) {
+    const elapsedMs = Date.now() - startedAt;
+    const avgMsPerChunk = elapsedMs / completed;
+    const remainingMs = avgMsPerChunk * (total - completed);
+    const mins = Math.ceil(remainingMs / 60000);
+    eta = mins <= 1 ? '~1 min remaining' : `~${mins} min remaining`;
+  }
+
   const label = total > 0
-    ? `Section ${Math.min(progress.completed + (progress.completed === total ? 0 : 1), total)} of ${total}${progress.pages ? ` · pages ${progress.pages[0]}–${progress.pages[1]}` : ''}`
+    ? usingChunks
+      ? `Categorising batch ${completed} of ${total}`
+      : `Section ${Math.min(progress.completed + (progress.completed === total ? 0 : 1), total)} of ${total}${progress.pages ? ` · pages ${progress.pages[0]}–${progress.pages[1]}` : ''}`
     : 'Preparing sections…';
+
   return (
     <div className="mt-3">
       <div className="h-2 w-full rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden">
@@ -33,6 +60,7 @@ function AnalyzeProgressBar({ progress }: { progress: BankStatementAnalyzeProgre
       </div>
       <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
         {label}{total > 0 ? ` · ${pct}%` : ''}
+        {eta ? ` · ${eta}` : ''}
       </p>
     </div>
   );
@@ -51,6 +79,19 @@ export function BankStatementUploader({ manager }: Props) {
   // Wizard state. When set, the user is mid-mapping for a digital PDF;
   // we hold onto the grid + filename until they confirm or cancel.
   const [pendingGrid, setPendingGrid] = useState<{ grid: PdfGrid; filename: string } | null>(null);
+
+  // Pull batch progress off the in-flight statement (the placeholder
+  // row's analyze_chunks_* fields, polled every 5s by the manager).
+  const inFlight = manager.statements.find(s => s.status === 'analyzing');
+  const chunksDone = inFlight?.analyzeChunksDone ?? 0;
+  const chunksTotal = inFlight?.analyzeChunksTotal ?? 0;
+  const analyzeStartedAt = useRef<number | null>(null);
+  if (chunksTotal > 0 && analyzeStartedAt.current === null) {
+    analyzeStartedAt.current = Date.now();
+  }
+  if (chunksTotal === 0 && analyzeStartedAt.current !== null) {
+    analyzeStartedAt.current = null;
+  }
 
   const handleFiles = async (files: FileList | null) => {
     const file = files?.[0];
@@ -180,8 +221,13 @@ export function BankStatementUploader({ manager }: Props) {
         <p className="font-semibold text-gray-800 dark:text-gray-100">
           {manager.isAnalyzing ? 'Analyzing your statement…' : 'Drop your bank statement here'}
         </p>
-        {manager.isAnalyzing && manager.analyzeProgress ? (
-          <AnalyzeProgressBar progress={manager.analyzeProgress} />
+        {manager.isAnalyzing || chunksTotal > 0 ? (
+          <AnalyzeProgressBar
+            progress={manager.analyzeProgress ?? { completed: 0, total: 0 }}
+            chunksDone={chunksDone}
+            chunksTotal={chunksTotal}
+            startedAt={analyzeStartedAt.current ?? undefined}
+          />
         ) : (
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
             PDF up to 500 KB — or a CSV export from your bank

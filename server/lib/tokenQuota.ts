@@ -49,9 +49,21 @@ export interface TokenQuotaDenied {
 export type TokenQuotaResult = TokenQuotaOk | TokenQuotaDenied;
 
 /** Resolve and check the user's token budget. Sends a 429 response
- *  when the budget is exhausted; returns ok=false in that case so the
- *  caller can early-return without doing any further work. */
-export function enforceTokenQuota(req: AuthRequest, res: Response): TokenQuotaResult {
+ *  when the budget is exhausted (or when a passed-in estimate would
+ *  push the user over budget) and returns ok=false so the caller can
+ *  early-return without burning any Gemini calls.
+ *
+ *  estimatedTokens: optional rough-cost estimate for THIS run.
+ *  Bank/ledger uploads pass `rowCount × tokens-per-row` so a 5,000-
+ *  row PDF that would clearly exceed remaining budget hard-fails up
+ *  front with a clear "use a smaller file" message rather than
+ *  burning the first chunk's worth of tokens before hitting the
+ *  cap. Defaults to 0 (just check current usage). */
+export function enforceTokenQuota(
+  req: AuthRequest,
+  res: Response,
+  estimatedTokens: number = 0,
+): TokenQuotaResult {
   if (!req.user) {
     res.status(401).json({ error: 'Authentication required' });
     return { ok: false };
@@ -77,6 +89,21 @@ export function enforceTokenQuota(req: AuthRequest, res: Response): TokenQuotaRe
       error: `You've used ${pct}% of your monthly token budget (${used.toLocaleString('en-IN')} / ${budget.toLocaleString('en-IN')} tokens). Upgrade your plan or wait until next month.`,
       tokensUsed: used,
       tokenBudget: budget,
+      upgrade: plan !== 'enterprise',
+    });
+    return { ok: false };
+  }
+  // Pre-flight estimate check: if the caller knows roughly how many
+  // tokens this run will need and the user doesn't have that headroom,
+  // surface a tailored "use a smaller file" message instead of failing
+  // half-way through a chunked run.
+  if (estimatedTokens > 0 && estimatedTokens > remaining) {
+    res.status(429).json({
+      error: `This file would consume about ${estimatedTokens.toLocaleString('en-IN')} tokens, but you only have ${remaining.toLocaleString('en-IN')} left this month (${used.toLocaleString('en-IN')} of ${budget.toLocaleString('en-IN')} already used). Try a smaller file or split it, or upgrade your plan.`,
+      tokensUsed: used,
+      tokenBudget: budget,
+      tokensEstimated: estimatedTokens,
+      tokensRemaining: remaining,
       upgrade: plan !== 'enterprise',
     });
     return { ok: false };

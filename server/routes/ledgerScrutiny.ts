@@ -227,6 +227,11 @@ function serializeJob(row: ReturnType<typeof ledgerScrutinyRepo.findByIdForUser>
     updatedAt: row.updated_at,
     scrutinyChunksTotal: typeof r.scrutiny_chunks_total === 'number' ? r.scrutiny_chunks_total : 0,
     scrutinyChunksDone: typeof r.scrutiny_chunks_done === 'number' ? r.scrutiny_chunks_done : 0,
+    // Extract phase reuses pages_total / pages_processed (TSV chunked
+    // path bumps this per chunk). Frontend uses these during status=
+    // 'extracting' before scrutinyChunksTotal flips non-zero.
+    extractChunksTotal: typeof r.pages_total === 'number' ? r.pages_total : 0,
+    extractChunksDone: typeof r.pages_processed === 'number' ? r.pages_processed : 0,
   };
 }
 
