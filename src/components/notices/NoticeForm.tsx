@@ -76,6 +76,7 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
   const { user } = useAuth();
   const maxPages = noticePageCap(user?.plan);
   const [noticeType, setNoticeType] = useState('income-tax');
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [subType, setSubType] = useState('');
   const [senderName, setSenderName] = useState('');
   const [senderAddress, setSenderAddress] = useState('');
@@ -198,7 +199,22 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!keyPoints.trim() && !noticeFile) return;
+
+    // Pre-flight validation. Catches missing required fields BEFORE
+    // we burn a Gemini call — the server validates again as a backstop,
+    // but a fail there has already cost the user one credit's worth of
+    // tokens (and on slow paths, several minutes of wait time). Each
+    // check below maps to a specific server-side rejection we've
+    // previously surfaced to users.
+    if (!subType) {
+      setSubmitError('Pick a Sub-type / Section before generating — the AI uses it to choose the right reply template.');
+      return;
+    }
+    if (!keyPoints.trim() && !noticeFile) {
+      setSubmitError('Provide either Key Points to address, or upload the notice PDF — the model needs at least one input.');
+      return;
+    }
+    setSubmitError(null);
 
     onGenerate({
       noticeType,
@@ -229,6 +245,14 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4 overflow-y-auto flex-1 pr-1">
+      {/* fieldset[disabled] cascades to every input/select/button it
+          contains — one-line guarantee that the form can't be edited
+          while a generation is in flight. The submit button is OUTSIDE
+          this fieldset so it can keep its own disabled logic (which
+          also covers the in-flight case). display:contents lets the
+          fieldset participate in the form's flexbox flow without its
+          default border / padding box. */}
+      <fieldset disabled={isGenerating} className="contents">
       {/* Usage counter */}
       <div className="flex items-center justify-between px-1">
         <span className="text-xs text-gray-400">{usage.used}/{usage.limit} drafts this month</span>
@@ -573,6 +597,14 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
           required={!noticeFile}
         />
       </div>
+
+      </fieldset>
+
+      {/* Pre-flight validation error — shown above the submit button
+          so the user sees it without scrolling. */}
+      {submitError && (
+        <p className="text-xs text-red-500 px-1">{submitError}</p>
+      )}
 
       {/* Generate button */}
       <button
