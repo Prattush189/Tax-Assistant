@@ -885,7 +885,7 @@ async function scrutinizeAccountGroup(
 
   for (let attempt = 0; attempt < MAX_PRIMARY_ATTEMPTS; attempt++) {
     try {
-      return await scrutinizeAccountGroupOnce(extracted, groupAccounts, txPerAccount, totalAccounts, 'gemini-2.5-flash', 8192, recordAttempt);
+      return await scrutinizeAccountGroupOnce(extracted, groupAccounts, txPerAccount, totalAccounts, 'gemini-2.5-flash', 16384, recordAttempt);
     } catch (err) {
       lastErr = err;
       const status = (err as { status?: number })?.status ?? 0;
@@ -898,7 +898,7 @@ async function scrutinizeAccountGroup(
   }
   for (let attempt = 0; attempt < MAX_FALLBACK_ATTEMPTS; attempt++) {
     try {
-      return await scrutinizeAccountGroupOnce(extracted, groupAccounts, txPerAccount, totalAccounts, GEMINI_CHAT_MODEL_THINK_FB, 16384, recordAttempt);
+      return await scrutinizeAccountGroupOnce(extracted, groupAccounts, txPerAccount, totalAccounts, GEMINI_CHAT_MODEL_THINK_FB, 24576, recordAttempt);
     } catch (err) {
       lastErr = err;
       if (attempt < MAX_FALLBACK_ATTEMPTS - 1) {
@@ -932,11 +932,16 @@ async function runChunkedScrutiny(
   // personal-expense and round-tripping signals for the rubric. The old
   // 200-row digest was paying input cost without proportional accuracy.
   const TX_PER_ACCOUNT = 60;
-  // 15 accounts × 60 tx ≈ 35K input tokens — comfortably under the
-  // gemini-2.5-flash window — and the 8K output ceiling holds 25-30
-  // observations easily, which is more than any single 15-account
-  // group ever produces in practice.
-  const ACCOUNTS_PER_CHUNK = 15;
+  // 8 accounts × 60 tx ≈ 18K input tokens — well under the
+  // gemini-2.5-flash window — and the 16K output ceiling holds 30+
+  // observations comfortably even when one chunk happens to contain a
+  // bank account with many flag-worthy NEFT inflows. Was previously
+  // 15 accounts / 8K output, which truncated mid-JSON on dense chunks
+  // and surfaced as "Scrutiny chunk JSON parse failed,
+  // finish_reason=length" because Gemini 2.5 Flash spends 5-7K of its
+  // budget on reasoning tokens (those count against max_tokens but
+  // don't appear in the JSON output).
+  const ACCOUNTS_PER_CHUNK = 8;
   const SCRUTINY_CONCURRENCY = 2;
 
   const accounts = extracted.accounts;
