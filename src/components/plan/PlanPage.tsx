@@ -93,6 +93,7 @@ const plans = [
     icon: Crown,
     features: [
       'Everything in Free, plus:',
+      '8× the monthly capacity (across every feature)',
       'Bank Statement Analyzer',
       'AI Ledger Scrutiny',
       'Salary Structure Optimizer',
