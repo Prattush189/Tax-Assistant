@@ -480,9 +480,7 @@ export function applyMapping(
   // This fixes a row-drop bug where dates were on one grid row and
   // amounts on the next: the old code dropped both halves (date row
   // had amount=null → skipped; amount row had no date → treated as
-  // narration continuation, amount lost). The 10 missing rows in
-  // the user's Canara statement were all of this shape (small
-  // charges + UPI mandate auths whose date/amount split awkwardly).
+  // narration continuation, amount lost).
   interface PendingBlock {
     date: string;
     narration: string;
@@ -497,6 +495,14 @@ export function applyMapping(
   }
   let pending: PendingBlock | null = null;
   let lastAccount: string | null = null;
+  // Last successfully-emitted balance — used as the fallback source
+  // for an amount when the row's debit/credit cells lost the value
+  // to pdfjs column-clustering (small charges like ₹0.03 / ₹5 / ₹7
+  // get misplaced when their text-item x-positions don't match the
+  // column anchor). Bank running balance is ground truth: amount =
+  // balance(N) − balance(N-1). Only fires when no other amount
+  // source is available.
+  let lastBalance: number | null = null;
 
   const flushPending = () => {
     if (!pending) return;
@@ -529,6 +535,7 @@ export function applyMapping(
         balance: pending.balance,
         account: pending.account,
       });
+      if (pending.balance != null) lastBalance = pending.balance;
       pending = null;
       return;
     }
@@ -547,6 +554,22 @@ export function applyMapping(
         amount = pending.amountSingle;
       }
     }
+
+    // Last-resort fallback: derive amount from the printed running
+    // balance delta. Triggers when pdfjs's column clustering
+    // misplaced the amount value into a column we didn't read
+    // (typical for tiny charges like ₹0.03 / ₹5 / ₹7 where the
+    // narrow text rendered at an unusual x-coord). The bank's
+    // printed balance is authoritative — if it moved by X, the
+    // transaction was X. Recovers rows that would otherwise be
+    // silently dropped as "no amount".
+    if (amount == null && pending.balance != null && lastBalance != null) {
+      const delta = pending.balance - lastBalance;
+      if (Math.abs(delta) > 0.005) {
+        amount = delta;
+      }
+    }
+
     if (amount == null || !Number.isFinite(amount)) {
       stats.skippedNoAmount += 1;
       pending = null;
@@ -561,6 +584,7 @@ export function applyMapping(
       balance: pending.balance,
       account: pending.account,
     });
+    if (pending.balance != null) lastBalance = pending.balance;
     pending = null;
   };
 
