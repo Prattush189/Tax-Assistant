@@ -113,7 +113,7 @@ const plans = [
     icon: Building2,
     features: [
       'Everything in Pro, plus:',
-      '3× the monthly capacity (across every feature)',
+      '24× the monthly capacity (across every feature)',
       'IT portal profile import',
       'Year-over-year trends dashboard',
       'Priority support & SLA',
