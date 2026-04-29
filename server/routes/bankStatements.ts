@@ -8,6 +8,7 @@ import { callGeminiJson } from '../lib/geminiJson.js';
 import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_TSV_PROMPT, BANK_STATEMENT_CATEGORIES, buildConditionsBlock, countWords, MAX_CONDITION_WORDS } from '../lib/bankStatementPrompt.js';
 import { gemini, GEMINI_CHAT_MODEL_THINK_FB, costForModel } from '../lib/gemini.js';
 import { creditsForPages, creditsForCsvRows, PAGES_PER_CREDIT, CSV_ROWS_PER_CREDIT } from '../lib/creditPolicy.js';
+import { enforceTokenQuota } from '../lib/tokenQuota.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { bankStatementRepo } from '../db/repositories/bankStatementRepo.js';
 import { bankTransactionRepo, BankTransactionInput } from '../db/repositories/bankTransactionRepo.js';
@@ -562,13 +563,10 @@ function enforceQuota(req: AuthRequest, res: Response): { ok: true; billingUserI
     console.error('[bank-statements] Failed to read usage:', err);
   }
   const creditsRemaining = Math.max(0, creditsLimit - creditsUsed);
-  if (creditsRemaining <= 0) {
-    res.status(429).json({
-      error: `You've reached your monthly bank statement credit allowance. Upgrade your plan or wait until next month.`,
-      upgrade: plan !== 'enterprise',
-    });
-    return { ok: false };
-  }
+  // No longer hard-rejects on per-feature credits — the token budget
+  // (enforceTokenQuota at the route entry) is the only quota gate
+  // now. We still compute these so the dashboard can show "you've
+  // used 3 of 15 bank statements this month" as a soft display.
   return { ok: true, billingUserId, plan, creditsLimit, creditsUsed, creditsRemaining };
 }
 
@@ -778,6 +776,12 @@ router.post(
   async (req: AuthRequest, res: Response) => {
     if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
 
+    // Token-budget gate — the only HARD quota check now. Per-feature
+    // credit logic below is computed for analytics display only and
+    // doesn't reject. enforceTokenQuota responds 429 itself when the
+    // budget is exhausted; we early-return on ok=false.
+    const tokenQuota = enforceTokenQuota(req, res);
+    if (!tokenQuota.ok) return;
     const quota = enforceQuota(req, res);
     if (!quota.ok) return;
 
@@ -1069,6 +1073,10 @@ router.post(
           if (inputTokens === 0 && outputTokens === 0) return;
           try {
             const cost = costForModel(model, inputTokens, outputTokens);
+            // status='failed' so this attempt is excluded from the
+            // user's token budget (the user shouldn't pay for our
+            // retries). Still logged with full token counts so admin
+            // dashboard sees the wasted spend.
             usageRepo.logWithBilling(
               bankClientIp,
               req.user!.id,
@@ -1079,7 +1087,9 @@ router.post(
               false,
               model,
               false,
-              'bank_statement_failed',
+              'bank_statement',
+              0,
+              'failed',
             );
           } catch (e) {
             console.error('[bank-statements] failed-attempt cost log error', e);

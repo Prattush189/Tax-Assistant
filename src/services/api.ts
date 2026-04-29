@@ -365,6 +365,13 @@ export interface UserUsageResponse {
   trialExpired: boolean;
   trialDaysLeft: number | null;
   trialDays: number;
+  /** Cross-feature token budget — the only hard quota gate. Other
+   *  per-feature counts under `usage` are soft display. */
+  tokens: {
+    used: number;
+    budget: number;
+    remaining: number;
+  };
   usage: {
     messages: UsageMetric;
     attachments: UsageMetric;

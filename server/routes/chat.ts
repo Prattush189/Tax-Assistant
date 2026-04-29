@@ -9,6 +9,7 @@ import { usageRepo } from '../db/repositories/usageRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { getUserLimits, getEffectivePlan } from '../lib/planLimits.js';
 import { getBillingUserId, getBillingUser } from '../lib/billing.js';
+import { enforceTokenQuota } from '../lib/tokenQuota.js';
 import { SseWriter } from '../lib/sseStream.js';
 import { AuthRequest } from '../types.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
@@ -135,13 +136,15 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
   const limits = getUserLimits(billingUser);
   const used = getMessageCount(billingUserId, limits.messages.period);
 
+  // Per-feature message count is now soft (analytics display). Token
+  // budget is the hard quota — gate it here so a chat that would
+  // push the user over budget rejects cleanly without burning tokens.
+  const tokenQuota = enforceTokenQuota(req, res);
+  if (!tokenQuota.ok) return;
   if (used + 1 > limits.messages.limit) {
-    const periodLabel = limits.messages.period === 'day' ? 'daily' : 'monthly';
-    res.status(429).json({
-      error: `You've reached your ${periodLabel} message limit (${limits.messages.limit} messages). Upgrade your plan for more.`,
-      upgrade: true,
-    });
-    return;
+    // Soft-display only — log a warning and let it through. Token
+    // budget above is what actually rejects.
+    console.log(`[chat] user ${req.user.id} past per-feature msg limit (${used}/${limits.messages.limit}) but within token budget; allowing`);
   }
 
   // Check per-message attachment ceiling (separate from monthly attachment quota)

@@ -37,8 +37,20 @@ const stmts = {
     'INSERT INTO api_usage (ip, user_id, input_tokens, output_tokens, cost, is_plugin) VALUES (?, ?, ?, ?, ?, ?)'
   ),
   logWithBilling: db.prepare(
-    'INSERT INTO api_usage (ip, user_id, billing_user_id, input_tokens, output_tokens, cost, is_plugin, model, search_used, category, input_units) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO api_usage (ip, user_id, billing_user_id, input_tokens, output_tokens, cost, is_plugin, model, search_used, category, input_units, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ),
+  // Token quota query: sum input + output tokens for the current month
+  // for THIS billing user, EXCLUDING failed calls. Cancelled calls
+  // count because they consumed real Gemini tokens; failed calls don't
+  // because they're typically retried successfully.
+  sumTokensThisMonthByBillingUser: db.prepare(`
+    SELECT
+      COALESCE(SUM(input_tokens + output_tokens), 0) AS tokens
+    FROM api_usage
+    WHERE billing_user_id = ?
+      AND created_at >= ?
+      AND status != 'failed'
+  `),
   getByIp: db.prepare(`
     SELECT
       a.ip,
@@ -165,6 +177,16 @@ const analyticsStmts = {
   `),
 };
 
+/** Start of current month in IST as the 'YYYY-MM-01 00:00:00' string
+ *  the SQL queries match against created_at. Mirrors the helper in
+ *  featureUsageRepo so the same month boundary is used by both the
+ *  per-feature counters and the cross-feature token sum. */
+function startOfMonthIST(): string {
+  const now = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+  const start = new Date(now.getFullYear(), now.getMonth(), 1);
+  return start.toISOString().replace('Z', '');
+}
+
 function periodToDate(period: string): string {
   const now = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
   if (period === 'day') now.setDate(now.getDate() - 1);
@@ -193,7 +215,9 @@ export const usageRepo = {
    *  inputUnits is the user-input size in the unit that matters for the
    *  category (transactions for bank/ledger, pages for notice/document,
    *  message count for chat/suggestion). Defaults to 0 — admin UI shows
-   *  '—' for legacy / non-applicable rows. */
+   *  '—' for legacy / non-applicable rows.
+   *  status: 'success' (default) | 'cancelled' | 'failed'. Token quota
+   *  counts success + cancelled but excludes failed. */
   logWithBilling(
     ip: string,
     userId: string,
@@ -206,8 +230,17 @@ export const usageRepo = {
     searchUsed?: boolean,
     category?: string,
     inputUnits?: number,
+    status?: 'success' | 'cancelled' | 'failed',
   ): void {
-    stmts.logWithBilling.run(ip, userId, billingUserId, inputTokens, outputTokens, cost, isPlugin ? 1 : 0, model ?? null, searchUsed ? 1 : 0, category ?? null, inputUnits ?? 0);
+    stmts.logWithBilling.run(ip, userId, billingUserId, inputTokens, outputTokens, cost, isPlugin ? 1 : 0, model ?? null, searchUsed ? 1 : 0, category ?? null, inputUnits ?? 0, status ?? 'success');
+  },
+
+  /** Sum tokens (input+output) used this month by this billing user,
+   *  excluding 'failed' calls. Used by enforceTokenQuota. */
+  sumTokensThisMonthByBillingUser(billingUserId: string): number {
+    const since = startOfMonthIST();
+    const row = stmts.sumTokensThisMonthByBillingUser.get(billingUserId, since) as { tokens: number };
+    return row.tokens ?? 0;
   },
 
   getByIp(period: string = 'month'): UsageByIp[] {

@@ -447,6 +447,17 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_obs_account_id ON ledger_observat
   if (!usageCols.includes('input_units')) {
     db.exec("ALTER TABLE api_usage ADD COLUMN input_units INTEGER NOT NULL DEFAULT 0");
   }
+  // status: 'success' | 'cancelled' | 'failed'. Token-budget quota
+  // counts success + cancelled (both consumed real Gemini tokens),
+  // but excludes failed (network errors, timeouts, content-filter
+  // rejections — typically retried successfully and shouldn't double-
+  // bill the user). Admin dashboard surfaces all three so the operator
+  // sees wasted spend on failed/cancelled paths. Legacy rows default
+  // to 'success' which preserves their token contribution to the
+  // monthly budget.
+  if (!usageCols.includes('status')) {
+    db.exec("ALTER TABLE api_usage ADD COLUMN status TEXT NOT NULL DEFAULT 'success'");
+  }
 }
 
 // Add filing_status + notes to profiles (merge clients into profiles)

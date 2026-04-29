@@ -34,9 +34,31 @@ export interface UserLimits {
   partnershipDeeds: number;   // monthly
   bankStatements: number;     // monthly
   ledgerScrutiny: number;     // monthly
+  /** Cross-feature monthly token budget — the only HARD quota gate.
+   *  Per-feature limits above stay as soft analytics counters: we
+   *  still log them so the dashboard can show "you've used 22 notices
+   *  this month", but they no longer block. The only thing that can
+   *  reject a request is the user being out of tokens. */
+  monthlyTokenBudget: number;
 }
 
-/** Baseline defaults for each plan tier. */
+/** Baseline defaults for each plan tier.
+ *
+ *  Token-budget sizing (the only hard gate now):
+ *    Free       250 K  ≈ 30 notices  /  1.5 K bank txns  /  500 chats
+ *    Pro          2 M  ≈ 200 notices /  13 K bank txns  /  4 K chats
+ *    Enterprise 7.5 M  ≈ 600 notices /  50 K bank txns  /  15 K chats
+ *
+ *  Realistic API cost at the realistic 60% Flash-Lite / 30% Flash /
+ *  10% Flash-3 mix, fully consumed:
+ *    Free       ~₹12   (loss on free trial)
+ *    Pro        ~₹95   margin ₹405 (81% gross at ₹500 list)
+ *    Enterprise ~₹357  margin ₹393 (52% gross at ₹750 list)
+ *
+ *  Per-feature counts (notices: 3/15/50, etc.) are kept as SOFT
+ *  display in the UI and analytics — useful for "you've drafted
+ *  22 notices this month" surfacing — but the routes no longer
+ *  enforce them. Only monthlyTokenBudget can reject a request. */
 export const PLAN_DEFAULTS: Record<PlanId, UserLimits> = {
   free: {
     messages: { limit: 50, period: 'month' },
@@ -48,6 +70,7 @@ export const PLAN_DEFAULTS: Record<PlanId, UserLimits> = {
     partnershipDeeds: 3,
     bankStatements: 3,
     ledgerScrutiny: 3,
+    monthlyTokenBudget: 250_000,
   },
   pro: {
     messages: { limit: 1500, period: 'month' },
@@ -59,6 +82,7 @@ export const PLAN_DEFAULTS: Record<PlanId, UserLimits> = {
     partnershipDeeds: 15,
     bankStatements: 15,
     ledgerScrutiny: 50,
+    monthlyTokenBudget: 2_000_000,
   },
   enterprise: {
     messages: { limit: 3000, period: 'month' },
@@ -70,6 +94,7 @@ export const PLAN_DEFAULTS: Record<PlanId, UserLimits> = {
     partnershipDeeds: 50,
     bankStatements: 50,
     ledgerScrutiny: 250,
+    monthlyTokenBudget: 7_500_000,
   },
 };
 
@@ -120,6 +145,14 @@ export function getUserLimits(user: LimitUserInput): UserLimits {
     partnershipDeeds: overrides.partnershipDeeds ?? base.partnershipDeeds,
     bankStatements: overrides.bankStatements ?? base.bankStatements,
     ledgerScrutiny: overrides.ledgerScrutiny ?? base.ledgerScrutiny,
+    // Token budget falls back to plan default unless the override
+    // explicitly sets a positive value. Zero means "no override"
+    // because sanitizePluginLimits stores 0 when the parent app
+    // doesn't supply this field, and we don't want to reject every
+    // request for those users.
+    monthlyTokenBudget: (overrides.monthlyTokenBudget && overrides.monthlyTokenBudget > 0)
+      ? overrides.monthlyTokenBudget
+      : base.monthlyTokenBudget,
   };
 }
 
@@ -177,6 +210,7 @@ export function sanitizePluginLimits(raw: unknown): UserLimits | null {
     partnershipDeeds: partnershipDeeds ?? 0,
     bankStatements: bankStatements ?? 0,
     ledgerScrutiny: ledgerScrutiny ?? 0,
+    monthlyTokenBudget: 0, // plugin overrides don't set token budget — use plan default
   };
 }
 

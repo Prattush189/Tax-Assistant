@@ -10,6 +10,7 @@ import { styleProfileRepo } from '../db/repositories/styleProfileRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { getEffectivePlan } from '../lib/planLimits.js';
+import { enforceTokenQuota } from '../lib/tokenQuota.js';
 import { getBillingUser } from '../lib/billing.js';
 import { extractWithRetry } from '../lib/documentExtract.js';
 import { GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST } from '../lib/gemini.js';
@@ -214,14 +215,10 @@ router.post(
   const plan = billingUser?.plan ?? actor?.plan ?? 'free';
   const limit = NOTICE_LIMITS[plan] ?? NOTICE_LIMITS.free;
   const used = featureUsageRepo.countThisMonthByBillingUser(billingUserId, 'notice');
-
-  if (used >= limit) {
-    res.status(429).json({
-      error: `You've reached your monthly notice draft limit (${limit}). Upgrade your plan for more.`,
-      upgrade: true,
-    });
-    return;
-  }
+  // Per-feature notice count is now SOFT (analytics display only).
+  // Hard quota is the cross-feature token budget.
+  const tokenQuota = enforceTokenQuota(req, res);
+  if (!tokenQuota.ok) return;
 
   const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
 
@@ -439,6 +436,16 @@ router.post(
       noticeRepo.setError(noticeId, req.user!.id, errMsg);
     } catch (e) {
       console.error('[notices] failed to mark notice as error:', e);
+    }
+    // Log the failed attempt to api_usage with status='failed' so the
+    // admin dashboard sees the wasted spend, but it does NOT count
+    // toward the user's token budget (sumTokensThisMonth excludes
+    // status='failed'). Token counts are 0 since we don't have a
+    // usage object on the failure path.
+    try {
+      usageRepo.logWithBilling(clientIp, req.user!.id, billingUserId, 0, 0, 0, false, undefined, false, 'notice', 0, 'failed');
+    } catch (e) {
+      console.error('[notices] failed-attempt log failed:', e);
     }
     sse.writeError('Failed to generate notice draft. Please try again.');
   }

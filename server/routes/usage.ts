@@ -8,6 +8,7 @@ import { AuthRequest } from '../types.js';
 import { getUserLimits, getEffectivePlan, getTrialEndsAt, isTrialExpired, TRIAL_DAYS } from '../lib/planLimits.js';
 import { getBillingUser, countSeats, SEAT_CAP } from '../lib/billing.js';
 import { CSV_ROWS_PER_CREDIT } from '../lib/creditPolicy.js';
+import { tokensRemainingForUser } from '../lib/tokenQuota.js';
 
 const router = Router();
 
@@ -136,6 +137,10 @@ router.get('/', (req: AuthRequest, res: Response) => {
       }
     : undefined;
 
+  // Cross-feature token budget — the only HARD quota gate. Per-
+  // feature counters below are kept as soft analytics display.
+  const tokenStats = tokensRemainingForUser(req);
+
   res.json({
     plan,
     planExpiresAt: user.plan_expires_at ?? null,
@@ -146,6 +151,11 @@ router.get('/', (req: AuthRequest, res: Response) => {
     pluginRole: user.plugin_role ?? undefined,
     consultantId: user.plugin_consultant_id ?? undefined,
     sharedWith,
+    tokens: {
+      used: tokenStats.used,
+      budget: tokenStats.budget,
+      remaining: tokenStats.remaining,
+    },
     usage: {
       messages: {
         used: messagesUsed,

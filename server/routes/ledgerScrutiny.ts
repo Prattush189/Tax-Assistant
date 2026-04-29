@@ -23,6 +23,7 @@ import { pickChatProvider } from '../lib/chatProvider.js';
 import { SseWriter } from '../lib/sseStream.js';
 import { gemini, GEMINI_CHAT_MODEL_THINK_FB, costForModel } from '../lib/gemini.js';
 import { creditsForPages, creditsForCsvRows, PAGES_PER_CREDIT, CSV_ROWS_PER_CREDIT } from '../lib/creditPolicy.js';
+import { enforceTokenQuota } from '../lib/tokenQuota.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import {
   LEDGER_EXTRACT_PROMPT,
@@ -193,15 +194,9 @@ function enforceQuota(
     console.error('[ledger-scrutiny] usage read failed', err);
   }
   const creditsRemaining = Math.max(0, creditsLimit - creditsUsed);
-  if (creditsRemaining <= 0) {
-    res.status(429).json({
-      error: `You've reached your monthly ledger scrutiny credit allowance. Upgrade your plan or wait until next month.`,
-      upgrade: billingUser.plan !== 'enterprise',
-      creditsUsed,
-      creditsLimit,
-    });
-    return { ok: false };
-  }
+  // No longer hard-rejects on per-feature credits — token-budget gate
+  // upstream (enforceTokenQuota) is the only quota gate. Per-feature
+  // counters here stay for analytics display only.
   return { ok: true, billingUserId: billingUser.id, plan: billingUser.plan, creditsLimit, creditsUsed, creditsRemaining };
 }
 
@@ -1124,6 +1119,8 @@ router.post(
     // Quota gate before extraction (which is also expensive — though we
     // only debit usage on a successful scrutiny pass, we don't want a user
     // already at-cap to burn extract calls either).
+    const tokenQuota = enforceTokenQuota(req, res);
+    if (!tokenQuota.ok) return;
     const quota = enforceQuota(req, res);
     if (!quota.ok) return;
 
@@ -1311,6 +1308,8 @@ router.post(
           if (inputTokens === 0 && outputTokens === 0) return;
           try {
             const cost = costForModel(model, inputTokens, outputTokens);
+            // status='failed' excludes from the token budget; still
+            // logged with full token counts for admin visibility.
             usageRepo.logWithBilling(
               ledgerClientIp,
               req.user!.id,
@@ -1321,7 +1320,9 @@ router.post(
               false,
               model,
               false,
-              'ledger_extract_failed',
+              'ledger_extract',
+              0,
+              'failed',
             );
           } catch (e) {
             console.error('[ledger-scrutiny] failed-attempt cost log error', e);
@@ -1613,6 +1614,8 @@ router.post('/:id/scrutinize', async (req: AuthRequest, res: Response) => {
     return;
   }
 
+  const tokenQuota = enforceTokenQuota(req, res);
+  if (!tokenQuota.ok) return;
   const quota = enforceQuota(req, res);
   if (!quota.ok) return;
 

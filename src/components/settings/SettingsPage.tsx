@@ -100,6 +100,58 @@ function Toggle({ enabled, onChange }: { enabled: boolean; onChange: (v: boolean
   );
 }
 
+// ── TokenBudgetBar ────────────────────────────────────────────────────────────
+// Single, prominent bar for the cross-feature token budget — the only
+// HARD quota gate now. Per-feature counters live in a collapsed
+// "analytics" section below this so the eye lands here first.
+function TokenBudgetBar({ tokens }: { tokens: { used: number; budget: number; remaining: number } }) {
+  const pct = tokens.budget > 0 ? Math.min(100, (tokens.used / tokens.budget) * 100) : 0;
+  const barColor =
+    pct >= 90 ? 'bg-red-500' :
+    pct >= 75 ? 'bg-amber-500' :
+    pct >= 50 ? 'bg-yellow-500' :
+    'bg-[#0D9668] dark:bg-[#2DD4A0]';
+
+  // Conversion hints so "X tokens left" feels tangible. Coarse
+  // averages — a notice is roughly 12 K, a bank txn 150, a chat 500.
+  const remainingNotices = Math.max(0, Math.floor(tokens.remaining / 12_000));
+  const remainingBankTxns = Math.max(0, Math.floor(tokens.remaining / 150));
+  const remainingChats = Math.max(0, Math.floor(tokens.remaining / 500));
+
+  return (
+    <div className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-5 border border-gray-200/60 dark:border-gray-700/60">
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <p className="text-sm font-semibold text-gray-700 dark:text-gray-200">Monthly token budget</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+            One pool across every feature — chat, notices, bank statements, ledger audits.
+          </p>
+        </div>
+        <span className={cn(
+          'text-base font-bold',
+          pct >= 90 ? 'text-red-600 dark:text-red-400' :
+          pct >= 75 ? 'text-amber-600 dark:text-amber-400' :
+          'text-gray-700 dark:text-gray-200',
+        )}>
+          {pct.toFixed(0)}%
+        </span>
+      </div>
+      <div className="h-2.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+        <div className={cn('h-full rounded-full transition-all duration-500', barColor)} style={{ width: `${pct}%` }} />
+      </div>
+      <p className="text-sm font-bold text-gray-800 dark:text-white mt-3 tabular-nums">
+        {tokens.used.toLocaleString('en-IN')} / {tokens.budget.toLocaleString('en-IN')} tokens used
+      </p>
+      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
+        Remaining roughly covers <span className="font-semibold text-gray-700 dark:text-gray-300">{remainingNotices.toLocaleString('en-IN')} notices</span>
+        {' '}OR <span className="font-semibold text-gray-700 dark:text-gray-300">{remainingBankTxns.toLocaleString('en-IN')} bank txns</span>
+        {' '}OR <span className="font-semibold text-gray-700 dark:text-gray-300">{remainingChats.toLocaleString('en-IN')} chats</span>.
+        Mix and match.
+      </p>
+    </div>
+  );
+}
+
 // ── UsageBar ──────────────────────────────────────────────────────────────────
 
 function UsageBar({
@@ -437,17 +489,29 @@ function BillingTab({ userName, userEmail }: { userName: string; userEmail: stri
             </div>
             <TrendingUp className="w-5 h-5 text-gray-400 shrink-0" />
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            <UsageBar icon={MessageSquare} label={usage.usage.messages.label}        used={usage.usage.messages.used}        limit={usage.usage.messages.limit}        period={usage.usage.messages.period} />
-            <UsageBar icon={Paperclip}     label={usage.usage.attachments.label}     used={usage.usage.attachments.used}     limit={usage.usage.attachments.limit}     period={usage.usage.attachments.period} />
-            <UsageBar icon={Lightbulb}     label={usage.usage.suggestions.label}     used={usage.usage.suggestions.used}     limit={usage.usage.suggestions.limit}     period={usage.usage.suggestions.period} />
-            <UsageBar icon={FileText}      label={usage.usage.notices.label}         used={usage.usage.notices.used}         limit={usage.usage.notices.limit}         period={usage.usage.notices.period} />
-            <UsageBar icon={FileSignature} label={usage.usage.boardResolutions.label} used={usage.usage.boardResolutions.used} limit={usage.usage.boardResolutions.limit} period={usage.usage.boardResolutions.period} />
-            <UsageBar icon={ScrollText}    label={usage.usage.partnershipDeeds.label} used={usage.usage.partnershipDeeds.used} limit={usage.usage.partnershipDeeds.limit} period={usage.usage.partnershipDeeds.period} />
-            <UsageBar icon={Landmark}      label={usage.usage.bankStatements.label}  used={usage.usage.bankStatements.used}  limit={usage.usage.bankStatements.limit}  period={usage.usage.bankStatements.period} displayMultiplier={usage.usage.bankStatements.rowsPerCredit} />
-            <UsageBar icon={BookOpenCheck} label={usage.usage.ledgerScrutiny.label}  used={usage.usage.ledgerScrutiny.used}  limit={usage.usage.ledgerScrutiny.limit}  period={usage.usage.ledgerScrutiny.period} displayMultiplier={usage.usage.ledgerScrutiny.rowsPerCredit} />
-            <UsageBar icon={User}          label={usage.usage.profiles.label}        used={usage.usage.profiles.used}        limit={usage.usage.profiles.limit}        period={usage.usage.profiles.period} />
-          </div>
+          {/* Token budget — the only hard quota gate. Spans full
+              width so users see one number to track. */}
+          <TokenBudgetBar tokens={usage.tokens} />
+          {/* Per-feature counts kept as soft display below — useful
+              for "you've drafted 22 notices this month" but no longer
+              gates anything. Compact 3-up grid; smaller font. */}
+          <details className="mt-4 group">
+            <summary className="text-xs font-medium text-gray-500 dark:text-gray-400 cursor-pointer hover:text-gray-700 dark:hover:text-gray-200 list-none flex items-center gap-1">
+              <span className="group-open:rotate-90 transition-transform">▸</span>
+              Per-feature breakdown (analytics only)
+            </summary>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-3">
+              <UsageBar icon={MessageSquare} label={usage.usage.messages.label}        used={usage.usage.messages.used}        limit={usage.usage.messages.limit}        period={usage.usage.messages.period} />
+              <UsageBar icon={Paperclip}     label={usage.usage.attachments.label}     used={usage.usage.attachments.used}     limit={usage.usage.attachments.limit}     period={usage.usage.attachments.period} />
+              <UsageBar icon={Lightbulb}     label={usage.usage.suggestions.label}     used={usage.usage.suggestions.used}     limit={usage.usage.suggestions.limit}     period={usage.usage.suggestions.period} />
+              <UsageBar icon={FileText}      label={usage.usage.notices.label}         used={usage.usage.notices.used}         limit={usage.usage.notices.limit}         period={usage.usage.notices.period} />
+              <UsageBar icon={FileSignature} label={usage.usage.boardResolutions.label} used={usage.usage.boardResolutions.used} limit={usage.usage.boardResolutions.limit} period={usage.usage.boardResolutions.period} />
+              <UsageBar icon={ScrollText}    label={usage.usage.partnershipDeeds.label} used={usage.usage.partnershipDeeds.used} limit={usage.usage.partnershipDeeds.limit} period={usage.usage.partnershipDeeds.period} />
+              <UsageBar icon={Landmark}      label={usage.usage.bankStatements.label}  used={usage.usage.bankStatements.used}  limit={usage.usage.bankStatements.limit}  period={usage.usage.bankStatements.period} displayMultiplier={usage.usage.bankStatements.rowsPerCredit} />
+              <UsageBar icon={BookOpenCheck} label={usage.usage.ledgerScrutiny.label}  used={usage.usage.ledgerScrutiny.used}  limit={usage.usage.ledgerScrutiny.limit}  period={usage.usage.ledgerScrutiny.period} displayMultiplier={usage.usage.ledgerScrutiny.rowsPerCredit} />
+              <UsageBar icon={User}          label={usage.usage.profiles.label}        used={usage.usage.profiles.used}        limit={usage.usage.profiles.limit}        period={usage.usage.profiles.period} />
+            </div>
+          </details>
         </div>
       )}
 
