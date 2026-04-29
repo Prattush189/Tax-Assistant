@@ -471,7 +471,99 @@ export function applyMapping(
     if (r !== 'skip' && !colByRole.has(r)) colByRole.set(r, i);
   });
 
+  // Block-based parser: one logical transaction can span multiple
+  // grid rows (pdfjs splits visual lines whenever the y-coord shifts,
+  // so a date row + an amount row + a narration tail-line is THREE
+  // grid rows for ONE transaction). We accumulate fragments into a
+  // pending block and flush when the next dated row appears.
+  //
+  // This fixes a row-drop bug where dates were on one grid row and
+  // amounts on the next: the old code dropped both halves (date row
+  // had amount=null → skipped; amount row had no date → treated as
+  // narration continuation, amount lost). The 10 missing rows in
+  // the user's Canara statement were all of this shape (small
+  // charges + UPI mandate auths whose date/amount split awkwardly).
+  interface PendingBlock {
+    date: string;
+    narration: string;
+    voucher: string | null;
+    reference: string | null;
+    debit: number | null;
+    credit: number | null;
+    amountSingle: number | null; // 'amount' single-column path
+    drCrMarker: string;
+    balance: number | null;
+    account: string | null;
+  }
+  let pending: PendingBlock | null = null;
   let lastAccount: string | null = null;
+
+  const flushPending = () => {
+    if (!pending) return;
+    // Resolve final amount(s). Three cases:
+    //   - debit AND credit BOTH non-zero: emit TWO transactions (e.g.
+    //     UPI mandate auth + immediate reversal — Apple Media pair
+    //     pattern flagged by review). Otherwise we'd silently pick
+    //     debit and the credit half flips to a debit.
+    //   - one of debit/credit non-zero: standard signed amount.
+    //   - amountSingle path: signed by drCrMarker.
+    const debit = pending.debit ?? 0;
+    const credit = pending.credit ?? 0;
+    const hasBoth = debit !== 0 && credit !== 0;
+    if (hasBoth) {
+      out.push({
+        date: pending.date,
+        narration: pending.narration || '',
+        voucher: pending.voucher,
+        reference: pending.reference,
+        amount: -Math.abs(debit),
+        balance: pending.balance,
+        account: pending.account,
+      });
+      out.push({
+        date: pending.date,
+        narration: pending.narration || '',
+        voucher: pending.voucher,
+        reference: pending.reference,
+        amount: Math.abs(credit),
+        balance: pending.balance,
+        account: pending.account,
+      });
+      pending = null;
+      return;
+    }
+    let amount: number | null = null;
+    if (debit !== 0) {
+      amount = -Math.abs(debit);
+    } else if (credit !== 0) {
+      amount = Math.abs(credit);
+    } else if (pending.amountSingle != null) {
+      const marker = pending.drCrMarker.toLowerCase();
+      if (marker.includes('dr') || marker.includes('debit') || marker.includes('-')) {
+        amount = -Math.abs(pending.amountSingle);
+      } else if (marker.includes('cr') || marker.includes('credit')) {
+        amount = Math.abs(pending.amountSingle);
+      } else {
+        amount = pending.amountSingle;
+      }
+    }
+    if (amount == null || !Number.isFinite(amount)) {
+      stats.skippedNoAmount += 1;
+      pending = null;
+      return;
+    }
+    out.push({
+      date: pending.date,
+      narration: pending.narration || '',
+      voucher: pending.voucher,
+      reference: pending.reference,
+      amount,
+      balance: pending.balance,
+      account: pending.account,
+    });
+    pending = null;
+  };
+
   for (const row of grid.rows) {
     const cell = (role: ColumnRole) => {
       const i = colByRole.get(role);
@@ -484,6 +576,7 @@ export function applyMapping(
     if (kind === 'ledger') {
       const headerName = detectAccountHeader(row, colByRole);
       if (headerName) {
+        flushPending();
         lastAccount = headerName;
         stats.accountHeaders += 1;
         continue;
@@ -492,51 +585,60 @@ export function applyMapping(
 
     const dateRaw = cell('date');
     const date = parseDate(dateRaw);
-    if (!date) {
-      const narr = cell('narration');
-      if (narr && out.length > 0) {
-        out[out.length - 1].narration = `${out[out.length - 1].narration} ${narr}`.trim();
-        stats.mergedContinuations += 1;
-      }
-      continue;
-    }
-
+    const narr = cell('narration');
     const debit = parseNumber(cell('debit'));
     const credit = parseNumber(cell('credit'));
-    let amount: number | null = null;
-    if (debit != null && debit !== 0) {
-      amount = -Math.abs(debit);
-    } else if (credit != null && credit !== 0) {
-      amount = Math.abs(credit);
-    } else {
-      const amt = parseNumber(cell('amount'));
-      if (amt != null) {
-        const marker = cell('drCrMarker').toLowerCase();
-        if (marker.includes('dr') || marker.includes('debit') || marker.includes('-')) {
-          amount = -Math.abs(amt);
-        } else if (marker.includes('cr') || marker.includes('credit')) {
-          amount = Math.abs(amt);
-        } else {
-          amount = amt;
-        }
+    const amountSingle = parseNumber(cell('amount'));
+    const drCrMarker = cell('drCrMarker');
+    const balance = parseNumber(cell('balance'));
+    const voucher = cell('voucher') || null;
+    const reference = cell('reference') || null;
+
+    if (date) {
+      // New transaction starts. Flush whatever was pending.
+      flushPending();
+      pending = {
+        date,
+        narration: narr,
+        voucher,
+        reference,
+        debit,
+        credit,
+        amountSingle,
+        drCrMarker,
+        balance,
+        account: lastAccount,
+      };
+    } else if (pending) {
+      // Continuation row — fill in any missing fields on the
+      // pending transaction. Narration concatenates; numeric fields
+      // take the first non-null/non-zero value (so a separately-
+      // rendered amount row supplies the amount the date row was
+      // missing).
+      if (narr) {
+        pending.narration = pending.narration ? `${pending.narration} ${narr}`.trim() : narr;
+        stats.mergedContinuations += 1;
       }
+      if ((pending.debit == null || pending.debit === 0) && debit != null && debit !== 0) {
+        pending.debit = debit;
+      }
+      if ((pending.credit == null || pending.credit === 0) && credit != null && credit !== 0) {
+        pending.credit = credit;
+      }
+      if (pending.amountSingle == null && amountSingle != null) pending.amountSingle = amountSingle;
+      if (!pending.drCrMarker && drCrMarker) pending.drCrMarker = drCrMarker;
+      if (pending.balance == null && balance != null) pending.balance = balance;
+      if (!pending.voucher && voucher) pending.voucher = voucher;
+      if (!pending.reference && reference) pending.reference = reference;
+    } else if (narr || debit != null || credit != null) {
+      // Pre-first-transaction noise (header rows, page metadata).
+      // Nothing pending to merge into; ignore.
+      stats.mergedContinuations += narr ? 1 : 0;
     }
-
-    if (amount == null || !Number.isFinite(amount)) {
-      stats.skippedNoAmount += 1;
-      continue;
-    }
-
-    out.push({
-      date,
-      narration: cell('narration'),
-      voucher: cell('voucher') || null,
-      reference: cell('reference') || null,
-      amount,
-      balance: parseNumber(cell('balance')),
-      account: lastAccount,
-    });
   }
+
+  // Flush the last block.
+  flushPending();
 
   stats.transactions = out.length;
   return { rows: out, stats };
