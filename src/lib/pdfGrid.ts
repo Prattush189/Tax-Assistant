@@ -401,8 +401,71 @@ function detectAccountHeader(
  * "account headers" and silently dropped, costing transaction count
  * and data fidelity on multi-line bank narrations.
  */
-export function applyMapping(grid: PdfGrid, mapping: ColumnMapping, kind: 'bank' | 'ledger' = 'bank'): MappedRow[] {
+export interface MappingStats {
+  /** Raw grid rows seen by applyMapping (everything pdfjs extracted
+   *  before any filtering). */
+  totalGridRows: number;
+  /** Rows that became real transactions in the output. */
+  transactions: number;
+  /** Date-less rows whose narration was merged into the previous
+   *  transaction (multi-line UPI references / wrapped counterparty
+   *  names). NOT lost — text is appended to the prior row. */
+  mergedContinuations: number;
+  /** Rows with a parseable date but no debit / credit / amount.
+   *  Almost always opening / closing balance markers, page totals,
+   *  "Brought Forward" labels — non-transaction noise that bank
+   *  statements legitimately include in their row count but aren't
+   *  meaningful txns. */
+  skippedNoAmount: number;
+  /** Ledger-only: rows detected as Tally / Busy account-separator
+   *  headers (e.g. "-HDFC BANK LTD.") — used to update the account
+   *  context for following transactions. Always 0 for kind='bank'. */
+  accountHeaders: number;
+}
+
+/**
+ * Apply a column mapping to a raw grid → array of normalized rows.
+ *
+ * Returns both the mapped transactions AND a stats breakdown so the
+ * caller can surface "we saw 337 rows but only 327 were real
+ * transactions — 8 wrapped narrations got merged, 2 were opening/
+ * closing balance markers." Without that visibility users see a
+ * lower-than-expected count and can't tell whether something was
+ * silently dropped.
+ *
+ * Skips rows where the date column doesn't parse to a real date —
+ * those are the page headers, totals, "Brought Forward" labels and
+ * other non-transaction noise that any bank statement carries.
+ *
+ * If the mapping uses (debit, credit) the signed amount comes from
+ * whichever side is populated. If it uses (amount, drCrMarker), the
+ * sign comes from the marker. If it uses (amount) alone, we keep
+ * whatever sign is in the cell (some statements pre-sign withdrawals
+ * with a minus).
+ *
+ * For ledger PDFs that bundle multiple GL accounts in one file
+ * (Tally / Busy party-wise ledger book), account-separator rows
+ * between transaction blocks update lastAccount so each transaction
+ * carries the right account name into mappedRowsToExtractedLedger.
+ *
+ * Bank statements should pass kind='bank' to disable the account-
+ * header detection — bank statements don't have account separators,
+ * and any date-less rows are multi-line narration continuations
+ * that need to be appended to the previous transaction.
+ */
+export function applyMapping(
+  grid: PdfGrid,
+  mapping: ColumnMapping,
+  kind: 'bank' | 'ledger' = 'bank',
+): { rows: MappedRow[]; stats: MappingStats } {
   const out: MappedRow[] = [];
+  const stats: MappingStats = {
+    totalGridRows: grid.rows.length,
+    transactions: 0,
+    mergedContinuations: 0,
+    skippedNoAmount: 0,
+    accountHeaders: 0,
+  };
   const colByRole = new Map<ColumnRole, number>();
   mapping.roles.forEach((r, i) => {
     if (r !== 'skip' && !colByRole.has(r)) colByRole.set(r, i);
@@ -415,20 +478,14 @@ export function applyMapping(grid: PdfGrid, mapping: ColumnMapping, kind: 'bank'
       return i === undefined ? '' : (row[i] ?? '').trim();
     };
 
-    // 1. Explicit "account" column (CSV exports with a per-row
-    //    Account / Ledger column). Takes precedence over auto-detect.
     const accountCell = cell('account');
     if (accountCell) lastAccount = accountCell;
 
-    // 2. Auto-detect Tally-style account-separator rows. Only run
-    //    on LEDGER uploads — bank statements don't have account
-    //    separators, and date-less rows there are multi-line
-    //    narration continuations that need to fall through to the
-    //    continuation logic below.
     if (kind === 'ledger') {
       const headerName = detectAccountHeader(row, colByRole);
       if (headerName) {
         lastAccount = headerName;
+        stats.accountHeaders += 1;
         continue;
       }
     }
@@ -436,12 +493,10 @@ export function applyMapping(grid: PdfGrid, mapping: ColumnMapping, kind: 'bank'
     const dateRaw = cell('date');
     const date = parseDate(dateRaw);
     if (!date) {
-      // No date AND it wasn't an account header → multi-line narration
-      // continuing the previous transaction. Append to its narration so
-      // a wrapped UPI ref or counterparty name doesn't get lost.
       const narr = cell('narration');
       if (narr && out.length > 0) {
         out[out.length - 1].narration = `${out[out.length - 1].narration} ${narr}`.trim();
+        stats.mergedContinuations += 1;
       }
       continue;
     }
@@ -462,12 +517,15 @@ export function applyMapping(grid: PdfGrid, mapping: ColumnMapping, kind: 'bank'
         } else if (marker.includes('cr') || marker.includes('credit')) {
           amount = Math.abs(amt);
         } else {
-          amount = amt; // trust pre-signed
+          amount = amt;
         }
       }
     }
 
-    if (amount == null || !Number.isFinite(amount)) continue;
+    if (amount == null || !Number.isFinite(amount)) {
+      stats.skippedNoAmount += 1;
+      continue;
+    }
 
     out.push({
       date,
@@ -480,7 +538,8 @@ export function applyMapping(grid: PdfGrid, mapping: ColumnMapping, kind: 'bank'
     });
   }
 
-  return out;
+  stats.transactions = out.length;
+  return { rows: out, stats };
 }
 
 export interface ExtractedLedgerLike {

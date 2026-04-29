@@ -161,7 +161,7 @@ export function LedgerUploader({ manager }: Props) {
     if (!pendingGrid) return;
     const { grid, filename } = pendingGrid;
     setPendingGrid(null);
-    const mapped = applyMapping(grid, mapping, 'ledger');
+    const { rows: mapped, stats } = applyMapping(grid, mapping, 'ledger');
     if (mapped.length === 0) {
       toast.error('No transaction rows found after applying the mapping. Re-check the Date column.');
       return;
@@ -169,6 +169,16 @@ export function LedgerUploader({ manager }: Props) {
     if (mapped.length > MAX_LEDGER_TXNS_PER_FILE) {
       toast.error(`This ledger has ${mapped.length.toLocaleString('en-IN')} transactions, but a single upload is capped at ${MAX_LEDGER_TXNS_PER_FILE.toLocaleString('en-IN')}. Split by quarter / by account and re-upload.`);
       return;
+    }
+    const filteredCount = stats.totalGridRows - stats.transactions;
+    if (filteredCount > 0) {
+      const parts: string[] = [];
+      if (stats.accountHeaders > 0) parts.push(`${stats.accountHeaders} account-separator row${stats.accountHeaders === 1 ? '' : 's'}`);
+      if (stats.mergedContinuations > 0) parts.push(`${stats.mergedContinuations} wrapped narration line${stats.mergedContinuations === 1 ? '' : 's'} merged`);
+      if (stats.skippedNoAmount > 0) parts.push(`${stats.skippedNoAmount} non-transaction row${stats.skippedNoAmount === 1 ? '' : 's'} skipped (opening / closing balance, page totals)`);
+      if (parts.length > 0) {
+        toast(`From ${stats.totalGridRows.toLocaleString('en-IN')} grid rows: ${stats.transactions.toLocaleString('en-IN')} transactions — ${parts.join(', ')}.`, { duration: 6000 });
+      }
     }
     const extracted = mappedRowsToExtractedLedger(mapped);
     // Tally / Busy party-books bundle many GL accounts (often 100s)

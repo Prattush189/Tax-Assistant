@@ -171,19 +171,32 @@ export function BankStatementUploader({ manager }: Props) {
     if (!pendingGrid) return;
     const { grid, filename } = pendingGrid;
     setPendingGrid(null);
-    const mapped = applyMapping(grid, mapping, 'bank');
+    const { rows: mapped, stats } = applyMapping(grid, mapping, 'bank');
     if (mapped.length === 0) {
       toast.error('No transaction rows found after applying the mapping. Re-check the Date column.');
       return;
     }
-    // Per-file ceiling so a single huge upload can't blow through a
-    // user's monthly budget in one shot. 500 transactions is enough
-    // for ~95% of personal/SMB bank statements; if a user has more
-    // they should split by month or use the CSV path with smaller
-    // exports.
     if (mapped.length > MAX_BANK_TXNS_PER_FILE) {
       toast.error(`This statement has ${mapped.length.toLocaleString('en-IN')} transactions, but a single upload is capped at ${MAX_BANK_TXNS_PER_FILE.toLocaleString('en-IN')}. Split by month and re-upload.`);
       return;
+    }
+    // Surface what was filtered so the user can see why the
+    // transaction count might be lower than the visual row count
+    // in the source PDF. Common case: opening / closing balance
+    // markers and wrapped narrations (no date) get correctly merged
+    // into the previous transaction.
+    const filteredCount = stats.totalGridRows - stats.transactions;
+    if (filteredCount > 0) {
+      const parts: string[] = [];
+      if (stats.mergedContinuations > 0) {
+        parts.push(`${stats.mergedContinuations} wrapped narration line${stats.mergedContinuations === 1 ? '' : 's'} merged into previous transactions`);
+      }
+      if (stats.skippedNoAmount > 0) {
+        parts.push(`${stats.skippedNoAmount} row${stats.skippedNoAmount === 1 ? '' : 's'} skipped (date but no debit / credit — usually opening / closing balance or page totals)`);
+      }
+      if (parts.length > 0) {
+        toast(`From ${stats.totalGridRows.toLocaleString('en-IN')} grid rows: ${stats.transactions.toLocaleString('en-IN')} transactions — ${parts.join(', ')}.`, { duration: 6000 });
+      }
     }
     const csv = mappedRowsToBankCsv(mapped);
     try {
