@@ -203,6 +203,11 @@ function enforceQuota(
 // ── Serializers ─────────────────────────────────────────────────────────
 function serializeJob(row: ReturnType<typeof ledgerScrutinyRepo.findByIdForUser>) {
   if (!row) return null;
+  // Cast to any for the ALTER-TABLE-added columns — the SELECT *
+  // statement returns them but the inferred type doesn't include
+  // them yet. Frontend reads scrutinyChunksTotal / scrutinyChunksDone
+  // to render "5 of 46 chunks audited" + ETA while a job runs.
+  const r = row as unknown as Record<string, unknown>;
   return {
     id: row.id,
     name: row.name,
@@ -220,6 +225,8 @@ function serializeJob(row: ReturnType<typeof ledgerScrutinyRepo.findByIdForUser>
     errorMessage: row.error_message,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    scrutinyChunksTotal: typeof r.scrutiny_chunks_total === 'number' ? r.scrutiny_chunks_total : 0,
+    scrutinyChunksDone: typeof r.scrutiny_chunks_done === 'number' ? r.scrutiny_chunks_done : 0,
   };
 }
 
@@ -1502,7 +1509,21 @@ router.post(
         }
       };
 
-      const scrutinyResult = await runChunkedScrutiny(extracted, accountIdByName, recordScrutinyAttempt);
+      // Persist chunk progress to the DB so the frontend's 5-second
+      // polling sees "5 of 46 chunks audited" updates while this runs.
+      // The total is set once before chunking starts (inside
+      // runChunkedScrutiny via the onChunkDone signal at completion=0
+      // is missed — we set it explicitly via the userId/jobId here).
+      const scrutinyJobId = job.id;
+      const scrutinyUserId = req.user.id;
+      const scrutinyResult = await runChunkedScrutiny(extracted, accountIdByName, recordScrutinyAttempt, (completed, total) => {
+        // First call (completed=1, since onChunkDone fires AFTER each
+        // chunk) — write the total once. Cheap idempotent UPDATE.
+        if (completed === 1) {
+          try { ledgerScrutinyRepo.setScrutinyChunksTotal(scrutinyJobId, scrutinyUserId, total); } catch (e) { console.error('[ledger-scrutiny] set total failed', e); }
+        }
+        try { ledgerScrutinyRepo.bumpScrutinyChunksDone(scrutinyJobId, scrutinyUserId); } catch (e) { console.error('[ledger-scrutiny] bump failed', e); }
+      });
       ledgerScrutinyRepo.replaceObservations(job.id, scrutinyResult.observations);
 
       let high = 0, warn = 0, info = 0, flaggedAmount = 0;

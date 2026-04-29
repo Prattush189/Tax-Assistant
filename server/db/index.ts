@@ -222,6 +222,17 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_bank_rules_user_id ON bank_statement_rul
   if (!names.includes('pages_processed')) {
     db.exec("ALTER TABLE ledger_scrutiny_jobs ADD COLUMN pages_processed INTEGER NOT NULL DEFAULT 0");
   }
+  // Chunked-scrutiny progress fields. Frontend polls /api/ledger-scrutiny/:id
+  // every 5s while a job is running; these columns let the inline auto-chain
+  // path in /upload surface "5 of 46 chunks audited" without needing a
+  // dedicated SSE stream. Updated by ledgerScrutinyRepo.setScrutinyChunkProgress
+  // from runChunkedScrutiny.onChunkDone after each chunk finishes.
+  if (!names.includes('scrutiny_chunks_total')) {
+    db.exec("ALTER TABLE ledger_scrutiny_jobs ADD COLUMN scrutiny_chunks_total INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!names.includes('scrutiny_chunks_done')) {
+    db.exec("ALTER TABLE ledger_scrutiny_jobs ADD COLUMN scrutiny_chunks_done INTEGER NOT NULL DEFAULT 0");
+  }
 }
 
 // Credits column on feature_usage so the quota check can sum credits

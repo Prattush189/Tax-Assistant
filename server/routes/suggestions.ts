@@ -5,6 +5,7 @@ import { userRepo } from '../db/repositories/userRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { getBillingUser } from '../lib/billing.js';
+import { enforceTokenQuota } from '../lib/tokenQuota.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
@@ -42,15 +43,11 @@ router.post('/optimize', async (req: AuthRequest, res: Response) => {
   const plan = billingUser?.plan ?? actor?.plan ?? 'free';
   const monthlyLimit = MONTHLY_LIMITS[plan] ?? 50;
 
-  // Enforce monthly cap against the shared pool
+  // Token-budget gate — the only HARD quota check now. Per-feature
+  // count below stays for analytics display.
+  const tokenQuota = enforceTokenQuota(req, res);
+  if (!tokenQuota.ok) return;
   const usedThisMonth = featureUsageRepo.countThisMonthByBillingUser(billingUserId, 'ai_suggestions');
-  if (usedThisMonth >= monthlyLimit) {
-    res.status(429).json({
-      error: `You've reached your monthly AI suggestions limit (${monthlyLimit}). Upgrade your plan for more, or wait until the 1st.`,
-      upgrade: plan !== 'enterprise',
-    });
-    return;
-  }
 
   const { grossIncome, taxableIncome, regime, ageCategory, deductions, fy } = req.body;
 

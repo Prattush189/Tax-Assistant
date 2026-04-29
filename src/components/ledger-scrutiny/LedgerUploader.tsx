@@ -22,25 +22,48 @@ interface Props {
 function ScrutinyProgressBar({
   phase,
   progress,
+  chunksDone,
+  chunksTotal,
+  startedAt,
 }: {
   phase: 'extracting' | 'scrutinizing';
   progress: LedgerScrutinyProgress | null;
+  /** From the polled job row. Surfaces upload-time auto-chained
+   *  scrutiny progress (the SSE-streamed /scrutinize endpoint uses
+   *  `progress.completed/total` in bytes; this path uses chunks). */
+  chunksDone?: number;
+  chunksTotal?: number;
+  /** Wall-clock when the job switched to scrutinizing. Used with
+   *  chunksDone to estimate remaining time. */
+  startedAt?: number;
 }) {
-  // Extract pass is a single synchronous Gemini call — no real progress
-  // signal, so we render an indeterminate sliver. Scrutinize pass streams
-  // bytes from the model and the server emits periodic {completed,total}
-  // events; we cap completed at total-1 server-side so the bar never
-  // visually completes before the `done` event lands.
-  const total = progress?.total ?? 0;
-  const completed = progress?.completed ?? 0;
+  // Prefer chunk-based progress (auto-chained inline path) when
+  // available — it's a real fraction. Fall back to the byte-stream
+  // estimate (SSE streamed scrutinize). Extract pass is indeterminate.
+  const usingChunks = phase === 'scrutinizing' && (chunksTotal ?? 0) > 0;
+  const total = usingChunks ? chunksTotal! : (progress?.total ?? 0);
+  const completed = usingChunks ? (chunksDone ?? 0) : (progress?.completed ?? 0);
   const pct = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : 0;
   const indeterminate = phase === 'extracting' || total === 0;
 
+  // ETA: average per-chunk wall time × chunks remaining. Only meaningful
+  // for the chunk-based path (the byte-stream path completes in seconds).
+  let eta: string | null = null;
+  if (usingChunks && completed > 0 && startedAt && completed < total) {
+    const elapsedMs = Date.now() - startedAt;
+    const avgMsPerChunk = elapsedMs / completed;
+    const remainingMs = avgMsPerChunk * (total - completed);
+    const mins = Math.ceil(remainingMs / 60000);
+    eta = mins <= 1 ? '~1 min remaining' : `~${mins} min remaining`;
+  }
+
   const label = phase === 'extracting'
     ? 'Reading the ledger structure…'
-    : progress?.accountsTotal
-      ? `Auditing ${progress.accountsTotal} account${progress.accountsTotal === 1 ? '' : 's'} against §40A(3) / §269ST / TDS rubric`
-      : 'Auditing accounts…';
+    : usingChunks
+      ? `Auditing chunk ${completed} of ${total} against §40A(3) / §269ST / TDS rubric`
+      : progress?.accountsTotal
+        ? `Auditing ${progress.accountsTotal} account${progress.accountsTotal === 1 ? '' : 's'} against §40A(3) / §269ST / TDS rubric`
+        : 'Auditing accounts…';
 
   return (
     <div className="mt-3">
@@ -52,6 +75,7 @@ function ScrutinyProgressBar({
       </div>
       <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
         {label}{!indeterminate ? ` · ${pct}%` : ''}
+        {eta ? ` · ${eta}` : ''}
       </p>
     </div>
   );
@@ -161,6 +185,19 @@ export function LedgerUploader({ manager }: Props) {
   };
 
   const currentStatus = manager.current?.job.status;
+  const chunksDone = manager.current?.job.scrutinyChunksDone ?? 0;
+  const chunksTotal = manager.current?.job.scrutinyChunksTotal ?? 0;
+  // Track the moment scrutiny started locally so we can compute an
+  // ETA from average chunk time. We can't trust createdAt because
+  // the job sat in 'extracting' first; we just remember the first
+  // poll where chunksTotal flipped non-zero.
+  const scrutinyStartedAt = useRef<number | null>(null);
+  if (chunksTotal > 0 && scrutinyStartedAt.current === null) {
+    scrutinyStartedAt.current = Date.now();
+  }
+  if (chunksTotal === 0 && scrutinyStartedAt.current !== null) {
+    scrutinyStartedAt.current = null;
+  }
   // `busy` covers both the in-flight upload AND any other in-progress job
   // visible in the user's job list — so the upload zone is locked even
   // if the user navigated away from the running audit's detail view.
@@ -200,6 +237,9 @@ export function LedgerUploader({ manager }: Props) {
           <ScrutinyProgressBar
             phase={currentStatus === 'scrutinizing' ? 'scrutinizing' : 'extracting'}
             progress={manager.scrutinizeProgress}
+            chunksDone={chunksDone}
+            chunksTotal={chunksTotal}
+            startedAt={scrutinyStartedAt.current ?? undefined}
           />
         ) : (
           <>

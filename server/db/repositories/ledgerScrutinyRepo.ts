@@ -158,6 +158,25 @@ const stmts = {
   getPagesTotals: db.prepare(
     'SELECT pages_total, pages_processed FROM ledger_scrutiny_jobs WHERE id = ? AND user_id = ?'
   ),
+  // Scrutiny-pass chunk progress. Updated after every chunk finishes
+  // so the frontend polling at /api/ledger-scrutiny/:id sees a live
+  // counter. scrutiny_chunks_total is set once when chunking starts;
+  // scrutiny_chunks_done bumps from 0 → total.
+  setScrutinyChunksTotal: db.prepare(
+    `UPDATE ledger_scrutiny_jobs
+       SET scrutiny_chunks_total = ?, scrutiny_chunks_done = 0,
+           updated_at = datetime('now', '+5 hours', '+30 minutes')
+     WHERE id = ? AND user_id = ?`
+  ),
+  bumpScrutinyChunksDone: db.prepare(
+    `UPDATE ledger_scrutiny_jobs
+       SET scrutiny_chunks_done = scrutiny_chunks_done + 1,
+           updated_at = datetime('now', '+5 hours', '+30 minutes')
+     WHERE id = ? AND user_id = ?`
+  ),
+  getScrutinyChunkProgress: db.prepare(
+    'SELECT scrutiny_chunks_total, scrutiny_chunks_done FROM ledger_scrutiny_jobs WHERE id = ? AND user_id = ?'
+  ),
   updateJobExtraction: db.prepare(
     `UPDATE ledger_scrutiny_jobs
        SET raw_extracted = ?, party_name = COALESCE(?, party_name),
@@ -276,6 +295,19 @@ export const ledgerScrutinyRepo = {
   bumpPagesProcessed(id: string, userId: string, deltaPages: number): void {
     if (deltaPages <= 0) return;
     stmts.bumpPagesProcessed.run(deltaPages, id, userId);
+  },
+
+  setScrutinyChunksTotal(id: string, userId: string, total: number): void {
+    stmts.setScrutinyChunksTotal.run(total, id, userId);
+  },
+
+  bumpScrutinyChunksDone(id: string, userId: string): void {
+    stmts.bumpScrutinyChunksDone.run(id, userId);
+  },
+
+  getScrutinyChunkProgress(id: string, userId: string): { scrutiny_chunks_total: number; scrutiny_chunks_done: number } | null {
+    const row = stmts.getScrutinyChunkProgress.get(id, userId) as { scrutiny_chunks_total: number; scrutiny_chunks_done: number } | undefined;
+    return row ?? null;
   },
 
   getPagesTotals(id: string, userId: string): { pages_total: number; pages_processed: number } | null {

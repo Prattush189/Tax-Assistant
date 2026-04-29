@@ -110,6 +110,7 @@ const plans = [
     icon: Building2,
     features: [
       'Everything in Pro, plus:',
+      '3× the monthly capacity (across every feature)',
       '3,000 chat messages / month',
       '200 document uploads / month',
       '5,000 bank statement transactions / month',
@@ -588,10 +589,22 @@ export function PlanPage() {
                 <ul className="space-y-2.5 mb-6 flex-1">
                   {plan.features.map((feature, i) => {
                     const isInheritance = /^Everything in /i.test(feature);
+                    // Lines starting with "Nx" (e.g. "3× the monthly capacity")
+                    // render as a colored highlight badge so the value-prop
+                    // headline of higher tiers reads at a glance.
+                    const isHighlight = /^\d+×/.test(feature);
                     if (isInheritance) {
                       return (
                         <li key={i} className="text-xs font-medium text-gray-400 dark:text-gray-500 italic pt-1 pb-0.5">
                           {feature}
+                        </li>
+                      );
+                    }
+                    if (isHighlight) {
+                      return (
+                        <li key={i} className="flex items-start gap-2 text-sm font-semibold text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-900/20 px-2.5 py-1.5 rounded-lg border border-indigo-200 dark:border-indigo-800">
+                          <span className="text-indigo-500 dark:text-indigo-400">★</span>
+                          <span>{feature}</span>
                         </li>
                       );
                     }

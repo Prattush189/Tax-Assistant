@@ -1944,6 +1944,11 @@ export interface LedgerScrutinyJob {
   errorMessage: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Chunked-scrutiny progress — surfaces "5 of 46 chunks audited"
+   *  while an upload-time auto-chained scrutiny is running. Both 0
+   *  on jobs that haven't reached the audit phase yet. */
+  scrutinyChunksTotal: number;
+  scrutinyChunksDone: number;
 }
 
 export interface LedgerScrutinyAccount {
