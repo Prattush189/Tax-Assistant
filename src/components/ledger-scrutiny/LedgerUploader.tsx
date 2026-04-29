@@ -143,6 +143,15 @@ export function LedgerUploader({ manager }: Props) {
       return;
     }
     const extracted = mappedRowsToExtractedLedger(mapped);
+    // Tally / Busy party-books bundle many GL accounts (often 100s)
+    // in a single PDF separated by header rows. Surface the detected
+    // account count so the user can spot the "single Default account"
+    // failure mode before paying for an audit on a misparsed file.
+    if (extracted.accounts.length === 1 && extracted.accounts[0].name === 'Default') {
+      toast.error('Could not detect any account headers (Tally-style "-Account Name" rows). The audit would treat all transactions as one account and produce wrong totals. Verify the PDF has account headers between blocks, or pre-split it.');
+      return;
+    }
+    toast(`Detected ${extracted.accounts.length.toLocaleString('en-IN')} account${extracted.accounts.length === 1 ? '' : 's'} · ${mapped.length.toLocaleString('en-IN')} transactions — running audit…`);
     try {
       const result = await manager.uploadMapped(extracted, filename);
       toast.success(`Audit complete: ${result.observations.length} observation${result.observations.length === 1 ? '' : 's'} across ${result.accounts.length} accounts`);

@@ -12,18 +12,29 @@ interface Props {
   onCancel: () => void;
 }
 
-const BASE_ROLES: Array<{ value: ColumnRole; label: string; bankOnly?: boolean; ledgerOnly?: boolean }> = [
-  { value: 'skip',       label: 'Skip / Ignore' },
-  { value: 'date',       label: 'Date' },
-  { value: 'narration',  label: 'Narration / Description' },
-  { value: 'debit',      label: 'Debit (Withdrawal)' },
-  { value: 'credit',     label: 'Credit (Deposit)' },
-  { value: 'amount',     label: 'Amount (single column)' },
-  { value: 'drCrMarker', label: 'Dr/Cr marker' },
-  { value: 'balance',    label: 'Running Balance' },
-  { value: 'reference',  label: 'Reference / UTR / Cheque' },
-  { value: 'voucher',    label: 'Voucher / Type', ledgerOnly: true },
-  { value: 'account',    label: 'Account / Ledger Name', ledgerOnly: true },
+// Role-label per kind. Bank statements speak "Withdrawal / Deposit"
+// (the customer-facing convention), ledgers speak "Debit / Credit"
+// (the bookkeeping convention). Mixing the two confuses ledger users
+// because in a bank-account ledger Dr = receipt and Cr = payment —
+// the OPPOSITE of how the bank statement labels them.
+const BASE_ROLES: Array<{
+  value: ColumnRole;
+  bankLabel: string;
+  ledgerLabel: string;
+  bankOnly?: boolean;
+  ledgerOnly?: boolean;
+}> = [
+  { value: 'skip',       bankLabel: 'Skip / Ignore',                 ledgerLabel: 'Skip / Ignore' },
+  { value: 'date',       bankLabel: 'Date',                          ledgerLabel: 'Date' },
+  { value: 'narration',  bankLabel: 'Narration / Description',       ledgerLabel: 'Narration / Particulars' },
+  { value: 'debit',      bankLabel: 'Debit (Withdrawal)',            ledgerLabel: 'Debit (Dr)' },
+  { value: 'credit',     bankLabel: 'Credit (Deposit)',              ledgerLabel: 'Credit (Cr)' },
+  { value: 'amount',     bankLabel: 'Amount (single column)',        ledgerLabel: 'Amount (single column)' },
+  { value: 'drCrMarker', bankLabel: 'Dr/Cr marker',                  ledgerLabel: 'Dr/Cr marker' },
+  { value: 'balance',    bankLabel: 'Running Balance',               ledgerLabel: 'Running Balance' },
+  { value: 'reference',  bankLabel: 'Reference / UTR / Cheque',      ledgerLabel: 'Reference / UTR / Cheque' },
+  { value: 'voucher',    bankLabel: 'Voucher / Type',                ledgerLabel: 'Voucher / Type', ledgerOnly: true },
+  { value: 'account',    bankLabel: 'Account / Ledger Name',         ledgerLabel: 'Account / Ledger Name', ledgerOnly: true },
 ];
 
 const PREVIEW_ROWS = 12;
@@ -38,11 +49,13 @@ export function ColumnMappingWizard({ kind, grid, filename, onConfirm, onCancel 
   }, [grid]);
 
   const availableRoles = useMemo(
-    () => BASE_ROLES.filter(r => {
-      if (r.bankOnly && kind !== 'bank') return false;
-      if (r.ledgerOnly && kind !== 'ledger') return false;
-      return true;
-    }),
+    () => BASE_ROLES
+      .filter(r => {
+        if (r.bankOnly && kind !== 'bank') return false;
+        if (r.ledgerOnly && kind !== 'ledger') return false;
+        return true;
+      })
+      .map(r => ({ value: r.value, label: kind === 'ledger' ? r.ledgerLabel : r.bankLabel })),
     [kind],
   );
 

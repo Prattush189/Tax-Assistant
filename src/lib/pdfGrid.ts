@@ -308,6 +308,73 @@ export function parseDate(raw: string): string | null {
 }
 
 /**
+ * Detect whether a row is an "account separator" — a Tally / Busy
+ * ledger book-style header that introduces a new GL account between
+ * transaction blocks. These rows have substantial text but ZERO
+ * transaction data: no parseable date, no debit/credit/balance/amount.
+ *
+ * Examples in the wild:
+ *   "-HDFC BANK LTD."
+ *   "-VARROC ENGINEERING LIMITED"
+ *   "Account: Sales"
+ *   "  CHETAN ENTERPRISES  "
+ *
+ * The detection is conservative — it requires every numeric column
+ * (debit/credit/balance/amount) to be empty AND the date column to
+ * not parse. That's enough to exclude page totals (which have numbers)
+ * and column-header rows (which contain words like "Date" / "Debit"
+ * that we explicitly reject).
+ *
+ * Returns the cleaned account name, or null if this isn't a header.
+ *
+ * Without this, the wizard collapses every transaction in a 365-account
+ * Tally book into a single "Default" bucket — an external auditor
+ * pointed out that opening / closing / total-debit / total-credit
+ * become meaningless aggregates and reconciliation flags fire
+ * spuriously across unrelated accounts.
+ */
+function detectAccountHeader(
+  row: string[],
+  colByRole: Map<ColumnRole, number>,
+): string | null {
+  const cell = (role: ColumnRole): string => {
+    const i = colByRole.get(role);
+    return i === undefined ? '' : (row[i] ?? '').trim();
+  };
+
+  // Reject anything carrying transaction data.
+  if (parseDate(cell('date'))) return null;
+  if (parseNumber(cell('debit')) || parseNumber(cell('credit'))) return null;
+  if (parseNumber(cell('amount')) || parseNumber(cell('balance'))) return null;
+
+  // Pull all non-empty cells; pick the longest as the account-name
+  // candidate. (In Tally PDFs the account name usually lands in the
+  // narration / particulars column when extracted, but we don't
+  // assume that — different banks lay it out differently.)
+  const nonEmpty = row
+    .map(c => (c ?? '').trim())
+    .filter(c => c.length > 0);
+  if (nonEmpty.length === 0) return null;
+
+  const candidate = nonEmpty.sort((a, b) => b.length - a.length)[0];
+
+  // Reject column-header rows defensively (findTableStart already
+  // skips these but this function might be called on the raw grid).
+  if (/^(date|narration|particulars|description|debit|credit|balance|chq|voucher|amount|reference|ref|utr|type)\b/i.test(candidate)) {
+    return null;
+  }
+
+  // Strip Tally's leading dash and trim.
+  let name = candidate.replace(/^[\s\-•]+/, '').trim();
+  // "Account: HDFC Bank" → "HDFC Bank"
+  name = name.replace(/^Account\s*[:.]\s*/i, '').trim();
+
+  // Need a meaningful length.
+  if (name.length < 3) return null;
+  return name;
+}
+
+/**
  * Apply a column mapping to a raw grid → array of normalized rows.
  *
  * Skips rows where the date column doesn't parse to a real date —
@@ -319,6 +386,11 @@ export function parseDate(raw: string): string | null {
  * sign comes from the marker. If it uses (amount) alone, we keep
  * whatever sign is in the cell (some statements pre-sign withdrawals
  * with a minus).
+ *
+ * For ledger PDFs that bundle multiple GL accounts in one file
+ * (Tally / Busy party-wise ledger book), account-separator rows
+ * between transaction blocks update lastAccount so each transaction
+ * carries the right account name into mappedRowsToExtractedLedger.
  */
 export function applyMapping(grid: PdfGrid, mapping: ColumnMapping): MappedRow[] {
   const out: MappedRow[] = [];
@@ -334,18 +406,24 @@ export function applyMapping(grid: PdfGrid, mapping: ColumnMapping): MappedRow[]
       return i === undefined ? '' : (row[i] ?? '').trim();
     };
 
-    // Track the most recent "Account: X" header — applies to all
-    // subsequent rows until the next header. Common in Tally / Busy
-    // ledger exports where multiple accounts share one PDF.
+    // 1. Explicit "account" column (CSV exports with a per-row
+    //    Account / Ledger column). Takes precedence over auto-detect.
     const accountCell = cell('account');
     if (accountCell) lastAccount = accountCell;
+
+    // 2. Auto-detect Tally-style account-separator rows.
+    const headerName = detectAccountHeader(row, colByRole);
+    if (headerName) {
+      lastAccount = headerName;
+      continue;
+    }
 
     const dateRaw = cell('date');
     const date = parseDate(dateRaw);
     if (!date) {
-      // Possibly a multi-line narration continuing the previous row.
-      // If date is empty AND previous out row exists AND there's text
-      // in the narration column, append to previous narration.
+      // No date AND it wasn't an account header → multi-line narration
+      // continuing the previous transaction. Append to its narration so
+      // a wrapped UPI ref or counterparty name doesn't get lost.
       const narr = cell('narration');
       if (narr && out.length > 0) {
         out[out.length - 1].narration = `${out[out.length - 1].narration} ${narr}`.trim();
