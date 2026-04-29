@@ -162,6 +162,7 @@ export function RecentApiCallsDashboard() {
                 <th className="text-left px-3 py-2 text-gray-500 font-medium">Time</th>
                 <th className="text-left px-3 py-2 text-gray-500 font-medium">User</th>
                 <th className="text-left px-3 py-2 text-gray-500 font-medium">Category</th>
+                <th className="text-center px-3 py-2 text-gray-500 font-medium" title="success / cancelled / failed. Cancelled tokens count toward user budget; failed tokens do not.">Status</th>
                 <th className="text-left px-3 py-2 text-gray-500 font-medium">Model</th>
                 <th className="text-center px-3 py-2 text-gray-500 font-medium">Search</th>
                 <th className="text-center px-3 py-2 text-gray-500 font-medium">Plugin</th>
@@ -198,6 +199,15 @@ export function RecentApiCallsDashboard() {
                         <span className="text-gray-300">—</span>
                       )}
                     </td>
+                    <td className="px-3 py-2 text-center">
+                      {c.status === 'cancelled' ? (
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">cancelled</span>
+                      ) : c.status === 'failed' ? (
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-400">failed</span>
+                      ) : (
+                        <span className="text-gray-300">—</span>
+                      )}
+                    </td>
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-1.5">
                         <div className={cn('w-2 h-2 rounded-full shrink-0', modelColor)} />
@@ -224,7 +234,7 @@ export function RecentApiCallsDashboard() {
               })}
               {calls.length === 0 && !loading && (
                 <tr>
-                  <td colSpan={11} className="px-3 py-8 text-center text-gray-400">No API calls recorded</td>
+                  <td colSpan={12} className="px-3 py-8 text-center text-gray-400">No API calls recorded</td>
                 </tr>
               )}
             </tbody>

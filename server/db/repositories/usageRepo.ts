@@ -150,7 +150,7 @@ const analyticsStmts = {
   recentRequestsPaginated: db.prepare(`
     SELECT
       a.id, a.user_id, a.input_tokens, a.output_tokens, a.cost, a.created_at,
-      a.model, a.search_used, a.is_plugin, a.category, a.input_units,
+      a.model, a.search_used, a.is_plugin, a.category, a.input_units, a.status,
       COALESCE(u.name, 'Guest') AS user_name,
       COALESCE(u.email, '') AS user_email,
       COALESCE(u.plan, 'free') AS user_plan
@@ -307,7 +307,7 @@ export const usageRepo = {
   getRecentRequestsPaginated(limit: number, offset: number): Array<{
     id: number; user_id: string | null; input_tokens: number; output_tokens: number;
     cost: number; created_at: string; model: string | null; search_used: number; is_plugin: number;
-    category: string | null; input_units: number; user_name: string; user_email: string; user_plan: string;
+    category: string | null; input_units: number; status: string; user_name: string; user_email: string; user_plan: string;
   }> {
     return analyticsStmts.recentRequestsPaginated.all(limit, offset) as any[];
   },

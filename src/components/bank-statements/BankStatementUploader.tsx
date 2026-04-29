@@ -247,15 +247,38 @@ export function BankStatementUploader({ manager }: Props) {
           </p>
         )}
       </div>
-      <button
-        type="button"
-        disabled={manager.hasInProgressJob}
-        onClick={() => inputRef.current?.click()}
-        className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
-      >
-        <FileText className="w-4 h-4" />
-        Choose file
-      </button>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          disabled={manager.hasInProgressJob}
+          onClick={() => inputRef.current?.click()}
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+        >
+          <FileText className="w-4 h-4" />
+          Choose file
+        </button>
+        {/* Cancel button surfaces here (next to the disabled
+            Choose-file button) so the user can stop a long
+            chunked-categorisation run without scrolling to the
+            statement detail view. inFlight is the placeholder
+            row that the analyze handler is operating on. */}
+        {inFlight && (
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                await manager.cancel(inFlight.id);
+                toast.success('Analysis cancelled');
+              } catch (e) {
+                toast.error(e instanceof Error ? e.message : 'Cancel failed');
+              }
+            }}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-rose-300 dark:border-rose-700 text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/20 text-sm font-medium transition-colors"
+          >
+            Cancel
+          </button>
+        )}
+      </div>
       <input
         ref={inputRef}
         type="file"

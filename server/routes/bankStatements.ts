@@ -1453,6 +1453,27 @@ ${JSON.stringify(batch)}`;
       // again (cancel route already debited featureUsage).
       if (bankStatementRepo.getStatus(placeholder.id, req.user.id) === 'cancelled') {
         console.log(`[bank-statements] statement ${placeholder.id} was cancelled mid-analysis; discarding ${extracted.transactions.length} extracted rows`);
+        // Log the in-flight chunks' tokens to api_usage with
+        // status='cancelled'. The chunks ran (Node doesn't abort
+        // handlers on cancel — they completed before the cancel
+        // detection check); their tokens are real spend that should
+        // (a) appear in the admin Recent API Calls dashboard, and
+        // (b) count toward the user's monthly token budget. Without
+        // this, the chunked-TSV path leaks tokens into a dead-end
+        // run that nobody sees and nobody pays for.
+        try {
+          const cancelClientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
+          const usages = (res.locals as Record<string, unknown>).geminiUsages as
+            Array<{ inputTokens: number; outputTokens: number; modelUsed: string }> | undefined;
+          if (usages && usages.length > 0) {
+            const inputTok = usages.reduce((a, u) => a + u.inputTokens, 0);
+            const outputTok = usages.reduce((a, u) => a + u.outputTokens, 0);
+            const cost = usages.reduce((a, u) => a + costForModel(u.modelUsed, u.inputTokens, u.outputTokens), 0);
+            usageRepo.logWithBilling(cancelClientIp, req.user.id, quota.billingUserId, inputTok, outputTok, cost, false, usages[0].modelUsed, false, 'bank_statement', 0, 'cancelled');
+          }
+        } catch (err) {
+          console.error('[bank-statements] cancelled-run cost log failed:', err);
+        }
         const cancelledPayload = {
           statement: serializeStatement(bankStatementRepo.findByIdForUser(placeholder.id, req.user.id)),
           transactions: [],

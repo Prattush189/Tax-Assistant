@@ -13,6 +13,11 @@ export function BankStatementSummary({ detail, onDelete }: Props) {
   const { statement } = detail;
   const net = statement.totalInflow - statement.totalOutflow;
   const [downloading, setDownloading] = useState(false);
+  // Disable destructive / export actions while the statement is
+  // mid-analysis. CSV would download an empty file; Delete would
+  // race the in-flight Gemini chunks and confuse the analyze
+  // handler that's still running on the server.
+  const isRunning = statement.status === 'analyzing';
 
   const handleCsvDownload = async () => {
     if (downloading) return;
@@ -48,7 +53,8 @@ export function BankStatementSummary({ detail, onDelete }: Props) {
           <button
             type="button"
             onClick={handleCsvDownload}
-            disabled={downloading}
+            disabled={downloading || isRunning}
+            title={isRunning ? "Wait for the analysis to finish before exporting" : undefined}
             className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Download className="w-4 h-4" />
@@ -57,7 +63,9 @@ export function BankStatementSummary({ detail, onDelete }: Props) {
           <button
             type="button"
             onClick={onDelete}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg bg-red-50 hover:bg-red-100 text-red-700 dark:bg-red-900/20 dark:hover:bg-red-900/40 dark:text-red-400 transition-colors"
+            disabled={isRunning}
+            title={isRunning ? "Can't delete a statement while it's analysing" : undefined}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg bg-red-50 hover:bg-red-100 text-red-700 dark:bg-red-900/20 dark:hover:bg-red-900/40 dark:text-red-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Trash2 className="w-4 h-4" />
             Delete

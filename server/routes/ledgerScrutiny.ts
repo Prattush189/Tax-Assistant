@@ -1695,6 +1695,21 @@ router.post(
       const currentStatus = ledgerScrutinyRepo.getStatus(job.id, req.user.id);
       if (currentStatus === 'cancelled' || scrutinyResult.paused) {
         console.log(`[ledger-scrutiny] job ${job.id} paused/cancelled; preserving ${persistedObs.length} observations and skipping 'done' transition`);
+        // Log the partial scrutiny tokens to api_usage with
+        // status='cancelled' so admin sees the wasted spend AND the
+        // user's token budget reflects what was actually consumed
+        // by chunks that completed before the pause/cancel landed.
+        // scrutinyResult.inputTokens / outputTokens already aggregate
+        // exactly the chunks that ran (paused chunks short-circuit
+        // with no tokens).
+        try {
+          if (scrutinyResult.inputTokens + scrutinyResult.outputTokens > 0) {
+            const cost = costForModel(scrutinyResult.modelUsed, scrutinyResult.inputTokens, scrutinyResult.outputTokens);
+            usageRepo.logWithBilling(ledgerClientIp, req.user.id, quota.billingUserId, scrutinyResult.inputTokens, scrutinyResult.outputTokens, cost, false, scrutinyResult.modelUsed, false, 'ledger_scrutiny', persistedObs.length, 'cancelled');
+          }
+        } catch (e) {
+          console.error('[ledger-scrutiny] cancelled-run cost log failed', e);
+        }
         res.status(200).json({
           job: serializeJob(ledgerScrutinyRepo.findByIdForUser(job.id, req.user.id)),
           accounts: ledgerScrutinyRepo.listAccounts(job.id).map(serializeAccount),

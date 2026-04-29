@@ -1281,6 +1281,11 @@ export interface RecentApiCall {
    *  notice/document, message count for chat. 0 for legacy or
    *  un-instrumented call sites. */
   input_units: number;
+  /** 'success' | 'cancelled' | 'failed'. Cancelled means the user
+   *  stopped the run mid-flight (tokens still consumed and counted
+   *  toward budget). Failed means a parse / network / content-
+   *  filter error (tokens NOT counted toward budget). */
+  status: 'success' | 'cancelled' | 'failed' | string;
   created_at: string;
 }
 
