@@ -117,6 +117,14 @@ async function callOnce<T>(
 
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 const MAX_PRIMARY_ATTEMPTS = 3;
+// Fallback also gets multiple attempts now. Production logs showed
+// brief Gemini regional outages (503 bursts lasting 30-90s) where the
+// primary exhausted its 3 retries and then the fallback's single
+// attempt also caught a 503, surfacing as a hard "503 (no body)"
+// failure to the user even though waiting another 5-10s would have
+// recovered. 3 fallback attempts with longer backoff covers the
+// outage window.
+const MAX_FALLBACK_ATTEMPTS = 3;
 
 /**
  * Call Gemini, ask for JSON, parse it, and return both the value and the
@@ -150,16 +158,24 @@ export async function callGeminiJson<T = unknown>(
         if (!RETRYABLE_STATUSES.has(status)) break;
         if (attempt < MAX_PRIMARY_ATTEMPTS - 1) {
           console.warn(`[geminiJson] ${primary} retry ${attempt + 1}/${MAX_PRIMARY_ATTEMPTS} after status ${status}`);
-          await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)));
+          await new Promise(r => setTimeout(r, 1500 * Math.pow(2, attempt)));
         }
       }
     }
 
     console.warn(`[geminiJson] ${primary} exhausted, falling back to ${fallback}`);
-    try {
-      return await callOnce<T>(messages, fallback, maxTokens, responseFormat, recordAttempt);
-    } catch (err) {
-      lastErr = err;
+    for (let attempt = 0; attempt < MAX_FALLBACK_ATTEMPTS; attempt++) {
+      try {
+        return await callOnce<T>(messages, fallback, maxTokens, responseFormat, recordAttempt);
+      } catch (err) {
+        lastErr = err;
+        const status = (err as { status?: number })?.status ?? 0;
+        if (!RETRYABLE_STATUSES.has(status)) break;
+        if (attempt < MAX_FALLBACK_ATTEMPTS - 1) {
+          console.warn(`[geminiJson] ${fallback} retry ${attempt + 1}/${MAX_FALLBACK_ATTEMPTS} after status ${status}`);
+          await new Promise(r => setTimeout(r, 2000 * Math.pow(2, attempt)));
+        }
+      }
     }
 
     throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
