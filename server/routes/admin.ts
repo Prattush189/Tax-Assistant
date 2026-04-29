@@ -86,17 +86,33 @@ router.post('/usage/reset-self', (req: AuthRequest, res: Response) => {
   const start = new Date(now.getFullYear(), now.getMonth(), 1);
   const since = start.toISOString().replace('Z', '');
 
-  let cleared = 0;
+  // Two tables to clear:
+  //   - feature_usage:  per-feature soft counters (notices, deeds, etc.)
+  //   - api_usage:      actual Gemini token logs — what the
+  //                     enforceTokenQuota gate sums for the hard
+  //                     monthly budget. Without clearing this too,
+  //                     "reset my usage" zeros the dashboard counters
+  //                     but the token-quota gate keeps rejecting.
+  let featureRowsCleared = 0;
+  let apiRowsCleared = 0;
   try {
-    const result = db.prepare('DELETE FROM feature_usage WHERE billing_user_id = ? AND created_at >= ?').run(billingUser.id, since);
-    cleared = result.changes;
+    const featureResult = db.prepare('DELETE FROM feature_usage WHERE billing_user_id = ? AND created_at >= ?').run(billingUser.id, since);
+    featureRowsCleared = featureResult.changes;
+    const apiResult = db.prepare('DELETE FROM api_usage WHERE billing_user_id = ? AND created_at >= ?').run(billingUser.id, since);
+    apiRowsCleared = apiResult.changes;
   } catch (err) {
     console.error('[admin] usage reset-self failed', err);
     res.status(500).json({ error: 'Reset failed', detail: (err as Error).message?.slice(0, 200) });
     return;
   }
-  console.log(`[admin] ${actor.email ?? actor.id} reset their own monthly usage (${cleared} rows cleared)`);
-  res.json({ success: true, cleared, billingUserId: billingUser.id });
+  console.log(`[admin] ${actor.email ?? actor.id} reset their own monthly usage (feature_usage: ${featureRowsCleared}, api_usage: ${apiRowsCleared} rows cleared)`);
+  res.json({
+    success: true,
+    cleared: featureRowsCleared + apiRowsCleared,
+    featureRowsCleared,
+    apiRowsCleared,
+    billingUserId: billingUser.id,
+  });
 });
 
 // POST /api/admin/users/:id/plan — change user's plan
