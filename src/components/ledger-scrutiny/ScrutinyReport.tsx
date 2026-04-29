@@ -184,9 +184,10 @@ export function ScrutinyReport({ manager }: Props) {
             <button
               type="button"
               onClick={() => setCancelOpen(true)}
-              className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-rose-300 dark:border-rose-700 text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/20"
+              className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-900/20"
+              title="Stop the audit now and keep observations from chunks already completed"
             >
-              Cancel
+              Pause &amp; save progress
             </button>
           </div>
           {/* Indeterminate progress bar — we don't surface chunk counts
@@ -303,20 +304,19 @@ export function ScrutinyReport({ manager }: Props) {
       </div>
       <ConfirmDialog
         open={cancelOpen}
-        title="Cancel this scrutiny?"
-        description="It will still count toward your monthly limit. The audit run can't be resumed once cancelled."
-        confirmLabel="Cancel scrutiny"
+        title="Pause this scrutiny?"
+        description="The audit will stop now. Observations already produced by chunks that finished are kept and visible — only the remaining chunks are abandoned. Tokens already consumed still count toward your monthly budget."
+        confirmLabel="Pause &amp; save progress"
         cancelLabel="Keep running"
-        destructive
         pending={cancelPending}
         onConfirm={async () => {
           setCancelPending(true);
           try {
             await manager.cancel(job.id);
-            toast.success('Scrutiny cancelled');
+            toast.success('Audit paused — observations so far are saved');
             setCancelOpen(false);
           } catch (e) {
-            toast.error(e instanceof Error ? e.message : 'Cancel failed');
+            toast.error(e instanceof Error ? e.message : 'Pause failed');
           } finally {
             setCancelPending(false);
           }

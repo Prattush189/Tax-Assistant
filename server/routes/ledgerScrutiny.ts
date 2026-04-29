@@ -991,11 +991,23 @@ async function runChunkedScrutiny(
   accountIdByName: Map<string, string>,
   recordAttempt: RecordAttempt,
   onChunkDone: (completed: number, total: number) => void = () => {},
+  /** Job/user IDs are passed so the inner loop can persist each
+   *  chunk's observations as they complete (incremental) and check
+   *  whether the user has clicked "Pause / Cancel" between chunks.
+   *  When undefined, the function runs to completion as before
+   *  (legacy single-call path) — used by the SSE-streamed
+   *  /scrutinize endpoint that doesn't support mid-run cancel. */
+  pauseControl?: { jobId: string; userId: string },
 ): Promise<{
   observations: LedgerObservationCreateInput[];
   inputTokens: number;
   outputTokens: number;
   modelUsed: string;
+  /** true if the loop bailed early because the job was paused
+   *  / cancelled mid-run. Caller can use this to skip the
+   *  finalize-as-done step and leave the job in its existing
+   *  status so the partial observations stay visible. */
+  paused: boolean;
 }> {
   // 60 tx per account is enough to surface §40A(3), §269ST, TDS-scope,
   // personal-expense and round-tripping signals for the rubric. The old
@@ -1014,7 +1026,7 @@ async function runChunkedScrutiny(
 
   const accounts = extracted.accounts;
   if (accounts.length === 0) {
-    return { observations: [], inputTokens: 0, outputTokens: 0, modelUsed: 'gemini-2.5-flash' };
+    return { observations: [], inputTokens: 0, outputTokens: 0, modelUsed: 'gemini-2.5-flash', paused: false };
   }
   const groups: ExtractedAccount[][] = [];
   for (let i = 0; i < accounts.length; i += ACCOUNTS_PER_CHUNK) {
@@ -1027,8 +1039,25 @@ async function runChunkedScrutiny(
   let totalOutput = 0;
   let modelUsed = '';
   const allObservations: ScrutinyObservationRaw[] = [];
+  // Pause-aware loop: a flag plus a per-chunk DB status check. When
+  // the user clicks "Pause and save progress", the cancel endpoint
+  // sets status='cancelled'. The first chunk to finish AFTER that
+  // sets pausedFlag, and mapWithConcurrency's remaining workers
+  // see pausedFlag and skip processing without throwing — so the
+  // run stops cleanly without a thrown error and the partial
+  // results we've already persisted via appendObservations stay
+  // visible to the user.
+  let pausedFlag = false;
 
   await mapWithConcurrency(groups, SCRUTINY_CONCURRENCY, async (group, idx) => {
+    if (pausedFlag) {
+      // Skip remaining chunks after pause; still bump the counter
+      // so the progress bar reflects "X of total finished" even
+      // though some of those are skipped.
+      completed += 1;
+      onChunkDone(completed, groups.length);
+      return;
+    }
     const t0 = Date.now();
     try {
       const r = await scrutinizeWithSplit(extracted, group, TX_PER_ACCOUNT, accounts.length, recordAttempt);
@@ -1037,6 +1066,45 @@ async function runChunkedScrutiny(
       totalInput += r.inputTokens;
       totalOutput += r.outputTokens;
       modelUsed = r.modelUsed || modelUsed;
+
+      // Persist this chunk's observations now so a Pause click after
+      // this point preserves them. Map raw → DB shape using the same
+      // logic as the final reconciliation below.
+      if (pauseControl && r.observations.length > 0) {
+        const inputs: LedgerObservationCreateInput[] = r.observations.map((o) => {
+          const accountId = o.accountName ? accountIdByName.get(o.accountName.toLowerCase()) ?? null : null;
+          return {
+            accountId,
+            accountName: o.accountName ?? null,
+            code: typeof o.code === 'string' ? o.code.slice(0, 64) : 'GENERIC',
+            severity: normalizeSeverity(o.severity),
+            message: typeof o.message === 'string' ? o.message.slice(0, 1000) : '',
+            amount: o.amount === null || o.amount === undefined ? null : toNumber(o.amount),
+            dateRef: typeof o.dateRef === 'string' ? o.dateRef : null,
+            suggestedAction: typeof o.suggestedAction === 'string' ? o.suggestedAction.slice(0, 500) : null,
+          };
+        }).filter((o) => o.message);
+        try {
+          ledgerScrutinyRepo.appendObservations(pauseControl.jobId, inputs);
+        } catch (e) {
+          console.error(`[ledger-scrutiny] incremental persist failed`, e);
+        }
+      }
+
+      // Check pause state — runs after each chunk. Cheap (single
+      // SELECT), and saves us from kicking off a 90-150s chunk that
+      // the user has already given up on.
+      if (pauseControl) {
+        try {
+          const status = ledgerScrutinyRepo.getStatus(pauseControl.jobId, pauseControl.userId);
+          if (status === 'cancelled') {
+            console.log(`[ledger-scrutiny] paused mid-run after chunk ${idx + 1}/${groups.length} — preserving ${allObservations.length} observations`);
+            pausedFlag = true;
+          }
+        } catch (e) {
+          console.error('[ledger-scrutiny] pause status check failed', e);
+        }
+      }
     } catch (e) {
       const msg = (e as Error).message ?? String(e);
       console.error(`[ledger-scrutiny] scrutiny group ${idx + 1}/${groups.length} ✗ ${msg}`);
@@ -1061,7 +1129,7 @@ async function runChunkedScrutiny(
     };
   }).filter((o) => o.message);
 
-  return { observations: observationInputs, inputTokens: totalInput, outputTokens: totalOutput, modelUsed: modelUsed || 'gemini-2.5-flash' };
+  return { observations: observationInputs, inputTokens: totalInput, outputTokens: totalOutput, modelUsed: modelUsed || 'gemini-2.5-flash', paused: pausedFlag };
 }
 
 // ── Routes ──────────────────────────────────────────────────────────────
@@ -1591,30 +1659,47 @@ router.post(
           try { ledgerScrutinyRepo.setScrutinyChunksTotal(scrutinyJobId, scrutinyUserId, total); } catch (e) { console.error('[ledger-scrutiny] set total failed', e); }
         }
         try { ledgerScrutinyRepo.bumpScrutinyChunksDone(scrutinyJobId, scrutinyUserId); } catch (e) { console.error('[ledger-scrutiny] bump failed', e); }
-      });
-      ledgerScrutinyRepo.replaceObservations(job.id, scrutinyResult.observations);
+      }, { jobId: scrutinyJobId, userId: scrutinyUserId });
 
+      // If the loop bailed early due to a Pause click, the partial
+      // observations are already in the DB via appendObservations
+      // (the incremental persistence inside runChunkedScrutiny). Skip
+      // the replace — it would wipe the chunks that completed AFTER
+      // the pause-decision but BEFORE the loop exited (in-flight
+      // workers from concurrency=2 finish their current chunk).
+      if (!scrutinyResult.paused) {
+        ledgerScrutinyRepo.replaceObservations(job.id, scrutinyResult.observations);
+      } else {
+        console.log(`[ledger-scrutiny] paused — skipping replaceObservations to preserve incremental writes`);
+      }
+
+      // Recompute totals from whatever is now in the DB so the
+      // summary reflects the actual persisted set (paused or
+      // complete).
+      const persistedObs = ledgerScrutinyRepo.listObservations(job.id);
       let high = 0, warn = 0, info = 0, flaggedAmount = 0;
-      for (const o of scrutinyResult.observations) {
+      for (const o of persistedObs) {
         if (o.severity === 'high') high += 1;
         else if (o.severity === 'warn') warn += 1;
         else info += 1;
         if (typeof o.amount === 'number') flaggedAmount += Math.abs(o.amount);
       }
       ledgerScrutinyRepo.updateTotals(job.id, high, warn, info, flaggedAmount);
-      // If the user cancelled mid-flight, leave the row at 'cancelled'.
-      // Persisting a 'done' over the top would hide their cancel intent
-      // and re-enable Export PDF on a job they explicitly abandoned.
+      // If the user paused/cancelled mid-flight, leave the row at
+      // 'cancelled' so the UI shows "paused with N observations
+      // saved" rather than flipping to 'done' and re-enabling Export
+      // on a job the user explicitly stopped early.
       const currentStatus = ledgerScrutinyRepo.getStatus(job.id, req.user.id);
-      if (currentStatus === 'cancelled') {
-        console.log(`[ledger-scrutiny] job ${job.id} was cancelled; skipping 'done' transition and quota debit`);
+      if (currentStatus === 'cancelled' || scrutinyResult.paused) {
+        console.log(`[ledger-scrutiny] job ${job.id} paused/cancelled; preserving ${persistedObs.length} observations and skipping 'done' transition`);
         res.status(200).json({
           job: serializeJob(ledgerScrutinyRepo.findByIdForUser(job.id, req.user.id)),
           accounts: ledgerScrutinyRepo.listAccounts(job.id).map(serializeAccount),
-          observations: [],
+          observations: persistedObs.map(serializeObservation),
           extractPath,
           chunkCount,
           cancelled: true,
+          paused: true,
         });
         return;
       }

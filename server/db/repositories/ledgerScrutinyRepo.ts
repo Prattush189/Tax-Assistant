@@ -400,6 +400,34 @@ export const ledgerScrutinyRepo = {
     return this.listObservations(jobId);
   },
 
+  /** Append observations as scrutiny chunks complete — used by the
+   *  "pause and save progress" flow. Each chunk's observations land
+   *  in the DB immediately so a mid-run cancel preserves whatever
+   *  the audit found before being stopped, and the polling loop on
+   *  the frontend surfaces them as they appear instead of waiting
+   *  for the whole 46-chunk run to finish. No delete; pure insert. */
+  appendObservations(jobId: string, observations: LedgerObservationCreateInput[]): void {
+    if (observations.length === 0) return;
+    const tx = db.transaction((rows: LedgerObservationCreateInput[]) => {
+      for (const o of rows) {
+        const id = crypto.randomBytes(16).toString('hex');
+        stmts.insertObservation.run(
+          id,
+          jobId,
+          o.accountId,
+          o.accountName,
+          o.code,
+          o.severity,
+          o.message,
+          o.amount,
+          o.dateRef,
+          o.suggestedAction,
+        );
+      }
+    });
+    tx(observations);
+  },
+
   setObservationStatus(observationId: string, userId: string, status: LedgerObservationStatus): boolean {
     return stmts.updateObservationStatus.run(status, observationId, userId).changes > 0;
   },
