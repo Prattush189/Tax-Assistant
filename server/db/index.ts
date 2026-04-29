@@ -242,6 +242,18 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_bank_rules_user_id ON bank_statement_rul
   if (!names.includes('scrutiny_chunks_done')) {
     db.exec("ALTER TABLE ledger_scrutiny_jobs ADD COLUMN scrutiny_chunks_done INTEGER NOT NULL DEFAULT 0");
   }
+  // Extract-phase chunk progress (dedicated, not the page-billing
+  // counters). Set when the TSV chunked path starts; bumped per
+  // chunk. Lets the frontend show "Reading ledger structure — chunk
+  // 5 of 33 · 15%" instead of the indeterminate sliver. Page-billing
+  // counters (pages_total / pages_processed) stay reserved for
+  // credit math.
+  if (!names.includes('extract_chunks_total')) {
+    db.exec("ALTER TABLE ledger_scrutiny_jobs ADD COLUMN extract_chunks_total INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!names.includes('extract_chunks_done')) {
+    db.exec("ALTER TABLE ledger_scrutiny_jobs ADD COLUMN extract_chunks_done INTEGER NOT NULL DEFAULT 0");
+  }
 }
 
 // Credits column on feature_usage so the quota check can sum credits

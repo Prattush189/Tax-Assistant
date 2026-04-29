@@ -227,11 +227,11 @@ function serializeJob(row: ReturnType<typeof ledgerScrutinyRepo.findByIdForUser>
     updatedAt: row.updated_at,
     scrutinyChunksTotal: typeof r.scrutiny_chunks_total === 'number' ? r.scrutiny_chunks_total : 0,
     scrutinyChunksDone: typeof r.scrutiny_chunks_done === 'number' ? r.scrutiny_chunks_done : 0,
-    // Extract phase reuses pages_total / pages_processed (TSV chunked
-    // path bumps this per chunk). Frontend uses these during status=
-    // 'extracting' before scrutinyChunksTotal flips non-zero.
-    extractChunksTotal: typeof r.pages_total === 'number' ? r.pages_total : 0,
-    extractChunksDone: typeof r.pages_processed === 'number' ? r.pages_processed : 0,
+    // Extract phase has dedicated chunk counters (separate from the
+    // pages_total / pages_processed columns used for credit billing).
+    // Set once at chunk-loop start; bumped per chunk completion.
+    extractChunksTotal: typeof r.extract_chunks_total === 'number' ? r.extract_chunks_total : 0,
+    extractChunksDone: typeof r.extract_chunks_done === 'number' ? r.extract_chunks_done : 0,
   };
 }
 
@@ -1437,6 +1437,10 @@ router.post(
         chunkCount = chunks.length;
         const dateCount = countLikelyDates(pdfText);
         console.log(`[ledger-scrutiny] pdfText path: ${chunks.length} chunk(s), ~${dateCount} candidate dates`);
+        // Set extract-chunk total upfront so the frontend's progress
+        // bar flips to "chunk 0 of N" immediately. Bumped per chunk
+        // below alongside the page-billing counter.
+        try { ledgerScrutinyRepo.setExtractChunksTotal(job.id, req.user!.id, chunks.length); } catch (e) { console.error('[ledger-scrutiny] set extract chunks total failed', e); }
 
         // Closure that fires for every Gemini attempt — successful or
         // not. Failed attempts get logged immediately at category
@@ -1491,6 +1495,7 @@ router.post(
               const note = results.length > 1 ? ` (bisected into ${results.length})` : '';
               console.log(`[ledger-scrutiny] ${label} ✓ ${totalAcct} accounts, ${totalTx} TX in ${Date.now() - t0}ms${note}`);
               ledgerScrutinyRepo.bumpPagesProcessed(job.id, req.user!.id, pagesPerChunk);
+              try { ledgerScrutinyRepo.bumpExtractChunksDone(job.id, req.user!.id); } catch (e) { console.error('[ledger-scrutiny] bump extract chunks failed', e); }
               return results;
             } catch (e) {
               const msg = (e as Error).message ?? String(e);

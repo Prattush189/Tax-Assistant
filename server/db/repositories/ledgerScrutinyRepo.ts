@@ -174,6 +174,20 @@ const stmts = {
            updated_at = datetime('now', '+5 hours', '+30 minutes')
      WHERE id = ? AND user_id = ?`
   ),
+  // Extract-phase chunk progress (dedicated columns; page-billing
+  // counters stay reserved for credit math).
+  setExtractChunksTotal: db.prepare(
+    `UPDATE ledger_scrutiny_jobs
+       SET extract_chunks_total = ?, extract_chunks_done = 0,
+           updated_at = datetime('now', '+5 hours', '+30 minutes')
+     WHERE id = ? AND user_id = ?`
+  ),
+  bumpExtractChunksDone: db.prepare(
+    `UPDATE ledger_scrutiny_jobs
+       SET extract_chunks_done = extract_chunks_done + 1,
+           updated_at = datetime('now', '+5 hours', '+30 minutes')
+     WHERE id = ? AND user_id = ?`
+  ),
   getScrutinyChunkProgress: db.prepare(
     'SELECT scrutiny_chunks_total, scrutiny_chunks_done FROM ledger_scrutiny_jobs WHERE id = ? AND user_id = ?'
   ),
@@ -303,6 +317,14 @@ export const ledgerScrutinyRepo = {
 
   bumpScrutinyChunksDone(id: string, userId: string): void {
     stmts.bumpScrutinyChunksDone.run(id, userId);
+  },
+
+  setExtractChunksTotal(id: string, userId: string, total: number): void {
+    stmts.setExtractChunksTotal.run(total, id, userId);
+  },
+
+  bumpExtractChunksDone(id: string, userId: string): void {
+    stmts.bumpExtractChunksDone.run(id, userId);
   },
 
   getScrutinyChunkProgress(id: string, userId: string): { scrutiny_chunks_total: number; scrutiny_chunks_done: number } | null {
