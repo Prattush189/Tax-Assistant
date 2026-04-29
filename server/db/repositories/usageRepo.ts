@@ -37,7 +37,7 @@ const stmts = {
     'INSERT INTO api_usage (ip, user_id, input_tokens, output_tokens, cost, is_plugin) VALUES (?, ?, ?, ?, ?, ?)'
   ),
   logWithBilling: db.prepare(
-    'INSERT INTO api_usage (ip, user_id, billing_user_id, input_tokens, output_tokens, cost, is_plugin, model, search_used, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO api_usage (ip, user_id, billing_user_id, input_tokens, output_tokens, cost, is_plugin, model, search_used, category, input_units) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ),
   getByIp: db.prepare(`
     SELECT
@@ -138,7 +138,7 @@ const analyticsStmts = {
   recentRequestsPaginated: db.prepare(`
     SELECT
       a.id, a.user_id, a.input_tokens, a.output_tokens, a.cost, a.created_at,
-      a.model, a.search_used, a.is_plugin, a.category,
+      a.model, a.search_used, a.is_plugin, a.category, a.input_units,
       COALESCE(u.name, 'Guest') AS user_name,
       COALESCE(u.email, '') AS user_email,
       COALESCE(u.plan, 'free') AS user_plan
@@ -189,7 +189,11 @@ export const usageRepo = {
     stmts.log.run(ip, userId, inputTokens, outputTokens, cost, isPlugin ? 1 : 0);
   },
 
-  /** Log usage with both actor (user_id) and billing (billing_user_id) ids. */
+  /** Log usage with both actor (user_id) and billing (billing_user_id) ids.
+   *  inputUnits is the user-input size in the unit that matters for the
+   *  category (transactions for bank/ledger, pages for notice/document,
+   *  message count for chat/suggestion). Defaults to 0 — admin UI shows
+   *  '—' for legacy / non-applicable rows. */
   logWithBilling(
     ip: string,
     userId: string,
@@ -201,8 +205,9 @@ export const usageRepo = {
     model?: string,
     searchUsed?: boolean,
     category?: string,
+    inputUnits?: number,
   ): void {
-    stmts.logWithBilling.run(ip, userId, billingUserId, inputTokens, outputTokens, cost, isPlugin ? 1 : 0, model ?? null, searchUsed ? 1 : 0, category ?? null);
+    stmts.logWithBilling.run(ip, userId, billingUserId, inputTokens, outputTokens, cost, isPlugin ? 1 : 0, model ?? null, searchUsed ? 1 : 0, category ?? null, inputUnits ?? 0);
   },
 
   getByIp(period: string = 'month'): UsageByIp[] {
@@ -269,7 +274,7 @@ export const usageRepo = {
   getRecentRequestsPaginated(limit: number, offset: number): Array<{
     id: number; user_id: string | null; input_tokens: number; output_tokens: number;
     cost: number; created_at: string; model: string | null; search_used: number; is_plugin: number;
-    category: string | null; user_name: string; user_email: string; user_plan: string;
+    category: string | null; input_units: number; user_name: string; user_email: string; user_plan: string;
   }> {
     return analyticsStmts.recentRequestsPaginated.all(limit, offset) as any[];
   },

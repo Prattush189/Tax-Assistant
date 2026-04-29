@@ -55,6 +55,28 @@ function fmtTokens(n: number): string {
   return String(n);
 }
 
+/** Categories report input_units in different real-world units. The
+ *  dashboard renders the right unit so an admin can read "337 txns"
+ *  vs "5 pages" at a glance and compute per-unit cost accurately. */
+function inputUnitLabel(category: string | null, units: number): string {
+  if (!units || units === 0) return '—';
+  switch (category) {
+    case 'bank_statement':
+    case 'ledger_extract':
+    case 'ledger_scrutiny':
+      return `${units.toLocaleString('en-IN')} txns`;
+    case 'notice':
+    case 'document':
+    case 'form16':
+      return `${units.toLocaleString('en-IN')} ${units === 1 ? 'page' : 'pages'}`;
+    case 'chat':
+    case 'suggestion':
+      return `${units.toLocaleString('en-IN')} ${units === 1 ? 'msg' : 'msgs'}`;
+    default:
+      return units.toLocaleString('en-IN');
+  }
+}
+
 function fmtInr(n: number): string {
   return 'Rs. ' + (Math.round(n * 10000) / 10000).toFixed(4);
 }
@@ -140,9 +162,11 @@ export function RecentApiCallsDashboard() {
                 <th className="text-left px-3 py-2 text-gray-500 font-medium">Model</th>
                 <th className="text-center px-3 py-2 text-gray-500 font-medium">Search</th>
                 <th className="text-center px-3 py-2 text-gray-500 font-medium">Plugin</th>
-                <th className="text-right px-3 py-2 text-gray-500 font-medium">Input</th>
-                <th className="text-right px-3 py-2 text-gray-500 font-medium">Output</th>
+                <th className="text-right px-3 py-2 text-gray-500 font-medium">In tok</th>
+                <th className="text-right px-3 py-2 text-gray-500 font-medium">Out tok</th>
+                <th className="text-right px-3 py-2 text-gray-500 font-medium" title="User-input size — txns for bank/ledger, pages for notice/document, msgs for chat">User input</th>
                 <th className="text-right px-3 py-2 text-gray-500 font-medium">Cost</th>
+                <th className="text-right px-3 py-2 text-gray-500 font-medium" title="Cost per user-input unit (cost ÷ input units)">₹ / unit</th>
               </tr>
             </thead>
             <tbody>
@@ -185,13 +209,19 @@ export function RecentApiCallsDashboard() {
                     </td>
                     <td className="px-3 py-2 text-right text-gray-500">{fmtTokens(c.input_tokens)}</td>
                     <td className="px-3 py-2 text-right text-gray-500">{fmtTokens(c.output_tokens)}</td>
+                    <td className="px-3 py-2 text-right text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                      {inputUnitLabel(c.category, c.input_units ?? 0)}
+                    </td>
                     <td className="px-3 py-2 text-right font-medium text-gray-900 dark:text-gray-100 whitespace-nowrap">{fmtInr(c.cost_inr)}</td>
+                    <td className="px-3 py-2 text-right text-gray-500 whitespace-nowrap">
+                      {c.input_units > 0 ? fmtInr(c.cost_inr / c.input_units) : '—'}
+                    </td>
                   </tr>
                 );
               })}
               {calls.length === 0 && !loading && (
                 <tr>
-                  <td colSpan={9} className="px-3 py-8 text-center text-gray-400">No API calls recorded</td>
+                  <td colSpan={11} className="px-3 py-8 text-center text-gray-400">No API calls recorded</td>
                 </tr>
               )}
             </tbody>

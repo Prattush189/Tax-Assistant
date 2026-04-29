@@ -43,6 +43,7 @@ interface Props {
 }
 
 const ACCEPT = '.pdf,.csv,application/pdf,text/csv';
+const MAX_BANK_TXNS_PER_FILE = 500;
 
 export function BankStatementUploader({ manager }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -132,6 +133,15 @@ export function BankStatementUploader({ manager }: Props) {
     const mapped = applyMapping(grid, mapping);
     if (mapped.length === 0) {
       toast.error('No transaction rows found after applying the mapping. Re-check the Date column.');
+      return;
+    }
+    // Per-file ceiling so a single huge upload can't blow through a
+    // user's monthly budget in one shot. 500 transactions is enough
+    // for ~95% of personal/SMB bank statements; if a user has more
+    // they should split by month or use the CSV path with smaller
+    // exports.
+    if (mapped.length > MAX_BANK_TXNS_PER_FILE) {
+      toast.error(`This statement has ${mapped.length.toLocaleString('en-IN')} transactions, but a single upload is capped at ${MAX_BANK_TXNS_PER_FILE.toLocaleString('en-IN')}. Split by month and re-upload.`);
       return;
     }
     const csv = mappedRowsToBankCsv(mapped);

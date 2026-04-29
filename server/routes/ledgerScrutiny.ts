@@ -1385,6 +1385,7 @@ router.post(
             modelUsed,
             false,
             'ledger_extract',
+            totalTx,
           );
         } catch (err) {
           console.error('[ledger-scrutiny] cost log failed', err);
@@ -1408,6 +1409,7 @@ router.post(
         try {
           const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
           const cost = costForModel(result.modelUsed, result.inputTokens, result.outputTokens);
+          const visionTotalTx = extracted.accounts.reduce((s, a) => s + a.transactions.length, 0);
           usageRepo.logWithBilling(
             clientIp,
             req.user.id,
@@ -1419,6 +1421,7 @@ router.post(
             result.modelUsed,
             false,
             'ledger_extract',
+            visionTotalTx,
           );
         } catch (err) {
           console.error('[ledger-scrutiny] cost log failed', err);
@@ -1534,6 +1537,7 @@ router.post(
       // Cost log for the (successful) scrutiny pass.
       try {
         const cost = costForModel(scrutinyResult.modelUsed, scrutinyResult.inputTokens, scrutinyResult.outputTokens);
+        const scrutinyTxCount = ledgerUnit === 'rows' ? ledgerRowsTotal : extracted.accounts.reduce((s, a) => s + a.transactions.length, 0);
         usageRepo.logWithBilling(
           ledgerClientIp,
           req.user.id,
@@ -1545,6 +1549,7 @@ router.post(
           scrutinyResult.modelUsed,
           false,
           'ledger_scrutiny',
+          scrutinyTxCount,
         );
       } catch (err) {
         console.error('[ledger-scrutiny] scrutiny cost log failed', err);
@@ -1728,6 +1733,12 @@ router.post('/:id/scrutinize', async (req: AuthRequest, res: Response) => {
     // Log scrutiny-pass token cost.
     try {
       const totalInput = usage.inputTokens + usage.cacheReadTokens + usage.cacheCreationTokens;
+      // Tx count for cost-per-row analytics. Wizard/preExtracted runs
+      // already know the count up front (ledgerRowsTotal); for vision
+      // and chunked-TSV runs we recover it from the persisted accounts.
+      const scrutinyTxCount = ledgerUnit === 'rows'
+        ? ledgerRowsTotal
+        : ledgerScrutinyRepo.listAccounts(job.id).reduce((s, a) => s + (a.tx_count ?? 0), 0);
       usageRepo.logWithBilling(
         clientIp,
         req.user.id,
@@ -1739,6 +1750,7 @@ router.post('/:id/scrutinize', async (req: AuthRequest, res: Response) => {
         usage.modelUsed,
         usage.withSearch,
         'ledger_scrutiny',
+        scrutinyTxCount,
       );
     } catch (err) {
       console.error('[ledger-scrutiny] cost log failed', err);

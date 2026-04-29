@@ -1269,6 +1269,11 @@ export interface RecentApiCall {
   search_used: boolean;
   is_plugin: boolean;
   category: string | null;
+  /** Size of the user input in the unit that matters for the
+   *  category — txn count for bank/ledger, page count for
+   *  notice/document, message count for chat. 0 for legacy or
+   *  un-instrumented call sites. */
+  input_units: number;
   created_at: string;
 }
 

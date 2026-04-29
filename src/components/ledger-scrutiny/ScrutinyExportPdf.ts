@@ -92,52 +92,81 @@ function renderHeader(doc: jsPDF, detail: LedgerScrutinyDetail): number {
 function renderObservation(doc: jsPDF, obs: LedgerScrutinyObservation, y: number): number {
   const sev = obs.severity;
   const [r, g, b] = severityColor(sev);
-  const bodyWidth = PAGE_W - MARGIN * 2 - 6;
+  const xBody = MARGIN + 6;
+  const bodyWidth = PAGE_W - MARGIN * 2 - 8;
 
-  // Estimate height
+  // Pre-measure so the severity bar matches the block height and so
+  // we know whether to insert the metadata sub-line.
   const messageLines = wrapText(doc, obs.message, bodyWidth);
   const actionLines = obs.suggestedAction ? wrapText(doc, `Action: ${obs.suggestedAction}`, bodyWidth) : [];
-  const estimated = 6 + messageLines.length * LINE + actionLines.length * LINE + 4;
-  y = ensureSpace(doc, y, estimated);
+  const hasMeta = !!obs.dateRef || obs.amount !== null;
+  const headerLines = 1 + (hasMeta ? 1 : 0);
+  const blockHeight = (headerLines + messageLines.length + actionLines.length) * LINE + 4;
+  y = ensureSpace(doc, y, blockHeight);
+
+  const blockStart = y;
 
   // Severity bar
   doc.setFillColor(r, g, b);
-  doc.rect(MARGIN, y, 2, estimated - 2, 'F');
+  doc.rect(MARGIN, blockStart, 2, blockHeight - 2, 'F');
 
-  // Header row: severity + code + date + amount
+  // Move to first baseline (jsPDF places text at the baseline; ~LINE-1
+  // gives a comfortable top margin inside the bar).
+  y += LINE - 1;
+
+  // Line 1: severity tag + code on one line. Code text width is
+  // measured at runtime so a long code like LARGE_UNEXPLAINED_CREDIT
+  // doesn't collide with anything to its right (the previous layout
+  // hard-coded x positions and overflowed when the code was wider
+  // than 38mm).
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9);
   doc.setTextColor(r, g, b);
-  doc.text(sev.toUpperCase(), MARGIN + 5, y + 4);
-  doc.setTextColor(100, 100, 100);
+  const sevTxt = sev.toUpperCase();
+  doc.text(sevTxt, xBody, y);
+  const sevWidth = doc.getTextWidth(sevTxt);
   doc.setFont('helvetica', 'normal');
-  doc.text(obs.code, MARGIN + 22, y + 4);
-  if (obs.dateRef) doc.text(obs.dateRef, MARGIN + 60, y + 4);
-  if (obs.amount !== null) {
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(40, 40, 40);
-    doc.text(`Rs. ${fmtINR(Math.abs(obs.amount))}`, PAGE_W - MARGIN - 2, y + 4, { align: 'right' });
-  }
-  y += 6;
+  doc.setTextColor(100, 100, 100);
+  doc.text(obs.code, xBody + sevWidth + 4, y);
+  y += LINE;
 
-  // Message
+  // Line 2 (optional): date on left, amount right-aligned. Both have
+  // their own dedicated row so length variation in either can never
+  // overlap — also gives the eye a clean header → meta → body break.
+  if (hasMeta) {
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    if (obs.dateRef) {
+      doc.setTextColor(120, 120, 120);
+      doc.text(obs.dateRef, xBody, y);
+    }
+    if (obs.amount !== null) {
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(40, 40, 40);
+      doc.text(`Rs. ${fmtINR(Math.abs(obs.amount))}`, PAGE_W - MARGIN - 2, y, { align: 'right' });
+    }
+    y += LINE;
+  }
+
+  // Body — message
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(10);
   doc.setTextColor(20, 20, 20);
   for (const line of messageLines) {
-    doc.text(line, MARGIN + 5, y);
+    doc.text(line, xBody, y);
     y += LINE;
   }
 
-  // Suggested action
+  // Suggested action — slightly muted
   if (actionLines.length > 0) {
     doc.setTextColor(80, 80, 80);
     doc.setFontSize(9);
     for (const line of actionLines) {
-      doc.text(line, MARGIN + 5, y);
+      doc.text(line, xBody, y);
       y += LINE;
     }
   }
+
   y += 3;
   return y;
 }

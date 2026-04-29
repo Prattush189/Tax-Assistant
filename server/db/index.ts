@@ -438,6 +438,15 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_obs_account_id ON ledger_observat
     // 'chat' | 'notice' | 'suggestion' | null (legacy rows)
     db.exec("ALTER TABLE api_usage ADD COLUMN category TEXT");
   }
+  // input_units: the size of the user's input in the unit that
+  // matters for that category. Bank/ledger = transaction count;
+  // notice/document = page count; chat/suggestion = message count
+  // (usually 1). Lets the admin dashboard compute "cost per row" or
+  // "cost per page" for unit-pricing validation. Legacy rows stay
+  // at 0 — admin UI shows '—' for those.
+  if (!usageCols.includes('input_units')) {
+    db.exec("ALTER TABLE api_usage ADD COLUMN input_units INTEGER NOT NULL DEFAULT 0");
+  }
 }
 
 // Add filing_status + notes to profiles (merge clients into profiles)

@@ -530,6 +530,18 @@ export function Sidebar({
             Upload Statement
           </button>
         )}
+
+        {/* New Ledger Button — same shape and placement as Upload
+            Statement so the two analyzer views feel like siblings. */}
+        {activeView === 'ledger_scrutiny' && (
+          <button
+            onClick={() => { onNewLedgerScrutiny(); onClose(); }}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-xl shadow-md shadow-emerald-600/15 transition-all text-sm"
+          >
+            <Plus className="w-4 h-4" />
+            Upload Ledger
+          </button>
+        )}
       </div>
 
       {/* History */}

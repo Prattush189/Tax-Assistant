@@ -1394,7 +1394,7 @@ ${JSON.stringify(batch)}`;
           // runs on gemini-2.5-flash / gemini-3-flash-preview; flat T2
           // rates were under-counting by 3-6x.
           const cost = usages.reduce((a, u) => a + costForModel(u.modelUsed, u.inputTokens, u.outputTokens), 0);
-          usageRepo.logWithBilling(clientIp, req.user.id, quota.billingUserId, inputTok, outputTok, cost, false, usages[0].modelUsed, false, 'bank_statement');
+          usageRepo.logWithBilling(clientIp, req.user.id, quota.billingUserId, inputTok, outputTok, cost, false, usages[0].modelUsed, false, 'bank_statement', txCount);
         }
       } catch (err) {
         console.error('[bank-statements] Failed to log cost:', err);
