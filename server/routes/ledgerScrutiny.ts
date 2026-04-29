@@ -41,7 +41,7 @@ import { userRepo } from '../db/repositories/userRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { getBillingUser } from '../lib/billing.js';
-import { getUserLimits } from '../lib/planLimits.js';
+import { getUserLimits, getEffectivePlan } from '../lib/planLimits.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
