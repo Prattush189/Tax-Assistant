@@ -570,6 +570,61 @@ export function applyMapping(
       }
     }
 
+    // Sanity-check amount/balance against the bank's running balance.
+    // For narrow-text rows pdfjs sometimes drops the amount value at
+    // a column boundary and ends up putting the *running balance* into
+    // our debit cell and the *actual fee* into our balance cell — or
+    // mis-clusters a credit value into the debit anchor. The printed
+    // running balance is ground truth: if `lastBalance + amount` does
+    // not equal `pending.balance`, but flipping the sign / swapping
+    // amount<->balance / both makes the equation hold within a paisa,
+    // adopt the corrected pair. Tight gates (>1₹ as-is error AND
+    // <5p corrected error) so this only fires on genuinely-wrong rows
+    // and never "fixes" a correct one.
+    //
+    // Skip when amount came from the balance-delta fallback above —
+    // by construction that path already satisfies the equation, and
+    // re-checking would just compare floating point against itself.
+    if (
+      amount != null && Number.isFinite(amount)
+      && lastBalance != null && pending.balance != null
+      // The balance-delta fallback path produces an exact match by
+      // construction; only sanity-check rows where amount came from
+      // the explicit cells (debit/credit/amountSingle).
+      && !(pending.debit === 0 && pending.credit === 0 && pending.amountSingle == null)
+    ) {
+      const sign = amount < 0 ? -1 : 1;
+      const m = Math.abs(amount);
+      const b = Math.abs(pending.balance);
+      const errFor = (newAmt: number, newBal: number) =>
+        Math.abs((lastBalance! + newAmt) - newBal);
+
+      type Candidate = { amount: number; balance: number; err: number; kind: string };
+      const asIs: Candidate = {
+        amount, balance: pending.balance,
+        err: errFor(amount, pending.balance), kind: 'as-is',
+      };
+      const candidates: Candidate[] = [
+        asIs,
+        // Sign flip (credit mis-clustered as debit, or vice versa).
+        { amount: -amount, balance: pending.balance,
+          err: errFor(-amount, pending.balance), kind: 'flip' },
+        // Swap (amount and balance values landed in each other's
+        // columns), keeping original sign.
+        { amount: sign * b, balance: m,
+          err: errFor(sign * b, m), kind: 'swap' },
+        // Swap + flip.
+        { amount: -sign * b, balance: m,
+          err: errFor(-sign * b, m), kind: 'swap+flip' },
+      ];
+      let best = asIs;
+      for (const c of candidates) if (c.err < best.err) best = c;
+      if (asIs.err > 1 && best.err < 0.05 && best !== asIs) {
+        amount = best.amount;
+        pending.balance = best.balance;
+      }
+    }
+
     if (amount == null || !Number.isFinite(amount)) {
       stats.skippedNoAmount += 1;
       pending = null;
