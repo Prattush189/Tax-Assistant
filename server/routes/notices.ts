@@ -9,6 +9,7 @@ import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { styleProfileRepo } from '../db/repositories/styleProfileRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
+import { getEffectivePlan } from '../lib/planLimits.js';
 import { getBillingUser } from '../lib/billing.js';
 import { extractWithRetry } from '../lib/documentExtract.js';
 import { GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST } from '../lib/gemini.js';
@@ -231,16 +232,21 @@ router.post(
   // PDF page-count gate. Server-side backstop for the client check in
   // NoticeForm — protects against direct API uploads that bypass the
   // browser. Counts `/Type /Page` markers in the PDF binary; cheap
-  // (no pdfjs dependency on the server) and accurate enough for the
-  // 10-page ceiling. Buffer is already in memory via multer.memoryStorage.
+  // (no pdfjs dependency on the server) and accurate enough.
+  // Cap is plan-tiered: Free / Pro = 10 pages, Enterprise = 50.
+  // Notices are usually 1-3 pages but enterprise users sometimes
+  // upload bundled assessment-order packs that genuinely run longer.
   if (req.file && req.file.mimetype === 'application/pdf') {
     const pdfStr = req.file.buffer.toString('latin1');
     // `/Type /Page` (with optional whitespace) but NOT `/Type /Pages`
     // (the page-tree node) — negative-lookahead on the trailing 's'.
     const matches = pdfStr.match(/\/Type\s*\/Page(?![s\w])/g);
     const pageCount = matches ? matches.length : 0;
-    if (pageCount > 10) {
-      res.status(413).json({ error: 'PDF too large — please attach a shorter document.' });
+    const actor = userRepo.findById(req.user!.id);
+    const plan = actor ? getEffectivePlan(actor) : 'free';
+    const maxPages = plan === 'enterprise' ? 50 : 10;
+    if (pageCount > maxPages) {
+      res.status(413).json({ error: `PDF too large — your plan allows up to ${maxPages} pages per notice. Please attach a shorter document or upgrade.` });
       return;
     }
   }
