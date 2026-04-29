@@ -274,12 +274,15 @@ router.post(
         mergedDin: data.din ?? undefined,
       };
 
-      // Log vision cost to api_usage with feature='notice'. We use the same
-      // T2 (gemini-2.5-flash-lite) cost basis since extractWithRetry's primary
-      // model is GEMINI_MODEL = 'gemini-2.5-flash-lite'.
+      // Log vision cost to api_usage. Tagged 'notice_extract' (not
+      // plain 'notice') so the admin dashboard can distinguish the
+      // PDF-extract pass from the draft-generation pass — they have
+      // different cost profiles (extract = vision input, no search;
+      // draft = text input + search grounding) and merging them into
+      // one label hides which is the bigger spend.
       try {
         const cost = extraction.inputTokens * GEMINI_T2_INPUT_COST + extraction.outputTokens * GEMINI_T2_OUTPUT_COST;
-        usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, extraction.inputTokens, extraction.outputTokens, cost, false, extraction.modelUsed, false, 'notice');
+        usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, extraction.inputTokens, extraction.outputTokens, cost, false, extraction.modelUsed, false, 'notice_extract');
       } catch (logErr) {
         console.error('[notices] Failed to log extraction cost:', logErr);
       }
