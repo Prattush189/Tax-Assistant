@@ -492,7 +492,7 @@ interface BalanceMismatch {
  * exactly — the bank's printed number is authoritative, the AI's
  * credit/debit classification is not.
  *
- * Two outcomes per mismatched row:
+ * Three outcomes per mismatched row:
  *
  *   - Pure sign flip (|expected| ≈ |actual|, signs differ): the AI
  *     got the rupee amount right but put it on the wrong side of the
@@ -502,10 +502,16 @@ interface BalanceMismatch {
  *     pattern (e.g. 16-row Canara mismatch → ₹62K each-way drift,
  *     ₹1.23L net error).
  *
- *   - Magnitudes also disagree: real extraction error (AI misread
- *     a digit, missed a row, etc.). We can't pick a correct value
- *     from one side, so we surface it for human review and leave
- *     tx.amount alone.
+ *   - Column swap (amount and balance values landed in each other's
+ *     columns upstream — typical for narrow-fee rows where pdfjs's
+ *     column anchor drifts past the boundary). prev.balance + ±|cur.
+ *     balance| ≈ |cur.amount| pins the swap. We overwrite both
+ *     amount and balance with the corrected pair.
+ *
+ *   - Magnitudes still disagree after both candidates fail: real
+ *     extraction error (AI misread a digit, missed a row, etc.). We
+ *     can't pick a correct value, so we surface it for human review
+ *     and leave tx.amount alone.
  *
  * Mutates txs in-place. Skips rows where either balance is null
  * (page boundaries, banks that don't print a per-row balance).
@@ -530,6 +536,33 @@ function reconcileBalances(txs: BankTransactionInput[]): {
     if (Math.abs(Math.abs(expectedDelta) - Math.abs(actualDelta)) <= tol) {
       // Sign flip — printed balance is ground truth, overwrite.
       cur.amount = expectedDelta;
+      autoCorrected++;
+      continue;
+    }
+
+    // Column swap — amount and balance values landed in each other's
+    // columns upstream. The corrected amount magnitude lives in
+    // cur.balance and the corrected balance lives in |cur.amount|.
+    // Verify against prev.balance: prev.balance + corrected_amount
+    // should equal corrected_balance within a paisa.
+    const sign = actualDelta < 0 ? -1 : 1;
+    const correctedAmtCandA = sign * Math.abs(cur.balance);
+    const correctedAmtCandB = -sign * Math.abs(cur.balance);
+    const correctedBal = Math.abs(actualDelta);
+    const errA = Math.abs((prev.balance + correctedAmtCandA) - correctedBal);
+    const errB = Math.abs((prev.balance + correctedAmtCandB) - correctedBal);
+    // Tight gate (5 paise) — only adopt when the swap explanation
+    // produces a near-exact match against the printed balance,
+    // otherwise we'd false-correct rows that have a different bug.
+    if (errA < 0.05 && errA <= errB) {
+      cur.amount = correctedAmtCandA;
+      cur.balance = correctedBal;
+      autoCorrected++;
+      continue;
+    }
+    if (errB < 0.05) {
+      cur.amount = correctedAmtCandB;
+      cur.balance = correctedBal;
       autoCorrected++;
       continue;
     }
