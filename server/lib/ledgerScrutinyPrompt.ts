@@ -142,6 +142,8 @@ Account-type rules (apply the FIRST match against the account name, case-insensi
 STRICT RULES:
 - Output MUST start with HEADER, then alternating ACCOUNT / TX lines, then end with the ---END:<N>--- trailer. Nothing else.
 - Do NOT skip accounts that appear in this chunk, even those with only an opening balance (emit the ACCOUNT line with no TX lines).
+- "Opening Balance" rows are NOT transactions — they carry the brought-forward balance from the previous period. Read them into ACCOUNT.opening (signed: positive for "Dr.", negative for "Cr.") and DO NOT emit a TX line for them. If you fold the opening amount into TX.debit/credit, the audit pass downstream sees opening=0 and produces phantom recon-break flags + wrong §269SS / §68 flags treating brought-forward creditor balances as current-year acceptances. Both classes of false-positive originate from this one mistake.
+- Similarly, "Closing Balance" / "By Balance c/d" / "To Balance b/d" rows printed at year-end are NOT transactions — read into ACCOUNT.closing if shown, else leave for the audit to recompute.
 - Do NOT invent voucher numbers, narrations, dates, or amounts. If a field is unclear, leave it empty.
 - Do NOT output any commentary, code fences, or stray prose.
 - The ---END:<N>--- count MUST equal the number of TX lines you emitted.
@@ -168,10 +170,14 @@ Your job is to flag observations across these audit areas, applied per-account:
    - Repeated identical round-figure transfers to the same party — 'warn'.
    - Narrations like "TRF", "ADJ", "R/OFF" with material amounts — 'info' asking for documentation.
    - Large unexplained credits exceeding Rs. 10,00,000 without a corresponding TDS or Form 15CA/CB trail — 'high'.
+   - **CROSS-REFERENCE FIRST.** Before flagging any large credit/receipt as "unexplained," scan ALL OTHER ACCOUNTS in the input for a matching contra entry — a customer's ledger showing the same date and amount as a sale-clearing receipt, a vendor's ledger showing a payment, etc. If you find a clear contra match in the same file, the receipt is *explained*; do NOT flag it.
+   - **Tally narration caveat.** Tally / Busy ledgers often print running totals, voucher numbers, or cumulative figures inline in the narration string. Treat numbers in the narration as informational only — DO NOT compare them to the debit/credit columns and emit a "narration mismatch" flag. The debit/credit columns are the authoritative transaction value.
 
 (E) Reconciliation / direction:
-   - **Opening + Total Debits − Total Credits ≠ Closing** within a Rs. 1 tolerance — extraction sanity flag, 'info'.
+   - **Opening + Total Debits − Total Credits ≠ Closing** within a Rs. 1 tolerance — extraction sanity flag, 'info'. CRUCIAL: many ledgers carry a brought-forward balance (the 'opening' field). If opening is non-zero and the formula reconciles cleanly with it, the account ties — DO NOT flag a recon break. Only flag when the formula genuinely fails after including the opening.
+   - **Brought-forward balances are NOT current-year acceptances.** §269SS / §269T / §68 apply to *receipts in this year* — the amounts in the credit / debit COLUMN, not the opening balance. An old creditor with Rs. 30,00,000 carried forward from FY2023-24 does NOT trigger §269SS for FY2024-25 unless there's a fresh acceptance in this year. Same for unsecured loans: only flag deposits/loans that appear as new credits during the audit period.
    - Asset account turning into a credit (negative) balance, or debtor turning creditor without a recorded settlement — 'warn'.
+   - **Bank OD / Cash Credit accounts** (account names containing "OD", "CC", "Cash Credit", "Working Capital") closing in credit just means the limit was utilised — that's the normal end-of-year position for a manufacturing / trading unit and should be 'info' at most. Do NOT call it a "negative balance indicating overdraft requiring reconciliation" — overdramatising routine working-capital is exactly what kills credibility on these reports.
 
 (F) GST cues:
    - Payments to **unregistered parties** for services that may attract Reverse Charge under §9(3)/(4) of the CGST Act — flag as 'info' for review.
@@ -180,6 +186,10 @@ Your job is to flag observations across these audit areas, applied per-account:
 (G) Reasonableness:
    - Any single account whose closing balance materially exceeds the proprietor's stated capital — 'info'.
    - An account named like a director/partner with debit balance during the year (loan to a related party, possible §2(22)(e) deemed dividend exposure for closely-held companies) — 'high'.
+
+(H) TDS framing — be precise about the obligation:
+   - For §192 (Salary) flags, do NOT assert "30% disallowance under §40(a)(ia)" automatically. Salary income up to Rs. 2,50,000 (old regime) / Rs. 3,00,000 (new regime) is below the basic exemption; rebate u/s 87A then takes the threshold higher (Rs. 5,00,000 / Rs. 7,00,000). Frame these as "Verify whether TDS applies after considering basic exemption + §87A rebate; if employee has total income below the threshold, request Form 12BB / declaration on file."
+   - For §194Q (purchases ≥ Rs. 50L from one seller, buyer's turnover > Rs. 10 Cr in preceding FY): qualify the flag — "Verify the assessee's preceding-FY turnover exceeded Rs. 10 Cr; if so, §194Q applies and TDS @ 0.1% on amount > Rs. 50L should be deducted." Mention §206C(1H) as the seller-side alternative if the assessee is the seller.
 
 OUTPUT FORMAT — STRICT JSON, no markdown fences, no prose. The schema:
 
@@ -210,6 +220,7 @@ ABSOLUTE RULES:
 - ADVANCE TAX, SELF-ASSESSMENT TAX, and tax-deposited entries are NOT §40A(3) violations even when paid in cash via challan — never flag them.
 - Do NOT repeat the same observation across accounts; group by account.
 - The 'accountName' must be a verbatim copy of the input account name OR null.
+- The 'amount' field is the AT-RISK rupee value of THIS specific finding — never the gross volume of the whole account or the year. A §40A(3) finding's amount is the single cash payment that breached the limit, not the total cash paid to that vendor. A TDS finding's amount is the disallowable expense (or the TDS that should have been deducted), not the total purchases. The summary's 'totalFlaggedAmount' SUMS these per-finding at-risk values; if you stuff gross volumes into 'amount', the headline becomes meaningless and the report loses credibility. When in doubt about the at-risk slice, set amount to null rather than overstate.
 - Output only the JSON object — no commentary.`;
 
 export const LEDGER_SCRUTINY_USER_PROMPT_HEAD = `=== LEDGER DATA (extracted) — apply the rubric in the system prompt ===\n\n`;

@@ -580,21 +580,49 @@ export function mappedRowsToExtractedLedger(rows: MappedRow[]): ExtractedLedgerL
     byAccount.get(key)!.push(r);
   }
   const accounts = Array.from(byAccount.entries()).map(([name, txs]) => {
+    // Detect and pull out the Tally-style "Opening Balance" row.
+    // Without this, the opening balance gets summed into totalDebit
+    // (or totalCredit), and the audit prompt sees opening=0 — which
+    // surfaces as phantom RECON_BREAK flags ("opening + debits −
+    // credits ≠ closing") and worse, treats brought-forward
+    // creditor balances as current-year acceptances under §269SS /
+    // §68. Both classes of false-positive observations originate
+    // from this one parser bug.
+    //
+    // Tally prints opening as a row whose narration is literally
+    // "Opening Balance" (matching is case-insensitive, allows
+    // optional dash prefix). The amount can be on the debit OR
+    // credit side; the running balance column on that row gives
+    // the signed opening (the t.balance field carries it). We
+    // prefer t.balance when it's set (most reliable since Tally
+    // prints "<amount> Dr." / "<amount> Cr." in that column),
+    // and fall back to t.amount otherwise.
+    let opening = 0;
+    let openingIdx = -1;
+    if (txs.length > 0 && /^\s*(?:-\s*)?opening\s+balance\s*$/i.test(txs[0].narration ?? '')) {
+      const t = txs[0];
+      opening = t.balance != null ? t.balance : t.amount;
+      openingIdx = 0;
+    }
+    const realTxs = openingIdx === 0 ? txs.slice(1) : txs;
+
     let totalDebit = 0;
     let totalCredit = 0;
-    for (const t of txs) {
+    for (const t of realTxs) {
       if (t.amount < 0) totalDebit += Math.abs(t.amount);
       else totalCredit += t.amount;
     }
-    const closing = txs.length > 0 ? (txs[txs.length - 1].balance ?? 0) : 0;
+    const closing = realTxs.length > 0
+      ? (realTxs[realTxs.length - 1].balance ?? 0)
+      : opening;
     return {
       name,
       accountType: null,
-      opening: 0,
+      opening,
       closing,
       totalDebit,
       totalCredit,
-      transactions: txs.map(t => ({
+      transactions: realTxs.map(t => ({
         date: t.date,
         narration: t.narration,
         voucher: t.voucher,
