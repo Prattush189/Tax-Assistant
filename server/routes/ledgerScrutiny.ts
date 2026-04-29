@@ -910,7 +910,7 @@ async function scrutinizeAccountGroup(
   }
   for (let attempt = 0; attempt < MAX_FALLBACK_ATTEMPTS; attempt++) {
     try {
-      return await scrutinizeAccountGroupOnce(extracted, groupAccounts, txPerAccount, totalAccounts, GEMINI_CHAT_MODEL_THINK_FB, 24576, recordAttempt);
+      return await scrutinizeAccountGroupOnce(extracted, groupAccounts, txPerAccount, totalAccounts, GEMINI_CHAT_MODEL_THINK_FB, 32768, recordAttempt);
     } catch (err) {
       lastErr = err;
       if (attempt < MAX_FALLBACK_ATTEMPTS - 1) {
@@ -919,6 +919,58 @@ async function scrutinizeAccountGroup(
     }
   }
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
+/**
+ * Recursive split-on-fail wrapper around scrutinizeAccountGroup.
+ *
+ * If a chunk fails parse on BOTH primary and fallback (typically
+ * "finish_reason=length" when the model truncates mid-JSON because
+ * one chunk happens to be unusually flag-dense — a bank account
+ * with many NEFT receipts each generating a CASH_40A3 / TDS_194Q
+ * observation), halve the chunk and recurse. Caps at depth 3
+ * (~6 → 3 → 1 → fail) so a genuinely-bad single account doesn't
+ * loop forever.
+ *
+ * Mirrors the bank-statement TSV pipeline's extractLedgerTsvWithBisect.
+ * Without this, one truncating chunk failed the entire 46-chunk
+ * audit even though the other 45 succeeded.
+ */
+async function scrutinizeWithSplit(
+  extracted: ExtractedLedger,
+  group: ExtractedAccount[],
+  txPerAccount: number,
+  totalAccounts: number,
+  recordAttempt: RecordAttempt,
+  depth: number = 0,
+): Promise<ScrutinyChunkResult> {
+  try {
+    return await scrutinizeAccountGroup(extracted, group, txPerAccount, totalAccounts, recordAttempt);
+  } catch (err) {
+    const msg = (err as Error).message ?? String(err);
+    // Only split on truncation/parse errors — server / network /
+    // auth errors should propagate (no point splitting if the API
+    // key is bad).
+    const looksLikeTruncation = /parse failed|finish_reason=length|JSON/i.test(msg);
+    if (!looksLikeTruncation) throw err;
+    if (group.length <= 1 || depth >= 3) throw err;
+
+    const mid = Math.ceil(group.length / 2);
+    const a = group.slice(0, mid);
+    const b = group.slice(mid);
+    console.warn(`[ledger-scrutiny] chunk too dense (${group.length} accts at depth ${depth}), bisecting → [${a.length}, ${b.length}]: ${msg.slice(0, 120)}`);
+
+    const [ra, rb] = await Promise.all([
+      scrutinizeWithSplit(extracted, a, txPerAccount, totalAccounts, recordAttempt, depth + 1),
+      scrutinizeWithSplit(extracted, b, txPerAccount, totalAccounts, recordAttempt, depth + 1),
+    ]);
+    return {
+      observations: [...ra.observations, ...rb.observations],
+      inputTokens: ra.inputTokens + rb.inputTokens,
+      outputTokens: ra.outputTokens + rb.outputTokens,
+      modelUsed: ra.modelUsed || rb.modelUsed,
+    };
+  }
 }
 
 /**
@@ -944,16 +996,15 @@ async function runChunkedScrutiny(
   // personal-expense and round-tripping signals for the rubric. The old
   // 200-row digest was paying input cost without proportional accuracy.
   const TX_PER_ACCOUNT = 60;
-  // 8 accounts × 60 tx ≈ 18K input tokens — well under the
-  // gemini-2.5-flash window — and the 16K output ceiling holds 30+
-  // observations comfortably even when one chunk happens to contain a
-  // bank account with many flag-worthy NEFT inflows. Was previously
-  // 15 accounts / 8K output, which truncated mid-JSON on dense chunks
-  // and surfaced as "Scrutiny chunk JSON parse failed,
-  // finish_reason=length" because Gemini 2.5 Flash spends 5-7K of its
-  // budget on reasoning tokens (those count against max_tokens but
-  // don't appear in the JSON output).
-  const ACCOUNTS_PER_CHUNK = 8;
+  // 6 accounts × 60 tx ≈ 14K input tokens — well under the
+  // gemini-2.5-flash window. Output ceiling is 16K primary / 32K
+  // fallback, which holds 30+ observations comfortably even on a
+  // chunk full of dense bank-account flags. Was 8; dropped to 6 so
+  // chunks have more output headroom by default. Edge cases that
+  // STILL hit finish_reason=length get auto-bisected by
+  // scrutinizeWithSplit below — same pattern as the bank-statement
+  // TSV pipeline's extractTsvWithBisect.
+  const ACCOUNTS_PER_CHUNK = 6;
   const SCRUTINY_CONCURRENCY = 2;
 
   const accounts = extracted.accounts;
@@ -975,7 +1026,7 @@ async function runChunkedScrutiny(
   await mapWithConcurrency(groups, SCRUTINY_CONCURRENCY, async (group, idx) => {
     const t0 = Date.now();
     try {
-      const r = await scrutinizeAccountGroup(extracted, group, TX_PER_ACCOUNT, accounts.length, recordAttempt);
+      const r = await scrutinizeWithSplit(extracted, group, TX_PER_ACCOUNT, accounts.length, recordAttempt);
       console.log(`[ledger-scrutiny] scrutiny group ${idx + 1}/${groups.length} ✓ ${r.observations.length} observations in ${Date.now() - t0}ms`);
       allObservations.push(...r.observations);
       totalInput += r.inputTokens;
