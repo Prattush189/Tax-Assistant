@@ -8,6 +8,7 @@ import {
   renameLedgerScrutinyJob,
   deleteLedgerScrutinyJob,
   cancelLedgerScrutinyJob,
+  resumeLedgerScrutinyJob,
   updateLedgerObservationStatus,
   LedgerScrutinyJob,
   LedgerScrutinyDetail,
@@ -183,6 +184,19 @@ export function useLedgerScrutinyManager(enabled: boolean) {
    *  has likely already done partial work, and refunding would let users
    *  bypass the limit by spamming Generate→Cancel. The server keeps the
    *  Promise chain running internally but discards the result. */
+  const resume = useCallback(async (id: string): Promise<void> => {
+    setError(null);
+    try {
+      const result = await resumeLedgerScrutinyJob(id);
+      setJobs((prev) => prev.map((j) => (j.id === id ? result.job : j)));
+      setCurrent((prev) => (prev && prev.job.id === id ? { ...prev, job: result.job } : prev));
+      // Polling loop will pick up progress as chunks complete.
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Resume failed');
+      throw e;
+    }
+  }, []);
+
   const cancel = useCallback(async (id: string): Promise<void> => {
     const { job } = await cancelLedgerScrutinyJob(id);
     if (job) {
@@ -238,6 +252,7 @@ export function useLedgerScrutinyManager(enabled: boolean) {
     rename,
     remove,
     cancel,
+    resume,
     setObservationStatus,
   };
 }

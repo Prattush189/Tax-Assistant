@@ -2238,6 +2238,15 @@ export async function cancelLedgerScrutinyJob(id: string): Promise<{ job: Ledger
   return authFetch(`/api/ledger-scrutiny/${id}/cancel`, { method: 'POST' });
 }
 
+/** Resume a paused/cancelled ledger audit from the chunk it stopped
+ *  at. Server validates that the job is in a resumable state and
+ *  that there are remaining chunks. Returns the job row with status
+ *  flipped back to 'scrutinizing'; the actual chunk work runs in
+ *  the background and progress shows up via the existing 5s polling. */
+export async function resumeLedgerScrutinyJob(id: string): Promise<{ job: LedgerScrutinyJob; resuming: boolean; fromChunk: number; totalChunks: number }> {
+  return authFetch(`/api/ledger-scrutiny/${id}/resume`, { method: 'POST' });
+}
+
 export async function updateLedgerObservationStatus(
   jobId: string,
   obsId: string,

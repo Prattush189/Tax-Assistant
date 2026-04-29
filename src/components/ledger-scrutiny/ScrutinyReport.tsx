@@ -82,6 +82,26 @@ export function ScrutinyReport({ manager }: Props) {
   // export an empty PDF.
   const isRunning = job.status === 'extracting' || job.status === 'scrutinizing' || job.status === 'pending';
   const isError = job.status === 'error';
+  // Resumable when the user paused mid-scrutiny: status is
+  // 'cancelled', some chunks completed, and chunks remain. The
+  // Continue button below kicks off /resume which picks up from
+  // scrutinyChunksDone.
+  const canResume = job.status === 'cancelled'
+    && (job.scrutinyChunksDone ?? 0) > 0
+    && (job.scrutinyChunksTotal ?? 0) > (job.scrutinyChunksDone ?? 0);
+  const [resumePending, setResumePending] = useState(false);
+  const handleResume = async () => {
+    if (resumePending) return;
+    setResumePending(true);
+    try {
+      await manager.resume(job.id);
+      toast.success('Audit resumed — picking up where it left off');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Resume failed');
+    } finally {
+      setResumePending(false);
+    }
+  };
   const openCount = observations.filter((o) => o.status === 'open');
   const high = openCount.filter((o) => o.severity === 'high').length;
   const warn = openCount.filter((o) => o.severity === 'warn').length;
@@ -199,6 +219,35 @@ export function ScrutinyReport({ manager }: Props) {
             }} />
           </div>
           <style>{`@keyframes ledgerProgress { 0% { transform: translateX(-120%); } 50% { transform: translateX(120%); } 100% { transform: translateX(320%); } }`}</style>
+        </div>
+      )}
+
+      {/* Paused-with-progress banner — shows when the user clicked
+          "Pause and save progress" and there are remaining chunks
+          to run. The Continue button kicks off /resume which picks
+          up from the chunk that was about to start. Uses amber
+          styling to match the Pause button's intent. */}
+      {canResume && (
+        <div className="rounded-2xl border-2 border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-4 mb-4">
+          <div className="flex items-start gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold text-amber-800 dark:text-amber-200">
+                Audit paused — {(job.scrutinyChunksDone ?? 0).toLocaleString('en-IN')} of {(job.scrutinyChunksTotal ?? 0).toLocaleString('en-IN')} chunks finished
+              </p>
+              <p className="text-xs text-amber-700/80 dark:text-amber-300/80 mt-0.5">
+                Observations from completed chunks are saved below.
+                Click Continue to pick up from chunk {((job.scrutinyChunksDone ?? 0) + 1).toLocaleString('en-IN')} — already-finished chunks won't run again.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void handleResume()}
+              disabled={resumePending}
+              className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {resumePending ? 'Resuming…' : 'Continue audit'}
+            </button>
+          </div>
         </div>
       )}
 

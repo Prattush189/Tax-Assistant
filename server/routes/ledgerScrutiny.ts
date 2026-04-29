@@ -991,13 +991,13 @@ async function runChunkedScrutiny(
   accountIdByName: Map<string, string>,
   recordAttempt: RecordAttempt,
   onChunkDone: (completed: number, total: number) => void = () => {},
-  /** Job/user IDs are passed so the inner loop can persist each
-   *  chunk's observations as they complete (incremental) and check
-   *  whether the user has clicked "Pause / Cancel" between chunks.
-   *  When undefined, the function runs to completion as before
-   *  (legacy single-call path) — used by the SSE-streamed
-   *  /scrutinize endpoint that doesn't support mid-run cancel. */
   pauseControl?: { jobId: string; userId: string },
+  /** Resume support — skip the first `startChunkIndex` groups so a
+   *  paused audit can pick up where it left off without re-billing
+   *  for chunks that already completed. groups.length stays the
+   *  full count so the progress bar's "X of N" reads consistently
+   *  with what the user saw before pausing. */
+  startChunkIndex: number = 0,
 ): Promise<{
   observations: LedgerObservationCreateInput[];
   inputTokens: number;
@@ -1034,22 +1034,20 @@ async function runChunkedScrutiny(
   }
   console.log(`[ledger-scrutiny] chunked scrutiny: ${accounts.length} accounts → ${groups.length} group(s)`);
 
-  let completed = 0;
+  // Resume support: when startChunkIndex > 0, slice past the chunks
+  // a previous (paused) run already finished. The progress counter
+  // starts at startChunkIndex so the UI's "X of N" picks up smoothly
+  // — total stays at groups.length (the full job).
+  const chunksToRun = startChunkIndex > 0 ? groups.slice(startChunkIndex) : groups;
+  let completed = startChunkIndex;
   let totalInput = 0;
   let totalOutput = 0;
   let modelUsed = '';
   const allObservations: ScrutinyObservationRaw[] = [];
-  // Pause-aware loop: a flag plus a per-chunk DB status check. When
-  // the user clicks "Pause and save progress", the cancel endpoint
-  // sets status='cancelled'. The first chunk to finish AFTER that
-  // sets pausedFlag, and mapWithConcurrency's remaining workers
-  // see pausedFlag and skip processing without throwing — so the
-  // run stops cleanly without a thrown error and the partial
-  // results we've already persisted via appendObservations stay
-  // visible to the user.
   let pausedFlag = false;
 
-  await mapWithConcurrency(groups, SCRUTINY_CONCURRENCY, async (group, idx) => {
+  await mapWithConcurrency(chunksToRun, SCRUTINY_CONCURRENCY, async (group, localIdx) => {
+    const idx = localIdx + startChunkIndex;
     if (pausedFlag) {
       // Skip remaining chunks after pause; still bump the counter
       // so the progress bar reflects "X of total finished" even
@@ -2002,6 +2000,146 @@ router.post('/:id/cancel', (req: AuthRequest, res: Response) => {
     console.error('[ledger-scrutiny] cancel feature_usage log failed', err);
   }
   res.json({ job: serializeJob(ledgerScrutinyRepo.findByIdForUser(job.id, req.user.id)) });
+});
+
+// POST /api/ledger-scrutiny/:id/resume
+//
+// Picks up a paused/cancelled audit from the chunk it stopped at —
+// skips chunks that already finished (their observations are still
+// in ledger_observations from the incremental persistence) and runs
+// the remaining ones. Existing observations are preserved; new chunks'
+// observations are appended.
+//
+// Off-by-one note: with concurrency 2, when a pause hits, up to 2
+// in-flight chunks finish AFTER the pause-decision and bump
+// scrutiny_chunks_done. So skipping the first scrutiny_chunks_done
+// groups is safe in nearly all cases — the rare edge is if chunks
+// completed out of order (slow chunk N still pending while N+1
+// finished). For those, the slow chunk would re-run on resume,
+// producing potentially duplicate observations. Acceptable cost
+// for the simplicity gain; admin/auditor can delete duplicates.
+router.post('/:id/resume', async (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const job = ledgerScrutinyRepo.findByIdForUser(req.params.id, req.user.id);
+  if (!job) { res.status(404).json({ error: 'Job not found' }); return; }
+  if (job.status !== 'cancelled') {
+    res.status(400).json({ error: `Job is ${job.status}; resume only works on paused (cancelled) jobs.` });
+    return;
+  }
+  if (!job.raw_extracted) {
+    res.status(400).json({ error: 'Original extraction is missing; cannot resume. Re-upload the ledger.' });
+    return;
+  }
+
+  // Plan-tier + token-budget gates (resume = new audit work).
+  const tierActor = userRepo.findById(req.user.id);
+  const tierBilling = tierActor ? getBillingUser(tierActor) : undefined;
+  const tierPlan = tierBilling ? getEffectivePlan(tierBilling) : 'free';
+  if (tierPlan === 'free') {
+    res.status(402).json({ error: 'AI Ledger Scrutiny is available on Pro and Enterprise plans.', upgrade: true });
+    return;
+  }
+  const tokenQuota = enforceTokenQuota(req, res);
+  if (!tokenQuota.ok) return;
+
+  // Cast for the ALTER-added columns the row type doesn't include.
+  const r = job as unknown as Record<string, unknown>;
+  const startChunkIndex = typeof r.scrutiny_chunks_done === 'number' ? r.scrutiny_chunks_done : 0;
+  const totalChunks = typeof r.scrutiny_chunks_total === 'number' ? r.scrutiny_chunks_total : 0;
+  if (startChunkIndex <= 0 || startChunkIndex >= totalChunks) {
+    res.status(400).json({ error: 'Nothing left to resume — either the audit never reached scrutiny, or it already completed every chunk.' });
+    return;
+  }
+
+  // Flip status BEFORE returning the response so the polling UI
+  // immediately sees "scrutinizing" and shows the progress bar.
+  // The actual work runs in the background; resp returns once
+  // we've kicked off.
+  ledgerScrutinyRepo.setStatus(job.id, req.user.id, 'scrutinizing');
+  res.status(202).json({
+    job: serializeJob(ledgerScrutinyRepo.findByIdForUser(job.id, req.user.id)),
+    resuming: true,
+    fromChunk: startChunkIndex,
+    totalChunks,
+  });
+
+  // Run scrutiny in the background. Errors are persisted onto the
+  // job row via setStatus('error', ...) — frontend picks them up.
+  (async () => {
+    try {
+      const extracted = normalizeExtraction(safeParseJson<ExtractedLedger>(job.raw_extracted!));
+      const accountIdByName = new Map<string, string>();
+      const persistedAccounts = ledgerScrutinyRepo.listAccounts(job.id);
+      for (const a of persistedAccounts) {
+        accountIdByName.set(a.name.toLowerCase(), a.id);
+      }
+      const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
+      const billingUserId = tierBilling?.id ?? req.user!.id;
+
+      const recordResumeAttempt: RecordAttempt = ({ failed, inputTokens, outputTokens, model }) => {
+        if (!failed) return;
+        if (inputTokens === 0 && outputTokens === 0) return;
+        try {
+          const cost = costForModel(model, inputTokens, outputTokens);
+          usageRepo.logWithBilling(clientIp, req.user!.id, billingUserId, inputTokens, outputTokens, cost, false, model, false, 'ledger_scrutiny', 0, 'failed');
+        } catch (e) {
+          console.error('[ledger-scrutiny] resume failed-attempt log error', e);
+        }
+      };
+
+      const result = await runChunkedScrutiny(
+        extracted,
+        accountIdByName,
+        recordResumeAttempt,
+        (completed) => {
+          try { ledgerScrutinyRepo.bumpScrutinyChunksDone(job.id, req.user!.id); }
+          catch (e) { console.error('[ledger-scrutiny] resume bump failed', e); }
+          // completed already includes startChunkIndex via the loop's
+          // initial value; bumpScrutinyChunksDone increments by 1 per
+          // chunk so the total advances naturally.
+          void completed;
+        },
+        { jobId: job.id, userId: req.user!.id },
+        startChunkIndex,
+      );
+
+      // Recompute totals from the FULL persisted set (existing +
+      // newly appended). incrementalAppend already wrote the new
+      // ones, so listObservations is the source of truth.
+      const persistedObs = ledgerScrutinyRepo.listObservations(job.id);
+      let high = 0, warn = 0, info = 0, flaggedAmount = 0;
+      for (const o of persistedObs) {
+        if (o.severity === 'high') high += 1;
+        else if (o.severity === 'warn') warn += 1;
+        else info += 1;
+        if (typeof o.amount === 'number') flaggedAmount += Math.abs(o.amount);
+      }
+      ledgerScrutinyRepo.updateTotals(job.id, high, warn, info, flaggedAmount);
+
+      const finalStatus = result.paused ? 'cancelled' : 'done';
+      if (finalStatus === 'done') {
+        ledgerScrutinyRepo.setStatus(job.id, req.user!.id, 'done');
+      }
+      // If paused again mid-resume, status stays 'cancelled'; another
+      // resume click can pick up from the new scrutiny_chunks_done.
+
+      // Bill credits for the resume's audit work.
+      try {
+        const cost = result.outputTokens > 0 ? costForModel(result.modelUsed, result.inputTokens, result.outputTokens) : 0;
+        if (result.inputTokens + result.outputTokens > 0) {
+          usageRepo.logWithBilling(clientIp, req.user!.id, billingUserId, result.inputTokens, result.outputTokens, cost, false, result.modelUsed, false, 'ledger_scrutiny', persistedObs.length);
+        }
+      } catch (e) {
+        console.error('[ledger-scrutiny] resume cost log failed', e);
+      }
+      console.log(`[ledger-scrutiny] resume done: ${result.paused ? 'paused again' : 'completed'}, ${persistedObs.length} total observations`);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error(`[ledger-scrutiny] resume error: ${errMsg.slice(0, 300)}`);
+      try { ledgerScrutinyRepo.setStatus(job.id, req.user!.id, 'error', errMsg.slice(0, 500)); }
+      catch (e) { console.error('[ledger-scrutiny] resume error-status set failed', e); }
+    }
+  })().catch(err => console.error('[ledger-scrutiny] resume background task crashed', err));
 });
 
 // Multer error handler — scoped to this router.
