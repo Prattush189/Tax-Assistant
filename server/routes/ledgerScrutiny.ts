@@ -847,6 +847,16 @@ async function scrutinizeAccountGroupOnce(
     stream: false,
     response_format: { type: 'json_object' },
     temperature: 0,
+  }, {
+    // Per-call timeout override: scrutiny chunks pack 8 × 60 = 480
+    // transactions into a single Gemini call with 16-24K of output
+    // budget. With Gemini 2.5 Flash's thinking phase eating 5-7K
+    // tokens before generation starts, real wall time on a dense
+    // chunk is 90-150s. The default 90s client timeout was clipping
+    // these mid-stream and surfacing as "Request timed out". 180s
+    // gives comfortable margin without leaving truly hung calls
+    // wedged forever.
+    timeout: 180_000,
   });
   const raw = response.choices[0]?.message?.content ?? '{}';
   const finishReason = response.choices[0]?.finish_reason ?? 'unknown';
