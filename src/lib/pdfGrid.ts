@@ -391,8 +391,17 @@ function detectAccountHeader(
  * (Tally / Busy party-wise ledger book), account-separator rows
  * between transaction blocks update lastAccount so each transaction
  * carries the right account name into mappedRowsToExtractedLedger.
+ *
+ * Bank statements should pass kind='bank' to disable the account-
+ * header detection — bank statements don't have account separators,
+ * and any date-less rows are multi-line narration continuations
+ * that need to be appended to the previous transaction (e.g.
+ * Canara's UPI references that wrap onto a second display line).
+ * Without this gate, those continuations were being misread as
+ * "account headers" and silently dropped, costing transaction count
+ * and data fidelity on multi-line bank narrations.
  */
-export function applyMapping(grid: PdfGrid, mapping: ColumnMapping): MappedRow[] {
+export function applyMapping(grid: PdfGrid, mapping: ColumnMapping, kind: 'bank' | 'ledger' = 'bank'): MappedRow[] {
   const out: MappedRow[] = [];
   const colByRole = new Map<ColumnRole, number>();
   mapping.roles.forEach((r, i) => {
@@ -411,11 +420,17 @@ export function applyMapping(grid: PdfGrid, mapping: ColumnMapping): MappedRow[]
     const accountCell = cell('account');
     if (accountCell) lastAccount = accountCell;
 
-    // 2. Auto-detect Tally-style account-separator rows.
-    const headerName = detectAccountHeader(row, colByRole);
-    if (headerName) {
-      lastAccount = headerName;
-      continue;
+    // 2. Auto-detect Tally-style account-separator rows. Only run
+    //    on LEDGER uploads — bank statements don't have account
+    //    separators, and date-less rows there are multi-line
+    //    narration continuations that need to fall through to the
+    //    continuation logic below.
+    if (kind === 'ledger') {
+      const headerName = detectAccountHeader(row, colByRole);
+      if (headerName) {
+        lastAccount = headerName;
+        continue;
+      }
     }
 
     const dateRaw = cell('date');

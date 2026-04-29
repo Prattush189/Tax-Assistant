@@ -157,7 +157,7 @@ export function LedgerUploader({ manager }: Props) {
     if (!pendingGrid) return;
     const { grid, filename } = pendingGrid;
     setPendingGrid(null);
-    const mapped = applyMapping(grid, mapping);
+    const mapped = applyMapping(grid, mapping, 'ledger');
     if (mapped.length === 0) {
       toast.error('No transaction rows found after applying the mapping. Re-check the Date column.');
       return;
