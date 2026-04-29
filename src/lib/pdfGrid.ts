@@ -141,7 +141,25 @@ export async function extractPdfGrid(file: File): Promise<PdfGrid | null> {
     // because items inside one column pack densely while inter-
     // column gaps are 30-100 units.
     const HEADER_WORD = /^(date|narration|particulars|description|details|withdraw\w*|deposit\w*|debit|credit|balance|chq|cheque|voucher|amount|reference|ref|utr|type)$/i;
-    let columnXs: number[] = [];
+    // Numeric headers correspond to right-aligned data columns. Indian
+    // bank statements (and most accounting exports) right-align rupee
+    // values with the header word's RIGHT edge; the LEFT edge drifts
+    // by ~1 unit per digit, so a narrow ₹9.42 in a column populated
+    // mostly by ₹50,000 values has a left-edge ~25 units to the right
+    // of where it "should" be — close enough to the next column's
+    // left anchor that nearest-by-left-edge mis-clusters it. Anchoring
+    // numeric columns by RIGHT edge eliminates the digit-width drift.
+    const NUMERIC_HEADER = /^(withdraw\w*|deposit\w*|debit|credit|balance|amount)$/i;
+    interface ColumnAnchor {
+      // x used for matching: header's RIGHT edge for numeric columns,
+      // LEFT edge for text columns.
+      x: number;
+      align: 'right' | 'left';
+      // Always the header word's LEFT edge — for dedup and for the
+      // public columnXs visual-sort key.
+      leftX: number;
+    }
+    let columnAnchors: ColumnAnchor[] = [];
     for (const bucket of rowBuckets) {
       const headerItems = bucket.filter(it => HEADER_WORD.test(it.text.trim()));
       // Need at least 3 distinct header words to consider this a real
@@ -151,28 +169,43 @@ export async function extractPdfGrid(file: File): Promise<PdfGrid | null> {
         // header word like "Withdrawal Amt." across two text items).
         const sorted = [...headerItems].sort((a, b) => a.x - b.x);
         for (const it of sorted) {
-          if (columnXs.length === 0 || it.x - columnXs[columnXs.length - 1] > 12) {
-            columnXs.push(it.x);
+          const isNumeric = NUMERIC_HEADER.test(it.text.trim());
+          const anchor: ColumnAnchor = isNumeric
+            ? { x: it.x + it.width, align: 'right', leftX: it.x }
+            : { x: it.x, align: 'left', leftX: it.x };
+          // Dedup using the header word's left edge so a "Withdrawal"
+          // header that pdfjs split into "Withdrawal" + "Amt." across
+          // two adjacent text items collapses to one column.
+          const lastLeft = columnAnchors.length === 0
+            ? -Infinity
+            : columnAnchors[columnAnchors.length - 1].leftX;
+          if (it.x - lastLeft > 12) {
+            columnAnchors.push(anchor);
           }
         }
         break;
       }
     }
 
-    if (columnXs.length < 2) {
+    if (columnAnchors.length < 2) {
       // Fallback: gap-based clustering of all items' left-edges.
+      // Without a header row we can't tell numeric from text columns,
+      // so fall back to LEFT-edge anchoring for everything (the
+      // legacy behavior). Banks that hit this path usually have a
+      // table starting on page 2 or non-standard layouts.
       const xs = allItems.map(i => i.x).sort((a, b) => a - b);
       const minDensity = Math.max(3, Math.floor(rowBuckets.length * 0.05));
       let clusterSum = xs[0];
       let clusterCount = 1;
       let prevX = xs[0];
+      const fallbackXs: number[] = [];
       for (let i = 1; i < xs.length; i++) {
         if (xs[i] - prevX <= X_GAP_TOLERANCE) {
           clusterSum += xs[i];
           clusterCount++;
         } else {
           if (clusterCount >= minDensity) {
-            columnXs.push(clusterSum / clusterCount);
+            fallbackXs.push(clusterSum / clusterCount);
           }
           clusterSum = xs[i];
           clusterCount = 1;
@@ -180,24 +213,38 @@ export async function extractPdfGrid(file: File): Promise<PdfGrid | null> {
         prevX = xs[i];
       }
       if (clusterCount >= minDensity) {
-        columnXs.push(clusterSum / clusterCount);
+        fallbackXs.push(clusterSum / clusterCount);
       }
+      columnAnchors = fallbackXs.map(x => ({ x, align: 'left' as const, leftX: x }));
     }
 
-    if (columnXs.length < 2) return null; // not enough column structure
+    if (columnAnchors.length < 2) return null; // not enough column structure
 
-    // Phase 4 — assign each row's items to the nearest column anchor,
-    // concatenate text within a column with a space. Preserve original
-    // reading order within a column by sorting items by x.
+    // Public columnXs is the LEFT edge of each column header — used by
+    // the wizard preview as a visual sort key. Internally we still
+    // match items against `anchor.x` (right edge for numeric columns).
+    const columnXs: number[] = columnAnchors.map(a => a.leftX);
+
+    // Phase 4 — assign each row's items to the column whose anchor is
+    // closest *in the column's alignment frame*. Numeric columns
+    // compare item.right-edge to header.right-edge; text columns
+    // compare item.left-edge to header.left-edge. This is what fixes
+    // the narrow-number swap (₹9.42 vs ₹90.58 mis-classified between
+    // Withdrawal and Balance columns).
     const rows: string[][] = [];
     for (const bucket of rowBuckets) {
       bucket.sort((a, b) => a.x - b.x);
-      const cells: string[] = new Array(columnXs.length).fill('');
+      const cells: string[] = new Array(columnAnchors.length).fill('');
       for (const it of bucket) {
+        const itLeft = it.x;
+        const itRight = it.x + it.width;
         let bestCol = 0;
-        let bestDist = Math.abs(it.x - columnXs[0]);
-        for (let c = 1; c < columnXs.length; c++) {
-          const d = Math.abs(it.x - columnXs[c]);
+        let bestDist = Math.abs(
+          (columnAnchors[0].align === 'right' ? itRight : itLeft) - columnAnchors[0].x,
+        );
+        for (let c = 1; c < columnAnchors.length; c++) {
+          const ref = columnAnchors[c].align === 'right' ? itRight : itLeft;
+          const d = Math.abs(ref - columnAnchors[c].x);
           if (d < bestDist) { bestDist = d; bestCol = c; }
         }
         cells[bestCol] = cells[bestCol] ? `${cells[bestCol]} ${it.text}`.trim() : it.text.trim();
