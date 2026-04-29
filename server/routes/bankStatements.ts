@@ -18,7 +18,7 @@ import { userRepo } from '../db/repositories/userRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { getBillingUser } from '../lib/billing.js';
-import { getUserLimits } from '../lib/planLimits.js';
+import { getUserLimits, getEffectivePlan } from '../lib/planLimits.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
@@ -776,10 +776,27 @@ router.post(
   async (req: AuthRequest, res: Response) => {
     if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
 
-    // Token-budget gate — the only HARD quota check now. Per-feature
-    // credit logic below is computed for analytics display only and
-    // doesn't reject. enforceTokenQuota responds 429 itself when the
-    // budget is exhausted; we early-return on ok=false.
+    // Plan-tier gate. Bank Statement Analyzer is a Pro+ feature
+    // because the analyzer is a heavy, file-format-aware path that
+    // adds enough product value to justify the upgrade ask. Free
+    // users see an "Upgrade to Pro" prompt instead of a generic
+    // 429. Token budget is the secondary gate (see below).
+    const tierActor = userRepo.findById(req.user.id);
+    const tierBilling = tierActor ? getBillingUser(tierActor) : undefined;
+    const tierPlan = tierBilling ? getEffectivePlan(tierBilling) : (tierActor ? getEffectivePlan(tierActor) : 'free');
+    if (tierPlan === 'free') {
+      res.status(402).json({
+        error: 'Bank Statement Analyzer is available on Pro and Enterprise plans. Upgrade to start analyzing.',
+        upgrade: true,
+        feature: 'bank_statement',
+      });
+      return;
+    }
+
+    // Token-budget gate — the HARD quota check. Per-feature credit
+    // logic below is computed for analytics display only and doesn't
+    // reject. enforceTokenQuota responds 429 itself when the budget
+    // is exhausted; we early-return on ok=false.
     const tokenQuota = enforceTokenQuota(req, res);
     if (!tokenQuota.ok) return;
     const quota = enforceQuota(req, res);

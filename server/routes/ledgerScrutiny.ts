@@ -1177,6 +1177,18 @@ router.post(
     // Quota gate before extraction (which is also expensive — though we
     // only debit usage on a successful scrutiny pass, we don't want a user
     // already at-cap to burn extract calls either).
+    // Plan-tier gate first. Ledger Scrutiny is a Pro+ feature.
+    const tierActor = userRepo.findById(req.user.id);
+    const tierBilling = tierActor ? getBillingUser(tierActor) : undefined;
+    const tierPlan = tierBilling ? getEffectivePlan(tierBilling) : (tierActor ? getEffectivePlan(tierActor) : 'free');
+    if (tierPlan === 'free') {
+      res.status(402).json({
+        error: 'AI Ledger Scrutiny is available on Pro and Enterprise plans. Upgrade to start auditing.',
+        upgrade: true,
+        feature: 'ledger_scrutiny',
+      });
+      return;
+    }
     const tokenQuota = enforceTokenQuota(req, res);
     if (!tokenQuota.ok) return;
     const quota = enforceQuota(req, res);

@@ -60,22 +60,27 @@ function yearlyDiscountPct(plan: 'pro' | 'enterprise'): number {
 // capability per bullet. Strings starting with "Everything in" get
 // rendered as a divider, not a bullet, so users see at a glance that
 // higher tiers stack on top of lower tiers.
+// Feature lists are now capability-only — no per-month counts. The
+// single token budget (250K / 2M / 6M) is what gates total usage,
+// shown in Settings → Your Usage and on each feature's landing page.
+// Plan tiers differ in (a) which features are unlocked and (b) the
+// size of the shared token pool.
 const plans = [
   {
     id: 'free' as const,
     name: 'Free',
-    description: '30-day trial — every feature included',
+    description: '30-day trial — try every general-purpose feature',
     icon: Sparkles,
     features: [
-      '50 chat messages',
-      '5 document uploads',
-      '300 bank statement transactions / month',
-      '300 ledger transactions / month',
-      '20 AI suggestions',
-      '3 each: notices, board resolutions, partnership deeds',
+      'AI tax chat assistant',
+      'Document uploads',
+      'AI tax-saving suggestions',
+      'Notice draft generator',
+      'Board resolution generator',
+      'Partnership deed generator',
       'All tax calculators (Income Tax, CG, GST, TDS)',
       'Rent receipts + Challan 280',
-      '1 saved profile',
+      'Saved tax profile',
     ],
     gradient: 'from-gray-500 to-gray-600',
     shadow: 'shadow-gray-500/20',
@@ -84,18 +89,15 @@ const plans = [
   {
     id: 'pro' as const,
     name: 'Pro',
-    description: 'For professionals who need more power',
+    description: 'For professionals who need the analyzers',
     icon: Crown,
     features: [
       'Everything in Free, plus:',
-      '1,500 chat messages / month',
-      '30 document uploads / month',
-      '1,500 bank statement transactions / month',
-      '5,000 ledger transactions / month',
-      '100 AI suggestions / month',
-      '15 each: notices, board resolutions, partnership deeds',
-      'Salary Structure Optimizer + Tax Planning PDF',
-      '5 saved profiles · Writing style customization',
+      'Bank Statement Analyzer',
+      'AI Ledger Scrutiny',
+      'Salary Structure Optimizer',
+      'Tax Planning PDF report',
+      'Writing style customization',
       'Priority support',
     ],
     gradient: 'from-[#0D9668] to-[#0A7B55]',
@@ -111,15 +113,9 @@ const plans = [
     features: [
       'Everything in Pro, plus:',
       '3× the monthly capacity (across every feature)',
-      '3,000 chat messages / month',
-      '200 document uploads / month',
-      '5,000 bank statement transactions / month',
-      '25,000 ledger transactions / month',
-      '500 AI suggestions / month',
-      '50 each: notices, board resolutions, partnership deeds',
       'IT portal profile import',
       'Year-over-year trends dashboard',
-      '25 saved profiles · Priority support & SLA',
+      'Priority support & SLA',
     ],
     gradient: 'from-indigo-500 to-purple-600',
     shadow: 'shadow-indigo-500/20',

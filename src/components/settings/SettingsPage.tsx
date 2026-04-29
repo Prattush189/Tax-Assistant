@@ -104,7 +104,7 @@ function Toggle({ enabled, onChange }: { enabled: boolean; onChange: (v: boolean
 // Single, prominent bar for the cross-feature token budget — the only
 // HARD quota gate now. Per-feature counters live in a collapsed
 // "analytics" section below this so the eye lands here first.
-function TokenBudgetBar({ tokens }: { tokens: { used: number; budget: number; remaining: number } }) {
+function TokenBudgetBar({ tokens, plan }: { tokens: { used: number; budget: number; remaining: number }; plan: string }) {
   const pct = tokens.budget > 0 ? Math.min(100, (tokens.used / tokens.budget) * 100) : 0;
   const barColor =
     pct >= 90 ? 'bg-red-500' :
@@ -112,11 +112,14 @@ function TokenBudgetBar({ tokens }: { tokens: { used: number; budget: number; re
     pct >= 50 ? 'bg-yellow-500' :
     'bg-[#0D9668] dark:bg-[#2DD4A0]';
 
-  // Conversion hints so "X tokens left" feels tangible. Coarse
-  // averages — a notice is roughly 12 K, a bank txn 150, a chat 500.
+  // Plan-aware conversion hints. Bank statement and ledger analyzers
+  // are Pro+ only — Free users shouldn't see "X bank txns" guidance
+  // for a feature they can't use. Coarse per-call averages: notice
+  // ~12K tokens, bank txn ~150, ledger txn ~100, chat ~500.
+  const isPaid = plan === 'pro' || plan === 'enterprise';
   const remainingNotices = Math.max(0, Math.floor(tokens.remaining / 12_000));
-  const remainingBankTxns = Math.max(0, Math.floor(tokens.remaining / 150));
   const remainingChats = Math.max(0, Math.floor(tokens.remaining / 500));
+  const remainingBankTxns = Math.max(0, Math.floor(tokens.remaining / 150));
 
   return (
     <div className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-5 border border-gray-200/60 dark:border-gray-700/60">
@@ -124,7 +127,7 @@ function TokenBudgetBar({ tokens }: { tokens: { used: number; budget: number; re
         <div>
           <p className="text-sm font-semibold text-gray-700 dark:text-gray-200">Monthly token budget</p>
           <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-            One pool across every feature — chat, notices, bank statements, ledger audits.
+            One pool across every feature — {isPaid ? 'chat, notices, bank statements, ledger audits.' : 'chat, notices, calculators, document tools.'}
           </p>
         </div>
         <span className={cn(
@@ -144,7 +147,11 @@ function TokenBudgetBar({ tokens }: { tokens: { used: number; budget: number; re
       </p>
       <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
         Remaining roughly covers <span className="font-semibold text-gray-700 dark:text-gray-300">{remainingNotices.toLocaleString('en-IN')} notices</span>
-        {' '}OR <span className="font-semibold text-gray-700 dark:text-gray-300">{remainingBankTxns.toLocaleString('en-IN')} bank txns</span>
+        {isPaid && (
+          <>
+            {' '}OR <span className="font-semibold text-gray-700 dark:text-gray-300">{remainingBankTxns.toLocaleString('en-IN')} bank txns</span>
+          </>
+        )}
         {' '}OR <span className="font-semibold text-gray-700 dark:text-gray-300">{remainingChats.toLocaleString('en-IN')} chats</span>.
         Mix and match.
       </p>
@@ -491,7 +498,7 @@ function BillingTab({ userName, userEmail }: { userName: string; userEmail: stri
           </div>
           {/* Token budget — the only hard quota gate. Spans full
               width so users see one number to track. */}
-          <TokenBudgetBar tokens={usage.tokens} />
+          <TokenBudgetBar tokens={usage.tokens} plan={usage.plan} />
           {/* Per-feature counts kept as soft display below — useful
               for "you've drafted 22 notices this month" but no longer
               gates anything. Compact 3-up grid; smaller font. */}
