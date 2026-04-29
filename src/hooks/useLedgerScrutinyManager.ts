@@ -87,11 +87,18 @@ export function useLedgerScrutinyManager(enabled: boolean) {
   // accidentally firing a duplicate run.
   useEffect(() => {
     if (!enabled) return;
-    const hasInProgress = jobs.some(j => j.status === 'extracting' || j.status === 'scrutinizing');
+    // Include `isUploading` / `isScrutinizing` so polling starts on the
+    // same tab that just kicked off the run (before the persisted job
+    // row has rolled into `jobs` from the next refresh). Without this
+    // the in-flight Cancel button / chunk progress bar only appear
+    // after a manual reload.
+    const hasInProgress = isUploading || isScrutinizing
+      || jobs.some(j => j.status === 'extracting' || j.status === 'scrutinizing');
     if (!hasInProgress) return;
+    const fast = setTimeout(() => { void refresh(); }, 800);
     const handle = setInterval(() => { void refresh(); if (currentId) void load(currentId); }, 5000);
-    return () => clearInterval(handle);
-  }, [enabled, jobs, currentId, refresh, load]);
+    return () => { clearTimeout(fast); clearInterval(handle); };
+  }, [enabled, isUploading, isScrutinizing, jobs, currentId, refresh, load]);
 
   const upload = useCallback(async (file: File): Promise<LedgerScrutinyDetail> => {
     setIsUploading(true);

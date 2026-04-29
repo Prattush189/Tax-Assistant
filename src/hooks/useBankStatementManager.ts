@@ -115,23 +115,30 @@ export function useBankStatementManager(enabled: boolean) {
     }
   }, []);
 
-  // Reload-resume. Server now creates the bank_statements row UPFRONT with
-  // status='analyzing' before kicking off the Gemini pipeline; the express
-  // handler keeps running on tab close (Node default), so the row updates
-  // to 'done' on completion regardless of whether the original request
-  // socket is still open. Poll every 5 s while any statement is in
-  // 'analyzing' so a reload mid-run shows live status and the UI can
-  // disable buttons that mustn't fire during the generation.
+  // Reload-resume + same-tab pickup. Server creates the bank_statements
+  // row UPFRONT with status='analyzing' before kicking off the Gemini
+  // pipeline; the express handler keeps running on tab close (Node
+  // default), so the row updates to 'done' on completion regardless of
+  // whether the original request socket is still open. Poll every 5 s
+  // while EITHER an analyze is in flight on this tab (`isAnalyzing`) OR
+  // any persisted statement is still in 'analyzing'. Including
+  // `isAnalyzing` is what makes the in-flight Cancel button + chunk
+  // progress bar appear immediately on the same tab that started the
+  // upload — without it the placeholder row only surfaces after a
+  // reload (analyzeFile only resolves on completion).
   useEffect(() => {
     if (!enabled) return;
-    const hasInProgress = statements.some(s => s.status === 'analyzing');
+    const hasInProgress = isAnalyzing || statements.some(s => s.status === 'analyzing');
     if (!hasInProgress) return;
+    // Kick the first refresh almost immediately so the placeholder row
+    // shows up within a second of upload, not after the first 5 s tick.
+    const fast = setTimeout(() => { void refresh(); }, 800);
     const handle = setInterval(() => {
       void refresh();
       if (currentId) void load(currentId);
     }, 5000);
-    return () => clearInterval(handle);
-  }, [enabled, statements, currentId, refresh, load]);
+    return () => { clearTimeout(fast); clearInterval(handle); };
+  }, [enabled, isAnalyzing, statements, currentId, refresh, load]);
 
   const analyzeFile = useCallback(async (file: File): Promise<BankStatementDetail> => {
     setIsAnalyzing(true);
