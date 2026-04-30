@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Users, Activity, DollarSign, Shield, RefreshCw, ShieldOff, BarChart3, Cpu, Clock, RotateCcw } from 'lucide-react';
+import { Users, Activity, DollarSign, Shield, RefreshCw, ShieldOff, BarChart3, Cpu, Clock, RotateCcw, Search, Filter } from 'lucide-react';
 import { ApiCostDashboard } from './ApiCostDashboard';
 import { ModelUsageDashboard } from './ModelUsageDashboard';
 import { RecentApiCallsDashboard } from './RecentApiCallsDashboard';
@@ -86,6 +86,12 @@ export function AdminDashboard() {
   const [plans, setPlans] = useState<PlanCount[]>([]);
   const [resetOpen, setResetOpen] = useState(false);
   const [resetPending, setResetPending] = useState(false);
+  // Users-tab search & filter — applied client-side to the loaded
+  // users[] array. Searching by name OR email; plan + status filters
+  // are independent.
+  const [userSearch, setUserSearch] = useState('');
+  const [planFilter, setPlanFilter] = useState<'all' | 'free' | 'pro' | 'enterprise'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'suspended'>('all');
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -135,6 +141,21 @@ export function AdminDashboard() {
   };
 
   const [adminTab, setAdminTab] = useState<AdminTab>('overview');
+
+  // Apply search + plan + status filters to the users[] before
+  // rendering. Client-side because the list size is small (admin
+  // sees all users, not paginated) and filters change frequently.
+  const filteredUsers = users.filter(u => {
+    if (planFilter !== 'all' && u.plan !== planFilter) return false;
+    if (statusFilter === 'active' && u.suspended_until) return false;
+    if (statusFilter === 'suspended' && !u.suspended_until) return false;
+    if (userSearch.trim()) {
+      const q = userSearch.trim().toLowerCase();
+      const hay = `${u.name} ${u.email}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
 
   // `ai: true` tabs expose AI-specific telemetry (per-model costs / usage /
   // recent calls). Rendered with a small [AI] badge so admins can see at a
@@ -230,8 +251,8 @@ export function AdminDashboard() {
         {adminTab !== 'api-costs' && adminTab !== 'recent-calls' && adminTab !== 'model-usage' && (
         <>
 
-        {/* Stats Cards */}
-        {stats && (
+        {/* Stats Cards — overview tab only (Users tab is search-focused) */}
+        {adminTab === 'overview' && stats && (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             <StatCard icon={Users} label="Users" value={stats.total_users} />
             <StatCard icon={Activity} label="API Calls" value={stats.total_requests} />
@@ -240,18 +261,20 @@ export function AdminDashboard() {
           </div>
         )}
 
-        <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-          {stats && (
-            <>
-              <MiniStat label="Total Messages" value={stats.total_messages} />
-              <MiniStat label="Active Users" value={stats.unique_users} />
-              <MiniStat label="Tokens Used" value={`${((stats.total_input_tokens + stats.total_output_tokens) / 1000).toFixed(1)}K`} />
-            </>
-          )}
-        </div>
+        {adminTab === 'overview' && (
+          <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+            {stats && (
+              <>
+                <MiniStat label="Total Messages" value={stats.total_messages} />
+                <MiniStat label="Active Users" value={stats.unique_users} />
+                <MiniStat label="Tokens Used" value={`${((stats.total_input_tokens + stats.total_output_tokens) / 1000).toFixed(1)}K`} />
+              </>
+            )}
+          </div>
+        )}
 
-        {/* Cost Trend Line Chart */}
-        {trend.length > 0 && (
+        {/* Cost Trend Line Chart — overview tab only */}
+        {adminTab === 'overview' && trend.length > 0 && (
           <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
             <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">Usage Trend (Last 30 Days)</h2>
             <ResponsiveContainer width="100%" height={300}>
@@ -268,8 +291,8 @@ export function AdminDashboard() {
           </div>
         )}
 
-        {/* Plan Distribution Pie Chart */}
-        {plans.length > 0 && (
+        {/* Plan Distribution Pie Chart — overview tab only */}
+        {adminTab === 'overview' && plans.length > 0 && (
           <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
             <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">Plan Distribution</h2>
             <ResponsiveContainer width="100%" height={300}>
@@ -295,17 +318,70 @@ export function AdminDashboard() {
           </div>
         )}
 
-        {/* Users Table — visible on overview and users tabs */}
+        {/* Users — visible on overview and users tabs */}
         {(adminTab === 'overview' || adminTab === 'users') && (
         <div className="bg-white/70 dark:bg-gray-900/70 backdrop-blur-sm border border-gray-200/50 dark:border-gray-800/50 rounded-2xl overflow-hidden">
-          <div className="px-4 py-3 border-b border-gray-200/50 dark:border-gray-800/50 flex items-center justify-between">
+          <div className="px-4 py-3 border-b border-gray-200/50 dark:border-gray-800/50 flex flex-wrap items-center gap-3">
             <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
-              Users ({users.length}) <span className="text-xs font-normal text-gray-400 ml-1">sorted by latest activity</span>
+              Users{' '}
+              <span className="text-xs font-normal text-gray-400">
+                ({filteredUsers.length}{filteredUsers.length !== users.length ? ` of ${users.length}` : ''})
+              </span>
             </h2>
+
+            {/* Search box */}
+            <div className="relative flex-1 min-w-[180px] max-w-xs">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+              <input
+                type="text"
+                value={userSearch}
+                onChange={e => setUserSearch(e.target.value)}
+                placeholder="Search by name or email…"
+                className="w-full pl-8 pr-2 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 text-gray-700 dark:text-gray-200 placeholder:text-gray-400"
+              />
+            </div>
+
+            {/* Plan filter */}
+            <div className="flex items-center gap-1.5">
+              <Filter className="w-3.5 h-3.5 text-gray-400" />
+              <select
+                value={planFilter}
+                onChange={e => setPlanFilter(e.target.value as 'all' | 'free' | 'pro' | 'enterprise')}
+                className="px-2 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md text-gray-700 dark:text-gray-200 cursor-pointer"
+              >
+                <option value="all">All plans</option>
+                <option value="free">Free</option>
+                <option value="pro">Pro</option>
+                <option value="enterprise">Enterprise</option>
+              </select>
+            </div>
+
+            {/* Status filter */}
+            <select
+              value={statusFilter}
+              onChange={e => setStatusFilter(e.target.value as 'all' | 'active' | 'suspended')}
+              className="px-2 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md text-gray-700 dark:text-gray-200 cursor-pointer"
+            >
+              <option value="all">All status</option>
+              <option value="active">Active only</option>
+              <option value="suspended">Suspended only</option>
+            </select>
+
+            {/* Reset filters — only when a filter is engaged */}
+            {(userSearch || planFilter !== 'all' || statusFilter !== 'all') && (
+              <button
+                type="button"
+                onClick={() => { setUserSearch(''); setPlanFilter('all'); setStatusFilter('all'); }}
+                className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 underline underline-offset-2"
+              >
+                Clear
+              </button>
+            )}
+
             <button
               onClick={loadData}
               disabled={loading}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/15 border border-emerald-200 dark:border-emerald-800/30 rounded-lg hover:bg-emerald-100 dark:hover:bg-emerald-900/25 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              className="ml-auto flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/15 border border-emerald-200 dark:border-emerald-800/30 rounded-lg hover:bg-emerald-100 dark:hover:bg-emerald-900/25 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               title="Reload users"
             >
               {loading ? (
@@ -319,8 +395,12 @@ export function AdminDashboard() {
           <div className="p-3 space-y-2">
             {users.length === 0 ? (
               <div className="text-center text-sm text-gray-400 py-8">No users yet.</div>
+            ) : filteredUsers.length === 0 ? (
+              <div className="text-center text-sm text-gray-400 py-8">
+                No users match these filters.
+              </div>
             ) : (
-              users.map(u => (
+              filteredUsers.map(u => (
                 <UserCard
                   key={u.id}
                   user={u}
