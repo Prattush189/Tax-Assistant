@@ -937,32 +937,11 @@ router.post(
       pagesTotal = PAGES_PER_CREDIT.bank_statement;
       creditsNeeded = 1;
     }
-    if (creditsNeeded > quota.creditsRemaining) {
-      // Surface the over-limit as a percentage rather than raw
-      // credits — credits are an internal unit, percentages map
-      // cleanly to the % allowance bar the user already sees on
-      // the landing page. "Exceeds by 50%" reads better than
-      // "needs 6 credits but you have 4 left".
-      const excessPct = quota.creditsRemaining > 0
-        ? Math.ceil(((creditsNeeded - quota.creditsRemaining) / quota.creditsRemaining) * 100)
-        : 100;
-      const unit = pagesUnit === 'rows' ? 'rows' : 'pages';
-      const allowance = pagesUnit === 'rows'
-        ? `${(CSV_ROWS_PER_CREDIT.bank_statement ?? 0) * quota.creditsRemaining} rows`
-        : `${PAGES_PER_CREDIT.bank_statement * quota.creditsRemaining} pages`;
-      const csvHint = isCsv ? '' : ' Tip: CSV exports use a more generous row-per-credit ratio.';
-      const errorMsg = quota.creditsRemaining === 0
-        ? `You've already used 100% of your monthly bank statement allowance. Upgrade your plan or wait until next month.${csvHint}`
-        : `This file (${pagesTotal} ${unit}) exceeds your remaining monthly allowance by ~${excessPct}%. You have room for about ${allowance} this month.${csvHint}`;
-      res.status(413).json({
-        error: errorMsg,
-        excessPct,
-        creditsNeeded,
-        creditsRemaining: quota.creditsRemaining,
-        upgrade: quota.plan !== 'enterprise',
-      });
-      return;
-    }
+    // Per-feature credit caps are no longer enforced — the token budget
+    // (enforceTokenQuota at the route entry) is the sole quota gate.
+    // creditsNeeded is still computed for display/analytics purposes.
+    void creditsNeeded;
+    void pagesUnit;
 
     // Upfront placeholder. Visible to any subsequent /api/bank-statements
     // GET while the analysis runs, even after this connection closes.
