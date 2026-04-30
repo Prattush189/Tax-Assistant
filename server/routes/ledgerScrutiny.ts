@@ -1335,26 +1335,9 @@ router.post(
     const ledgerCreditsNeeded = ledgerUnit === 'rows'
       ? creditsForCsvRows('ledger_scrutiny', ledgerRowsTotal)
       : creditsForPages('ledger_scrutiny', ledgerPagesTotal);
-    if (ledgerCreditsNeeded > quota.creditsRemaining) {
-      const excessPct = quota.creditsRemaining > 0
-        ? Math.ceil(((ledgerCreditsNeeded - quota.creditsRemaining) / quota.creditsRemaining) * 100)
-        : 100;
-      const remainingHeadline = ledgerUnit === 'rows'
-        ? `${quota.creditsRemaining * (CSV_ROWS_PER_CREDIT.ledger_scrutiny ?? 0)} rows`
-        : `${quota.creditsRemaining * PAGES_PER_CREDIT.ledger_scrutiny} pages`;
-      const fileSize = ledgerUnit === 'rows' ? `${ledgerRowsTotal} rows` : `${ledgerPagesTotal} pages`;
-      const errorMsg = quota.creditsRemaining === 0
-        ? `You've already used 100% of your monthly ledger allowance. Upgrade your plan or wait until next month.`
-        : `This ledger (${fileSize}) exceeds your remaining monthly allowance by ~${excessPct}%. You have room for about ${remainingHeadline} this month.`;
-      res.status(413).json({
-        error: errorMsg,
-        excessPct,
-        creditsNeeded: ledgerCreditsNeeded,
-        creditsRemaining: quota.creditsRemaining,
-        upgrade: quota.plan !== 'enterprise',
-      });
-      return;
-    }
+    // Per-feature credit caps are no longer enforced — the token budget
+    // (enforceTokenQuota at the route entry) is the sole quota gate.
+    void ledgerCreditsNeeded;
 
     // If the user uploaded the same file before, reuse the extraction —
     // creates a fresh job row but skips re-running the extract pass.
