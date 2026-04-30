@@ -67,15 +67,38 @@ const Y_TOLERANCE = 2.5;       // PDF user-space units. Items within this
 const X_GAP_TOLERANCE = 12;
 
 /**
+ * Thrown when extractPdfGrid hits an encrypted PDF. The uploader
+ * catches this, prompts the user for the password, and retries.
+ *
+ * `wrongPassword` is true when a password was supplied but pdfjs
+ * rejected it (pdfjs's PasswordException code 2 = INCORRECT_PASSWORD);
+ * the dialog uses this to show "wrong password, try again" rather
+ * than treating it as a fresh request.
+ */
+export class PdfPasswordError extends Error {
+  wrongPassword: boolean;
+  constructor(wrongPassword: boolean) {
+    super(wrongPassword ? 'Incorrect PDF password' : 'PDF is password-protected');
+    this.name = 'PdfPasswordError';
+    this.wrongPassword = wrongPassword;
+  }
+}
+
+/**
  * Extract a 2D grid from a digital PDF. Returns null when the PDF
  * has no extractable text layer (scanned image) — caller should
- * fall back to the vision pipeline in that case.
+ * fall back to the vision pipeline in that case. Throws
+ * PdfPasswordError when the PDF is encrypted; pass `password` on
+ * the retry call to unlock it.
  */
-export async function extractPdfGrid(file: File): Promise<PdfGrid | null> {
+export async function extractPdfGrid(file: File, password?: string): Promise<PdfGrid | null> {
   if (file.type !== 'application/pdf') return null;
   try {
     const buf = await file.arrayBuffer();
-    const pdf = await pdfjs.getDocument({ data: new Uint8Array(buf) }).promise;
+    const pdf = await pdfjs.getDocument({
+      data: new Uint8Array(buf),
+      ...(password ? { password } : {}),
+    }).promise;
 
     // Phase 1 — pull every text item with its coords. Across all pages.
     // We carry a page-relative y plus a global page offset so a 50-page
@@ -318,6 +341,14 @@ export async function extractPdfGrid(file: File): Promise<PdfGrid | null> {
       pageCount: pdf.numPages,
     };
   } catch (err) {
+    // Surface password-protected PDFs as a typed error so the uploader
+    // can prompt the user. pdfjs's PasswordException uses code 1 for
+    // "need password" and code 2 for "incorrect password" — both end
+    // up here when getDocument().promise rejects.
+    const e = err as { name?: string; code?: number } | null;
+    if (e && e.name === 'PasswordException') {
+      throw new PdfPasswordError(e.code === 2);
+    }
     console.warn('[pdfGrid] extraction failed:', err);
     return null;
   }

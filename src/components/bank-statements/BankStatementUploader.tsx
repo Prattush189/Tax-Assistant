@@ -11,9 +11,11 @@ import {
   extractPdfGrid,
   mappedRowsToBankCsv,
   rowsToFakeGrid,
+  PdfPasswordError,
   type ColumnMapping,
   type PdfGrid,
 } from '../../lib/pdfGrid';
+import { PasswordPromptDialog } from '../shared/PasswordPromptDialog';
 
 function AnalyzeProgressBar({
   progress,
@@ -79,6 +81,13 @@ export function BankStatementUploader({ manager }: Props) {
   // Wizard state. When set, the user is mid-mapping for a digital PDF;
   // we hold onto the grid + filename until they confirm or cancel.
   const [pendingGrid, setPendingGrid] = useState<{ grid: PdfGrid; filename: string } | null>(null);
+  // Password-protected PDFs go here. The dialog calls onSubmit with
+  // the entered password; we re-run extractPdfGrid with it. If it
+  // still fails, wrongPassword flips and the user can try again.
+  const [pendingPassword, setPendingPassword] = useState<{
+    file: File;
+    wrongPassword: boolean;
+  } | null>(null);
 
   // Pull batch progress off the in-flight statement (the placeholder
   // row's analyze_chunks_* fields, polled every 5s by the manager).
@@ -153,6 +162,13 @@ export function BankStatementUploader({ manager }: Props) {
           return;
         }
       } catch (err) {
+        if (err instanceof PdfPasswordError) {
+          // Encrypted bank PDFs are common — pop the unlock prompt
+          // instead of falling through to the vision path (which
+          // would also fail without the password).
+          setPendingPassword({ file, wrongPassword: false });
+          return;
+        }
         console.warn('[BankStatementUploader] grid extraction failed; falling back to vision:', err);
       }
     }
@@ -296,6 +312,35 @@ export function BankStatementUploader({ manager }: Props) {
           filename={pendingGrid.filename}
           onConfirm={handleMappingConfirm}
           onCancel={() => setPendingGrid(null)}
+        />
+      )}
+      {pendingPassword && (
+        <PasswordPromptDialog
+          filename={pendingPassword.file.name}
+          wrongPassword={pendingPassword.wrongPassword}
+          onCancel={() => setPendingPassword(null)}
+          onSubmit={async (password) => {
+            const file = pendingPassword.file;
+            try {
+              const grid = await extractPdfGrid(file, password);
+              if (grid && grid.rows.length >= 3) {
+                setPendingPassword(null);
+                setPendingGrid({ grid, filename: file.name });
+                return;
+              }
+              // Decrypted but no usable text layer — give up gracefully.
+              setPendingPassword(null);
+              toast.error('Could not read this PDF after unlocking.');
+            } catch (err) {
+              if (err instanceof PdfPasswordError) {
+                // Wrong password — re-show with the inline error.
+                setPendingPassword({ file, wrongPassword: true });
+                return;
+              }
+              setPendingPassword(null);
+              toast.error(err instanceof Error ? err.message : 'Failed to read PDF');
+            }
+          }}
         />
       )}
     </div>
