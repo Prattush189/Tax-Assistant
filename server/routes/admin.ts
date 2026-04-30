@@ -4,6 +4,7 @@ import { usageRepo } from '../db/repositories/usageRepo.js';
 import { AuthRequest } from '../types.js';
 import db from '../db/index.js';
 import { getBillingUser } from '../lib/billing.js';
+import { getEffectivePlan } from '../lib/planLimits.js';
 
 const router = Router();
 
@@ -170,6 +171,135 @@ router.get('/stats/trend', (_req: AuthRequest, res: Response) => {
   `).all() as { day: string; requests: number; cost: number; users: number }[];
 
   res.json({ trend: rows });
+});
+
+// GET /api/admin/users/:id/details — detailed cost / token / call breakdown
+//   for a single user. Powers the expandable user-card view in the admin UI.
+//   Returns: cumulative + month tokens & cost, monthly token budget, last
+//   30 days daily history, recent 50 api_usage rows.
+router.get('/users/:id/details', (req: AuthRequest, res: Response) => {
+  const { id } = req.params;
+  const user = userRepo.findById(id);
+  if (!user) { res.status(404).json({ error: 'User not found' }); return; }
+
+  // Token budget — uses the same effective-plan resolver the runtime
+  // quota guard uses, so the bar matches what the user actually sees
+  // in their own Settings page.
+  const billing = getBillingUser(user);
+  const tokensThisMonth = usageRepo.sumTokensThisMonthByBillingUser(billing.id);
+  const effectivePlan = getEffectivePlan(billing);
+  const PLAN_BUDGETS: Record<string, number> = {
+    free: 250_000, pro: 2_000_000, enterprise: 6_000_000,
+  };
+  const monthlyTokenBudget = PLAN_BUDGETS[effectivePlan] ?? PLAN_BUDGETS.free;
+
+  // Cumulative totals across api_usage (excluding failed). Same filter
+  // sumTokensThisMonth uses, so totals add up.
+  const totals = db.prepare(`
+    SELECT
+      COUNT(*) AS requests,
+      COALESCE(SUM(input_tokens), 0) AS total_input_tokens,
+      COALESCE(SUM(output_tokens), 0) AS total_output_tokens,
+      COALESCE(SUM(cost), 0) AS total_cost,
+      MAX(created_at) AS last_used
+    FROM api_usage
+    WHERE user_id = ? AND COALESCE(status, 'success') != 'failed'
+  `).get(id) as {
+    requests: number;
+    total_input_tokens: number;
+    total_output_tokens: number;
+    total_cost: number;
+    last_used: string | null;
+  };
+
+  // Daily history — last 30 days, one row per day (gaps fine, UI fills 0s).
+  const daily = db.prepare(`
+    SELECT
+      DATE(created_at) AS date,
+      COUNT(*) AS requests,
+      COALESCE(SUM(input_tokens), 0) AS input_tokens,
+      COALESCE(SUM(output_tokens), 0) AS output_tokens,
+      COALESCE(SUM(cost), 0) AS cost
+    FROM api_usage
+    WHERE user_id = ?
+      AND COALESCE(status, 'success') != 'failed'
+      AND created_at >= datetime('now', '-30 days')
+    GROUP BY DATE(created_at)
+    ORDER BY date ASC
+  `).all(id) as Array<{
+    date: string;
+    requests: number;
+    input_tokens: number;
+    output_tokens: number;
+    cost: number;
+  }>;
+
+  // Recent 50 api_usage rows — what the cards expand to show.
+  const recent = db.prepare(`
+    SELECT
+      id, input_tokens, output_tokens, cost, model, search_used,
+      is_plugin, category, status, created_at
+    FROM api_usage
+    WHERE user_id = ?
+    ORDER BY created_at DESC
+    LIMIT 50
+  `).all(id) as Array<{
+    id: string;
+    input_tokens: number;
+    output_tokens: number;
+    cost: number;
+    model: string | null;
+    search_used: number;
+    is_plugin: number;
+    category: string | null;
+    status: string | null;
+    created_at: string;
+  }>;
+
+  // Avg cost per 1M tokens — what the user actually wants to see at a
+  // glance, normalised across input + output. Guard against div-by-zero.
+  const totalTokens = totals.total_input_tokens + totals.total_output_tokens;
+  const avgCostPer1MUsd = totalTokens > 0 ? (totals.total_cost / totalTokens) * 1_000_000 : 0;
+  const usdToInr = 85;
+
+  res.json({
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      plan: user.plan,
+      effectivePlan,
+      role: user.role,
+      created_at: user.created_at,
+      suspended_until: user.suspended_until,
+    },
+    totals: {
+      requests: totals.requests,
+      inputTokens: totals.total_input_tokens,
+      outputTokens: totals.total_output_tokens,
+      totalTokens,
+      totalCostUsd: totals.total_cost,
+      totalCostInr: Math.round(totals.total_cost * usdToInr * 100) / 100,
+      avgCostPer1MUsd: Math.round(avgCostPer1MUsd * 1000) / 1000,
+      avgCostPer1MInr: Math.round(avgCostPer1MUsd * usdToInr * 100) / 100,
+      lastUsed: totals.last_used,
+    },
+    monthly: {
+      tokensUsed: tokensThisMonth,
+      tokenBudget: monthlyTokenBudget,
+      pct: monthlyTokenBudget > 0
+        ? Math.min(100, Math.round((tokensThisMonth / monthlyTokenBudget) * 1000) / 10)
+        : 0,
+    },
+    daily: daily.map(d => ({
+      ...d,
+      cost_inr: Math.round(d.cost * usdToInr * 1000) / 1000,
+    })),
+    recent: recent.map(r => ({
+      ...r,
+      cost_inr: Math.round(r.cost * usdToInr * 1000) / 1000,
+    })),
+  });
 });
 
 // GET /api/admin/stats/plans — user count by plan

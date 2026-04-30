@@ -296,6 +296,39 @@ export async function adminFetchUsers() {
   return authFetch('/api/admin/users');
 }
 
+export interface AdminUserDetails {
+  user: {
+    id: string; name: string; email: string; plan: string;
+    effectivePlan: string; role: string; created_at: string;
+    suspended_until: string | null;
+  };
+  totals: {
+    requests: number; inputTokens: number; outputTokens: number;
+    totalTokens: number;
+    totalCostUsd: number; totalCostInr: number;
+    avgCostPer1MUsd: number; avgCostPer1MInr: number;
+    lastUsed: string | null;
+  };
+  monthly: { tokensUsed: number; tokenBudget: number; pct: number };
+  daily: Array<{
+    date: string; requests: number;
+    input_tokens: number; output_tokens: number;
+    cost: number; cost_inr: number;
+  }>;
+  recent: Array<{
+    id: string;
+    input_tokens: number; output_tokens: number;
+    cost: number; cost_inr: number;
+    model: string | null; search_used: number;
+    is_plugin: number; category: string | null;
+    status: string | null; created_at: string;
+  }>;
+}
+
+export async function adminFetchUserDetails(userId: string): Promise<AdminUserDetails> {
+  return authFetch(`/api/admin/users/${userId}/details`);
+}
+
 export async function adminFetchUsage(period = 'month') {
   return authFetch(`/api/admin/usage?period=${period}`);
 }

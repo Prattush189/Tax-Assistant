@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Users, Activity, DollarSign, Shield, CheckCircle, RefreshCw, ShieldOff, BarChart3, Cpu, Clock, RotateCcw } from 'lucide-react';
+import { Users, Activity, DollarSign, Shield, RefreshCw, ShieldOff, BarChart3, Cpu, Clock, RotateCcw } from 'lucide-react';
 import { ApiCostDashboard } from './ApiCostDashboard';
 import { ModelUsageDashboard } from './ModelUsageDashboard';
 import { RecentApiCallsDashboard } from './RecentApiCallsDashboard';
+import { UserCard } from './UserCard';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import { adminFetchStats, adminFetchUsers, adminSuspendUser, adminUnsuspendUser, adminChangePlan, adminFetchTrend, adminFetchPlans, adminResetOwnUsage } from '../../services/api';
 import { LoadingAnimation } from '../ui/LoadingAnimation';
@@ -55,14 +56,6 @@ const PLAN_COLORS: Record<string, string> = {
   pro: '#10b981',
   enterprise: '#6366f1',
 };
-
-const SUSPEND_OPTIONS = [
-  { label: '1 hour', hours: 1 },
-  { label: '6 hours', hours: 6 },
-  { label: '24 hours', hours: 24 },
-  { label: '7 days', hours: 168 },
-  { label: '30 days', hours: 720 },
-];
 
 /** Format ISO timestamp to relative time (e.g., "5m ago", "2h ago", "3d ago") */
 function relativeTime(ts: string | null): string {
@@ -323,86 +316,21 @@ export function AdminDashboard() {
               Reload
             </button>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-200 dark:border-gray-700">
-                  <th className="text-left px-4 py-3 font-medium text-gray-500">Name</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500">Email</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500">Plan</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500">Role</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500">IPs</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500">Chats</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500">Msgs</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500">Last Call</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500">Status</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {users.map(u => (
-                  <tr key={u.id} className="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50">
-                    <td className="px-4 py-3 text-gray-800 dark:text-gray-200 font-medium">{u.name}</td>
-                    <td className="px-4 py-3 text-gray-500 dark:text-gray-400 text-xs">{u.email}</td>
-                    <td className="px-4 py-3">
-                      {u.role === 'admin' ? (
-                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-[#059669]/20 text-[#047857] dark:text-[#059669]">
-                          {u.plan}
-                        </span>
-                      ) : (
-                        <select
-                          value={u.plan}
-                          onChange={e => handlePlanChange(u.id, e.target.value as 'free' | 'pro' | 'enterprise')}
-                          className="px-2 py-1 text-xs bg-transparent border border-gray-200 dark:border-gray-700 rounded-lg text-gray-700 dark:text-gray-300 cursor-pointer"
-                        >
-                          <option value="free">Free</option>
-                          <option value="pro">Pro</option>
-                          <option value="enterprise">Enterprise</option>
-                        </select>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${u.role === 'admin' ? 'bg-[#059669]/20 text-[#047857] dark:text-[#059669]' : 'bg-gray-100 dark:bg-gray-800 text-gray-500'}`}>
-                        {u.role}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-xs font-mono text-gray-400 max-w-[150px] truncate" title={u.ips}>
-                      {u.ips ? u.ips.split(',').length + ' IP' + (u.ips.split(',').length > 1 ? 's' : '') : '—'}
-                    </td>
-                    <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{u.chat_count}</td>
-                    <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{u.message_count}</td>
-                    <td className="px-4 py-3 text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap" title={u.last_api_call ?? 'Never'}>
-                      {relativeTime(u.last_api_call)}
-                    </td>
-                    <td className="px-4 py-3">
-                      {u.suspended_until ? (
-                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400">Suspended</span>
-                      ) : (
-                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400">Active</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      {u.role !== 'admin' && (
-                        u.suspended_until ? (
-                          <button onClick={() => handleUnsuspend(u.id)} className="flex items-center gap-1 px-2 py-1 text-xs text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 rounded-lg transition-colors">
-                            <CheckCircle className="w-3 h-3" /> Unsuspend
-                          </button>
-                        ) : (
-                          <select
-                            onChange={e => { const h = parseInt(e.target.value); if (h > 0) handleSuspend(u.id, h); e.target.value = ''; }}
-                            defaultValue=""
-                            className="px-2 py-1 text-xs bg-transparent border border-gray-200 dark:border-gray-700 rounded-lg text-red-500 cursor-pointer"
-                          >
-                            <option value="" disabled>Suspend...</option>
-                            {SUSPEND_OPTIONS.map(o => <option key={o.hours} value={o.hours}>{o.label}</option>)}
-                          </select>
-                        )
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="p-3 space-y-2">
+            {users.length === 0 ? (
+              <div className="text-center text-sm text-gray-400 py-8">No users yet.</div>
+            ) : (
+              users.map(u => (
+                <UserCard
+                  key={u.id}
+                  user={u}
+                  relativeTime={relativeTime}
+                  onPlanChange={handlePlanChange}
+                  onSuspend={handleSuspend}
+                  onUnsuspend={handleUnsuspend}
+                />
+              ))
+            )}
           </div>
         </div>
 
