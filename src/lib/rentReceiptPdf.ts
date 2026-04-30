@@ -52,7 +52,7 @@ export function generateRentReceipts(input: RentReceiptInput): void {
     if (m > 12) { m = 1; yr++; }
   }
 
-  const rentFormatted = '₹ ' + Math.round(input.monthlyRent).toLocaleString('en-IN');
+  const rentFormatted = 'Rs. ' + Math.round(input.monthlyRent).toLocaleString('en-IN');
   const rentWords = numberToWords(input.monthlyRent);
 
   months.forEach((period, idx) => {

@@ -106,15 +106,18 @@ export function Challan280Tab() {
     y += 8;
 
     doc.setFontSize(10);
-    row('Income Tax', '₹ ' + Math.round(tax).toLocaleString('en-IN'));
-    row('Surcharge', '₹ ' + Math.round(sur).toLocaleString('en-IN'));
-    row('Health & Education Cess', '₹ ' + Math.round(cess).toLocaleString('en-IN'));
+    // jsPDF's built-in Helvetica is WinAnsi-encoded — no glyph for
+    // U+20B9 (₹). Use "Rs." in PDF strings; the JSX above keeps the
+    // ₹ symbol because browsers render it fine.
+    row('Income Tax', 'Rs. ' + Math.round(tax).toLocaleString('en-IN'));
+    row('Surcharge', 'Rs. ' + Math.round(sur).toLocaleString('en-IN'));
+    row('Health & Education Cess', 'Rs. ' + Math.round(cess).toLocaleString('en-IN'));
     y += 2;
     doc.setLineWidth(0.4);
     doc.line(margin + 60, y, pw - margin, y);
     y += 7;
     doc.setFontSize(12);
-    row('TOTAL', '₹ ' + Math.round(total).toLocaleString('en-IN'));
+    row('TOTAL', 'Rs. ' + Math.round(total).toLocaleString('en-IN'));
     y += 2;
 
     doc.setFontSize(9);

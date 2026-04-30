@@ -194,25 +194,25 @@ export function generateTaxPlanningReport(
   if (used80C < 150000 && diff < 0) {
     const gap = 150000 - used80C;
     const potentialSaving = Math.round(gap * oldResult.marginalRate * 1.04);
-    suggestions.push(`Invest ₹ ${Math.round(gap).toLocaleString('en-IN')} more under Section 80C (ELSS, PPF, LIC) to save up to ₹ ${potentialSaving.toLocaleString('en-IN')} in tax.`);
+    suggestions.push(`Invest Rs. ${Math.round(gap).toLocaleString('en-IN')} more under Section 80C (ELSS, PPF, LIC) to save up to Rs. ${potentialSaving.toLocaleString('en-IN')} in tax.`);
   }
 
   const used80D = d.section80D ?? 0;
   if (used80D < 25000) {
-    suggestions.push('Take health insurance to claim up to ₹25,000 under Section 80D (₹50,000 if senior citizen).');
+    suggestions.push('Take health insurance to claim up to Rs. 25,000 under Section 80D (Rs. 50,000 if senior citizen).');
   }
 
   const usedNPS = d.section80CCD1B ?? 0;
   if (usedNPS < 50000) {
-    suggestions.push(`Invest ₹ ${(50000 - usedNPS).toLocaleString('en-IN')} in NPS under 80CCD(1B) for additional ₹50,000 deduction beyond 80C.`);
+    suggestions.push(`Invest Rs. ${(50000 - usedNPS).toLocaleString('en-IN')} in NPS under 80CCD(1B) for additional Rs. 50,000 deduction beyond 80C.`);
   }
 
   if (oldResult.grossIncome > 1200000 && diff > 0) {
-    suggestions.push('With income above ₹12L, the new regime offers lower slab rates that outweigh old regime deductions.');
+    suggestions.push('With income above Rs. 12L, the new regime offers lower slab rates that outweigh old regime deductions.');
   }
 
   if (oldResult.grossIncome <= 700000) {
-    suggestions.push('Your income is within the ₹7L rebate threshold under the old regime — consider maximizing 80C to bring taxable income below ₹5L for zero tax.');
+    suggestions.push('Your income is within the Rs. 7L rebate threshold under the old regime — consider maximizing 80C to bring taxable income below Rs. 5L for zero tax.');
   }
 
   if (newResult.totalTax === 0 && oldResult.totalTax === 0) {

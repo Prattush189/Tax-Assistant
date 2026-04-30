@@ -34,7 +34,12 @@ export interface UserInfo {
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 function fmt(n: number): string {
-  return '\u20B9' + n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // Use "Rs." instead of the \u20B9 glyph (U+20B9). jsPDF's built-in
+  // Helvetica is a WinAnsi font and has no glyph for U+20B9, so the
+  // symbol renders as a fallback character (a tiny superscript "1")
+  // and the digits get extra kerning from the missing-width metrics \u2014
+  // exactly the broken "\u00B93 3 8 . 9 8" rendering on receipts.
+  return 'Rs. ' + n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 /** AI-XXXXXXXXXX — 10-char uppercase hex derived from payment ID */
