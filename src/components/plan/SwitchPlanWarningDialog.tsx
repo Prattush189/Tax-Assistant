@@ -45,11 +45,7 @@ export function SwitchPlanWarningDialog({ fromPlan, toPlan, onConfirm, onCancel 
           </p>
           <ul className="list-disc list-inside space-y-1.5 text-gray-600 dark:text-gray-400">
             <li>{toPlan} starts billing today and runs on its own cycle.</li>
-            <li>
-              Pre-paid time on {fromPlan} is <span className="font-semibold">not refunded automatically</span>{' '}
-              — email <a href="mailto:support@smartbizin.com" className="text-[#0D9668] hover:underline">support@smartbizin.com</a>{' '}
-              if you want a partial refund.
-            </li>
+            <li>Pre-paid time on {fromPlan} is not refunded.</li>
             <li>You'll keep all your data, history, and settings.</li>
           </ul>
         </div>
