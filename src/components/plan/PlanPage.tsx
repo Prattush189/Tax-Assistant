@@ -11,6 +11,7 @@ import {
   type BillingDetails,
 } from '../../services/api';
 import { BillingDetailsDialog } from './BillingDetailsDialog';
+import { SwitchPlanWarningDialog } from './SwitchPlanWarningDialog';
 import {
   Check,
   Crown,
@@ -295,6 +296,12 @@ export function PlanPage() {
   const [successPayment, setSuccessPayment] = useState<PaymentData | null>(null);
   const [showBillingDialog, setShowBillingDialog] = useState<'pro' | 'enterprise' | null>(null);
   const [lastBillingDetails, setLastBillingDetails] = useState<BillingDetails | null>(null);
+  // Plan-switch warning. When the user is already on a different paid
+  // plan and clicks the other one's button, show a confirmation modal
+  // explaining that the existing subscription will be cancelled. Only
+  // gated when current and target are BOTH paid (free → paid never
+  // hits this).
+  const [pendingSwitch, setPendingSwitch] = useState<'pro' | 'enterprise' | null>(null);
 
   useEffect(() => {
     fetchUserUsage()
@@ -400,6 +407,20 @@ export function PlanPage() {
 
   return (
     <div className="flex-1 overflow-y-auto">
+      {/* Switch-plan warning — only when going Pro ↔ Enterprise */}
+      {pendingSwitch && (
+        <SwitchPlanWarningDialog
+          fromPlan={currentPlan === 'pro' ? 'Pro' : 'Enterprise'}
+          toPlan={pendingSwitch === 'pro' ? 'Pro' : 'Enterprise'}
+          onConfirm={() => {
+            const target = pendingSwitch;
+            setPendingSwitch(null);
+            setShowBillingDialog(target);
+          }}
+          onCancel={() => setPendingSwitch(null)}
+        />
+      )}
+
       {/* Billing details dialog — shown before Razorpay opens */}
       {showBillingDialog && (
         <BillingDetailsDialog
@@ -625,7 +646,19 @@ export function PlanPage() {
                   </div>
                 ) : isPaid ? (
                   <button
-                    onClick={() => setShowBillingDialog(plan.id as 'pro' | 'enterprise')}
+                    onClick={() => {
+                      const target = plan.id as 'pro' | 'enterprise';
+                      // If user is already on a different paid plan,
+                      // intercept with the switch-warning modal so we
+                      // can tell them the old sub will be cancelled.
+                      // Free / cancelled users skip this and go
+                      // straight to the billing-details dialog.
+                      if ((currentPlan === 'pro' || currentPlan === 'enterprise') && currentPlan !== target) {
+                        setPendingSwitch(target);
+                      } else {
+                        setShowBillingDialog(target);
+                      }
+                    }}
                     disabled={!!paying}
                     className={cn(
                       'w-full py-3 text-center text-sm font-semibold text-white rounded-xl transition-all flex items-center justify-center gap-2',
@@ -641,7 +674,9 @@ export function PlanPage() {
                     ) : (
                       <>
                         <Shield className="w-4 h-4" />
-                        Upgrade to {plan.name}
+                        {currentPlan === 'pro' || currentPlan === 'enterprise'
+                          ? `Switch to ${plan.name}`
+                          : `Upgrade to ${plan.name}`}
                       </>
                     )}
                   </button>

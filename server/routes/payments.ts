@@ -163,6 +163,16 @@ router.post('/verify', verifyLimiter, (req: AuthRequest, res: Response) => {
     res.status(400).json({ error: 'plan and billing are required' }); return;
   }
 
+  // 3a. Capture the current subscription BEFORE we overwrite it. If the
+  //     user is switching plans (Pro → Enterprise or vice versa) or
+  //     re-buying after a lapse, the old Razorpay subscription is still
+  //     active on Razorpay's side — without cancelling it we'd
+  //     double-bill them every cycle. Snapshot for the post-activation
+  //     cancel call below.
+  const userBefore = userRepo.findById(req.user.id);
+  const oldSubId = userBefore?.razorpay_subscription_id ?? null;
+  const oldStatus = userBefore?.subscription_status ?? null;
+
   // 4. Activate plan — webhook will keep extending plan_expires_at each cycle
   const expiresAt = fallbackExpiry(billing as BillingCycle);
   userRepo.updateSubscription(
@@ -172,6 +182,24 @@ router.post('/verify', verifyLimiter, (req: AuthRequest, res: Response) => {
     plan as PaidPlan,
     expiresAt,
   );
+
+  // 4a. Fire-and-forget: cancel the old Razorpay subscription if it's
+  //     a different one and was active. Done AFTER the DB flip so the
+  //     user's plan is safely stored on the new sub before we touch
+  //     the old one. If the cancel fails (network blip, Razorpay
+  //     hiccup), the new plan is still active — worst case the user
+  //     manually cancels via the existing Cancel button later.
+  if (oldSubId && oldSubId !== razorpay_subscription_id && oldStatus === 'active') {
+    void (async () => {
+      try {
+        const rzp = getRazorpay();
+        await rzp.subscriptions.cancel(oldSubId, false); // immediate
+        console.log(`[payments/verify] Cancelled old subscription ${oldSubId} after switch to ${plan} (new sub ${razorpay_subscription_id})`);
+      } catch (err) {
+        console.error(`[payments/verify] Failed to cancel old subscription ${oldSubId}:`, err);
+      }
+    })();
+  }
 
   // 5. Log payment record
   const amount = PLAN_AMOUNTS[planKey(plan as PaidPlan, billing as BillingCycle)];
