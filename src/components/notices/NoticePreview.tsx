@@ -5,6 +5,7 @@ import { Download, Copy, Check, Trash2, Edit3 } from 'lucide-react';
 import { LetterheadConfig } from '../../hooks/useNoticeDrafter';
 import { LoadingAnimation } from '../ui/LoadingAnimation';
 import { renderMarkdownToPdf } from '../../lib/markdownPdf';
+import { downloadAsWord } from '../../lib/markdownDoc';
 
 interface NoticePreviewProps {
   content: string;
@@ -202,6 +203,15 @@ export function NoticePreview({ content, onContentChange, isGenerating, onClear,
         >
           <Download className="w-3.5 h-3.5" />
           PDF
+        </button>
+        <button
+          onClick={() => downloadAsWord(content)}
+          disabled={!content || isGenerating}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors disabled:opacity-50"
+          title="Download as editable Word document (.doc)"
+        >
+          <Download className="w-3.5 h-3.5" />
+          Word
         </button>
         {isGenerating && (
           <div className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-[#059669] bg-[#059669]/10 rounded-lg">
