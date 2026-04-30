@@ -32,6 +32,10 @@ export interface PdfGrid {
   columnCount: number;
   /** Median x-position of each column — used by the wizard preview. */
   columnXs: number[];
+  /** The header word that defined each column (e.g. "Withdrawal Amt.").
+   *  null for columns built from the gap-clustering fallback (no header
+   *  row found). Used by suggestMapping to auto-assign roles. */
+  columnHeaders: (string | null)[];
   /** Indices in `rows` where a new page starts, for visual hints. */
   pageBreaks: number[];
   /** Total pages parsed. */
@@ -122,6 +126,31 @@ export async function extractPdfGrid(file: File): Promise<PdfGrid | null> {
     }
     if (currentRow.length) rowBuckets.push(currentRow);
 
+    // Phase 2.5 — truncate at the statement-summary footer block.
+    // Banks (HDFC, ICICI, Axis) print a "STATEMENT SUMMARY" panel
+    // below the transaction table that includes its own data row
+    // with totals: opening balance / debit count / credit count /
+    // total debits / total credits / closing balance. Without this
+    // truncation, the summary's data row gets bucketed into the
+    // transaction list as a phantom row whose Withdrawal/Deposit/
+    // Balance values are the period totals — inflating credit
+    // totals by 2× (real credits + summary-block "Credits" total)
+    // and adding a row whose balance equals the previous balance
+    // unchanged, which is impossible for a real transaction. Cut
+    // everything from the marker row onward.
+    const SUMMARY_MARKER = /\b(statement\s+summary|account\s+summary|period\s+summary|summary\s+of\s+account|legends?\s*:)\b/i;
+    let summaryCutAt = rowBuckets.length;
+    for (let i = 0; i < rowBuckets.length; i++) {
+      const rowText = rowBuckets[i].map(it => it.text).join(' ');
+      if (SUMMARY_MARKER.test(rowText)) {
+        summaryCutAt = i;
+        break;
+      }
+    }
+    if (summaryCutAt < rowBuckets.length) {
+      rowBuckets.length = summaryCutAt;
+    }
+
     // Phase 3 — discover canonical column x-positions.
     //
     // First-choice strategy: find the table's header row in the raw
@@ -158,6 +187,11 @@ export async function extractPdfGrid(file: File): Promise<PdfGrid | null> {
       // Always the header word's LEFT edge — for dedup and for the
       // public columnXs visual-sort key.
       leftX: number;
+      // The original header word that defined this column (e.g.
+      // "Withdrawal", "Closing Balance"). Carried through to the
+      // public PdfGrid so suggestMapping can auto-assign roles
+      // without re-finding the header row downstream.
+      headerText: string | null;
     }
     let columnAnchors: ColumnAnchor[] = [];
     for (const bucket of rowBuckets) {
@@ -169,18 +203,27 @@ export async function extractPdfGrid(file: File): Promise<PdfGrid | null> {
         // header word like "Withdrawal Amt." across two text items).
         const sorted = [...headerItems].sort((a, b) => a.x - b.x);
         for (const it of sorted) {
-          const isNumeric = NUMERIC_HEADER.test(it.text.trim());
+          const trimmed = it.text.trim();
+          const isNumeric = NUMERIC_HEADER.test(trimmed);
           const anchor: ColumnAnchor = isNumeric
-            ? { x: it.x + it.width, align: 'right', leftX: it.x }
-            : { x: it.x, align: 'left', leftX: it.x };
+            ? { x: it.x + it.width, align: 'right', leftX: it.x, headerText: trimmed }
+            : { x: it.x, align: 'left', leftX: it.x, headerText: trimmed };
           // Dedup using the header word's left edge so a "Withdrawal"
           // header that pdfjs split into "Withdrawal" + "Amt." across
-          // two adjacent text items collapses to one column.
+          // two adjacent text items collapses to one column. Append
+          // the second token's text to the existing header so we
+          // capture "Withdrawal Amt." as one label, not just
+          // "Withdrawal".
           const lastLeft = columnAnchors.length === 0
             ? -Infinity
             : columnAnchors[columnAnchors.length - 1].leftX;
           if (it.x - lastLeft > 12) {
             columnAnchors.push(anchor);
+          } else if (columnAnchors.length > 0) {
+            const prev = columnAnchors[columnAnchors.length - 1];
+            if (prev.headerText) prev.headerText = `${prev.headerText} ${trimmed}`;
+            // Numeric anchor's right-edge tracks the rightmost token.
+            if (prev.align === 'right') prev.x = Math.max(prev.x, it.x + it.width);
           }
         }
         break;
@@ -215,7 +258,9 @@ export async function extractPdfGrid(file: File): Promise<PdfGrid | null> {
       if (clusterCount >= minDensity) {
         fallbackXs.push(clusterSum / clusterCount);
       }
-      columnAnchors = fallbackXs.map(x => ({ x, align: 'left' as const, leftX: x }));
+      columnAnchors = fallbackXs.map(x => ({
+        x, align: 'left' as const, leftX: x, headerText: null as string | null,
+      }));
     }
 
     if (columnAnchors.length < 2) return null; // not enough column structure
@@ -268,6 +313,7 @@ export async function extractPdfGrid(file: File): Promise<PdfGrid | null> {
       rows,
       columnCount: columnXs.length,
       columnXs,
+      columnHeaders: columnAnchors.map(a => a.headerText),
       pageBreaks,
       pageCount: pdf.numPages,
     };
@@ -962,10 +1008,18 @@ export function rowsToFakeGrid(rows: string[][]): PdfGrid | null {
     while (out.length < columnCount) out.push('');
     return out;
   });
+  // The first row of a CSV is almost always the header — promote it
+  // to columnHeaders so suggestMapping can auto-assign roles the same
+  // way it does for digital PDFs.
+  const firstRow = padded[0];
+  const looksLikeHeader = firstRow.some(c => /date|narration|particulars|debit|credit|balance|withdraw|deposit|amount|reference/i.test(c));
   return {
     rows: padded,
     columnCount,
     columnXs: Array.from({ length: columnCount }, (_, i) => i * 100),
+    columnHeaders: looksLikeHeader
+      ? firstRow.map(c => (c ?? '').trim() || null)
+      : Array.from({ length: columnCount }, () => null as string | null),
     pageBreaks: [],
     pageCount: 1,
   };
@@ -975,6 +1029,43 @@ export function rowsToFakeGrid(rows: string[][]): PdfGrid | null {
  *  the column's median content. The wizard pre-fills with this and
  *  the user adjusts. Mandatory confirm step still applies — we never
  *  auto-submit. */
+/**
+ * Map a single header word to its semantic role. Returns null when
+ * the header is too ambiguous to assign confidently.
+ *
+ * Order matters: more-specific patterns are checked first so
+ * "Value Dt" doesn't match `/date/` and become the transaction Date,
+ * "Closing Balance" doesn't match `/closing/` only, etc.
+ */
+function roleFromHeader(header: string): ColumnRole | null {
+  const h = header.toLowerCase().trim();
+  if (!h) return null;
+  // "Value Date" / "Value Dt" / "Val Dt" — bank-internal posting date,
+  // not the transaction date the user wants to report on. Skip so the
+  // real Date column wins.
+  if (/\bvalue\s*(?:date|dt)\b|\bval\.?\s*dt\b|\bposting\s*date\b/.test(h)) return 'skip';
+  // "Closing Balance" / "Running Balance" / "Balance"
+  if (/\b(closing|running)\s*bal\w*\b|^bal\w*$|^balance\b/.test(h)) return 'balance';
+  // Withdrawal / Debit / Dr Amount
+  if (/\b(withdraw\w*|debits?|dr\.?\s*amount|debit\s*amt)\b/.test(h)) return 'debit';
+  // Deposit / Credit / Cr Amount
+  if (/\b(deposit\w*|credits?|cr\.?\s*amount|credit\s*amt)\b/.test(h)) return 'credit';
+  // Single signed amount column (when there's no separate dr/cr)
+  if (/^amount$|^amt\.?$|\btxn\s*amount\b/.test(h)) return 'amount';
+  if (/\bdr\s*\/\s*cr|type\s*\(dr\/cr\)|dr\/cr/.test(h)) return 'drCrMarker';
+  // Cheque / Reference / UTR — distinct from narration so search/filter
+  // works on the long narration text without matching reference numbers.
+  if (/\b(chq\.?\s*(no|number|ref)?|cheque|ref\.?\s*no\.?|reference|utr)\b/.test(h)) return 'reference';
+  // Voucher type (Tally) — ledger only but harmless if assigned for bank
+  if (/\bvoucher|\bvch\b|^type$/.test(h)) return 'voucher';
+  // Account / ledger name (Tally party-wise book)
+  if (/\baccount\b|^ledger$|party\s*name/.test(h)) return 'account';
+  // Date — checked AFTER value-date so the real Date column wins
+  if (/^date$|\btxn\s*date\b|\btransaction\s*date\b|^dt$/.test(h)) return 'date';
+  if (/^narration|^particulars|^description|^details|^narrative$/.test(h)) return 'narration';
+  return null;
+}
+
 export function suggestMapping(grid: PdfGrid): ColumnMapping {
   const roles: ColumnRole[] = new Array(grid.columnCount).fill('skip');
   const sample = grid.rows.slice(0, Math.min(20, grid.rows.length));
@@ -982,33 +1073,49 @@ export function suggestMapping(grid: PdfGrid): ColumnMapping {
   const colTexts: string[][] = Array.from({ length: grid.columnCount }, (_, c) =>
     sample.map(r => r[c] ?? ''),
   );
-  const headerRow = grid.rows.find(r =>
-    r.some(c => /date|particulars|narration|debit|credit|balance|withdraw|deposit|voucher/i.test(c)),
-  );
+
+  // Track which roles have been assigned so we don't double-assign
+  // (e.g. two columns both guessed as 'balance'). First-wins —
+  // header order is left-to-right, which mirrors how every Indian
+  // bank statement and Tally ledger lays out its table.
+  const taken = new Set<ColumnRole>();
 
   for (let c = 0; c < grid.columnCount; c++) {
-    const header = (headerRow?.[c] ?? '').toLowerCase();
-    if (/date/.test(header)) { roles[c] = 'date'; continue; }
-    if (/particulars|narration|description|chq|cheque|details/.test(header)) { roles[c] = 'narration'; continue; }
-    if (/voucher|vch|type/.test(header)) { roles[c] = 'voucher'; continue; }
-    if (/withdraw|debit|dr\b/.test(header)) { roles[c] = 'debit'; continue; }
-    if (/deposit|credit|cr\b/.test(header)) { roles[c] = 'credit'; continue; }
-    if (/balance|closing/.test(header)) { roles[c] = 'balance'; continue; }
-    if (/ref|utr|chq/.test(header)) { roles[c] = 'reference'; continue; }
-
-    // Header didn't help. Look at content.
-    const texts = colTexts[c];
-    const dateHits = texts.filter(t => DATE_LIKE_RE.test(t)).length;
-    const numHits = texts.filter(t => NUMBER_RE.test(t) && !DATE_LIKE_RE.test(t)).length;
-    if (dateHits >= sample.length * 0.4) { roles[c] = 'date'; continue; }
-    if (numHits >= sample.length * 0.4) {
-      // ambiguous numeric column — leave as skip; user picks.
+    // Prefer the per-column header captured at extraction time —
+    // it's the actual header word that defined this column's
+    // x-position, so it can't drift the way grid.rows.find()-based
+    // detection can.
+    const header = grid.columnHeaders?.[c] ?? '';
+    const fromHeader = roleFromHeader(header);
+    if (fromHeader && fromHeader !== 'skip' && !taken.has(fromHeader)) {
+      roles[c] = fromHeader;
+      taken.add(fromHeader);
+      continue;
+    }
+    if (fromHeader === 'skip') {
       roles[c] = 'skip';
       continue;
     }
-    // Long-text-heavy column → narration candidate.
+
+    // Fallback: look at the column's content.
+    const texts = colTexts[c];
+    const dateHits = texts.filter(t => DATE_LIKE_RE.test(t)).length;
+    const numHits = texts.filter(t => NUMBER_RE.test(t) && !DATE_LIKE_RE.test(t)).length;
+    if (dateHits >= sample.length * 0.4 && !taken.has('date')) {
+      roles[c] = 'date';
+      taken.add('date');
+      continue;
+    }
+    if (numHits >= sample.length * 0.4) {
+      // Ambiguous numeric column — leave as skip; user picks.
+      roles[c] = 'skip';
+      continue;
+    }
     const avgLen = texts.reduce((s, t) => s + t.length, 0) / Math.max(1, texts.length);
-    if (avgLen >= 12) roles[c] = 'narration';
+    if (avgLen >= 12 && !taken.has('narration')) {
+      roles[c] = 'narration';
+      taken.add('narration');
+    }
   }
 
   return { roles };
