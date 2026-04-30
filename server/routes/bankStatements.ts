@@ -32,7 +32,7 @@ const ALLOWED_MIME_TYPES = [
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 500 * 1024 },
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
   fileFilter: (_req, file, cb) => {
     if ((ALLOWED_MIME_TYPES as readonly string[]).includes(file.mimetype)) {
       cb(null, true);
@@ -1671,7 +1671,7 @@ router.get('/:id/export.csv', (req: AuthRequest, res: Response) => {
 router.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
   if (err instanceof MulterError) {
     if (err.code === 'LIMIT_FILE_SIZE') {
-      res.status(400).json({ error: 'File exceeds the 500 KB size limit.' });
+      res.status(400).json({ error: 'File exceeds the 10 MB size limit.' });
       return;
     }
     res.status(400).json({ error: `Upload error: ${err.message}` });

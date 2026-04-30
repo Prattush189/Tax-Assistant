@@ -88,7 +88,7 @@ function ScrutinyProgressBar({
 }
 
 const ACCEPT = '.pdf,.csv,application/pdf,text/csv';
-const MAX_BYTES = 3 * 1024 * 1024;
+const MAX_BYTES = 10 * 1024 * 1024;
 const MAX_LEDGER_TXNS_PER_FILE = 20_000;
 
 export function LedgerUploader({ manager }: Props) {
@@ -114,7 +114,7 @@ export function LedgerUploader({ manager }: Props) {
       return;
     }
     if (file.size > MAX_BYTES) {
-      toast.error('Ledger file exceeds the 3 MB size limit. Split the export and re-upload.');
+      toast.error('Ledger file exceeds the 10 MB size limit. Split the export and re-upload.');
       return;
     }
     // Hard guard against starting a second audit while the first is
@@ -272,7 +272,7 @@ export function LedgerUploader({ manager }: Props) {
         ) : (
           <>
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-              Tally / Busy / Marg PDF or CSV export · max 3 MB
+              Tally / Busy / Marg PDF or CSV export · max 10 MB
             </p>
             <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
               Extract + audit run as one step — no buttons to click after upload.

@@ -46,7 +46,7 @@ import { AuthRequest } from '../types.js';
 
 const router = Router();
 
-const MAX_FILE_BYTES = 3 * 1024 * 1024; // 3 MB — Tally / Busy year-long ledgers can be dense.
+const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB
 
 const ALLOWED_MIME_TYPES = ['application/pdf'] as const;
 
@@ -2126,7 +2126,7 @@ router.post('/:id/resume', async (req: AuthRequest, res: Response) => {
 router.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
   if (err instanceof MulterError) {
     if (err.code === 'LIMIT_FILE_SIZE') {
-      res.status(400).json({ error: 'Ledger PDF exceeds the 3 MB size limit. Split the export and re-upload.' });
+      res.status(400).json({ error: 'Ledger PDF exceeds the 10 MB size limit. Split the export and re-upload.' });
       return;
     }
     res.status(400).json({ error: `Upload error: ${err.message}` });
