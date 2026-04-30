@@ -797,6 +797,39 @@ export function applyMapping(
     const voucher = cell('voucher') || null;
     const reference = cell('reference') || null;
 
+    // Bank-statement subtotal / running-total / carry-forward rows.
+    // Banks print rows like "Page Total", "Grand Total", "Carried
+    // Forward", "B/F", "Opening Balance", "Closing Balance" inside
+    // the transaction table — they look structurally identical to
+    // a real transaction (often with aggregate amounts in the
+    // debit/credit/balance columns) but aren't txns. Without this
+    // guard, the continuation-merge logic below absorbs their
+    // numbers into the previous transaction's pending block,
+    // inflating its amount or balance.
+    //
+    // Match against narration + voucher + reference (whichever cell
+    // the bank put the label in) but only when the row has NO
+    // parseable date — a real transaction with "Total" in the
+    // counterparty name (e.g. "TOTAL ENERGIES PVT LTD") still has
+    // a date and passes through.
+    //
+    // Bank-only because mappedRowsToExtractedLedger relies on the
+    // Tally "Opening Balance" row staying in the mapped output to
+    // populate accounts[].opening; skipping it here would zero out
+    // every ledger's opening and re-introduce the false-positive
+    // §269SS / RECON_BREAK observations that fix targeted.
+    if (kind === 'bank') {
+      const SUBTOTAL_MARKER = /\b(grand\s+total|sub[- ]?total|page\s+total|carr(?:y|ied)\s+forward|brought\s+forward|opening\s+balance|closing\s+balance|c\.?\s*\/\.?\s*f\.?|b\.?\s*\/\.?\s*f\.?|^\s*total\b)/i;
+      const haystack = `${narr} ${voucher ?? ''} ${reference ?? ''}`.trim();
+      if (!date && SUBTOTAL_MARKER.test(haystack)) {
+        // Flush whatever was pending so this row's stray numbers
+        // don't bleed into the previous transaction's pending block.
+        flushPending();
+        stats.skippedNoAmount += 1;
+        continue;
+      }
+    }
+
     if (date) {
       // New transaction starts. Flush whatever was pending.
       flushPending();
