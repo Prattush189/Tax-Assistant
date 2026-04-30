@@ -9,7 +9,6 @@ import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { styleProfileRepo } from '../db/repositories/styleProfileRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
-import { getEffectivePlan } from '../lib/planLimits.js';
 import { enforceTokenQuota } from '../lib/tokenQuota.js';
 import { getBillingUser } from '../lib/billing.js';
 import { extractWithRetry } from '../lib/documentExtract.js';
@@ -233,20 +232,8 @@ router.post(
   // Cap is plan-tiered: Free / Pro = 10 pages, Enterprise = 50.
   // Notices are usually 1-3 pages but enterprise users sometimes
   // upload bundled assessment-order packs that genuinely run longer.
-  if (req.file && req.file.mimetype === 'application/pdf') {
-    const pdfStr = req.file.buffer.toString('latin1');
-    // `/Type /Page` (with optional whitespace) but NOT `/Type /Pages`
-    // (the page-tree node) — negative-lookahead on the trailing 's'.
-    const matches = pdfStr.match(/\/Type\s*\/Page(?![s\w])/g);
-    const pageCount = matches ? matches.length : 0;
-    const actor = userRepo.findById(req.user!.id);
-    const plan = actor ? getEffectivePlan(actor) : 'free';
-    const maxPages = plan === 'enterprise' ? 50 : 10;
-    if (pageCount > maxPages) {
-      res.status(413).json({ error: `PDF too large — your plan allows up to ${maxPages} pages per notice. Please attach a shorter document or upgrade.` });
-      return;
-    }
-  }
+  // Notice PDF page count is no longer capped — the multer file-size
+  // limit and token budget are the only gates.
   let extractionMeta: { mergedNoticeNumber?: string; mergedNoticeDate?: string; mergedSection?: string; mergedAssessmentYear?: string; mergedDin?: string } = {};
   if (req.file) {
     try {

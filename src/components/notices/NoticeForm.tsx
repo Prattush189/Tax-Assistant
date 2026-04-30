@@ -6,14 +6,6 @@ import { LetterheadConfig } from '../../hooks/useNoticeDrafter';
 import { LoadFromProfile } from '../profile/shared/LoadFromProfile';
 import { profileToNoticeForm } from '../profile/lib/prefillAdapters';
 import { cn } from '../../lib/utils';
-import { useAuth } from '../../contexts/AuthContext';
-
-/** Tier-based PDF page cap on notice uploads. Free / Pro = 10 pages
- *  (notices are usually 1-3 pages); Enterprise = 50 to cover bundled
- *  assessment-order packs. Mirrored on the server in notices.ts. */
-function noticePageCap(plan: string | undefined): number {
-  return plan === 'enterprise' ? 50 : 10;
-}
 
 const NOTICE_TYPES = [
   { value: 'income-tax', label: 'Income Tax' },
@@ -73,8 +65,6 @@ function readFileAsDataUrl(file: File): Promise<string> {
 }
 
 export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLetterheadChange, currentNoticeId }: NoticeFormProps) {
-  const { user } = useAuth();
-  const maxPages = noticePageCap(user?.plan);
   const [noticeType, setNoticeType] = useState('income-tax');
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [subType, setSubType] = useState('');
@@ -169,24 +159,8 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
       setNoticeFile(null);
       return;
     }
-    // PDF page-count gate. Cap is plan-tiered: Free / Pro allow 10
-    // pages (notices are usually 1-3); Enterprise allows 50 for
-    // bundled assessment-order packs. Server enforces the same cap
-    // as a backstop for direct API uploads.
-    if (file.type === 'application/pdf') {
-      try {
-        const { countPdfPagesClient } = await import('../../lib/pdfText');
-        const pages = await countPdfPagesClient(file);
-        if (pages !== null && pages > maxPages) {
-          setFileError(`PDF too large — your plan allows up to ${maxPages} pages per notice.`);
-          setNoticeFile(null);
-          return;
-        }
-      } catch {
-        // Counting failed — let the upload through; the server-side
-        // page check will catch a too-large PDF as a backup.
-      }
-    }
+    // PDF page count is no longer capped — the 10 MB file-size limit
+    // and token budget are the only gates.
     setFileError(null);
     setNoticeFile(file);
   };

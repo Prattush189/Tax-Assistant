@@ -48,11 +48,11 @@ STRICT RULES:
 - assessmentYear should be in format like "2025-26".
 - Escape quotes in string values with backslash. No literal newlines inside strings.`;
 
-// ── Multer — PDF only, 500 KB ───────────────────────────────────────────
+// ── Multer — PDF only, 10 MB ────────────────────────────────────────────
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 500 * 1024 },
+  limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     if (file.mimetype === 'application/pdf') {
       cb(null, true);
@@ -124,7 +124,7 @@ router.post(
 router.use('/import', (err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (err instanceof MulterError) {
     if (err.code === 'LIMIT_FILE_SIZE') {
-      res.status(400).json({ error: 'File exceeds the 500 KB size limit.' });
+      res.status(400).json({ error: 'File exceeds the 10 MB size limit.' });
       return;
     }
     res.status(400).json({ error: `Upload error: ${err.message}` });
