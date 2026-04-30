@@ -41,7 +41,7 @@ import { userRepo } from '../db/repositories/userRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { getBillingUser } from '../lib/billing.js';
-import { getUserLimits, getEffectivePlan } from '../lib/planLimits.js';
+import { getUserLimits } from '../lib/planLimits.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
@@ -1248,18 +1248,7 @@ router.post(
     // Quota gate before extraction (which is also expensive — though we
     // only debit usage on a successful scrutiny pass, we don't want a user
     // already at-cap to burn extract calls either).
-    // Plan-tier gate first. Ledger Scrutiny is a Pro+ feature.
-    const tierActor = userRepo.findById(req.user.id);
-    const tierBilling = tierActor ? getBillingUser(tierActor) : undefined;
-    const tierPlan = tierBilling ? getEffectivePlan(tierBilling) : (tierActor ? getEffectivePlan(tierActor) : 'free');
-    if (tierPlan === 'free') {
-      res.status(402).json({
-        error: 'AI Ledger Scrutiny is available on Pro and Enterprise plans. Upgrade to start auditing.',
-        upgrade: true,
-        feature: 'ledger_scrutiny',
-      });
-      return;
-    }
+    // Ledger Scrutiny is available on all plans (including free).
     const tokenQuota = enforceTokenQuota(req, res);
     if (!tokenQuota.ok) return;
     const quota = enforceQuota(req, res);
@@ -2046,14 +2035,7 @@ router.post('/:id/resume', async (req: AuthRequest, res: Response) => {
     return;
   }
 
-  // Plan-tier + token-budget gates (resume = new audit work).
-  const tierActor = userRepo.findById(req.user.id);
-  const tierBilling = tierActor ? getBillingUser(tierActor) : undefined;
-  const tierPlan = tierBilling ? getEffectivePlan(tierBilling) : 'free';
-  if (tierPlan === 'free') {
-    res.status(402).json({ error: 'AI Ledger Scrutiny is available on Pro and Enterprise plans.', upgrade: true });
-    return;
-  }
+  // Token-budget gate (resume = new audit work). Ledger Scrutiny is open to all plans.
   const tokenQuota = enforceTokenQuota(req, res);
   if (!tokenQuota.ok) return;
 
