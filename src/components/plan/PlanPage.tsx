@@ -79,6 +79,8 @@ const plans = [
       'Notice draft generator',
       'Board resolution generator',
       'Partnership deed generator',
+      'Bank Statement Analyzer',
+      'AI Ledger Scrutiny',
       'All tax calculators (Income Tax, CG, GST, TDS)',
       'Rent receipts + Challan 280',
       'Saved tax profile',
@@ -95,8 +97,6 @@ const plans = [
     features: [
       'Everything in Free, plus:',
       '8× the monthly capacity (across every feature)',
-      'Bank Statement Analyzer',
-      'AI Ledger Scrutiny',
       'Salary Structure Optimizer',
       'Tax Planning PDF report',
       'Writing style customization',
