@@ -37,6 +37,17 @@ interface AdminUser {
   message_count: number;
   ips: string;
   last_api_call: string | null;
+  // Cumulative usage across api_usage (failed rows excluded). Powers
+  // the Users-tab filters & sorts so admins don't have to expand each
+  // card to find heavy-spend users.
+  requests: number;
+  total_tokens: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_cost_usd: number;
+  total_cost_inr: number;
+  avg_cost_per_1m_usd: number;
+  avg_cost_per_1m_inr: number;
 }
 
 interface TrendPoint {
@@ -92,6 +103,10 @@ export function AdminDashboard() {
   const [userSearch, setUserSearch] = useState('');
   const [planFilter, setPlanFilter] = useState<'all' | 'free' | 'pro' | 'enterprise'>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'suspended'>('all');
+  // Sort by usage column. Direction is implicit: descending for the
+  // numeric metrics (admins want high-spend users first), ascending
+  // for 'name'. 'recent' = sort by last_api_call desc (server default).
+  const [sortBy, setSortBy] = useState<'recent' | 'requests' | 'total_tokens' | 'total_cost_inr' | 'avg_cost_per_1m_inr' | 'name'>('recent');
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -145,17 +160,35 @@ export function AdminDashboard() {
   // Apply search + plan + status filters to the users[] before
   // rendering. Client-side because the list size is small (admin
   // sees all users, not paginated) and filters change frequently.
-  const filteredUsers = users.filter(u => {
-    if (planFilter !== 'all' && u.plan !== planFilter) return false;
-    if (statusFilter === 'active' && u.suspended_until) return false;
-    if (statusFilter === 'suspended' && !u.suspended_until) return false;
-    if (userSearch.trim()) {
-      const q = userSearch.trim().toLowerCase();
-      const hay = `${u.name} ${u.email}`.toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
-    return true;
-  });
+  const filteredUsers = users
+    .filter(u => {
+      if (planFilter !== 'all' && u.plan !== planFilter) return false;
+      if (statusFilter === 'active' && u.suspended_until) return false;
+      if (statusFilter === 'suspended' && !u.suspended_until) return false;
+      if (userSearch.trim()) {
+        const q = userSearch.trim().toLowerCase();
+        const hay = `${u.name} ${u.email}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    })
+    .slice()
+    .sort((a, b) => {
+      switch (sortBy) {
+        case 'requests':              return b.requests - a.requests;
+        case 'total_tokens':          return b.total_tokens - a.total_tokens;
+        case 'total_cost_inr':        return b.total_cost_inr - a.total_cost_inr;
+        case 'avg_cost_per_1m_inr':   return b.avg_cost_per_1m_inr - a.avg_cost_per_1m_inr;
+        case 'name':                  return a.name.localeCompare(b.name);
+        case 'recent':
+        default: {
+          // Server returns recent-first already; keep that ordering.
+          const ta = a.last_api_call ? new Date(a.last_api_call + '+05:30').getTime() : 0;
+          const tb = b.last_api_call ? new Date(b.last_api_call + '+05:30').getTime() : 0;
+          return tb - ta;
+        }
+      }
+    });
 
   // `ai: true` tabs expose AI-specific telemetry (per-model costs / usage /
   // recent calls). Rendered with a small [AI] badge so admins can see at a
@@ -367,11 +400,28 @@ export function AdminDashboard() {
               <option value="suspended">Suspended only</option>
             </select>
 
-            {/* Reset filters — only when a filter is engaged */}
-            {(userSearch || planFilter !== 'all' || statusFilter !== 'all') && (
+            {/* Sort by usage metric — descending for the numeric ones */}
+            <select
+              value={sortBy}
+              onChange={e => setSortBy(e.target.value as typeof sortBy)}
+              className="px-2 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md text-gray-700 dark:text-gray-200 cursor-pointer"
+              title="Sort users by"
+            >
+              <option value="recent">Recent activity</option>
+              <option value="name">Name (A→Z)</option>
+              <option value="requests">Requests (high → low)</option>
+              <option value="total_tokens">Total tokens (high → low)</option>
+              <option value="total_cost_inr">Total cost (high → low)</option>
+              <option value="avg_cost_per_1m_inr">Avg / 1M tokens (high → low)</option>
+            </select>
+
+            {/* Reset filters — only when a filter or non-default sort is engaged */}
+            {(userSearch || planFilter !== 'all' || statusFilter !== 'all' || sortBy !== 'recent') && (
               <button
                 type="button"
-                onClick={() => { setUserSearch(''); setPlanFilter('all'); setStatusFilter('all'); }}
+                onClick={() => {
+                  setUserSearch(''); setPlanFilter('all'); setStatusFilter('all'); setSortBy('recent');
+                }}
                 className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 underline underline-offset-2"
               >
                 Clear

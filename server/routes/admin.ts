@@ -24,7 +24,10 @@ router.get('/stats', (req: AuthRequest, res: Response) => {
   });
 });
 
-// GET /api/admin/users — includes IPs per user
+// GET /api/admin/users — includes IPs + per-user totals (requests,
+//   tokens, cost, avg cost per 1M tokens) so the admin Users tab can
+//   filter & sort by spend without expanding every card to fetch
+//   the per-user details.
 router.get('/users', (_req: AuthRequest, res: Response) => {
   const users = userRepo.findAll();
 
@@ -38,18 +41,61 @@ router.get('/users', (_req: AuthRequest, res: Response) => {
 
   const ipMap = new Map(ipsByUser.map(r => [r.user_id, r.ips]));
 
-  res.json(users.map(u => ({
-    id: u.id,
-    email: u.email,
-    name: u.name,
-    role: u.role,
-    plan: u.plan ?? 'free',
-    suspended_until: u.suspended_until,
-    created_at: u.created_at,
-    chat_count: u.chat_count,
-    message_count: u.message_count,
-    ips: ipMap.get(u.id) || '',
-  })));
+  // Cumulative totals per user (failed rows excluded — same filter
+  // sumTokensThisMonth uses, so the numbers add up consistently).
+  const totalsRows = db.prepare(`
+    SELECT
+      user_id,
+      COUNT(*) AS requests,
+      COALESCE(SUM(input_tokens), 0) AS input_tokens,
+      COALESCE(SUM(output_tokens), 0) AS output_tokens,
+      COALESCE(SUM(cost), 0) AS cost
+    FROM api_usage
+    WHERE user_id IS NOT NULL
+      AND COALESCE(status, 'success') != 'failed'
+    GROUP BY user_id
+  `).all() as Array<{
+    user_id: string;
+    requests: number;
+    input_tokens: number;
+    output_tokens: number;
+    cost: number;
+  }>;
+  const totalsMap = new Map(totalsRows.map(r => [r.user_id, r]));
+  const usdToInr = 85;
+
+  res.json(users.map(u => {
+    const t = totalsMap.get(u.id);
+    const requests = t?.requests ?? 0;
+    const inputTokens = t?.input_tokens ?? 0;
+    const outputTokens = t?.output_tokens ?? 0;
+    const totalTokens = inputTokens + outputTokens;
+    const totalCostUsd = t?.cost ?? 0;
+    const totalCostInr = Math.round(totalCostUsd * usdToInr * 100) / 100;
+    const avgCostPer1MUsd = totalTokens > 0 ? (totalCostUsd / totalTokens) * 1_000_000 : 0;
+    const avgCostPer1MInr = Math.round(avgCostPer1MUsd * usdToInr * 100) / 100;
+
+    return {
+      id: u.id,
+      email: u.email,
+      name: u.name,
+      role: u.role,
+      plan: u.plan ?? 'free',
+      suspended_until: u.suspended_until,
+      created_at: u.created_at,
+      chat_count: u.chat_count,
+      message_count: u.message_count,
+      ips: ipMap.get(u.id) || '',
+      requests,
+      total_tokens: totalTokens,
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      total_cost_usd: totalCostUsd,
+      total_cost_inr: totalCostInr,
+      avg_cost_per_1m_usd: Math.round(avgCostPer1MUsd * 1000) / 1000,
+      avg_cost_per_1m_inr: avgCostPer1MInr,
+    };
+  }));
 });
 
 // GET /api/admin/usage — grouped by IP (kept for stats)

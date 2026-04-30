@@ -28,6 +28,13 @@ interface AdminUserSummary {
   message_count: number;
   ips: string;
   last_api_call: string | null;
+  // Cumulative usage from /api/admin/users — surfaced in the
+  // always-visible header so admins can spot heavy-spend users
+  // without clicking expand on every card.
+  requests: number;
+  total_tokens: number;
+  total_cost_inr: number;
+  avg_cost_per_1m_inr: number;
 }
 
 interface Props {
@@ -119,13 +126,20 @@ export function UserCard({
           </div>
         </button>
 
-        {/* Compact per-user stats — visible without expanding */}
-        <div className="hidden sm:flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400 shrink-0">
-          <span title="Chats">
-            <span className="font-medium text-gray-700 dark:text-gray-200">{user.chat_count}</span> chats
+        {/* Compact per-user stats — visible without expanding so the
+            sort-by-usage admin filters land on something readable. */}
+        <div className="hidden sm:flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400 shrink-0">
+          <span title="Total API requests (cumulative)">
+            <span className="font-medium text-gray-700 dark:text-gray-200">{user.requests.toLocaleString('en-IN')}</span> req
           </span>
-          <span title="Messages">
-            <span className="font-medium text-gray-700 dark:text-gray-200">{user.message_count}</span> msgs
+          <span title="Total tokens (input + output, cumulative)">
+            <span className="font-medium text-gray-700 dark:text-gray-200">{formatTokens(user.total_tokens)}</span> tok
+          </span>
+          <span title="Total cost in INR (cumulative)">
+            <span className="font-medium text-gray-700 dark:text-gray-200">Rs. {formatINR(user.total_cost_inr)}</span>
+          </span>
+          <span title="Average cost per 1M tokens, INR">
+            <span className="font-medium text-gray-700 dark:text-gray-200">Rs. {formatINR(user.avg_cost_per_1m_inr)}</span>/1M
           </span>
           <span className="whitespace-nowrap" title={user.last_api_call ?? 'Never'}>
             <Clock className="w-3 h-3 inline mr-1 -mt-0.5" />
