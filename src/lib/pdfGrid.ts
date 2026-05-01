@@ -92,7 +92,8 @@ export class PdfPasswordError extends Error {
  * the retry call to unlock it.
  */
 export async function extractPdfGrid(file: File, password?: string): Promise<PdfGrid | null> {
-  if (file.type !== 'application/pdf') return null;
+  const looksLikePdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+  if (!looksLikePdf) return null;
   try {
     const buf = await file.arrayBuffer();
     const pdf = await pdfjs.getDocument({
