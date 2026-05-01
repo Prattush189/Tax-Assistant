@@ -5,7 +5,7 @@ import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 
 import { profileRepoV2 } from '../db/repositories/profileRepoV2.js';
 import { AuthRequest } from '../types.js';
-import { getUserLimits, getEffectivePlan, getTrialEndsAt, isTrialExpired, TRIAL_DAYS } from '../lib/planLimits.js';
+import { getUserLimits, getEffectivePlan, getTrialEndsAt, isTrialExpired, TRIAL_DAYS, getUsagePeriodStart } from '../lib/planLimits.js';
 import { getBillingUser, countSeats, SEAT_CAP } from '../lib/billing.js';
 import { CSV_ROWS_PER_CREDIT } from '../lib/creditPolicy.js';
 import { tokensRemainingForUser } from '../lib/tokenQuota.js';
@@ -42,7 +42,14 @@ router.get('/', (req: AuthRequest, res: Response) => {
   const plan = getEffectivePlan(billingUser);
   const limits = getUserLimits(billingUser);
 
-  // Messages
+  // Usage-period start: yearly billing window for paid users (resets on
+  // Razorpay renewal), or account lifetime for free-trial users (no
+  // reset; they hit the 30-day trial wall instead). All per-feature
+  // counters below are scoped to this same window.
+  const periodStart = getUsagePeriodStart(billingUser);
+
+  // Messages — uses period.messages still (day vs month) for the
+  // intra-period breakdown the UI surfaces ("messages today").
   let messagesUsed = 0;
   try {
     messagesUsed = usageRepo.countByBillingUser(billingUser.id, periodStartIST(limits.messages.period));
@@ -50,63 +57,55 @@ router.get('/', (req: AuthRequest, res: Response) => {
     console.error('[usage] messages count failed', err);
   }
 
-  // Attachments (monthly)
   let attachmentsUsed = 0;
   try {
-    attachmentsUsed = featureUsageRepo.countThisMonthByBillingUser(billingUser.id, 'attachment_upload');
+    attachmentsUsed = featureUsageRepo.countSinceForBillingUser(billingUser.id, 'attachment_upload', periodStart);
   } catch (err) {
     console.error('[usage] attachments count failed', err);
   }
 
-  // AI Suggestions (monthly)
   let suggestionsUsed = 0;
   try {
-    suggestionsUsed = featureUsageRepo.countThisMonthByBillingUser(billingUser.id, 'ai_suggestions');
+    suggestionsUsed = featureUsageRepo.countSinceForBillingUser(billingUser.id, 'ai_suggestions', periodStart);
   } catch (err) {
     console.error('[usage] suggestions count failed', err);
   }
 
-  // Notice drafts (monthly) — read from the immutable feature_usage log so
-  // that deleting a draft does not reduce the quota counter.
+  // Read counters from the immutable feature_usage log so deleting a
+  // draft does not reduce the quota counter.
   let noticesUsed = 0;
   try {
-    noticesUsed = featureUsageRepo.countThisMonthByBillingUser(billingUser.id, 'notice');
+    noticesUsed = featureUsageRepo.countSinceForBillingUser(billingUser.id, 'notice', periodStart);
   } catch (err) {
     console.error('[usage] notices count failed', err);
   }
 
-  // Board resolutions (monthly)
   let boardResolutionsUsed = 0;
   try {
-    boardResolutionsUsed = featureUsageRepo.countThisMonthByBillingUser(billingUser.id, 'board_resolution');
+    boardResolutionsUsed = featureUsageRepo.countSinceForBillingUser(billingUser.id, 'board_resolution', periodStart);
   } catch (err) {
     console.error('[usage] board resolutions count failed', err);
   }
 
-  // Partnership deeds (monthly)
   let partnershipDeedsUsed = 0;
   try {
-    partnershipDeedsUsed = featureUsageRepo.countThisMonthByBillingUser(billingUser.id, 'partnership_deeds');
+    partnershipDeedsUsed = featureUsageRepo.countSinceForBillingUser(billingUser.id, 'partnership_deeds', periodStart);
   } catch (err) {
     console.error('[usage] partnership deeds count failed', err);
   }
 
-  // Bank statement analyses — credits, not run count. The plan limit
-  // is interpreted as a credit cap (1 credit = 5 PDF pages OR 100 CSV
-  // rows), so the Settings panel must sum credits_used to match what
-  // the bank-statement landing page shows. Otherwise a 30-page run
-  // counts as 1 here but 6 there, and the percentages disagree.
+  // Bank statement analyses — credits, not run count. Sum credits_used
+  // to match what the bank-statement landing page shows.
   let bankStatementsUsed = 0;
   try {
-    bankStatementsUsed = featureUsageRepo.sumCreditsThisMonthByBillingUser(billingUser.id, 'bank_statement_analyze');
+    bankStatementsUsed = featureUsageRepo.sumCreditsSinceForBillingUser(billingUser.id, 'bank_statement_analyze', periodStart);
   } catch (err) {
     console.error('[usage] bank statements credit sum failed', err);
   }
 
-  // Ledger scrutiny — also credit-based (1 credit = 10 ledger pages).
   let ledgerScrutinyUsed = 0;
   try {
-    ledgerScrutinyUsed = featureUsageRepo.sumCreditsThisMonthByBillingUser(billingUser.id, 'ledger_scrutiny');
+    ledgerScrutinyUsed = featureUsageRepo.sumCreditsSinceForBillingUser(billingUser.id, 'ledger_scrutiny', periodStart);
   } catch (err) {
     console.error('[usage] ledger scrutiny credit sum failed', err);
   }

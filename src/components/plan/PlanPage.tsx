@@ -30,10 +30,13 @@ import { cn } from '../../lib/utils';
 import { generatePaymentReceipt, generatePaymentInvoice, type PaymentData } from '../../lib/paymentPdf';
 
 // ── Pricing ──────────────────────────────────────────────────────────────────
+//
+// Yearly billing only. Pro = ₹6,000/yr, Enterprise = ₹9,000/yr (12× the old
+// monthly base price — no annual discount). Monthly plans were retired.
 
 const PRICES = {
-  pro:        { monthly: 500,  yearly: 5700  },
-  enterprise: { monthly: 750,  yearly: 8550  },
+  pro:        { yearly: 6000 },
+  enterprise: { yearly: 9000 },
 } as const;
 
 const GST_PCT = 18;
@@ -45,14 +48,6 @@ function gstAmount(basePrice: number): number {
 
 function totalWithGst(basePrice: number): number {
   return basePrice + gstAmount(basePrice);
-}
-
-function yearlySaving(plan: 'pro' | 'enterprise'): number {
-  return PRICES[plan].monthly * 12 - PRICES[plan].yearly;
-}
-
-function yearlyDiscountPct(plan: 'pro' | 'enterprise'): number {
-  return Math.round((yearlySaving(plan) / (PRICES[plan].monthly * 12)) * 100);
 }
 
 // ── Plan definitions ──────────────────────────────────────────────────────────
@@ -96,7 +91,7 @@ const plans = [
     icon: Crown,
     features: [
       'Everything in Free, plus:',
-      '8× the monthly capacity (across every feature)',
+      '8× the Free token budget (across every feature)',
       'Salary Structure Optimizer',
       'Tax Planning PDF report',
       'Writing style customization',
@@ -114,7 +109,7 @@ const plans = [
     icon: Building2,
     features: [
       'Everything in Pro, plus:',
-      '24× the monthly capacity (across every feature)',
+      '24× the Free token budget (across every feature)',
       'IT portal profile import',
       'Year-over-year trends dashboard',
       'Priority support & SLA',
@@ -162,7 +157,7 @@ function PaymentSuccessDialog({
   const base     = Math.round(total / (1 + GST_RATE_DIALOG) * 100) / 100;
   const gst      = Math.round((total - base) * 100) / 100;
   const planName = payment.plan === 'pro' ? 'Pro' : 'Enterprise';
-  const cycle    = payment.billing === 'monthly' ? 'Monthly' : 'Yearly';
+  const cycle    = 'Yearly';
   const receiptNo = 'AI-' + payment.id.slice(0, 10).toUpperCase();
 
   const userInfo = {
@@ -288,7 +283,9 @@ export function PlanPage() {
   const currentPlan = user?.plan || 'free';
   const [usage, setUsage] = useState<UserUsageResponse | null>(null);
   const [history, setHistory] = useState<PaymentHistoryResponse | null>(null);
-  const [billing, setBilling] = useState<'monthly' | 'yearly'>('monthly');
+  // Yearly billing only — monthly was retired. Kept as a constant rather
+  // than state so the rest of this component can keep using `billing`.
+  const billing: 'yearly' = 'yearly';
   const [paying, setPaying] = useState<string | null>(null); // 'pro' | 'enterprise'
   const [payError, setPayError] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
@@ -333,7 +330,7 @@ export function PlanPage() {
       const basePrice = PRICES[planId][billing];
       const gst       = gstAmount(basePrice);
       const total     = totalWithGst(basePrice);
-      const period    = billing === 'monthly' ? 'month' : 'year';
+      const period    = 'year';
 
       const options = {
         key: sub.keyId,
@@ -461,43 +458,9 @@ export function PlanPage() {
           <TrialBanner daysLeft={trialDaysLeft!} onUpgrade={scrollToPlans} />
         )}
 
-        {/* Billing Toggle */}
-        <div className="flex items-center justify-center gap-3 mb-8">
-          <button
-            onClick={() => setBilling('monthly')}
-            className={cn(
-              'px-5 py-2 rounded-xl text-sm font-semibold transition-all',
-              billing === 'monthly'
-                ? 'bg-[#0D9668] text-white shadow-md'
-                : 'bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
-            )}
-          >
-            Monthly
-          </button>
-          <button
-            onClick={() => setBilling('yearly')}
-            className={cn(
-              'px-5 py-2 rounded-xl text-sm font-semibold transition-all flex items-center gap-2',
-              billing === 'yearly'
-                ? 'bg-[#0D9668] text-white shadow-md'
-                : 'bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
-            )}
-          >
-            Yearly
-            <span className={cn(
-              'text-xs px-2 py-0.5 rounded-full font-bold',
-              billing === 'yearly'
-                ? 'bg-white/20 text-white'
-                : 'bg-[#0D9668]/10 text-[#0D9668] dark:bg-[#0D9668]/20 dark:text-[#2DD4A0]'
-            )}>
-              Save 5%
-            </span>
-          </button>
-        </div>
-
-        {/* Tax note */}
-        <p className="text-xs text-center text-gray-400 dark:text-gray-500 -mt-5 mb-8">
-          All prices are exclusive of {GST_PCT}% GST
+        {/* Yearly-only billing — monthly was retired. */}
+        <p className="text-xs text-center text-gray-400 dark:text-gray-500 mb-8">
+          Billed yearly · All prices exclusive of {GST_PCT}% GST
         </p>
 
         {/* Payment Error */}
@@ -517,10 +480,7 @@ export function PlanPage() {
             const isPaying = paying === plan.id;
             const Icon = plan.icon;
 
-            const monthlyPrice = isPaid ? PRICES[plan.id as 'pro' | 'enterprise'].monthly : 0;
             const yearlyPrice  = isPaid ? PRICES[plan.id as 'pro' | 'enterprise'].yearly  : 0;
-            const saving = isPaid ? yearlySaving(plan.id as 'pro' | 'enterprise') : 0;
-            const discountPct = isPaid ? yearlyDiscountPct(plan.id as 'pro' | 'enterprise') : 0;
 
             return (
               <div
@@ -552,42 +512,18 @@ export function PlanPage() {
                 <h3 className="text-xl font-bold text-gray-800 dark:text-white mb-1">{plan.name}</h3>
                 <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">{plan.description}</p>
 
-                {/* Pricing */}
+                {/* Pricing — yearly only */}
                 {isPaid ? (
                   <div className="mb-4">
-                    {billing === 'monthly' ? (
-                      <>
-                        <div className="flex items-baseline gap-1">
-                          <span className="text-3xl font-bold text-gray-800 dark:text-white">
-                            ₹{monthlyPrice.toLocaleString('en-IN')}
-                          </span>
-                          <span className="text-sm text-gray-500 dark:text-gray-400">/month</span>
-                        </div>
-                        <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                          Excl. {GST_PCT}% GST · Total ₹{totalWithGst(monthlyPrice).toLocaleString('en-IN')}/month
-                        </p>
-                      </>
-                    ) : (
-                      <>
-                        <div className="flex items-baseline gap-1">
-                          <span className="text-3xl font-bold text-gray-800 dark:text-white">
-                            ₹{yearlyPrice.toLocaleString('en-IN')}
-                          </span>
-                          <span className="text-sm text-gray-500 dark:text-gray-400">/year</span>
-                        </div>
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="text-xs text-gray-400 dark:text-gray-500 line-through">
-                            ₹{(monthlyPrice * 12).toLocaleString('en-IN')}/year
-                          </span>
-                          <span className="text-xs font-bold text-[#0D9668] dark:text-[#2DD4A0] bg-[#0D9668]/10 dark:bg-[#0D9668]/20 px-2 py-0.5 rounded-full">
-                            Save ₹{saving.toLocaleString('en-IN')} ({discountPct}% off)
-                          </span>
-                        </div>
-                        <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                          Excl. {GST_PCT}% GST · Total ₹{totalWithGst(yearlyPrice).toLocaleString('en-IN')}/year
-                        </p>
-                      </>
-                    )}
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-3xl font-bold text-gray-800 dark:text-white">
+                        ₹{yearlyPrice.toLocaleString('en-IN')}
+                      </span>
+                      <span className="text-sm text-gray-500 dark:text-gray-400">/year</span>
+                    </div>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                      Excl. {GST_PCT}% GST · Total ₹{totalWithGst(yearlyPrice).toLocaleString('en-IN')}/year
+                    </p>
                   </div>
                 ) : (
                   <div className="mb-4">

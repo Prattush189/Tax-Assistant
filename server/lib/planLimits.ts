@@ -235,3 +235,45 @@ export function getTrialEndsAt(createdAt: string): string {
 export function isTrialExpired(createdAt: string): boolean {
   return new Date() > new Date(getTrialEndsAt(createdAt));
 }
+
+// ---------------------------------------------------------------------------
+// Usage-period helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns the ISO timestamp marking the start of the user's current usage
+ * period — the cutoff for "tokens used so far".
+ *
+ *   - Paid (plan_expires_at set): start = plan_expires_at − 1 year. Razorpay
+ *     extends plan_expires_at on every successful charge, so the period
+ *     auto-rolls forward when the yearly subscription renews.
+ *   - Free / no paid sub: start = created_at. Free plan is a one-off 30-day
+ *     trial — usage NEVER resets; once the 30 days pass the user hits the
+ *     trial-expired wall instead of getting fresh tokens next month.
+ *
+ * Returned as a SQLite-friendly local-IST string ('YYYY-MM-DD HH:MM:SS.sss')
+ * matching how api_usage.created_at is stored.
+ */
+export function getUsagePeriodStart(user: {
+  created_at: string;
+  plan_expires_at: string | null;
+  plan: string;
+}): string {
+  if (user.plan && user.plan !== 'free' && user.plan_expires_at) {
+    const expires = new Date(user.plan_expires_at);
+    if (!Number.isNaN(expires.getTime())) {
+      const start = new Date(expires);
+      start.setFullYear(start.getFullYear() - 1);
+      return toSqlIst(start);
+    }
+  }
+  // Free / no paid sub — usage period is the user's lifetime.
+  return toSqlIst(new Date(user.created_at));
+}
+
+/** Convert a JS Date to the same IST-local string format api_usage rows
+ *  use (no trailing 'Z'). The DB stores `datetime('now', '+5h30m')`. */
+function toSqlIst(d: Date): string {
+  // Strip the 'Z' so SQLite string comparisons line up with stored values.
+  return d.toISOString().replace('Z', '');
+}

@@ -36,9 +36,9 @@ function unixToUtcString(ts: number): string {
   return new Date(ts * 1000).toISOString().replace('Z', '');
 }
 
-function fallbackExpiry(billing: BillingCycle): string {
+function fallbackExpiry(_billing: BillingCycle): string {
   const d = new Date();
-  billing === 'yearly' ? d.setFullYear(d.getFullYear() + 1) : d.setMonth(d.getMonth() + 1);
+  d.setFullYear(d.getFullYear() + 1);
   return d.toISOString().replace('Z', '');
 }
 
@@ -96,8 +96,9 @@ function handleEvent(eventType: string, event: Record<string, unknown>): void {
         return;
       }
 
-      const effectivePlan    = (plan    ?? user.plan)   as PaidPlan;
-      const effectiveBilling = (billing ?? 'monthly')   as BillingCycle;
+      const effectivePlan    = (plan    ?? user.plan) as PaidPlan;
+      const effectiveBilling: BillingCycle = 'yearly';
+      void billing; // legacy notes field — yearly is the only supported cycle
       const expiresAt        = currentEnd ? unixToUtcString(currentEnd) : fallbackExpiry(effectiveBilling);
 
       userRepo.updateSubscription(user.id, subId, 'active', effectivePlan, expiresAt);

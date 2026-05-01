@@ -8,9 +8,6 @@ const stmts = {
   // Counts ROWS (pre-credits accounting) — kept for any feature that
   // hasn't migrated to the credit model yet. Bank statement and
   // ledger now use the sum-of-credits queries below.
-  countByUserSince: db.prepare(
-    'SELECT COUNT(*) as count FROM feature_usage WHERE user_id = ? AND feature = ? AND created_at >= ?'
-  ),
   countByBillingUserSince: db.prepare(
     'SELECT COUNT(*) as count FROM feature_usage WHERE billing_user_id = ? AND feature = ? AND created_at >= ?'
   ),
@@ -18,20 +15,10 @@ const stmts = {
   // each (set by the schema default), so a feature switching from
   // count() to sum() doesn't lose history — just treats every old
   // run as one credit's worth.
-  sumByUserSince: db.prepare(
-    'SELECT COALESCE(SUM(credits_used), 0) as total FROM feature_usage WHERE user_id = ? AND feature = ? AND created_at >= ?'
-  ),
   sumByBillingUserSince: db.prepare(
     'SELECT COALESCE(SUM(credits_used), 0) as total FROM feature_usage WHERE billing_user_id = ? AND feature = ? AND created_at >= ?'
   ),
 };
-
-/** Start of current month in IST (YYYY-MM-01 00:00:00) */
-function startOfMonthIST(): string {
-  const now = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
-  const start = new Date(now.getFullYear(), now.getMonth(), 1);
-  return start.toISOString().replace('Z', '');
-}
 
 export const featureUsageRepo = {
   /** Log a feature run. `credits` defaults to 1 for backwards compatibility
@@ -46,28 +33,18 @@ export const featureUsageRepo = {
     stmts.logWithBilling.run(userId, billingUserId, feature, Math.max(0, Math.floor(credits)));
   },
 
-  countThisMonth(userId: string, feature: string): number {
-    const since = startOfMonthIST();
-    const row = stmts.countByUserSince.get(userId, feature, since) as { count: number };
-    return row.count;
-  },
-
-  countThisMonthByBillingUser(billingUserId: string, feature: string): number {
-    const since = startOfMonthIST();
+  /** Count feature runs since `since` for a billing user. Caller passes
+   *  the user's usage-period start (yearly billing window for paid users,
+   *  account lifetime for free-trial users — see getUsagePeriodStart). */
+  countSinceForBillingUser(billingUserId: string, feature: string, since: string): number {
     const row = stmts.countByBillingUserSince.get(billingUserId, feature, since) as { count: number };
     return row.count;
   },
 
-  /** Sum credits_used for the current month. Used by the credits-based
-   *  quota check (bank statement + ledger). */
-  sumCreditsThisMonth(userId: string, feature: string): number {
-    const since = startOfMonthIST();
-    const row = stmts.sumByUserSince.get(userId, feature, since) as { total: number };
-    return row.total ?? 0;
-  },
-
-  sumCreditsThisMonthByBillingUser(billingUserId: string, feature: string): number {
-    const since = startOfMonthIST();
+  /** Sum credits_used since `since` for a billing user. Same semantics
+   *  as countSinceForBillingUser; used for credit-billed features
+   *  (bank-statement analyzer, ledger scrutiny). */
+  sumCreditsSinceForBillingUser(billingUserId: string, feature: string, since: string): number {
     const row = stmts.sumByBillingUserSince.get(billingUserId, feature, since) as { total: number };
     return row.total ?? 0;
   },

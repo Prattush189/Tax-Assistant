@@ -434,11 +434,12 @@ export interface CreateSubscriptionResponse {
 
 export async function createSubscription(
   plan: 'pro' | 'enterprise',
-  billing: 'monthly' | 'yearly',
+  // Yearly only — monthly was retired. Param kept for call-site compatibility.
+  _billing: 'yearly' = 'yearly',
 ): Promise<CreateSubscriptionResponse> {
   return authFetch('/api/payments/create-subscription', {
     method: 'POST',
-    body: JSON.stringify({ plan, billing }),
+    body: JSON.stringify({ plan, billing: 'yearly' }),
   });
 }
 

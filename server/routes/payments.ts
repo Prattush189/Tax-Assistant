@@ -40,10 +40,11 @@ function unixToIST(ts: number): string {
   return new Date(ts * 1000).toISOString().replace('Z', '');
 }
 
-/** Fallback expiry: now + billing period (used if webhook current_end not available) */
-function fallbackExpiry(billing: BillingCycle): string {
+/** Fallback expiry: now + 1 year (used if webhook current_end not available).
+ *  Only yearly billing is supported. */
+function fallbackExpiry(_billing: BillingCycle): string {
   const d = new Date();
-  billing === 'yearly' ? d.setFullYear(d.getFullYear() + 1) : d.setMonth(d.getMonth() + 1);
+  d.setFullYear(d.getFullYear() + 1);
   return d.toISOString().replace('Z', '');
 }
 
@@ -70,18 +71,18 @@ const verifyLimiter = rateLimit({
 router.post('/create-subscription', createLimiter, async (req: AuthRequest, res: Response) => {
   if (!req.user) { res.status(401).json({ error: 'Authentication required' }); return; }
 
-  const { plan, billing } = req.body ?? {};
+  const { plan } = req.body ?? {};
   if (!['pro', 'enterprise'].includes(plan)) {
     res.status(400).json({ error: 'plan must be pro or enterprise' }); return;
   }
-  if (!['monthly', 'yearly'].includes(billing)) {
-    res.status(400).json({ error: 'billing must be monthly or yearly' }); return;
-  }
+  // Billing cycle is always yearly — monthly plans were retired. Ignore any
+  // legacy 'billing' value in the request body.
+  const billing: BillingCycle = 'yearly';
 
   try {
     const rzp    = getRazorpay();
-    const planId = await getRazorpayPlanId(plan as PaidPlan, billing as BillingCycle);
-    const count  = TOTAL_COUNT[billing as BillingCycle]; // 1200 or 100 (100 years)
+    const planId = await getRazorpayPlanId(plan as PaidPlan, billing);
+    const count  = TOTAL_COUNT[billing];
 
     const sub = await rzp.subscriptions.create({
       plan_id:        planId,
@@ -103,7 +104,7 @@ router.post('/create-subscription', createLimiter, async (req: AuthRequest, res:
       keyId: process.env.RAZORPAY_KEY_ID,
       plan,
       billing,
-      amount: PLAN_AMOUNTS[planKey(plan as PaidPlan, billing as BillingCycle)],
+      amount: PLAN_AMOUNTS[planKey(plan as PaidPlan, billing)],
     });
   } catch (err) {
     console.error('[payments] create-subscription failed:', err);
@@ -156,12 +157,13 @@ router.post('/verify', verifyLimiter, (req: AuthRequest, res: Response) => {
     return;
   }
 
-  // 3. Determine plan/billing from the subscription ID stored by Razorpay
-  //    (notes are set when we created the sub — read from request body as fallback)
-  const { plan, billing } = req.body ?? {};
-  if (!plan || !billing) {
-    res.status(400).json({ error: 'plan and billing are required' }); return;
+  // 3. Determine plan from the request body. Billing cycle is always
+  //    yearly now — monthly plans were retired.
+  const { plan } = req.body ?? {};
+  if (!plan) {
+    res.status(400).json({ error: 'plan is required' }); return;
   }
+  const billing: BillingCycle = 'yearly';
 
   // 3a. Capture the current subscription BEFORE we overwrite it. If the
   //     user is switching plans (Pro → Enterprise or vice versa) or
@@ -174,7 +176,7 @@ router.post('/verify', verifyLimiter, (req: AuthRequest, res: Response) => {
   const oldStatus = userBefore?.subscription_status ?? null;
 
   // 4. Activate plan — webhook will keep extending plan_expires_at each cycle
-  const expiresAt = fallbackExpiry(billing as BillingCycle);
+  const expiresAt = fallbackExpiry(billing);
   userRepo.updateSubscription(
     req.user.id,
     razorpay_subscription_id,
@@ -202,7 +204,7 @@ router.post('/verify', verifyLimiter, (req: AuthRequest, res: Response) => {
   }
 
   // 5. Log payment record
-  const amount = PLAN_AMOUNTS[planKey(plan as PaidPlan, billing as BillingCycle)];
+  const amount = PLAN_AMOUNTS[planKey(plan as PaidPlan, billing)];
   try {
     // Reuse payment repo for audit trail (subscription_id stored as order_id)
     const existing = paymentRepo.findByOrderId(razorpay_subscription_id);

@@ -45,8 +45,8 @@ function fmt(n: number): string {
 /** AI-XXXXXXXXXX — 10-char uppercase hex derived from payment ID */
 function docNo(id: string): string { return 'AI-' + id.slice(0, 10).toUpperCase(); }
 
-function planLabel(plan: string, billing: string): string {
-  return `${COMPANY_BRAND} ${plan === 'pro' ? 'Pro' : 'Enterprise'} Plan \u2014 ${billing === 'monthly' ? 'Monthly' : 'Yearly'}`;
+function planLabel(plan: string, _billing: string): string {
+  return `${COMPANY_BRAND} ${plan === 'pro' ? 'Pro' : 'Enterprise'} Plan \u2014 Yearly`;
 }
 
 function fmtDate(iso: string | null): string {
