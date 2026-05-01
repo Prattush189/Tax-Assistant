@@ -41,6 +41,11 @@ export interface TokenQuotaOk {
   budget: number;
   used: number;
   remaining: number;
+  /** Pre-flight estimate the gate accepted for this request. Routes
+   *  pass this to `usageRepo.logWithBilling(..., estimatedTokens)` on
+   *  the summary row so the admin dashboard can audit estimate
+   *  vs. actual. Zero when the caller didn't provide an estimate. */
+  estimatedTokens: number;
   /** Release the pre-flight reservation taken by this gate call. Always
    *  call from a `finally` once the Gemini work for this request has
    *  finished (success, failure, or cancel). Idempotent. */
@@ -131,7 +136,7 @@ export function enforceTokenQuota(
   // up — releasing the reservation simultaneously prevents the user's
   // effective usage from briefly double-counting.
   const release = reserve(billingUserId, estimatedTokens);
-  return { ok: true, billingUserId, plan, budget, used, remaining, release };
+  return { ok: true, billingUserId, plan, budget, used, remaining, estimatedTokens, release };
 }
 
 /** Estimate-only soft warning. Caller can use this to add a small

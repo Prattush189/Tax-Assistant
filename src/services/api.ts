@@ -318,6 +318,10 @@ export interface AdminUserDetails {
   recent: Array<{
     id: string;
     input_tokens: number; output_tokens: number;
+    /** Pre-flight token estimate from the quota gate. Only set on the
+     *  summary row of a request (per-chunk / failure / cancel rows
+     *  stay at 0). Used to audit estimate-vs-actual in the admin UI. */
+    estimated_tokens: number;
     cost: number; cost_inr: number;
     model: string | null; search_used: number;
     is_plugin: number; category: string | null;

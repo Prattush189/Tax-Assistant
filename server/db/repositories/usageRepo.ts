@@ -37,7 +37,7 @@ const stmts = {
     'INSERT INTO api_usage (ip, user_id, input_tokens, output_tokens, cost, is_plugin) VALUES (?, ?, ?, ?, ?, ?)'
   ),
   logWithBilling: db.prepare(
-    'INSERT INTO api_usage (ip, user_id, billing_user_id, input_tokens, output_tokens, cost, is_plugin, model, search_used, category, input_units, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO api_usage (ip, user_id, billing_user_id, input_tokens, output_tokens, cost, is_plugin, model, search_used, category, input_units, status, estimated_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ),
   // Token quota query: sum input + output tokens for the current month
   // for THIS billing user, EXCLUDING failed calls. Cancelled calls
@@ -239,8 +239,13 @@ export const usageRepo = {
     category?: string,
     inputUnits?: number,
     status?: 'success' | 'cancelled' | 'failed',
+    /** Pre-flight token estimate (from tokenEstimate.ts), if known.
+     *  Only the SUMMARY row for a request should carry the estimate —
+     *  per-chunk failure / retry rows stay at 0 to keep audit sums
+     *  from double-counting a single logical request. */
+    estimatedTokens?: number,
   ): void {
-    stmts.logWithBilling.run(ip, userId, billingUserId, inputTokens, outputTokens, cost, isPlugin ? 1 : 0, model ?? null, searchUsed ? 1 : 0, category ?? null, inputUnits ?? 0, status ?? 'success');
+    stmts.logWithBilling.run(ip, userId, billingUserId, inputTokens, outputTokens, cost, isPlugin ? 1 : 0, model ?? null, searchUsed ? 1 : 0, category ?? null, inputUnits ?? 0, status ?? 'success', estimatedTokens ?? 0);
   },
 
   /** Sum tokens (input+output) used since `since` by this billing user,

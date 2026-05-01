@@ -284,9 +284,13 @@ router.get('/users/:id/details', (req: AuthRequest, res: Response) => {
   }>;
 
   // Recent 50 api_usage rows — what the cards expand to show.
+  // estimated_tokens is the gate's pre-flight estimate (only set on the
+  // SUMMARY row of a request); 0 on per-chunk / failure / cancel rows.
+  // Surfacing it lets the operator audit estimate-vs-actual and tune
+  // the safety margin in tokenEstimate.ts.
   const recent = db.prepare(`
     SELECT
-      id, input_tokens, output_tokens, cost, model, search_used,
+      id, input_tokens, output_tokens, estimated_tokens, cost, model, search_used,
       is_plugin, category, status, created_at
     FROM api_usage
     WHERE user_id = ?
@@ -296,6 +300,7 @@ router.get('/users/:id/details', (req: AuthRequest, res: Response) => {
     id: string;
     input_tokens: number;
     output_tokens: number;
+    estimated_tokens: number;
     cost: number;
     model: string | null;
     search_used: number;

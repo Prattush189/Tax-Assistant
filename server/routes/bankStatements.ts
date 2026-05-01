@@ -1556,7 +1556,10 @@ ${JSON.stringify(batch)}`;
           // runs on gemini-2.5-flash / gemini-3-flash-preview; flat T2
           // rates were under-counting by 3-6x.
           const cost = usages.reduce((a, u) => a + costForModel(u.modelUsed, u.inputTokens, u.outputTokens), 0);
-          usageRepo.logWithBilling(clientIp, req.user.id, quota.billingUserId, inputTok, outputTok, cost, false, usages[0].modelUsed, false, 'bank_statement', txCount);
+          // Attach the gate's pre-flight estimate to the summary row so
+          // the admin dashboard can show estimate-vs-actual on this
+          // request. Per-chunk / failure / cancel rows stay at 0.
+          usageRepo.logWithBilling(clientIp, req.user.id, quota.billingUserId, inputTok, outputTok, cost, false, usages[0].modelUsed, false, 'bank_statement', txCount, 'success', tokenQuota.estimatedTokens);
         }
       } catch (err) {
         console.error('[bank-statements] Failed to log cost:', err);

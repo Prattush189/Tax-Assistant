@@ -490,6 +490,16 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_obs_account_id ON ledger_observat
   if (!usageCols.includes('status')) {
     db.exec("ALTER TABLE api_usage ADD COLUMN status TEXT NOT NULL DEFAULT 'success'");
   }
+  // estimated_tokens: the pre-flight estimate produced by tokenEstimate
+  // and gated by enforceTokenQuota. Stored alongside the actual
+  // input_tokens/output_tokens so the admin dashboard can audit how
+  // close our heuristics are to reality (and tune the safety margin).
+  // Only the summary success row for a request gets the estimate; per-
+  // chunk failure / retry rows stay at 0 to avoid summing the estimate
+  // multiple times for the same logical request.
+  if (!usageCols.includes('estimated_tokens')) {
+    db.exec("ALTER TABLE api_usage ADD COLUMN estimated_tokens INTEGER NOT NULL DEFAULT 0");
+  }
 }
 
 // Add filing_status + notes to profiles (merge clients into profiles)

@@ -1749,6 +1749,12 @@ router.post(
           false,
           'ledger_scrutiny',
           scrutinyTxCount,
+          'success',
+          // Gate's pre-flight estimate attached to the summary row only
+          // (extract / chunk / failure rows stay at 0). Lets the admin
+          // dashboard audit estimate-vs-actual without summing an
+          // estimate across multiple rows of one logical request.
+          tokenQuota.estimatedTokens,
         );
       } catch (err) {
         console.error('[ledger-scrutiny] scrutiny cost log failed', err);
@@ -1950,6 +1956,8 @@ router.post('/:id/scrutinize', async (req: AuthRequest, res: Response) => {
         usage.withSearch,
         'ledger_scrutiny',
         scrutinyTxCount,
+        'success',
+        tokenQuota.estimatedTokens,
       );
     } catch (err) {
       console.error('[ledger-scrutiny] cost log failed', err);
@@ -2133,7 +2141,7 @@ router.post('/:id/resume', async (req: AuthRequest, res: Response) => {
       try {
         const cost = result.outputTokens > 0 ? costForModel(result.modelUsed, result.inputTokens, result.outputTokens) : 0;
         if (result.inputTokens + result.outputTokens > 0) {
-          usageRepo.logWithBilling(clientIp, req.user!.id, billingUserId, result.inputTokens, result.outputTokens, cost, false, result.modelUsed, false, 'ledger_scrutiny', persistedObs.length);
+          usageRepo.logWithBilling(clientIp, req.user!.id, billingUserId, result.inputTokens, result.outputTokens, cost, false, result.modelUsed, false, 'ledger_scrutiny', persistedObs.length, 'success', tokenQuota.estimatedTokens);
         }
       } catch (e) {
         console.error('[ledger-scrutiny] resume cost log failed', e);
