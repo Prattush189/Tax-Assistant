@@ -6,7 +6,7 @@ import Papa from 'papaparse';
 import { extractWithRetry } from '../lib/documentExtract.js';
 import { callGeminiJson, type GeminiJsonResult } from '../lib/geminiJson.js';
 import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_TSV_PROMPT, BANK_STATEMENT_CATEGORIES, buildConditionsBlock, countWords, MAX_CONDITION_WORDS } from '../lib/bankStatementPrompt.js';
-import { gemini, GEMINI_CHAT_MODEL_THINK_FB, costForModel } from '../lib/gemini.js';
+import { gemini, GEMINI_CHAT_MODEL_THINK_FB, GEMINI_CHAT_MODEL_T1, costForModel } from '../lib/gemini.js';
 import { creditsForPages, creditsForCsvRows, PAGES_PER_CREDIT, CSV_ROWS_PER_CREDIT } from '../lib/creditPolicy.js';
 import { enforceTokenQuota } from '../lib/tokenQuota.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
@@ -979,13 +979,23 @@ router.post(
         // OCR model first, a separate-family fallback, a larger JSON budget,
         // and retry parse failures. Keep this scoped to vision so the
         // deterministic wizard/CSV paths do not get slower or more costly.
+        //
+        // Three-tier chain: 2.5-flash → 3-flash-preview → 3.1-flash-lite.
+        // Production logs showed both thinking models (2.5-flash and the
+        // preview 3-flash) failing in the same window — 503 bursts on the
+        // GA model followed by parse failures on the preview — leaving the
+        // user with a hard error. Adding the T1 family as a third tier
+        // gives an independent model family to absorb the case where both
+        // thinking models are unhealthy at once. It's faster and lighter,
+        // not as strong on dense OCR, but a slightly weaker extraction is
+        // strictly better than asking the user to retry.
         const visionResult = await extractWithRetry<ExtractedStatement>(
           dataUrl,
           `${conditionsBlock}${BANK_STATEMENT_PROMPT}`,
           {
             maxTokens: 16_384,
             primaryModel: 'gemini-2.5-flash',
-            fallbackModel: GEMINI_CHAT_MODEL_THINK_FB,
+            fallbackModels: [GEMINI_CHAT_MODEL_THINK_FB, GEMINI_CHAT_MODEL_T1],
             retryParseFailures: true,
           },
         );

@@ -13,8 +13,16 @@ export interface GeminiJsonOptions {
   maxTokens?: number;
   /** Override the primary model. */
   primaryModel?: string;
-  /** Override the fallback model. */
+  /** Override the fallback model. Ignored if `fallbackModels` is set. */
   fallbackModel?: string;
+  /**
+   * Ordered chain of fallback models tried after the primary exhausts. Each
+   * tier gets its own retry loop with exponential backoff on 5xx/429. Use
+   * this when one fallback isn't enough — e.g. the bank-statements vision
+   * path wants a third independent model family for the case where both
+   * thinking models (2.5-flash, 3-flash-preview) are simultaneously flaky.
+   */
+  fallbackModels?: string[];
   /** Pass through to OpenAI SDK — defaults to `{ type: 'json_object' }`. Set to `null` to omit. */
   responseFormat?: { type: 'json_object' } | null;
   /**
@@ -129,6 +137,14 @@ const MAX_PRIMARY_ATTEMPTS = 3;
 // recovered. 3 fallback attempts with longer backoff covers the
 // outage window.
 const MAX_FALLBACK_ATTEMPTS = 3;
+// Parse failures get at most 1 retry per model: same model + same prompt
+// rarely reparses (the model isn't going to materially restructure its
+// own output on a re-call), so burning 3 attempts here just delays
+// advancing to the next model in the fallback chain. Production logs
+// showed gemini-3-flash-preview eating its full 3-attempt budget on
+// parse failures and then surfacing the failure to the user when a
+// different model would have answered cleanly.
+const MAX_PARSE_FAILURE_ATTEMPTS = 2;
 
 /**
  * Call Gemini, ask for JSON, parse it, and return both the value and the
@@ -142,7 +158,9 @@ export async function callGeminiJson<T = unknown>(
 ): Promise<GeminiJsonResult<T>> {
   const maxTokens = opts.maxTokens ?? 4096;
   const primary = opts.primaryModel ?? GEMINI_MODEL;
-  const fallback = opts.fallbackModel ?? GEMINI_FALLBACK_MODEL;
+  const fallbacks = opts.fallbackModels && opts.fallbackModels.length > 0
+    ? opts.fallbackModels
+    : [opts.fallbackModel ?? GEMINI_FALLBACK_MODEL];
   const responseFormat = opts.responseFormat;
   const recordAttempt = opts.recordAttempt;
   const retryParseFailures = opts.retryParseFailures === true;
@@ -153,32 +171,39 @@ export async function callGeminiJson<T = unknown>(
   // burning 6+ seconds of backoff time.
   return withBreaker('gemini', async () => {
     let lastErr: unknown;
+    const tiers: Array<{ model: string; maxAttempts: number; backoffMs: number }> = [
+      { model: primary, maxAttempts: MAX_PRIMARY_ATTEMPTS, backoffMs: 1500 },
+      ...fallbacks.map(model => ({ model, maxAttempts: MAX_FALLBACK_ATTEMPTS, backoffMs: 2000 })),
+    ];
 
-    for (let attempt = 0; attempt < MAX_PRIMARY_ATTEMPTS; attempt++) {
-      try {
-        return await callOnce<T>(messages, primary, maxTokens, responseFormat, recordAttempt);
-      } catch (err) {
-        lastErr = err;
-        const status = (err as { status?: number })?.status ?? 0;
-        if (!RETRYABLE_STATUSES.has(status) && !(retryParseFailures && isParseFailure(err))) break;
-        if (attempt < MAX_PRIMARY_ATTEMPTS - 1) {
-          console.warn(`[geminiJson] ${primary} retry ${attempt + 1}/${MAX_PRIMARY_ATTEMPTS} after ${status ? `status ${status}` : 'JSON parse failure'}`);
-          await new Promise(r => setTimeout(r, 1500 * Math.pow(2, attempt)));
-        }
+    for (let tierIdx = 0; tierIdx < tiers.length; tierIdx++) {
+      const { model, maxAttempts, backoffMs } = tiers[tierIdx];
+      if (tierIdx > 0) {
+        console.warn(`[geminiJson] ${tiers[tierIdx - 1].model} exhausted, falling back to ${model}`);
       }
-    }
 
-    console.warn(`[geminiJson] ${primary} exhausted, falling back to ${fallback}`);
-    for (let attempt = 0; attempt < MAX_FALLBACK_ATTEMPTS; attempt++) {
-      try {
-        return await callOnce<T>(messages, fallback, maxTokens, responseFormat, recordAttempt);
-      } catch (err) {
-        lastErr = err;
-        const status = (err as { status?: number })?.status ?? 0;
-        if (!RETRYABLE_STATUSES.has(status) && !(retryParseFailures && isParseFailure(err))) break;
-        if (attempt < MAX_FALLBACK_ATTEMPTS - 1) {
-          console.warn(`[geminiJson] ${fallback} retry ${attempt + 1}/${MAX_FALLBACK_ATTEMPTS} after ${status ? `status ${status}` : 'JSON parse failure'}`);
-          await new Promise(r => setTimeout(r, 2000 * Math.pow(2, attempt)));
+      // Parse failures don't benefit from many retries on the same model
+      // (same prompt → same output shape), so cap them low and let the
+      // next tier take over. Status retries follow the per-tier budget.
+      const parseCap = Math.min(maxAttempts, MAX_PARSE_FAILURE_ATTEMPTS);
+      let parseAttempts = 0;
+
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        try {
+          return await callOnce<T>(messages, model, maxTokens, responseFormat, recordAttempt);
+        } catch (err) {
+          lastErr = err;
+          const status = (err as { status?: number })?.status ?? 0;
+          const parseFail = retryParseFailures && isParseFailure(err);
+          if (!RETRYABLE_STATUSES.has(status) && !parseFail) break;
+          if (parseFail) {
+            parseAttempts++;
+            if (parseAttempts >= parseCap) break; // advance to next tier
+          }
+          if (attempt < maxAttempts - 1) {
+            console.warn(`[geminiJson] ${model} retry ${attempt + 1}/${maxAttempts} after ${status ? `status ${status}` : 'JSON parse failure'}`);
+            await new Promise(r => setTimeout(r, backoffMs * Math.pow(2, attempt)));
+          }
         }
       }
     }
