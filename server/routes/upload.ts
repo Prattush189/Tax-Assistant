@@ -2,6 +2,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
 import { extractWithRetry } from '../lib/documentExtract.js';
+import { extractVisionPdf } from '../lib/geminiVisionPdf.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
@@ -116,11 +117,13 @@ router.post(
     let extractedData: Record<string, unknown>;
 
     try {
-      // Gemini 2.5 Flash handles both PDFs and images natively via OpenAI-compat mode
-      const base64Data = req.file.buffer.toString('base64');
-      const dataUrl = `data:${mimetype};base64,${base64Data}`;
-
-      const result = await extractWithRetry(dataUrl, EXTRACTION_PROMPT);
+      // Multi-page PDFs need the native generateContent endpoint;
+      // the OpenAI compat shim drops every page after the first.
+      // Single-image uploads stay on the OpenAI compat path.
+      const isPdfFile = mimetype === 'application/pdf' || /\.pdf$/i.test(originalname);
+      const result = isPdfFile
+        ? await extractVisionPdf(req.file.buffer, mimetype, EXTRACTION_PROMPT)
+        : await extractWithRetry(`data:${mimetype};base64,${req.file.buffer.toString('base64')}`, EXTRACTION_PROMPT);
       extractedData = result.data;
 
       // Log successful upload toward monthly cap (non-fatal). Writes both

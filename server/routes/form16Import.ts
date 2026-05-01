@@ -2,6 +2,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
 import { extractWithRetry } from '../lib/documentExtract.js';
+import { extractVisionPdf } from '../lib/geminiVisionPdf.js';
 import { GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST } from '../lib/gemini.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
@@ -87,10 +88,15 @@ router.post(
     console.log(`[form16] Received: ${originalname} (${mimetype}, ${size} bytes)`);
 
     try {
-      const base64Data = req.file.buffer.toString('base64');
-      const dataUrl = `data:${mimetype};base64,${base64Data}`;
-
-      const result = await extractWithRetry(dataUrl, FORM16_EXTRACTION_PROMPT);
+      // Multi-page PDFs need the native generateContent endpoint —
+      // the OpenAI compat shim silently truncates a PDF data URL to
+      // its first page. Form 16s issued by some employers are 3-5
+      // pages with the actual deduction breakdown on later pages, so
+      // single-page truncation was producing under-extracted imports.
+      const isPdfFile = mimetype === 'application/pdf' || /\.pdf$/i.test(originalname);
+      const result = isPdfFile
+        ? await extractVisionPdf(req.file.buffer, mimetype, FORM16_EXTRACTION_PROMPT)
+        : await extractWithRetry(`data:${mimetype};base64,${req.file.buffer.toString('base64')}`, FORM16_EXTRACTION_PROMPT);
 
       // Log AI cost so Form 16 imports show up in the admin API-cost
       // dashboard alongside chat / notice / document extractions.

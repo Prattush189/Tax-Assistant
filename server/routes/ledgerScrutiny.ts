@@ -18,6 +18,7 @@ import crypto from 'crypto';
 import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
 import { extractWithRetry } from '../lib/documentExtract.js';
+import { extractVisionPdf } from '../lib/geminiVisionPdf.js';
 import { safeParseJson } from '../lib/geminiJson.js';
 import { pickChatProvider } from '../lib/chatProvider.js';
 import { SseWriter } from '../lib/sseStream.js';
@@ -1551,9 +1552,9 @@ router.post(
         // on long ledgers — the frontend should prefer the pdfText path.
         console.log(`[ledger-scrutiny] vision path: scanned PDF, no text layer`);
         ledgerScrutinyRepo.setStatus(job.id, req.user.id, 'extracting');
-        const base64 = req.file!.buffer.toString('base64');
-        const dataUrl = `data:${mimeType};base64,${base64}`;
-        const result = await extractWithRetry<ExtractedLedger>(dataUrl, LEDGER_EXTRACT_PROMPT, {
+        // Native generateContent — required for multi-page PDFs (the
+        // OpenAI compat shim only sees page 1).
+        const result = await extractVisionPdf<ExtractedLedger>(req.file!.buffer, mimeType, LEDGER_EXTRACT_PROMPT, {
           maxTokens: 16384,
         });
         extracted = normalizeExtraction(result.data);

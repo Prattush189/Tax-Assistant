@@ -13,6 +13,7 @@ import { enforceTokenQuota } from '../lib/tokenQuota.js';
 import { getBillingUser } from '../lib/billing.js';
 import { getUsagePeriodStart } from '../lib/planLimits.js';
 import { extractWithRetry } from '../lib/documentExtract.js';
+import { extractVisionPdf } from '../lib/geminiVisionPdf.js';
 import { GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST } from '../lib/gemini.js';
 import { AuthRequest } from '../types.js';
 
@@ -239,16 +240,27 @@ router.post(
   let extractionMeta: { mergedNoticeNumber?: string; mergedNoticeDate?: string; mergedSection?: string; mergedAssessmentYear?: string; mergedDin?: string } = {};
   if (req.file) {
     try {
-      const base64Data = req.file.buffer.toString('base64');
-      const dataUrl = `data:${req.file.mimetype};base64,${base64Data}`;
-      const extraction = await extractWithRetry<{
-        summary: string;
-        noticeNumber: string | null;
-        noticeDate: string | null;
-        section: string | null;
-        assessmentYear: string | null;
-        din: string | null;
-      }>(dataUrl, NOTICE_EXTRACTION_PROMPT);
+      // Multi-page notice PDFs need the native generateContent endpoint
+      // — the OpenAI compat path silently drops pages 2+ of a PDF data
+      // URL. Image notices (jpeg/png/webp) stay on the compat path.
+      const isPdfFile = req.file.mimetype === 'application/pdf' || /\.pdf$/i.test(req.file.originalname);
+      const extraction = isPdfFile
+        ? await extractVisionPdf<{
+            summary: string;
+            noticeNumber: string | null;
+            noticeDate: string | null;
+            section: string | null;
+            assessmentYear: string | null;
+            din: string | null;
+          }>(req.file.buffer, req.file.mimetype, NOTICE_EXTRACTION_PROMPT)
+        : await extractWithRetry<{
+            summary: string;
+            noticeNumber: string | null;
+            noticeDate: string | null;
+            section: string | null;
+            assessmentYear: string | null;
+            din: string | null;
+          }>(`data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`, NOTICE_EXTRACTION_PROMPT);
 
       const data = extraction.data ?? {};
       extractedText = (extractedText ?? '') + (data.summary ?? '');
