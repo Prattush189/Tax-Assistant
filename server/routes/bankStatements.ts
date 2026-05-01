@@ -9,6 +9,7 @@ import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_TSV_PROMPT, BANK_STATEMENT_CATEGO
 import { gemini, GEMINI_CHAT_MODEL_THINK_FB, GEMINI_CHAT_MODEL_T1, costForModel } from '../lib/gemini.js';
 import { creditsForPages, creditsForCsvRows, PAGES_PER_CREDIT, CSV_ROWS_PER_CREDIT } from '../lib/creditPolicy.js';
 import { enforceTokenQuota } from '../lib/tokenQuota.js';
+import { estimateBankStatementText, estimateBankStatementVision, estimateFromChars } from '../lib/tokenEstimate.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { bankStatementRepo } from '../db/repositories/bankStatementRepo.js';
 import { bankTransactionRepo, BankTransactionInput } from '../db/repositories/bankTransactionRepo.js';
@@ -822,8 +823,26 @@ router.post(
     // logic below is computed for analytics display only and doesn't
     // reject. enforceTokenQuota responds 429 itself when the budget
     // is exhausted; we early-return on ok=false.
-    const tokenQuota = enforceTokenQuota(req, res);
+    //
+    // Pre-flight estimate: compute the rough Gemini cost from the
+    // upload size BEFORE we call the gate, so the gate can reject
+    // a single-call overshoot up front instead of after the fact.
+    // Gate also reserves the estimate for the duration of the request,
+    // so two parallel uploads can't both pass on a thin remaining
+    // budget and collectively bust the cap.
+    const preflightEstimate = (() => {
+      if (req.file) return estimateBankStatementVision(req.file.size);
+      if (typeof req.body?.pdfText === 'string') return estimateBankStatementText(req.body.pdfText.length);
+      if (typeof req.body?.csvText === 'string') return estimateFromChars(req.body.csvText.length + 800);
+      return 0;
+    })();
+    const tokenQuota = enforceTokenQuota(req, res, preflightEstimate);
     if (!tokenQuota.ok) return;
+    // Reservation lives until the response closes — covers success,
+    // failure, and client-aborted cases. The api_usage row written by
+    // the route below replaces the reservation with real usage on the
+    // next gate call.
+    res.once('close', () => tokenQuota.release());
     const quota = enforceQuota(req, res);
     if (!quota.ok) return;
 

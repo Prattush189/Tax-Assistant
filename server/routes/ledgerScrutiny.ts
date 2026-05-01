@@ -24,6 +24,7 @@ import { SseWriter } from '../lib/sseStream.js';
 import { gemini, GEMINI_CHAT_MODEL_THINK_FB, costForModel } from '../lib/gemini.js';
 import { creditsForPages, creditsForCsvRows, PAGES_PER_CREDIT, CSV_ROWS_PER_CREDIT } from '../lib/creditPolicy.js';
 import { enforceTokenQuota } from '../lib/tokenQuota.js';
+import { estimateLedgerText, estimateLedgerVision, estimateFromChars } from '../lib/tokenEstimate.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import {
   LEDGER_EXTRACT_PROMPT,
@@ -1251,8 +1252,24 @@ router.post(
     // only debit usage on a successful scrutiny pass, we don't want a user
     // already at-cap to burn extract calls either).
     // Ledger Scrutiny is available on all plans (including free).
-    const tokenQuota = enforceTokenQuota(req, res);
+    //
+    // Pre-flight estimate so a single oversized ledger can't blow past
+    // the cap in one call (the scrutiny pass on a 200-page ledger is
+    // easily 350K+ tokens — exactly the failure mode we hit on the
+    // Suresh Sethi free account, which logged a 351K ledger_scrutiny
+    // call on a 250K budget).
+    const ledgerPreflightEstimate = (() => {
+      if (req.file) return estimateLedgerVision(req.file.size);
+      if (typeof req.body?.pdfText === 'string') return estimateLedgerText(req.body.pdfText.length);
+      if (isPreExtracted && typeof req.body?.preExtracted === 'string') {
+        // Pre-extracted skips the extract pass; estimate scrutiny only.
+        return estimateFromChars(req.body.preExtracted.length + 4_000);
+      }
+      return 0;
+    })();
+    const tokenQuota = enforceTokenQuota(req, res, ledgerPreflightEstimate);
     if (!tokenQuota.ok) return;
+    res.once('close', () => tokenQuota.release());
     const quota = enforceQuota(req, res);
     if (!quota.ok) return;
 
@@ -1780,8 +1797,12 @@ router.post('/:id/scrutinize', async (req: AuthRequest, res: Response) => {
     return;
   }
 
-  const tokenQuota = enforceTokenQuota(req, res);
+  // Scrutiny-only on already-extracted data. Estimate from the stored
+  // raw_extracted JSON length (that's what gets fed to the audit prompt).
+  const scrutinyEstimate = estimateFromChars(job.raw_extracted.length + 4_000);
+  const tokenQuota = enforceTokenQuota(req, res, scrutinyEstimate);
   if (!tokenQuota.ok) return;
+  res.once('close', () => tokenQuota.release());
   const quota = enforceQuota(req, res);
   if (!quota.ok) return;
 
@@ -2014,9 +2035,13 @@ router.post('/:id/resume', async (req: AuthRequest, res: Response) => {
     return;
   }
 
-  // Token-budget gate (resume = new audit work). Ledger Scrutiny is open to all plans.
-  const tokenQuota = enforceTokenQuota(req, res);
+  // Token-budget gate (resume = new audit work). Ledger Scrutiny is
+  // open to all plans. Estimate from the partially-extracted payload
+  // already on disk — we're only running the scrutiny pass on resume.
+  const resumeEstimate = estimateFromChars(job.raw_extracted.length + 4_000);
+  const tokenQuota = enforceTokenQuota(req, res, resumeEstimate);
   if (!tokenQuota.ok) return;
+  res.once('close', () => tokenQuota.release());
 
   // Resolve billing user once for downstream usage logging — needed by
   // the background scrutiny task below.
