@@ -43,11 +43,19 @@ const stmts = {
   // for THIS billing user, EXCLUDING failed calls. Cancelled calls
   // count because they consumed real Gemini tokens; failed calls don't
   // because they're typically retried successfully.
+  //
+  // The OR clause covers historic rows logged before billing_user_id
+  // was wired in: those rows have NULL billing_user_id but the user_id
+  // identifies who was billed (free users billed themselves; pre-CA-
+  // hierarchy data can't roll up to a billing aggregate anyway). Without
+  // this fallback, the admin "this period" widget reads 0 while the
+  // cumulative "Total tokens" tile reads the real number — the mismatch
+  // we hit on the Suresh Sethi free account.
   sumTokensThisMonthByBillingUser: db.prepare(`
     SELECT
       COALESCE(SUM(input_tokens + output_tokens), 0) AS tokens
     FROM api_usage
-    WHERE billing_user_id = ?
+    WHERE (billing_user_id = ? OR (billing_user_id IS NULL AND user_id = ?))
       AND created_at >= ?
       AND status != 'failed'
   `),
@@ -243,7 +251,10 @@ export const usageRepo = {
    *  yearly subscribers (resets on Razorpay renewal) or the user's
    *  created_at for free-trial users (never resets; lockout at 30 days). */
   sumTokensSinceForBillingUser(billingUserId: string, since: string): number {
-    const row = stmts.sumTokensThisMonthByBillingUser.get(billingUserId, since) as { tokens: number };
+    // Pass billingUserId twice: once for the canonical billing_user_id
+    // match, once for the NULL-fallback path that keys off user_id for
+    // historic rows. See the prepared statement comment above.
+    const row = stmts.sumTokensThisMonthByBillingUser.get(billingUserId, billingUserId, since) as { tokens: number };
     return row.tokens ?? 0;
   },
 

@@ -31,6 +31,7 @@ import { userRepo } from '../db/repositories/userRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { getUserLimits, getEffectivePlan, getUsagePeriodStart } from './planLimits.js';
 import { getBillingUser } from './billing.js';
+import { reservedTokensFor, reserve } from './quotaReservations.js';
 import type { AuthRequest } from '../types.js';
 
 export interface TokenQuotaOk {
@@ -40,6 +41,10 @@ export interface TokenQuotaOk {
   budget: number;
   used: number;
   remaining: number;
+  /** Release the pre-flight reservation taken by this gate call. Always
+   *  call from a `finally` once the Gemini work for this request has
+   *  finished (success, failure, or cancel). Idempotent. */
+  release: () => void;
 }
 
 export interface TokenQuotaDenied {
@@ -79,18 +84,25 @@ export function enforceTokenQuota(
   // Razorpay renewal), or account lifetime for free-trial users (no
   // reset; lockout at 30 days via the trial wall).
   const periodStart = limitSource ? getUsagePeriodStart(limitSource) : new Date(0).toISOString().replace('Z', '');
-  let used = 0;
+  let realUsed = 0;
   try {
-    used = usageRepo.sumTokensSinceForBillingUser(billingUserId, periodStart);
+    realUsed = usageRepo.sumTokensSinceForBillingUser(billingUserId, periodStart);
   } catch (err) {
     console.error('[tokenQuota] Failed to read usage:', err);
   }
-
+  // Effective usage = what's already logged to api_usage PLUS what's
+  // currently in-flight (reservations from concurrent requests we've
+  // gated but whose api_usage rows don't exist yet). Without this,
+  // two requests that each fit in the remaining budget on their own
+  // can both pass and collectively overshoot.
+  const reserved = reservedTokensFor(billingUserId);
+  const used = realUsed + reserved;
   const remaining = Math.max(0, budget - used);
+
   if (budget > 0 && used >= budget) {
     const pct = Math.round((used / budget) * 100);
     res.status(429).json({
-      error: `You've used ${pct}% of your token budget (${used.toLocaleString('en-IN')} / ${budget.toLocaleString('en-IN')} tokens). ${plan === 'free' ? 'Upgrade to Pro or Enterprise to continue.' : 'Your budget resets on your next yearly renewal — upgrade your plan if you need more headroom.'}`,
+      error: `You've used ${pct}% of your token budget (${used.toLocaleString('en-IN')} / ${budget.toLocaleString('en-IN')} tokens). ${plan === 'free' ? 'Upgrade to Pro or Enterprise to continue.' : 'Your budget resets on your next yearly renewal — renew now or upgrade your plan if you need more headroom.'}`,
       tokensUsed: used,
       tokenBudget: budget,
       upgrade: plan !== 'enterprise',
@@ -103,7 +115,7 @@ export function enforceTokenQuota(
   // half-way through a chunked run.
   if (estimatedTokens > 0 && estimatedTokens > remaining) {
     res.status(429).json({
-      error: `This file would consume about ${estimatedTokens.toLocaleString('en-IN')} tokens, but you only have ${remaining.toLocaleString('en-IN')} left in your current period (${used.toLocaleString('en-IN')} of ${budget.toLocaleString('en-IN')} already used). Try a smaller file or split it, or upgrade your plan.`,
+      error: `This run would use about ${estimatedTokens.toLocaleString('en-IN')} tokens, but you only have ${remaining.toLocaleString('en-IN')} left in your current period (${used.toLocaleString('en-IN')} of ${budget.toLocaleString('en-IN')} already used${reserved > 0 ? `, including ${reserved.toLocaleString('en-IN')} in other runs currently in progress` : ''}). ${plan === 'free' ? 'Try a smaller file or upgrade to Pro for a 2M-token monthly budget.' : 'Try a smaller file, wait for in-flight runs to finish, or renew now to start a fresh quota.'}`,
       tokensUsed: used,
       tokenBudget: budget,
       tokensEstimated: estimatedTokens,
@@ -112,7 +124,14 @@ export function enforceTokenQuota(
     });
     return { ok: false };
   }
-  return { ok: true, billingUserId, plan, budget, used, remaining };
+  // Hold the estimate as a reservation for the duration of the request.
+  // The caller releases this in a `finally` after their Gemini work
+  // (and the corresponding api_usage row write) has completed. Once
+  // the api_usage row exists, the next `realUsed` query will pick it
+  // up — releasing the reservation simultaneously prevents the user's
+  // effective usage from briefly double-counting.
+  const release = reserve(billingUserId, estimatedTokens);
+  return { ok: true, billingUserId, plan, budget, used, remaining, release };
 }
 
 /** Estimate-only soft warning. Caller can use this to add a small
@@ -132,5 +151,6 @@ export function tokensRemainingForUser(req: AuthRequest): { used: number; budget
   } catch {
     // best-effort
   }
+  used += reservedTokensFor(billingUserId);
   return { used, budget, remaining: Math.max(0, budget - used) };
 }
