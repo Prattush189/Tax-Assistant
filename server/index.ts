@@ -28,7 +28,6 @@ import invitationsRouter, { publicInvitationRouter } from './routes/invitations.
 import billingDetailsRouter from './routes/billingDetails.js';
 import { authMiddleware, adminMiddleware, trialCheckMiddleware } from './middleware/auth.js';
 import { authLimiter, chatLimiter, uploadLimiter } from './middleware/rateLimiter.js';
-import { warmupRazorpayPlans } from './lib/razorpayPlans.js';
 import { startRenewalReminderJob } from './jobs/renewalReminder.js';
 import { startStuckJobSweeper } from './lib/sweepStuckJobs.js';
 import helmet from 'helmet';
@@ -170,9 +169,6 @@ if (process.env.NODE_ENV === 'production') {
 
 app.listen(PORT, () => {
   console.log(`[API] Server running on :${PORT} (${process.env.NODE_ENV ?? 'development'})`);
-
-  // Pre-create all 4 Razorpay Plans on startup so first payment has no delay
-  void warmupRazorpayPlans();
 
   // Start 48-hour renewal reminder email job (runs hourly)
   startRenewalReminderJob();

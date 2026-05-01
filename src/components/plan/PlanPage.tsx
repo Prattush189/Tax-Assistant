@@ -5,9 +5,8 @@ import {
   fetchPaymentHistory,
   PaymentHistoryResponse,
   UserUsageResponse,
-  createSubscription,
-  verifySubscriptionPayment,
-  cancelSubscription,
+  createOrder,
+  verifyOrderPayment,
   type BillingDetails,
 } from '../../services/api';
 import { BillingDetailsDialog } from './BillingDetailsDialog';
@@ -91,7 +90,7 @@ const plans = [
     icon: Crown,
     features: [
       'Everything in Free, plus:',
-      '8× the Free token budget (across every feature)',
+      '20M yearly token budget (across every feature)',
       'Salary Structure Optimizer',
       'Tax Planning PDF report',
       'Writing style customization',
@@ -109,7 +108,7 @@ const plans = [
     icon: Building2,
     features: [
       'Everything in Pro, plus:',
-      '24× the Free token budget (across every feature)',
+      '60M yearly token budget (across every feature)',
       'IT portal profile import',
       'Year-over-year trends dashboard',
       'Priority support & SLA',
@@ -283,13 +282,8 @@ export function PlanPage() {
   const currentPlan = user?.plan || 'free';
   const [usage, setUsage] = useState<UserUsageResponse | null>(null);
   const [history, setHistory] = useState<PaymentHistoryResponse | null>(null);
-  // Yearly billing only — monthly was retired. Kept as a constant rather
-  // than state so the rest of this component can keep using `billing`.
-  const billing: 'yearly' = 'yearly';
   const [paying, setPaying] = useState<string | null>(null); // 'pro' | 'enterprise'
   const [payError, setPayError] = useState<string | null>(null);
-  const [cancelling, setCancelling] = useState(false);
-  const [cancelMsg, setCancelMsg] = useState<string | null>(null);
   const [successPayment, setSuccessPayment] = useState<PaymentData | null>(null);
   const [showBillingDialog, setShowBillingDialog] = useState<'pro' | 'enterprise' | null>(null);
   const [lastBillingDetails, setLastBillingDetails] = useState<BillingDetails | null>(null);
@@ -325,18 +319,19 @@ export function PlanPage() {
         return;
       }
 
-      const sub = await createSubscription(planId, billing);
+      const order = await createOrder(planId);
 
-      const basePrice = PRICES[planId][billing];
+      const basePrice = PRICES[planId].yearly;
       const gst       = gstAmount(basePrice);
       const total     = totalWithGst(basePrice);
-      const period    = 'year';
 
       const options = {
-        key: sub.keyId,
-        subscription_id: sub.subscriptionId,
+        key: order.keyId,
+        order_id: order.orderId,
+        amount: order.amount,
+        currency: 'INR',
         name: 'Smartbiz AI',
-        description: `${planId === 'pro' ? 'Pro' : 'Enterprise'} · ₹${basePrice.toLocaleString('en-IN')} + ₹${gst.toLocaleString('en-IN')} GST (${GST_PCT}%) = ₹${total.toLocaleString('en-IN')}/${period}`,
+        description: `${planId === 'pro' ? 'Pro' : 'Enterprise'} · ₹${basePrice.toLocaleString('en-IN')} + ₹${gst.toLocaleString('en-IN')} GST (${GST_PCT}%) = ₹${total.toLocaleString('en-IN')}/year`,
         prefill: {
           name: user?.name ?? '',
           email: user?.email ?? '',
@@ -347,16 +342,15 @@ export function PlanPage() {
         },
         handler: async (response: {
           razorpay_payment_id: string;
-          razorpay_subscription_id: string;
+          razorpay_order_id: string;
           razorpay_signature: string;
         }) => {
           try {
-            await verifySubscriptionPayment({
+            await verifyOrderPayment({
               razorpay_payment_id: response.razorpay_payment_id,
-              razorpay_subscription_id: response.razorpay_subscription_id,
-              razorpay_signature: response.razorpay_signature,
+              razorpay_order_id:   response.razorpay_order_id,
+              razorpay_signature:  response.razorpay_signature,
               plan: planId,
-              billing,
             });
             await refreshUser();
             const [freshUsage, freshHistory] = await Promise.all([fetchUserUsage(), fetchPaymentHistory()]);
@@ -380,24 +374,7 @@ export function PlanPage() {
       setPayError(msg);
       setPaying(null);
     }
-  }, [billing, user, refreshUser]);
-
-  const handleCancel = useCallback(async () => {
-    if (!window.confirm('Cancel your subscription? Your plan stays active until the current billing period ends, then downgrades to Free.')) return;
-    setCancelling(true);
-    setCancelMsg(null);
-    try {
-      const result = await cancelSubscription();
-      setCancelMsg(result.message);
-      await refreshUser();
-      const freshHistory = await fetchPaymentHistory();
-      setHistory(freshHistory);
-    } catch (err) {
-      setCancelMsg(err instanceof Error ? err.message : 'Could not cancel. Please try again.');
-    } finally {
-      setCancelling(false);
-    }
-  }, [refreshUser]);
+  }, [user, refreshUser]);
 
   const trialDaysLeft = usage?.trialDaysLeft ?? null;
   const showTrialBanner = currentPlan === 'free' && trialDaysLeft !== null && trialDaysLeft <= 10;
@@ -546,7 +523,7 @@ export function PlanPage() {
                     // Lines starting with "Nx" (e.g. "3× the monthly capacity")
                     // render as a colored highlight badge so the value-prop
                     // headline of higher tiers reads at a glance.
-                    const isHighlight = /^\d+×/.test(feature);
+                    const isHighlight = /^\d+[×M]/.test(feature);
                     if (isInheritance) {
                       return (
                         <li key={i} className="text-xs font-medium text-gray-400 dark:text-gray-500 italic pt-1 pb-0.5">
@@ -629,7 +606,7 @@ export function PlanPage() {
         {/* Security note */}
         <div className="flex items-center justify-center gap-2 text-xs text-gray-400 dark:text-gray-500 mb-10">
           <Shield className="w-3.5 h-3.5" />
-          <span>Payments secured by Razorpay · 256-bit SSL encryption · Auto-renews · Cancel any time</span>
+          <span>Payments secured by Razorpay · 256-bit SSL encryption · One-time yearly payment · No auto-renewal</span>
         </div>
 
         {/* Account Info */}
@@ -658,24 +635,6 @@ export function PlanPage() {
             </p>
           )}
 
-          {/* Cancel subscription — only shown when subscription is active */}
-          {history?.subscriptionStatus === 'active' && (
-            <div className="mt-5 pt-5 border-t border-gray-200 dark:border-gray-700">
-              {cancelMsg && (
-                <p className="text-sm text-amber-600 dark:text-amber-400 mb-3">{cancelMsg}</p>
-              )}
-              <button
-                onClick={handleCancel}
-                disabled={cancelling}
-                className="text-sm text-red-500 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300 font-medium disabled:opacity-50"
-              >
-                {cancelling ? 'Cancelling…' : 'Cancel subscription'}
-              </button>
-              <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                Your plan stays active until the end of the billing period.
-              </p>
-            </div>
-          )}
         </div>
       </div>
     </div>

@@ -44,16 +44,10 @@ export interface UserLimits {
 
 /** Baseline defaults for each plan tier.
  *
- *  Token-budget sizing (the only hard gate now):
+ *  Token-budget sizing (the only hard gate now) — yearly totals for paid plans:
  *    Free       250 K  ≈ 30 notices  /  1.5 K bank txns  /  500 chats
- *    Pro          2 M  ≈ 200 notices /  13 K bank txns  /  4 K chats
- *    Enterprise   6 M  ≈ 600 notices /  40 K bank txns  /  12 K chats   (3× Pro)
- *
- *  Realistic API cost at the realistic 60% Flash-Lite / 30% Flash /
- *  10% Flash-3 mix, fully consumed:
- *    Free       ~₹12   (loss on free trial)
- *    Pro        ~₹95   margin ₹405 (81% gross at ₹500 list)
- *    Enterprise ~₹357  margin ₹393 (52% gross at ₹750 list)
+ *    Pro         20 M  ≈ yearly budget across all features
+ *    Enterprise  60 M  ≈ yearly budget across all features   (3× Pro)
  *
  *  Per-feature counts (notices: 3/15/50, etc.) are kept as SOFT
  *  display in the UI and analytics — useful for "you've drafted
@@ -82,7 +76,7 @@ export const PLAN_DEFAULTS: Record<PlanId, UserLimits> = {
     partnershipDeeds: 15,
     bankStatements: 15,
     ledgerScrutiny: 50,
-    monthlyTokenBudget: 2_000_000,
+    monthlyTokenBudget: 20_000_000,
   },
   enterprise: {
     messages: { limit: 3000, period: 'month' },
@@ -94,7 +88,7 @@ export const PLAN_DEFAULTS: Record<PlanId, UserLimits> = {
     partnershipDeeds: 50,
     bankStatements: 50,
     ledgerScrutiny: 250,
-    monthlyTokenBudget: 6_000_000,
+    monthlyTokenBudget: 60_000_000,
   },
 };
 

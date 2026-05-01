@@ -1,18 +1,16 @@
 /**
- * Razorpay Subscription payment routes.
+ * Razorpay Order payment routes (one-time, non-recurring).
  *
  * Security model:
  *  - RAZORPAY_KEY_SECRET is server-side only; frontend never sees it.
- *  - Subscription verify uses HMAC-SHA256(payment_id|subscription_id, key_secret).
- *  - Ownership check: subscription ID is looked up in DB and owner confirmed before upgrade.
- *  - Idempotent: double-verify on same payment_id returns success without side effects.
+ *  - Order verify uses HMAC-SHA256(order_id|payment_id, key_secret).
+ *  - Ownership check: order ID is looked up in DB and owner confirmed before upgrade.
+ *  - Idempotent: double-verify on same order_id returns success without side effects.
  *  - Rate-limited per user.
  *
- * Auto-renewal:
- *  - Subscriptions are created with total_count = 1200 (monthly) or 100 (yearly).
- *    That is 100 years — effectively perpetual unless the user cancels.
- *  - Each recurring payment fires the subscription.charged webhook which extends
- *    plan_expires_at. Plan stays active as long as payments succeed.
+ * Billing model:
+ *  - Users pay once per year (Razorpay Order, not Subscription).
+ *  - No auto-renewal — on expiry access downgrades to Free unless the user repurchases.
  */
 
 import { Router, Response } from 'express';
@@ -21,7 +19,7 @@ import crypto from 'crypto';
 import { AuthRequest } from '../types.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { paymentRepo } from '../db/repositories/paymentRepo.js';
-import { getRazorpayPlanId, TOTAL_COUNT, PLAN_AMOUNTS, planKey } from '../lib/razorpayPlans.js';
+import { PLAN_AMOUNTS, planKey } from '../lib/razorpayPlans.js';
 import { rateLimit } from 'express-rate-limit';
 import type { BillingCycle, PaidPlan } from '../lib/razorpayPlans.js';
 import { sendPlanWelcomeEmail, sendInvoiceEmail } from '../lib/mailer.js';
@@ -35,14 +33,8 @@ function getRazorpay(): Razorpay {
   return new Razorpay({ key_id: keyId, key_secret: keySecret });
 }
 
-/** Convert a Unix timestamp (seconds) to IST datetime string for SQLite */
-function unixToIST(ts: number): string {
-  return new Date(ts * 1000).toISOString().replace('Z', '');
-}
-
-/** Fallback expiry: now + 1 year (used if webhook current_end not available).
- *  Only yearly billing is supported. */
-function fallbackExpiry(_billing: BillingCycle): string {
+/** Fallback expiry: now + 1 year. Only yearly billing is supported. */
+function fallbackExpiry(): string {
   const d = new Date();
   d.setFullYear(d.getFullYear() + 1);
   return d.toISOString().replace('Z', '');
@@ -66,78 +58,73 @@ const verifyLimiter = rateLimit({
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/payments/create-subscription
+// POST /api/payments/create-order
+// Creates a one-time Razorpay Order for the given plan.
 // ---------------------------------------------------------------------------
-router.post('/create-subscription', createLimiter, async (req: AuthRequest, res: Response) => {
+router.post('/create-order', createLimiter, async (req: AuthRequest, res: Response) => {
   if (!req.user) { res.status(401).json({ error: 'Authentication required' }); return; }
 
   const { plan } = req.body ?? {};
   if (!['pro', 'enterprise'].includes(plan)) {
     res.status(400).json({ error: 'plan must be pro or enterprise' }); return;
   }
-  // Billing cycle is always yearly — monthly plans were retired. Ignore any
-  // legacy 'billing' value in the request body.
-  const billing: BillingCycle = 'yearly';
 
   try {
     const rzp    = getRazorpay();
-    const planId = await getRazorpayPlanId(plan as PaidPlan, billing);
-    const count  = TOTAL_COUNT[billing];
+    const key    = planKey(plan as PaidPlan);
+    const amount = PLAN_AMOUNTS[key];
 
-    const sub = await rzp.subscriptions.create({
-      plan_id:        planId,
-      total_count:    count,
-      quantity:       1,
-      customer_notify: 1,
+    const order = await rzp.orders.create({
+      amount,
+      currency: 'INR',
+      receipt: `sbai-${plan}-${Date.now()}`,
       notes: {
         user_id: req.user.id,
         plan,
-        billing,
+        billing: 'yearly',
         app: 'smartbiz-ai',
       },
-    } as Parameters<typeof rzp.subscriptions.create>[0]);
+    });
 
-    const subId = (sub as { id: string }).id;
+    const orderId = (order as { id: string }).id;
 
     res.json({
-      subscriptionId: subId,
+      orderId,
       keyId: process.env.RAZORPAY_KEY_ID,
       plan,
-      billing,
-      amount: PLAN_AMOUNTS[planKey(plan as PaidPlan, billing)],
+      amount,
     });
   } catch (err) {
-    console.error('[payments] create-subscription failed:', err);
-    res.status(502).json({ error: 'Could not create subscription. Please try again.' });
+    console.error('[payments] create-order failed:', err);
+    res.status(502).json({ error: 'Could not create payment. Please try again.' });
   }
 });
 
 // ---------------------------------------------------------------------------
 // POST /api/payments/verify
-// Verifies the first payment of a new subscription and activates the plan.
-// Recurring payments are handled automatically by the webhook.
+// Verifies a completed Razorpay Order payment and activates the plan.
 // ---------------------------------------------------------------------------
 router.post('/verify', verifyLimiter, (req: AuthRequest, res: Response) => {
   if (!req.user) { res.status(401).json({ error: 'Authentication required' }); return; }
 
-  const { razorpay_payment_id, razorpay_subscription_id, razorpay_signature } = req.body ?? {};
+  const { razorpay_payment_id, razorpay_order_id, razorpay_signature } = req.body ?? {};
 
   if (
-    typeof razorpay_payment_id     !== 'string' ||
-    typeof razorpay_subscription_id !== 'string' ||
-    typeof razorpay_signature       !== 'string'
+    typeof razorpay_payment_id !== 'string' ||
+    typeof razorpay_order_id   !== 'string' ||
+    typeof razorpay_signature  !== 'string'
   ) {
-    res.status(400).json({ error: 'razorpay_payment_id, razorpay_subscription_id and razorpay_signature are required' });
+    res.status(400).json({ error: 'razorpay_payment_id, razorpay_order_id and razorpay_signature are required' });
     return;
   }
 
-  // 1. HMAC-SHA256 signature verification (subscription mode)
+  // 1. HMAC-SHA256 signature verification (order mode)
   const keySecret = process.env.RAZORPAY_KEY_SECRET;
   if (!keySecret) { res.status(503).json({ error: 'Payment verification not configured' }); return; }
 
   const expectedSig = crypto
     .createHmac('sha256', keySecret)
-    .update(`${razorpay_payment_id}|${razorpay_subscription_id}`)
+    .update(`${razorpay_order_id}|${razorpay_payment_id}`)
     .digest('hex');
 
   const expected = Buffer.from(expectedSig);
@@ -145,84 +132,55 @@ router.post('/verify', verifyLimiter, (req: AuthRequest, res: Response) => {
   const valid = expected.length === received.length && crypto.timingSafeEqual(expected, received);
 
   if (!valid) {
-    console.warn('[payments/verify] Signature mismatch sub:', razorpay_subscription_id);
+    console.warn('[payments/verify] Signature mismatch order:', razorpay_order_id);
     res.status(400).json({ error: 'Signature verification failed' });
     return;
   }
 
   // 2. Idempotency — already activated by webhook or prior verify
-  const existingUser = userRepo.findBySubscriptionId(razorpay_subscription_id);
-  if (existingUser && existingUser.subscription_status === 'active') {
-    res.json({ success: true, plan: existingUser.plan, planExpiresAt: existingUser.plan_expires_at });
+  const existingPayment = paymentRepo.findByOrderId(razorpay_order_id);
+  if (existingPayment?.status === 'paid') {
+    const existingUser = userRepo.findById(req.user.id);
+    res.json({ success: true, plan: existingUser?.plan, planExpiresAt: existingUser?.plan_expires_at });
     return;
   }
 
-  // 3. Determine plan from the request body. Billing cycle is always
-  //    yearly now — monthly plans were retired.
+  // 3. Determine plan from request body
   const { plan } = req.body ?? {};
-  if (!plan) {
-    res.status(400).json({ error: 'plan is required' }); return;
+  if (!['pro', 'enterprise'].includes(plan)) {
+    res.status(400).json({ error: 'plan must be pro or enterprise' }); return;
   }
   const billing: BillingCycle = 'yearly';
 
-  // 3a. Capture the current subscription BEFORE we overwrite it. If the
-  //     user is switching plans (Pro → Enterprise or vice versa) or
-  //     re-buying after a lapse, the old Razorpay subscription is still
-  //     active on Razorpay's side — without cancelling it we'd
-  //     double-bill them every cycle. Snapshot for the post-activation
-  //     cancel call below.
-  const userBefore = userRepo.findById(req.user.id);
-  const oldSubId = userBefore?.razorpay_subscription_id ?? null;
-  const oldStatus = userBefore?.subscription_status ?? null;
-
-  // 4. Activate plan — webhook will keep extending plan_expires_at each cycle
-  const expiresAt = fallbackExpiry(billing);
+  // 4. Activate plan
+  const expiresAt = fallbackExpiry();
   userRepo.updateSubscription(
     req.user.id,
-    razorpay_subscription_id,
+    razorpay_order_id,
     'active',
     plan as PaidPlan,
     expiresAt,
   );
 
-  // 4a. Fire-and-forget: cancel the old Razorpay subscription if it's
-  //     a different one and was active. Done AFTER the DB flip so the
-  //     user's plan is safely stored on the new sub before we touch
-  //     the old one. If the cancel fails (network blip, Razorpay
-  //     hiccup), the new plan is still active — worst case the user
-  //     manually cancels via the existing Cancel button later.
-  if (oldSubId && oldSubId !== razorpay_subscription_id && oldStatus === 'active') {
-    void (async () => {
-      try {
-        const rzp = getRazorpay();
-        await rzp.subscriptions.cancel(oldSubId, false); // immediate
-        console.log(`[payments/verify] Cancelled old subscription ${oldSubId} after switch to ${plan} (new sub ${razorpay_subscription_id})`);
-      } catch (err) {
-        console.error(`[payments/verify] Failed to cancel old subscription ${oldSubId}:`, err);
-      }
-    })();
-  }
-
   // 5. Log payment record
   const amount = PLAN_AMOUNTS[planKey(plan as PaidPlan, billing)];
   try {
-    // Reuse payment repo for audit trail (subscription_id stored as order_id)
-    const existing = paymentRepo.findByOrderId(razorpay_subscription_id);
+    const existing = paymentRepo.findByOrderId(razorpay_order_id);
     if (!existing) {
-      paymentRepo.create(req.user.id, razorpay_subscription_id, plan, billing, amount);
+      paymentRepo.create(req.user.id, razorpay_order_id, plan, billing, amount);
     }
-    paymentRepo.markPaid(razorpay_subscription_id, razorpay_payment_id, expiresAt);
+    paymentRepo.markPaid(razorpay_order_id, razorpay_payment_id, expiresAt);
   } catch { /* non-critical — plan already activated above */ }
 
   console.log(`[payments/verify] Plan activated: user=${req.user.id} plan=${plan}/${billing}`);
   const fresh = userRepo.findById(req.user.id);
 
-  // Fire-and-forget: welcome email + invoice email with PDF attachments
+  // Fire-and-forget: welcome email + invoice email
   void (async () => {
     try {
       const billingDetails = userRepo.getBillingDetails(req.user!.id);
       const buyer = { name: fresh?.name ?? '', email: fresh?.email ?? '', billingDetails };
-      const payRec = paymentRepo.findByOrderId(razorpay_subscription_id);
+      const payRec = paymentRepo.findByOrderId(razorpay_order_id);
       if (payRec) {
         const pdfData = {
           id: payRec.id, plan: payRec.plan, billing: payRec.billing,
@@ -239,33 +197,6 @@ router.post('/verify', verifyLimiter, (req: AuthRequest, res: Response) => {
   })();
 
   res.json({ success: true, plan: fresh?.plan, planExpiresAt: fresh?.plan_expires_at });
-});
-
-// ---------------------------------------------------------------------------
-// DELETE /api/payments/subscription  — cancel current subscription
-// ---------------------------------------------------------------------------
-router.delete('/subscription', async (req: AuthRequest, res: Response) => {
-  if (!req.user) { res.status(401).json({ error: 'Authentication required' }); return; }
-
-  const user = userRepo.findById(req.user.id);
-  if (!user?.razorpay_subscription_id) {
-    res.status(404).json({ error: 'No active subscription found' }); return;
-  }
-  if (user.subscription_status === 'cancelled') {
-    res.status(409).json({ error: 'Subscription is already cancelled' }); return;
-  }
-
-  try {
-    const rzp = getRazorpay();
-    await rzp.subscriptions.cancel(user.razorpay_subscription_id, false);
-    // Plan stays active until plan_expires_at — Razorpay stops billing after that
-    userRepo.updateSubscriptionStatus(user.razorpay_subscription_id, 'cancelled');
-    console.log(`[payments] Subscription cancelled: user=${req.user.id} sub=${user.razorpay_subscription_id}`);
-    res.json({ success: true, message: 'Subscription cancelled. Your plan remains active until ' + user.plan_expires_at });
-  } catch (err) {
-    console.error('[payments] cancel subscription failed:', err);
-    res.status(502).json({ error: 'Could not cancel subscription. Please try again.' });
-  }
 });
 
 // ---------------------------------------------------------------------------
@@ -288,6 +219,7 @@ router.get('/history', (req: AuthRequest, res: Response) => {
   }));
 
   res.json({
+    // Kept for API shape compatibility — stores the last Razorpay order ID
     subscriptionId:     user?.razorpay_subscription_id ?? null,
     subscriptionStatus: user?.subscription_status ?? null,
     payments,

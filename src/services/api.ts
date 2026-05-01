@@ -424,31 +424,27 @@ export async function fetchUserUsage(): Promise<UserUsageResponse> {
 
 // ── Payments API ─────────────────────────────────────────────────────────
 
-export interface CreateSubscriptionResponse {
-  subscriptionId: string;
+export interface CreateOrderResponse {
+  orderId: string;
   keyId: string;
   plan: string;
-  billing: string;
   amount: number; // paise
 }
 
-export async function createSubscription(
+export async function createOrder(
   plan: 'pro' | 'enterprise',
-  // Yearly only — monthly was retired. Param kept for call-site compatibility.
-  _billing: 'yearly' = 'yearly',
-): Promise<CreateSubscriptionResponse> {
-  return authFetch('/api/payments/create-subscription', {
+): Promise<CreateOrderResponse> {
+  return authFetch('/api/payments/create-order', {
     method: 'POST',
-    body: JSON.stringify({ plan, billing: 'yearly' }),
+    body: JSON.stringify({ plan }),
   });
 }
 
-export async function verifySubscriptionPayment(payload: {
+export async function verifyOrderPayment(payload: {
   razorpay_payment_id: string;
-  razorpay_subscription_id: string;
+  razorpay_order_id: string;
   razorpay_signature: string;
   plan: string;
-  billing: string;
 }): Promise<{ success: boolean; plan: string; planExpiresAt: string }> {
   return authFetch('/api/payments/verify', {
     method: 'POST',
@@ -474,10 +470,6 @@ export interface PaymentHistoryResponse {
 
 export async function fetchPaymentHistory(): Promise<PaymentHistoryResponse> {
   return authFetch('/api/payments/history');
-}
-
-export async function cancelSubscription(): Promise<{ success: boolean; message: string }> {
-  return authFetch('/api/payments/subscription', { method: 'DELETE' });
 }
 
 // ── Billing Details API ───────────────────────────────────────────────────
