@@ -25,6 +25,7 @@ function featureLimiter(limit: number, message: string) {
     keyGenerator: (req) => (req as AuthRequest).user?.id ?? 'anon',
     validate: { xForwardedForHeader: false, ip: false },
     message: { error: message },
+    skip: (req) => req.method === 'GET' || req.path.endsWith('/cancel'),
   });
 }
 
