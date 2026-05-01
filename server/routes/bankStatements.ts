@@ -4,6 +4,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
 import Papa from 'papaparse';
 import { extractWithRetry } from '../lib/documentExtract.js';
+import { extractVisionPdf } from '../lib/geminiVisionPdf.js';
 import { callGeminiJson, type GeminiJsonResult } from '../lib/geminiJson.js';
 import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_TSV_PROMPT, BANK_STATEMENT_CATEGORIES, buildConditionsBlock, countWords, MAX_CONDITION_WORDS } from '../lib/bankStatementPrompt.js';
 import { gemini, GEMINI_CHAT_MODEL_THINK_FB, GEMINI_CHAT_MODEL_T1, costForModel } from '../lib/gemini.js';
@@ -986,8 +987,12 @@ router.post(
       if (req.file) {
         filename = req.file.originalname;
         mimeType = req.file.mimetype;
-        const base64Data = req.file.buffer.toString('base64');
-        const dataUrl = `data:${mimeType};base64,${base64Data}`;
+        // Multi-page PDFs need the native generateContent endpoint —
+        // the OpenAI-compatible shim keeps only page 1 of an
+        // application/pdf data URL ("AI vision only analyzed page 1
+        // of 17"). For images (jpeg/png/webp) the OpenAI shim works
+        // fine since they're inherently single-page.
+        const isPdfFile = mimeType === 'application/pdf' || /\.pdf$/i.test(filename);
         // Vision fallback path — used only for scanned/image PDFs or direct
         // image uploads. Digital PDFs get pre-extracted client-side and hit
         // the faster `pdfText` branch below.
@@ -1008,16 +1013,28 @@ router.post(
         // thinking models are unhealthy at once. It's faster and lighter,
         // not as strong on dense OCR, but a slightly weaker extraction is
         // strictly better than asking the user to retry.
-        const visionResult = await extractWithRetry<ExtractedStatement>(
-          dataUrl,
-          `${conditionsBlock}${BANK_STATEMENT_PROMPT}`,
-          {
-            maxTokens: 16_384,
-            primaryModel: 'gemini-2.5-flash',
-            fallbackModels: [GEMINI_CHAT_MODEL_THINK_FB, GEMINI_CHAT_MODEL_T1],
-            retryParseFailures: true,
-          },
-        );
+        const visionResult = isPdfFile
+          ? await extractVisionPdf<ExtractedStatement>(
+              req.file.buffer,
+              mimeType,
+              `${conditionsBlock}${BANK_STATEMENT_PROMPT}`,
+              {
+                maxTokens: 16_384,
+                primaryModel: 'gemini-2.5-flash',
+                fallbackModels: [GEMINI_CHAT_MODEL_THINK_FB, GEMINI_CHAT_MODEL_T1],
+                retryParseFailures: true,
+              },
+            )
+          : await extractWithRetry<ExtractedStatement>(
+              `data:${mimeType};base64,${req.file.buffer.toString('base64')}`,
+              `${conditionsBlock}${BANK_STATEMENT_PROMPT}`,
+              {
+                maxTokens: 16_384,
+                primaryModel: 'gemini-2.5-flash',
+                fallbackModels: [GEMINI_CHAT_MODEL_THINK_FB, GEMINI_CHAT_MODEL_T1],
+                retryParseFailures: true,
+              },
+            );
         extracted = visionResult.data;
         (res.locals as Record<string, unknown>).geminiUsages = [{
           inputTokens: visionResult.inputTokens,
