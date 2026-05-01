@@ -27,7 +27,20 @@ import ledgerScrutinyRouter from './routes/ledgerScrutiny.js';
 import invitationsRouter, { publicInvitationRouter } from './routes/invitations.js';
 import billingDetailsRouter from './routes/billingDetails.js';
 import { authMiddleware, adminMiddleware, trialCheckMiddleware } from './middleware/auth.js';
-import { authLimiter, chatLimiter, uploadLimiter } from './middleware/rateLimiter.js';
+import {
+  authLimiter,
+  chatLimiter,
+  uploadLimiter,
+  bankStatementsLimiter,
+  ledgerScrutinyLimiter,
+  noticesLimiter,
+  boardResolutionsLimiter,
+  partnershipDeedsLimiter,
+  suggestionsLimiter,
+  itrLimiter,
+  itPortalLimiter,
+  form16ImportLimiter,
+} from './middleware/rateLimiter.js';
 import { startRenewalReminderJob } from './jobs/renewalReminder.js';
 import { startStuckJobSweeper } from './lib/sweepStuckJobs.js';
 import helmet from 'helmet';
@@ -114,20 +127,20 @@ app.use('/api/upload', uploadLimiter);
 app.use('/api', chatRouter);
 app.use('/api', uploadRouter);
 app.use('/api/chats', chatsRouter);
-app.use('/api/notices', noticesRouter);
-app.use('/api/suggestions', suggestionsRouter);
+app.use('/api/notices', noticesLimiter, noticesRouter);
+app.use('/api/suggestions', suggestionsLimiter, suggestionsRouter);
 app.use('/api/profiles', profilesRouter);
 app.use('/api/generic-profiles', genericProfilesRouter);
 app.use('/api/usage', usageRouter);
-app.use('/api/itr', itrRouter);
-app.use('/api/board-resolutions', boardResolutionsRouter);
-app.use('/api/partnership-deeds', partnershipDeedsRouter);
-app.use('/api/it-portal', itPortalImportRouter);
+app.use('/api/itr', itrLimiter, itrRouter);
+app.use('/api/board-resolutions', boardResolutionsLimiter, boardResolutionsRouter);
+app.use('/api/partnership-deeds', partnershipDeedsLimiter, partnershipDeedsRouter);
+app.use('/api/it-portal', itPortalLimiter, itPortalImportRouter);
 app.use('/api/style-profile', styleProfileRouter);
-app.use('/api/form16-import', form16ImportRouter);
+app.use('/api/form16-import', form16ImportLimiter, form16ImportRouter);
 app.use('/api/clients', clientsRouter);
-app.use('/api/bank-statements', bankStatementsRouter);
-app.use('/api/ledger-scrutiny', ledgerScrutinyRouter);
+app.use('/api/bank-statements', bankStatementsLimiter, bankStatementsRouter);
+app.use('/api/ledger-scrutiny', ledgerScrutinyLimiter, ledgerScrutinyRouter);
 app.use('/api/invitations', invitationsRouter);
 app.use('/api/payments', paymentsRouter);
 app.use('/api/billing-details', billingDetailsRouter);

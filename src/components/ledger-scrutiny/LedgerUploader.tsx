@@ -89,7 +89,6 @@ function ScrutinyProgressBar({
 
 const ACCEPT = '.pdf,.csv,application/pdf,text/csv';
 const MAX_BYTES = 10 * 1024 * 1024;
-const MAX_LEDGER_TXNS_PER_FILE = 20_000;
 
 export function LedgerUploader({ manager }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -177,10 +176,6 @@ export function LedgerUploader({ manager }: Props) {
     const { rows: mapped, stats } = applyMapping(grid, mapping, 'ledger');
     if (mapped.length === 0) {
       toast.error('No transaction rows found after applying the mapping. Re-check the Date column.');
-      return;
-    }
-    if (mapped.length > MAX_LEDGER_TXNS_PER_FILE) {
-      toast.error(`This ledger has ${mapped.length.toLocaleString('en-IN')} transactions, but a single upload is capped at ${MAX_LEDGER_TXNS_PER_FILE.toLocaleString('en-IN')}. Split by quarter / by account and re-upload.`);
       return;
     }
     const filteredCount = stats.totalGridRows - stats.transactions;

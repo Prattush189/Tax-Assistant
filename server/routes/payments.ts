@@ -60,8 +60,10 @@ const verifyLimiter = rateLimit({
 // ---------------------------------------------------------------------------
 // POST /api/payments/create-order
 // Creates a one-time Razorpay Order for the given plan.
+// (`/create-subscription` is kept as an alias so older cached frontend
+//  bundles continue to work after the subscription -> order migration.)
 // ---------------------------------------------------------------------------
-router.post('/create-order', createLimiter, async (req: AuthRequest, res: Response) => {
+router.post(['/create-order', '/create-subscription'], createLimiter, async (req: AuthRequest, res: Response) => {
   if (!req.user) { res.status(401).json({ error: 'Authentication required' }); return; }
 
   const { plan } = req.body ?? {};
@@ -107,7 +109,12 @@ router.post('/create-order', createLimiter, async (req: AuthRequest, res: Respon
 router.post('/verify', verifyLimiter, (req: AuthRequest, res: Response) => {
   if (!req.user) { res.status(401).json({ error: 'Authentication required' }); return; }
 
-  const { razorpay_payment_id, razorpay_order_id, razorpay_signature } = req.body ?? {};
+  const body = req.body ?? {};
+  const razorpay_payment_id = body.razorpay_payment_id;
+  // Accept both razorpay_order_id (new) and razorpay_subscription_id (legacy
+  // alias for stale frontend bundles after the subscription -> order switch).
+  const razorpay_order_id   = body.razorpay_order_id ?? body.razorpay_subscription_id;
+  const razorpay_signature  = body.razorpay_signature;
 
   if (
     typeof razorpay_payment_id !== 'string' ||

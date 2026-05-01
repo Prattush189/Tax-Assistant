@@ -73,7 +73,6 @@ interface Props {
 }
 
 const ACCEPT = '.pdf,.csv,application/pdf,text/csv';
-const MAX_BANK_TXNS_PER_FILE = 500;
 
 export function BankStatementUploader({ manager }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -190,10 +189,6 @@ export function BankStatementUploader({ manager }: Props) {
     const { rows: mapped, stats } = applyMapping(grid, mapping, 'bank');
     if (mapped.length === 0) {
       toast.error('No transaction rows found after applying the mapping. Re-check the Date column.');
-      return;
-    }
-    if (mapped.length > MAX_BANK_TXNS_PER_FILE) {
-      toast.error(`This statement has ${mapped.length.toLocaleString('en-IN')} transactions, but a single upload is capped at ${MAX_BANK_TXNS_PER_FILE.toLocaleString('en-IN')}. Split by month and re-upload.`);
       return;
     }
     // Surface what was filtered so the user can see why the

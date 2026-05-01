@@ -9,7 +9,27 @@ const COMPANY_GSTIN = '03AAUCS1499L1ZM';
 const COMPANY_ADDR1 = 'House No. 48, Chaturbhuj Road, Yaseen Road';
 const COMPANY_ADDR2 = 'Amritsar, Punjab \u2013 143001';
 const COMPANY_SUB   = 'Tax Planning & Advisory Platform';
+const COMPANY_STATE   = 'Punjab';
+const COMPANY_STATECD = '03';                    // GSTIN first-2 chars; Punjab = 03
 const BRAND_R = 13, BRAND_G = 150, BRAND_H = 104; // #0D9668
+
+/** True when buyer is in the same state as the seller (Punjab) -> CGST+SGST.
+ *  Otherwise IGST applies. Checks GSTIN prefix first (most reliable),
+ *  then falls back to the state name. */
+function isIntraState(buyer: { state?: string | null; gstin?: string | null }): boolean {
+  const gstin = buyer.gstin?.trim();
+  if (gstin && gstin.length >= 2) {
+    return gstin.slice(0, 2) === COMPANY_STATECD;
+  }
+  const s = buyer.state?.trim().toLowerCase();
+  if (!s) return false;
+  return s === COMPANY_STATE.toLowerCase() || s === 'pb';
+}
+
+function placeOfSupply(buyer: { state?: string | null }): string {
+  const s = buyer.state?.trim();
+  return s && s.length > 0 ? s : COMPANY_STATE;
+}
 
 export interface PaymentData {
   id: string;
@@ -200,9 +220,19 @@ export function generatePaymentReceipt(payment: PaymentData, user: UserInfo): vo
   doc.text('Sub-total (excl. GST)', col, y);
   doc.text(fmt(base), R - 2, y, { align: 'right' });
   y += 6;
-  doc.text('IGST @ 18%', col, y);
-  doc.text(fmt(gst), R - 2, y, { align: 'right' });
-  y += 6;
+  if (isIntraState(user)) {
+    const half = Math.round((gst / 2) * 100) / 100;
+    doc.text('CGST @ 9%', col, y);
+    doc.text(fmt(half), R - 2, y, { align: 'right' });
+    y += 6;
+    doc.text('SGST @ 9%', col, y);
+    doc.text(fmt(gst - half), R - 2, y, { align: 'right' });
+    y += 6;
+  } else {
+    doc.text('IGST @ 18%', col, y);
+    doc.text(fmt(gst), R - 2, y, { align: 'right' });
+    y += 6;
+  }
 
   doc.setDrawColor(BRAND_R, BRAND_G, BRAND_H);
   doc.line(col, y, R, y);
@@ -228,7 +258,7 @@ export function generatePaymentReceipt(payment: PaymentData, user: UserInfo): vo
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8);
     doc.setTextColor(100, 100, 100);
-    doc.text('Subscription valid until: ' + fmtDate(payment.expiresAt), L, y);
+    doc.text('Plan valid until: ' + fmtDate(payment.expiresAt), L, y);
   }
 
   drawFooter(doc, 'This is a computer-generated receipt and does not require a signature.');
@@ -263,7 +293,7 @@ export function generatePaymentInvoice(payment: PaymentData, user: UserInfo): vo
   doc.setFontSize(8.5);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(80, 80, 80);
-  doc.text('SAC Code: 9983 (IT & software services)  \u00B7  Place of Supply: Punjab (03)', L, y);
+  doc.text(`SAC Code: 9983 (IT & software services)  \u00B7  Place of Supply: ${placeOfSupply(user)}`, L, y);
   y += 10;
 
   doc.setDrawColor(220, 220, 220);
@@ -320,22 +350,25 @@ export function generatePaymentInvoice(payment: PaymentData, user: UserInfo): vo
   y += 8;
 
   // ── Item table ────────────────────────────────────────────────────────────
+  // All numeric columns are right-aligned at staggered x-positions so wide
+  // values like "Rs. 7,080.00" never collide with the column to their right.
+  const intra   = isIntraState(user);
   const colDesc = L + 2;
-  const colQty  = L + 100;
-  const colRate = L + 120;
-  const colIGST = L + 148;
-  const colTot  = R - 2;
+  const colQty  = L + 92;   // right-aligned; "1" is narrow
+  const colRate = L + 122;  // right-aligned; "Rs. 7,080.00"
+  const colTax  = L + 152;  // right-aligned; GST (or CGST+SGST combined)
+  const colTot  = R - 2;    // right-aligned
 
   doc.setFillColor(245, 247, 250);
   doc.rect(L, y, R - L, 8, 'F');
   doc.setFontSize(8);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(60, 60, 60);
-  doc.text('Description', colDesc, y + 5.5);
-  doc.text('Qty',         colQty,  y + 5.5);
-  doc.text('Rate',        colRate, y + 5.5);
-  doc.text('IGST 18%',    colIGST, y + 5.5);
-  doc.text('Total',       colTot,  y + 5.5, { align: 'right' });
+  doc.text('Description',         colDesc, y + 5.5);
+  doc.text('Qty',                 colQty,  y + 5.5, { align: 'right' });
+  doc.text('Rate',                colRate, y + 5.5, { align: 'right' });
+  doc.text(intra ? 'GST 18%' : 'IGST 18%', colTax, y + 5.5, { align: 'right' });
+  doc.text('Total',               colTot,  y + 5.5, { align: 'right' });
   y += 10;
 
   const base  = getBaseAmount(payment.amount);
@@ -346,9 +379,9 @@ export function generatePaymentInvoice(payment: PaymentData, user: UserInfo): vo
   doc.setFontSize(8.5);
   doc.setTextColor(30, 30, 30);
   doc.text(planLabel(payment.plan, payment.billing), colDesc, y + 5);
-  doc.text('1',        colQty,  y + 5);
-  doc.text(fmt(base),  colRate, y + 5);
-  doc.text(fmt(gst),   colIGST, y + 5);
+  doc.text('1',        colQty,  y + 5, { align: 'right' });
+  doc.text(fmt(base),  colRate, y + 5, { align: 'right' });
+  doc.text(fmt(gst),   colTax,  y + 5, { align: 'right' });
   doc.text(fmt(total), colTot,  y + 5, { align: 'right' });
   y += 10;
 
@@ -363,9 +396,19 @@ export function generatePaymentInvoice(payment: PaymentData, user: UserInfo): vo
   doc.text('Taxable Amount (excl. GST):', tCol, y);
   doc.text(fmt(base), R - 2, y, { align: 'right' });
   y += 6;
-  doc.text('IGST @ 18%:', tCol, y);
-  doc.text(fmt(gst), R - 2, y, { align: 'right' });
-  y += 6;
+  if (intra) {
+    const half = Math.round((gst / 2) * 100) / 100;
+    doc.text('CGST @ 9%:', tCol, y);
+    doc.text(fmt(half), R - 2, y, { align: 'right' });
+    y += 6;
+    doc.text('SGST @ 9%:', tCol, y);
+    doc.text(fmt(gst - half), R - 2, y, { align: 'right' });
+    y += 6;
+  } else {
+    doc.text('IGST @ 18%:', tCol, y);
+    doc.text(fmt(gst), R - 2, y, { align: 'right' });
+    y += 6;
+  }
 
   doc.setDrawColor(BRAND_R, BRAND_G, BRAND_H);
   doc.line(tCol, y, R, y);
@@ -387,7 +430,7 @@ export function generatePaymentInvoice(payment: PaymentData, user: UserInfo): vo
   doc.text('Payment Date: ' + fmtDate(payment.paidAt), L, y);
   y += 5;
   if (payment.expiresAt) {
-    doc.text('Subscription Valid Until: ' + fmtDate(payment.expiresAt), L, y);
+    doc.text('Plan Valid Until: ' + fmtDate(payment.expiresAt), L, y);
     y += 5;
   }
   y += 4;
@@ -395,7 +438,9 @@ export function generatePaymentInvoice(payment: PaymentData, user: UserInfo): vo
   doc.setFontSize(7.5);
   doc.setTextColor(130, 130, 130);
   doc.text(
-    'Note: This invoice is for SaaS subscription services. IGST applicable as per the IGST Act, 2017.',
+    intra
+      ? 'Note: This invoice is for SaaS subscription services. CGST + SGST applicable (intra-state supply) as per CGST Act, 2017.'
+      : 'Note: This invoice is for SaaS subscription services. IGST applicable (inter-state supply) as per IGST Act, 2017.',
     L, y
   );
 
