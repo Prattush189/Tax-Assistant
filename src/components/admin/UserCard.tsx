@@ -280,6 +280,8 @@ export function UserCard({
                           <th className="px-3 py-1.5 font-medium">Model</th>
                           <th className="px-3 py-1.5 font-medium text-right">In</th>
                           <th className="px-3 py-1.5 font-medium text-right">Out</th>
+                          <th className="px-3 py-1.5 font-medium text-right" title="Pre-flight token estimate from the quota gate. Only set on the summary row; — when not estimated.">Est.</th>
+                          <th className="px-3 py-1.5 font-medium text-right">Δ %</th>
                           <th className="px-3 py-1.5 font-medium text-right">Rs.</th>
                           <th className="px-3 py-1.5 font-medium">Status</th>
                         </tr>
@@ -301,6 +303,28 @@ export function UserCard({
                             </td>
                             <td className="px-3 py-1.5 text-right font-mono text-gray-700 dark:text-gray-200">
                               {formatTokens(r.output_tokens)}
+                            </td>
+                            <td className="px-3 py-1.5 text-right font-mono text-gray-500 dark:text-gray-400">
+                              {r.estimated_tokens > 0 ? formatTokens(r.estimated_tokens) : '—'}
+                            </td>
+                            <td className={cn(
+                              'px-3 py-1.5 text-right font-mono',
+                              // Drift colouring: under-estimate is the dangerous case
+                              // (the gate let through more than budgeted), so flag it
+                              // amber (>20% under) / rose (>50% under). Over-estimate
+                              // is just conservative — neutral grey.
+                              (() => {
+                                if (r.estimated_tokens <= 0) return 'text-gray-400';
+                                const actual = r.input_tokens + r.output_tokens;
+                                const drift = (actual - r.estimated_tokens) / r.estimated_tokens;
+                                if (drift > 0.5) return 'text-rose-500 dark:text-rose-400';
+                                if (drift > 0.2) return 'text-amber-500 dark:text-amber-400';
+                                return 'text-gray-500 dark:text-gray-400';
+                              })(),
+                            )}>
+                              {r.estimated_tokens > 0
+                                ? `${(((r.input_tokens + r.output_tokens) - r.estimated_tokens) / r.estimated_tokens * 100).toFixed(0)}%`
+                                : '—'}
                             </td>
                             <td className="px-3 py-1.5 text-right font-mono text-gray-700 dark:text-gray-200">
                               {r.cost_inr.toFixed(3)}
