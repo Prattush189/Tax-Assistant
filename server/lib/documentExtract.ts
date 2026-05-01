@@ -14,8 +14,10 @@ export interface ExtractOptions {
   maxTokens?: number;
   /** Override the primary model (e.g. use flash directly for complex tasks). */
   primaryModel?: string;
-  /** Override the fallback model. */
+  /** Override the fallback model. Ignored if `fallbackModels` is set. */
   fallbackModel?: string;
+  /** Ordered fallback chain. Use when one fallback isn't enough (e.g. scanned PDFs). */
+  fallbackModels?: string[];
   /** Pass-through to callGeminiJson for failed-attempt cost logging. */
   recordAttempt?: GeminiJsonOptions['recordAttempt'];
   /** Retry malformed/truncated JSON responses. Useful for dense vision PDFs. */
