@@ -18,6 +18,8 @@ export interface ExtractOptions {
   fallbackModel?: string;
   /** Pass-through to callGeminiJson for failed-attempt cost logging. */
   recordAttempt?: GeminiJsonOptions['recordAttempt'];
+  /** Retry malformed/truncated JSON responses. Useful for dense vision PDFs. */
+  retryParseFailures?: boolean;
 }
 
 /**

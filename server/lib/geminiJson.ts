@@ -26,6 +26,8 @@ export interface GeminiJsonOptions {
    * aggregate under the productive category or ignore.
    */
   recordAttempt?: (input: { failed: boolean; inputTokens: number; outputTokens: number; model: string }) => void;
+  /** Retry when the model returns malformed/truncated JSON. */
+  retryParseFailures?: boolean;
 }
 
 /** Parse JSON safely — strips markdown fences and attempts recovery on truncated strings. */
@@ -116,6 +118,8 @@ async function callOnce<T>(
 }
 
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
+const isParseFailure = (err: unknown) =>
+  err instanceof Error && /Failed to parse Gemini JSON response/i.test(err.message);
 const MAX_PRIMARY_ATTEMPTS = 3;
 // Fallback also gets multiple attempts now. Production logs showed
 // brief Gemini regional outages (503 bursts lasting 30-90s) where the
@@ -141,6 +145,7 @@ export async function callGeminiJson<T = unknown>(
   const fallback = opts.fallbackModel ?? GEMINI_FALLBACK_MODEL;
   const responseFormat = opts.responseFormat;
   const recordAttempt = opts.recordAttempt;
+  const retryParseFailures = opts.retryParseFailures === true;
 
   // Circuit-breaker wraps the WHOLE retry-and-fallback ladder for this provider.
   // If Gemini is genuinely down, the breaker opens after a handful of failures
@@ -155,9 +160,9 @@ export async function callGeminiJson<T = unknown>(
       } catch (err) {
         lastErr = err;
         const status = (err as { status?: number })?.status ?? 0;
-        if (!RETRYABLE_STATUSES.has(status)) break;
+        if (!RETRYABLE_STATUSES.has(status) && !(retryParseFailures && isParseFailure(err))) break;
         if (attempt < MAX_PRIMARY_ATTEMPTS - 1) {
-          console.warn(`[geminiJson] ${primary} retry ${attempt + 1}/${MAX_PRIMARY_ATTEMPTS} after status ${status}`);
+          console.warn(`[geminiJson] ${primary} retry ${attempt + 1}/${MAX_PRIMARY_ATTEMPTS} after ${status ? `status ${status}` : 'JSON parse failure'}`);
           await new Promise(r => setTimeout(r, 1500 * Math.pow(2, attempt)));
         }
       }
@@ -170,9 +175,9 @@ export async function callGeminiJson<T = unknown>(
       } catch (err) {
         lastErr = err;
         const status = (err as { status?: number })?.status ?? 0;
-        if (!RETRYABLE_STATUSES.has(status)) break;
+        if (!RETRYABLE_STATUSES.has(status) && !(retryParseFailures && isParseFailure(err))) break;
         if (attempt < MAX_FALLBACK_ATTEMPTS - 1) {
-          console.warn(`[geminiJson] ${fallback} retry ${attempt + 1}/${MAX_FALLBACK_ATTEMPTS} after status ${status}`);
+          console.warn(`[geminiJson] ${fallback} retry ${attempt + 1}/${MAX_FALLBACK_ATTEMPTS} after ${status ? `status ${status}` : 'JSON parse failure'}`);
           await new Promise(r => setTimeout(r, 2000 * Math.pow(2, attempt)));
         }
       }

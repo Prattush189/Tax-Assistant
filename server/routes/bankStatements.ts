@@ -972,7 +972,23 @@ router.post(
         // Vision fallback path — used only for scanned/image PDFs or direct
         // image uploads. Digital PDFs get pre-extracted client-side and hit
         // the faster `pdfText` branch below.
-        const visionResult = await extractWithRetry<ExtractedStatement>(dataUrl, `${conditionsBlock}${BANK_STATEMENT_PROMPT}`, { maxTokens: 8192 });
+        //
+        // Scanned statements are the least deterministic path: OCR/layout
+        // plus full JSON output can produce malformed/truncated JSON, and
+        // the 2.5 family occasionally returns 503 bursts. Use the stronger
+        // OCR model first, a separate-family fallback, a larger JSON budget,
+        // and retry parse failures. Keep this scoped to vision so the
+        // deterministic wizard/CSV paths do not get slower or more costly.
+        const visionResult = await extractWithRetry<ExtractedStatement>(
+          dataUrl,
+          `${conditionsBlock}${BANK_STATEMENT_PROMPT}`,
+          {
+            maxTokens: 16_384,
+            primaryModel: 'gemini-2.5-flash',
+            fallbackModel: GEMINI_CHAT_MODEL_THINK_FB,
+            retryParseFailures: true,
+          },
+        );
         extracted = visionResult.data;
         (res.locals as Record<string, unknown>).geminiUsages = [{
           inputTokens: visionResult.inputTokens,

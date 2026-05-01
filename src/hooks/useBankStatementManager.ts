@@ -216,6 +216,8 @@ export function useBankStatementManager(enabled: boolean) {
    *  close the Generate→Cancel loophole). */
   const cancel = useCallback(async (id: string): Promise<void> => {
     const { statement } = await cancelBankStatement(id);
+    setIsAnalyzing(false);
+    setAnalyzeProgress(null);
     if (statement) {
       setStatements((prev) => prev.map((s) => (s.id === id ? statement : s)));
       setCurrent((prev) => (prev && prev.statement.id === id ? { ...prev, statement } : prev));
