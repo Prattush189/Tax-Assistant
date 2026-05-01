@@ -9,12 +9,10 @@ interface Props {
 
 /**
  * Confirmation dialog shown when a paid-plan user tries to buy the
- * other paid plan (Pro ↔ Enterprise). Without this gate the server
- * silently created a second Razorpay subscription and never cancelled
- * the first one — double-billing the customer until they manually
- * cancelled. We now cancel the old subscription server-side after
- * /verify, but this modal makes the consequence explicit so the user
- * knows what to expect (loss of pre-paid time, no auto-refund).
+ * other paid plan (Pro ↔ Enterprise). Switching pays the new plan in
+ * full immediately — the remaining pre-paid time on the current plan
+ * is forfeited (no auto-refund). This modal makes that explicit before
+ * the user commits.
  */
 export function SwitchPlanWarningDialog({ fromPlan, toPlan, onConfirm, onCancel }: Props) {
   const isUpgrade = fromPlan === 'Pro' && toPlan === 'Enterprise';
@@ -40,11 +38,11 @@ export function SwitchPlanWarningDialog({ fromPlan, toPlan, onConfirm, onCancel 
 
         <div className="px-5 py-4 space-y-3 text-sm text-gray-700 dark:text-gray-300">
           <p>
-            Your current <span className="font-semibold">{fromPlan}</span> subscription will be cancelled
-            as soon as the {toPlan} payment goes through.
+            Switching to {toPlan} replaces your current <span className="font-semibold">{fromPlan}</span> plan
+            as soon as payment goes through.
           </p>
           <ul className="list-disc list-inside space-y-1.5 text-gray-600 dark:text-gray-400">
-            <li>{toPlan} starts billing today and runs on its own cycle.</li>
+            <li>{toPlan} is paid in full today and runs for one year from today.</li>
             <li>Pre-paid time on {fromPlan} is not refunded.</li>
             <li>You'll keep all your data, history, and settings.</li>
           </ul>

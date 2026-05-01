@@ -202,8 +202,8 @@ export async function sendInviteEmail(
 }
 
 /**
- * Sent ~48 hours before a subscription renews so the user can update their
- * payment method or cancel if they no longer need the plan.
+ * Sent ~48 hours before a paid plan expires. Plans do NOT auto-renew —
+ * the user must manually repurchase before this date to keep access.
  */
 export async function sendRenewalReminderEmail(
   to: string,
@@ -213,29 +213,29 @@ export async function sendRenewalReminderEmail(
   amountInr: number,
 ): Promise<SendMailResult> {
   const planLabel = plan.charAt(0).toUpperCase() + plan.slice(1);
-  const subject   = `Your Smartbiz AI ${planLabel} plan renews in 48 hours`;
+  const subject   = `Your Smartbiz AI ${planLabel} plan expires in 48 hours`;
   const text =
     `Hi ${name},\n\n` +
-    `This is a reminder that your Smartbiz AI ${planLabel} plan will automatically renew on ${renewalDate} for ₹${amountInr.toLocaleString('en-IN')}.\n\n` +
-    `If you'd like to make changes or cancel, log in and visit the Plan section.\n\n` +
+    `Your Smartbiz AI ${planLabel} plan expires on ${renewalDate}. To keep access, please renew manually for ₹${amountInr.toLocaleString('en-IN')} (one-time, no auto-renewal).\n\n` +
+    `Log in and visit the Plan section to renew.\n\n` +
     `Smartbiz AI Team`;
   const html = `
 <!doctype html><html><body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 32px 24px; color: #111827;">
   <div style="text-align: center; margin-bottom: 32px;">
     <h1 style="font-size: 18px; font-weight: 600; color: #0D9668; margin: 0;">Smartbiz AI</h1>
   </div>
-  <h2 style="font-size: 20px; font-weight: 600; margin: 0 0 12px;">Upcoming renewal in 48 hours</h2>
+  <h2 style="font-size: 20px; font-weight: 600; margin: 0 0 12px;">Your plan expires in 48 hours</h2>
   <p style="font-size: 14px; line-height: 1.6; color: #4b5563; margin: 0 0 16px;">
     Hi ${escapeHtml(name)},
   </p>
   <p style="font-size: 14px; line-height: 1.6; color: #4b5563; margin: 0 0 24px;">
-    Your <strong>${escapeHtml(planLabel)} plan</strong> will automatically renew on
-    <strong>${escapeHtml(renewalDate)}</strong> for
-    <strong>₹${amountInr.toLocaleString('en-IN')}</strong>.
+    Your <strong>${escapeHtml(planLabel)} plan</strong> expires on
+    <strong>${escapeHtml(renewalDate)}</strong>. To keep access, please renew manually for
+    <strong>₹${amountInr.toLocaleString('en-IN')}</strong>. This is a one-time payment — your plan does not auto-renew.
   </p>
   <div style="background: #f9fafb; border-radius: 12px; padding: 16px; margin: 0 0 24px;">
     <p style="margin: 0; font-size: 14px; color: #6b7280;">
-      To update your payment method or cancel, visit the <strong>Plan</strong> section in your account.
+      Visit the <strong>Plan</strong> section in your account to renew.
     </p>
   </div>
   <p style="font-size: 12px; color: #9ca3af; margin: 0;">
@@ -284,21 +284,21 @@ export async function sendSubscriptionHaltedEmail(
 }
 
 /**
- * Sent immediately after a successful subscription payment (first charge or renewal).
+ * Sent immediately after a successful one-time order payment.
  */
 export async function sendPaymentConfirmationEmail(
   to: string,
   name: string,
   plan: string,
   amountInr: number,
-  nextRenewalDate: string,
+  expiresOnDate: string,
 ): Promise<SendMailResult> {
   const planLabel = plan.charAt(0).toUpperCase() + plan.slice(1);
   const subject   = `Payment confirmed — Smartbiz AI ${planLabel}`;
   const text =
     `Hi ${name},\n\n` +
     `Your payment of ₹${amountInr.toLocaleString('en-IN')} for the ${planLabel} plan has been received.\n\n` +
-    `Your plan is now active and will renew on ${nextRenewalDate}.\n\n` +
+    `Your plan is now active until ${expiresOnDate}. To continue after that date, you'll need to renew manually — there is no auto-renewal.\n\n` +
     `Smartbiz AI Team`;
   const html = `
 <!doctype html><html><body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 32px 24px; color: #111827;">
@@ -312,11 +312,12 @@ export async function sendPaymentConfirmationEmail(
     <strong>${escapeHtml(planLabel)} plan</strong> has been received. Your plan is now active.
   </p>
   <div style="background: #ecfdf5; border-radius: 12px; padding: 16px; margin: 0 0 24px;">
-    <p style="margin: 0 0 4px; font-size: 13px; color: #065f46; font-weight: 600;">Next renewal</p>
-    <p style="margin: 0; font-size: 14px; color: #059669;">${escapeHtml(nextRenewalDate)}</p>
+    <p style="margin: 0 0 4px; font-size: 13px; color: #065f46; font-weight: 600;">Active until</p>
+    <p style="margin: 0; font-size: 14px; color: #059669;">${escapeHtml(expiresOnDate)}</p>
+    <p style="margin: 6px 0 0; font-size: 12px; color: #047857;">No auto-renewal — renew manually before this date to continue.</p>
   </div>
   <p style="font-size: 12px; color: #9ca3af; margin: 0;">
-    To manage or cancel your subscription, visit the Plan section. — Smartbiz AI Team
+    Visit the Plan section to view payment details. — Smartbiz AI Team
   </p>
 </body></html>`.trim();
   return sendMail({ to, subject, html, text });
@@ -340,7 +341,7 @@ export async function sendPlanWelcomeEmail(
   const text =
     `Hi ${name},\n\n` +
     `Your ${planLabel} (${cycleLabel}) plan is now active. Welcome aboard!\n\n` +
-    `Your subscription renews on ${renewalDate}. You can manage or cancel it anytime from Settings → Billing.\n\n` +
+    `Your plan is active until ${renewalDate}. To continue after that date, please renew manually — there is no auto-renewal.\n\n` +
     `A separate email with your tax invoice and receipt is on its way.\n\n` +
     `Smartbiz AI Team`;
   const html = `
@@ -354,13 +355,14 @@ export async function sendPlanWelcomeEmail(
     Your <strong>${escapeHtml(planLabel)} (${escapeHtml(cycleLabel)})</strong> plan is now active. You have full access to all features.
   </p>
   <div style="background:#ecfdf5;border-radius:12px;padding:16px 20px;margin:0 0 24px;">
-    <p style="margin:0 0 6px;font-size:13px;font-weight:600;color:#065f46;">Subscription details</p>
+    <p style="margin:0 0 6px;font-size:13px;font-weight:600;color:#065f46;">Plan details</p>
     <p style="margin:0;font-size:13px;color:#059669;">Plan: <strong>${escapeHtml(planLabel)}</strong> &nbsp;·&nbsp; Billing: <strong>${escapeHtml(cycleLabel)}</strong></p>
-    <p style="margin:4px 0 0;font-size:13px;color:#059669;">Next renewal: <strong>${escapeHtml(renewalDate)}</strong></p>
+    <p style="margin:4px 0 0;font-size:13px;color:#059669;">Active until: <strong>${escapeHtml(renewalDate)}</strong></p>
+    <p style="margin:6px 0 0;font-size:12px;color:#047857;">No auto-renewal — renew manually before this date to continue.</p>
   </div>
   <p style="font-size:13px;color:#6b7280;margin:0 0 8px;">Your tax invoice and payment receipt are attached to the next email.</p>
   <p style="font-size:12px;color:#9ca3af;margin:0;">
-    Manage your subscription anytime from <strong>Settings → Billing</strong>.
+    View payment details anytime from <strong>Settings → Billing</strong>.
   </p>
   <div style="margin-top:28px;padding-top:20px;border-top:1px solid #e5e7eb;">
     <p style="font-size:11px;color:#9ca3af;margin:0;">Smartbiz Technologies Private Limited &nbsp;·&nbsp; GSTIN: 03AAUCS1499L1ZM</p>

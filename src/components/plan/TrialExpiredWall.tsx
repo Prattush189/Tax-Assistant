@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
-import { createSubscription, verifySubscriptionPayment, fetchUserUsage } from '../../services/api';
+import { createOrder, verifyOrderPayment, fetchUserUsage } from '../../services/api';
 import { Crown, Building2, Shield, Loader2, AlertCircle, Lock } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
@@ -41,8 +41,6 @@ const PLANS = [
 
 export function TrialExpiredWall() {
   const { user, refreshUser } = useAuth();
-  // Yearly billing only — monthly was retired.
-  const billing: 'yearly' = 'yearly';
   const [paying, setPaying] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,28 +56,29 @@ export function TrialExpiredWall() {
         return;
       }
 
-      const sub = await createSubscription(planId, billing);
+      const order = await createOrder(planId);
 
       const options = {
-        key: sub.keyId,
-        subscription_id: sub.subscriptionId,
+        key: order.keyId,
+        order_id: order.orderId,
+        amount: order.amount,
+        currency: 'INR',
         name: 'Smartbiz AI',
-        description: `${planId === 'pro' ? 'Pro' : 'Enterprise'} · ₹${PLANS.find(p => p.id === planId)!.yearly.toLocaleString('en-IN')}/year · Auto-renews · Cancel any time`,
+        description: `${planId === 'pro' ? 'Pro' : 'Enterprise'} · ₹${PLANS.find(p => p.id === planId)!.yearly.toLocaleString('en-IN')}/year · One-time payment`,
         prefill: { name: user?.name ?? '', email: user?.email ?? '' },
         theme: { color: '#0D9668' },
         modal: { ondismiss: () => setPaying(null) },
         handler: async (response: {
           razorpay_payment_id: string;
-          razorpay_subscription_id: string;
+          razorpay_order_id: string;
           razorpay_signature: string;
         }) => {
           try {
-            await verifySubscriptionPayment({
+            await verifyOrderPayment({
               razorpay_payment_id: response.razorpay_payment_id,
-              razorpay_subscription_id: response.razorpay_subscription_id,
-              razorpay_signature: response.razorpay_signature,
+              razorpay_order_id:   response.razorpay_order_id,
+              razorpay_signature:  response.razorpay_signature,
               plan: planId,
-              billing,
             });
             await refreshUser();
             // Wall disappears automatically once refreshUser() updates plan to paid
@@ -98,7 +97,7 @@ export function TrialExpiredWall() {
       setError(err instanceof Error ? err.message : 'Payment failed. Please try again.');
       setPaying(null);
     }
-  }, [billing, user, refreshUser]);
+  }, [user, refreshUser]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/95 backdrop-blur-md p-4">
@@ -115,7 +114,7 @@ export function TrialExpiredWall() {
         </div>
 
         {/* Yearly billing only */}
-        <p className="text-center text-xs text-gray-500 mb-6">Billed yearly · Auto-renews</p>
+        <p className="text-center text-xs text-gray-500 mb-6">Billed yearly · One-time payment</p>
 
         {/* Error */}
         {error && (
@@ -183,7 +182,7 @@ export function TrialExpiredWall() {
         </div>
 
         <p className="text-center text-xs text-gray-500">
-          Payments secured by Razorpay · 256-bit SSL · Cancel any time
+          Payments secured by Razorpay · 256-bit SSL · No auto-renewal
         </p>
       </div>
     </div>
