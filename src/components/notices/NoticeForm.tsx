@@ -6,6 +6,8 @@ import { LetterheadConfig } from '../../hooks/useNoticeDrafter';
 import { LoadFromProfile } from '../profile/shared/LoadFromProfile';
 import { profileToNoticeForm } from '../profile/lib/prefillAdapters';
 import { cn } from '../../lib/utils';
+import { extractPdfGrid, PdfPasswordError } from '../../lib/pdfGrid';
+import { ScannedPdfConfirmDialog } from '../shared/ScannedPdfConfirmDialog';
 
 const NOTICE_TYPES = [
   { value: 'income-tax', label: 'Income Tax' },
@@ -144,6 +146,11 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
 
   const ALLOWED_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
   const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB — match server limit
+  // Pending scanned-PDF confirmation. Set when the user picks a PDF that
+  // has no readable text layer — we hold the file aside, show the
+  // shared dialog, and only commit it as the notice file if the user
+  // confirms they want to spend the extra tokens on AI vision.
+  const [pendingScannedNotice, setPendingScannedNotice] = useState<File | null>(null);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -162,6 +169,33 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
     // PDF page count is no longer capped — the 10 MB file-size limit
     // and token budget are the only gates.
     setFileError(null);
+
+    // Pre-flight: if the upload is a PDF, check whether it has a text
+    // layer. If not, the server will fall back to AI vision (much more
+    // expensive on tokens), so warn the user before they commit. Image
+    // uploads always go through vision; the user already knows that
+    // when they pick a JPEG/PNG so we don't double-warn.
+    const isPdf = file.type === 'application/pdf';
+    if (isPdf) {
+      try {
+        const grid = await extractPdfGrid(file);
+        if (!grid || grid.rows.length < 3) {
+          setPendingScannedNotice(file);
+          return;
+        }
+      } catch (err) {
+        if (err instanceof PdfPasswordError) {
+          setFileError('This PDF is password-protected. Remove the password and re-upload.');
+          return;
+        }
+        // Any other extraction failure (corrupt PDF, unsupported encoding,
+        // etc.) — treat as scanned and let the user opt in to vision.
+        console.warn('[NoticeForm] PDF text check failed; treating as scanned:', err);
+        setPendingScannedNotice(file);
+        return;
+      }
+    }
+
     setNoticeFile(file);
   };
 
@@ -218,6 +252,7 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
   const labelClass = "block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1";
 
   return (
+    <>
     <form onSubmit={handleSubmit} className="space-y-4 overflow-y-auto flex-1 pr-1">
       {/* fieldset[disabled] cascades to every input/select/button it
           contains — one-line guarantee that the form can't be edited
@@ -599,5 +634,17 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
         )}
       </button>
     </form>
+    {pendingScannedNotice && (
+      <ScannedPdfConfirmDialog
+        filename={pendingScannedNotice.name}
+        documentLabel="notice"
+        onCancel={() => setPendingScannedNotice(null)}
+        onConfirm={() => {
+          setNoticeFile(pendingScannedNotice);
+          setPendingScannedNotice(null);
+        }}
+      />
+    )}
+    </>
   );
 }

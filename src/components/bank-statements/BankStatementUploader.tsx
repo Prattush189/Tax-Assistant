@@ -1,11 +1,12 @@
 import { useRef, useState } from 'react';
-import { Upload, FileText, Loader2, AlertTriangle } from 'lucide-react';
+import { Upload, FileText, Loader2 } from 'lucide-react';
 import Papa from 'papaparse';
 import toast from 'react-hot-toast';
 import { BankStatementManager } from '../../hooks/useBankStatementManager';
 import type { BankStatementAnalyzeProgress } from '../../services/api';
 import { cn } from '../../lib/utils';
 import { ColumnMappingWizard } from '../shared/ColumnMappingWizard';
+import { ScannedPdfConfirmDialog } from '../shared/ScannedPdfConfirmDialog';
 import {
   applyMapping,
   extractPdfGrid,
@@ -347,48 +348,16 @@ export function BankStatementUploader({ manager }: Props) {
         />
       )}
       {pendingScannedPdf && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 max-w-lg w-full p-5 shadow-xl">
-            <div className="flex items-start gap-3">
-              <div className="w-10 h-10 rounded-lg bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center flex-shrink-0">
-                <AlertTriangle className="w-5 h-5 text-amber-700 dark:text-amber-300" />
-              </div>
-              <div>
-                <h2 className="text-base font-semibold text-gray-900 dark:text-gray-50">
-                  Column mapping is not available for this PDF
-                </h2>
-                <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">
-                  This file appears to be a scanned or image-only statement, so there is no text table to map.
-                  Continue with AI scan analysis, or upload a digital PDF / CSV export for column mapping.
-                </p>
-                <p className="mt-2 text-xs font-mono text-gray-500 dark:text-gray-400 break-all">
-                  {pendingScannedPdf.name}
-                </p>
-              </div>
-            </div>
-            <div className="mt-5 flex items-center justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => setPendingScannedPdf(null)}
-                className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const file = pendingScannedPdf;
-                  setPendingScannedPdf(null);
-                  void analyzeRawFile(file);
-                }}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium"
-              >
-                <FileText className="w-4 h-4" />
-                Continue with AI scan
-              </button>
-            </div>
-          </div>
-        </div>
+        <ScannedPdfConfirmDialog
+          filename={pendingScannedPdf.name}
+          documentLabel="statement"
+          onCancel={() => setPendingScannedPdf(null)}
+          onConfirm={() => {
+            const file = pendingScannedPdf;
+            setPendingScannedPdf(null);
+            void analyzeRawFile(file);
+          }}
+        />
       )}
     </div>
   );

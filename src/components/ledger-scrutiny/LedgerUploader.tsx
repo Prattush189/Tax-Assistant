@@ -145,27 +145,28 @@ export function LedgerUploader({ manager }: Props) {
     // Digital PDF → extract grid + run column-mapping wizard. Skips
     // Gemini extraction entirely (server runs only the audit pass) and
     // makes credit/debit signs deterministic from the user's mapping.
-    // Scanned PDFs without a text layer fall through to the legacy
-    // vision path.
+    //
+    // Scanned PDFs are BLOCKED here. Ledger audits depend on
+    // deterministic credit/debit signs from the user's column mapping,
+    // and a vision-extracted ledger can't reliably produce that — the
+    // §40A(3) / §269ST checks would silently mis-fire on any
+    // sign-flipped row. Better to refuse and ask for a digital export
+    // than to ship audit findings the user can't trust.
     try {
       const grid = await extractPdfGrid(file);
       if (grid && grid.rows.length >= 3) {
         setPendingGrid({ grid, filename: file.name });
         return;
       }
+      toast.error('This PDF appears to be scanned or image-only. Ledger audits need a digital PDF or CSV export — please upload one of those.');
+      return;
     } catch (err) {
       if (err instanceof PdfPasswordError) {
         setPendingPassword({ file, wrongPassword: false });
         return;
       }
-      console.warn('[LedgerUploader] grid extraction failed; falling back to vision:', err);
-    }
-
-    try {
-      const result = await manager.upload(file);
-      toast.success(`Audit complete: ${result.observations.length} observation${result.observations.length === 1 ? '' : 's'} across ${result.accounts.length} accounts`);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Upload failed');
+      console.warn('[LedgerUploader] grid extraction failed:', err);
+      toast.error('Could not read this PDF. If it is scanned or image-only, export the ledger as a digital PDF or CSV and re-upload.');
     }
   };
 
