@@ -18,7 +18,7 @@ import { userRepo } from '../db/repositories/userRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { getBillingUser } from '../lib/billing.js';
-import { getUserLimits } from '../lib/planLimits.js';
+import { getUserLimits, getUsagePeriodStart } from '../lib/planLimits.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
@@ -589,9 +589,10 @@ function enforceQuota(req: AuthRequest, res: Response): { ok: true; billingUserI
   // pages or 100 CSV rows, so the user-facing capacity is far larger
   // and rejection happens up-front based on file size, not run count.
   const creditsLimit = limitSource ? getUserLimits(limitSource).bankStatements : 3;
+  const periodStart = limitSource ? getUsagePeriodStart(limitSource) : new Date(0).toISOString().replace('Z', '');
   let creditsUsed = 0;
   try {
-    creditsUsed = featureUsageRepo.sumCreditsThisMonthByBillingUser(billingUserId, 'bank_statement_analyze');
+    creditsUsed = featureUsageRepo.sumCreditsSinceForBillingUser(billingUserId, 'bank_statement_analyze', periodStart);
   } catch (err) {
     console.error('[bank-statements] Failed to read usage:', err);
   }
@@ -708,8 +709,9 @@ router.get('/', (req: AuthRequest, res: Response) => {
   const actor = userRepo.findById(req.user.id);
   const billingUser = actor ? getBillingUser(actor) : null;
   const creditsLimit = (billingUser ?? actor) ? getUserLimits(billingUser ?? actor!).bankStatements : 3;
+  const periodStart = (billingUser ?? actor) ? getUsagePeriodStart(billingUser ?? actor!) : new Date(0).toISOString().replace('Z', '');
   const creditsUsed = billingUser
-    ? featureUsageRepo.sumCreditsThisMonthByBillingUser(billingUser.id, 'bank_statement_analyze')
+    ? featureUsageRepo.sumCreditsSinceForBillingUser(billingUser.id, 'bank_statement_analyze', periodStart)
     : 0;
   res.json({
     statements: rows.map(serializeStatement),
@@ -1385,8 +1387,9 @@ ${JSON.stringify(batch)}`;
               // billed against their token budget.
               if (result) {
                 try {
+                  const failedClientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
                   const failedCost = costForModel(result.modelUsed, result.inputTokens, result.outputTokens);
-                  usageRepo.logWithBilling(bankClientIp, req.user!.id, quota.billingUserId, result.inputTokens, result.outputTokens, failedCost, false, result.modelUsed, false, 'bank_statement', 0, 'failed');
+                  usageRepo.logWithBilling(failedClientIp, req.user!.id, quota.billingUserId, result.inputTokens, result.outputTokens, failedCost, false, result.modelUsed, false, 'bank_statement', 0, 'failed');
                 } catch (e) {
                   console.error('[bank-statements] failed-batch log error', e);
                 }

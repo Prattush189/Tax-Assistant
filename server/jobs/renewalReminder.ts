@@ -26,10 +26,11 @@ async function runRenewalReminders(): Promise<void> {
     try {
       const plan = user.plan as PaidPlan;
 
-      // Determine billing cycle from the most recent paid payment record.
-      // Falls back to monthly (conservative — shows the lower amount).
+      // Yearly is the only supported billing cycle now. Legacy payment
+      // rows may still carry billing='monthly' but are treated as yearly
+      // for renewal-amount display purposes.
       const lastPayment = paymentRepo.findLatestPaidByUser(user.id);
-      const billing = (lastPayment?.billing ?? 'monthly') as BillingCycle;
+      const billing: BillingCycle = 'yearly';
       const amountPaise = lastPayment?.amount ?? PLAN_AMOUNTS[planKey(plan, billing)];
       const amountInr   = Math.round(amountPaise / 100);
 

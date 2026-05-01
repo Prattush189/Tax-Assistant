@@ -6,7 +6,7 @@ import {
 import { boardResolutionAccessMiddleware } from '../middleware/auth.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
-import { getUserLimits } from '../lib/planLimits.js';
+import { getUserLimits, getUsagePeriodStart } from '../lib/planLimits.js';
 import { getBillingUser } from '../lib/billing.js';
 import { AuthRequest } from '../types.js';
 
@@ -61,7 +61,8 @@ router.post('/drafts', (req: AuthRequest, res: Response) => {
 
   const billingUser = getBillingUser(user);
   const limits = getUserLimits(billingUser);
-  const usedThisMonth = featureUsageRepo.countThisMonthByBillingUser(billingUser.id, 'board_resolution');
+  const periodStart = getUsagePeriodStart(billingUser);
+  const usedThisMonth = featureUsageRepo.countSinceForBillingUser(billingUser.id, 'board_resolution', periodStart);
 
   if (usedThisMonth >= limits.boardResolutions) {
     res.status(429).json({

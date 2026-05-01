@@ -7,6 +7,7 @@ import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST } from '../lib/gemini.js';
 import { getBillingUser } from '../lib/billing.js';
+import { getUsagePeriodStart } from '../lib/planLimits.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
@@ -92,9 +93,10 @@ router.post(
     const billingUserId = billingUser?.id ?? req.user.id;
     const plan = billingUser?.plan ?? actor?.plan ?? 'free';
     const monthlyLimit = MONTHLY_ATTACHMENT_LIMITS[plan] ?? 10;
+    const periodStart = (billingUser ?? actor) ? getUsagePeriodStart(billingUser ?? actor!) : new Date(0).toISOString().replace('Z', '');
     let usedThisMonth = 0;
     try {
-      usedThisMonth = featureUsageRepo.countThisMonthByBillingUser(billingUserId, 'attachment_upload');
+      usedThisMonth = featureUsageRepo.countSinceForBillingUser(billingUserId, 'attachment_upload', periodStart);
     } catch (err) {
       console.error('[upload] Failed to check attachment usage:', err);
       // Fail open — allow upload if we can't check usage

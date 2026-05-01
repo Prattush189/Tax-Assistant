@@ -9,7 +9,7 @@ import {
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
-import { getUserLimits } from '../lib/planLimits.js';
+import { getUserLimits, getUsagePeriodStart } from '../lib/planLimits.js';
 import { getBillingUser } from '../lib/billing.js';
 import { AuthRequest } from '../types.js';
 
@@ -149,7 +149,8 @@ router.get('/drafts', (req: AuthRequest, res: Response) => {
   if (!actor) { res.status(401).json({ error: 'User not found' }); return; }
   const billingUser = getBillingUser(actor);
   const limits = getUserLimits(billingUser);
-  const used = featureUsageRepo.countThisMonthByBillingUser(billingUser.id, 'partnership_deeds');
+  const periodStart = getUsagePeriodStart(billingUser);
+  const used = featureUsageRepo.countSinceForBillingUser(billingUser.id, 'partnership_deeds', periodStart);
 
   res.json({ drafts, usage: { used, limit: limits.partnershipDeeds } });
 });
@@ -254,7 +255,8 @@ router.post('/drafts/:id/generate', async (req: AuthRequest, res: Response) => {
   const billingUser = getBillingUser(actor);
   const billingUserId = billingUser.id;
   const limits = getUserLimits(billingUser);
-  const used = featureUsageRepo.countThisMonthByBillingUser(billingUserId, 'partnership_deeds');
+  const periodStart = getUsagePeriodStart(billingUser);
+  const used = featureUsageRepo.countSinceForBillingUser(billingUserId, 'partnership_deeds', periodStart);
   if (used >= limits.partnershipDeeds) {
     res.status(429).json({
       error: `You've reached your monthly partnership deed limit (${limits.partnershipDeeds}). Upgrade your plan for more.`,

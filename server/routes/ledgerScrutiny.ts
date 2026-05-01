@@ -41,7 +41,7 @@ import { userRepo } from '../db/repositories/userRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { getBillingUser } from '../lib/billing.js';
-import { getUserLimits } from '../lib/planLimits.js';
+import { getUserLimits, getUsagePeriodStart } from '../lib/planLimits.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
@@ -187,9 +187,10 @@ function enforceQuota(
   // 20 credits — preventing huge ledgers from consuming a whole
   // month of allowance in one call.
   const creditsLimit = getUserLimits(billingUser).ledgerScrutiny;
+  const periodStart = getUsagePeriodStart(billingUser);
   let creditsUsed = 0;
   try {
-    creditsUsed = featureUsageRepo.sumCreditsThisMonthByBillingUser(billingUser.id, 'ledger_scrutiny');
+    creditsUsed = featureUsageRepo.sumCreditsSinceForBillingUser(billingUser.id, 'ledger_scrutiny', periodStart);
   } catch (err) {
     console.error('[ledger-scrutiny] usage read failed', err);
   }
@@ -1139,8 +1140,9 @@ router.get('/', (req: AuthRequest, res: Response) => {
   const actor = userRepo.findById(req.user.id);
   const billingUser = actor ? getBillingUser(actor) : null;
   const limits = billingUser ? getUserLimits(billingUser) : null;
+  const periodStart = billingUser ? getUsagePeriodStart(billingUser) : new Date(0).toISOString().replace('Z', '');
   const creditsUsed = billingUser
-    ? featureUsageRepo.sumCreditsThisMonthByBillingUser(billingUser.id, 'ledger_scrutiny')
+    ? featureUsageRepo.sumCreditsSinceForBillingUser(billingUser.id, 'ledger_scrutiny', periodStart)
     : 0;
   const creditsLimit = limits?.ledgerScrutiny ?? 0;
   res.json({
@@ -1896,17 +1898,13 @@ router.post('/:id/scrutinize', async (req: AuthRequest, res: Response) => {
     }
     ledgerScrutinyRepo.setStatus(job.id, req.user.id, 'done');
 
-    // Bill credits proportional to what we processed — rows for the
-    // wizard / pre-extracted path, pages for the vision / TSV paths.
+    // Bill credits proportional to what we processed. Use the job's
+    // stored page totals — the upload route's ledgerUnit/ledgerRowsTotal
+    // closure isn't visible here (this is a separate /scrutinize route).
     try {
-      let ledgerCredits: number;
-      if (ledgerUnit === 'rows') {
-        ledgerCredits = creditsForCsvRows('ledger_scrutiny', ledgerRowsTotal);
-      } else {
-        const pages = ledgerScrutinyRepo.getPagesTotals(job.id, req.user.id);
-        const billedPages = Math.max(pages?.pages_processed ?? 0, pages?.pages_total ?? 0);
-        ledgerCredits = creditsForPages('ledger_scrutiny', billedPages || PAGES_PER_CREDIT.ledger_scrutiny);
-      }
+      const pages = ledgerScrutinyRepo.getPagesTotals(job.id, req.user.id);
+      const billedPages = Math.max(pages?.pages_processed ?? 0, pages?.pages_total ?? 0);
+      const ledgerCredits = creditsForPages('ledger_scrutiny', billedPages || PAGES_PER_CREDIT.ledger_scrutiny);
       featureUsageRepo.logWithBilling(req.user.id, quota.billingUserId, 'ledger_scrutiny', ledgerCredits);
     } catch (err) {
       console.error('[ledger-scrutiny] feature usage log failed', err);
@@ -1915,12 +1913,10 @@ router.post('/:id/scrutinize', async (req: AuthRequest, res: Response) => {
     // Log scrutiny-pass token cost.
     try {
       const totalInput = usage.inputTokens + usage.cacheReadTokens + usage.cacheCreationTokens;
-      // Tx count for cost-per-row analytics. Wizard/preExtracted runs
-      // already know the count up front (ledgerRowsTotal); for vision
-      // and chunked-TSV runs we recover it from the persisted accounts.
-      const scrutinyTxCount = ledgerUnit === 'rows'
-        ? ledgerRowsTotal
-        : ledgerScrutinyRepo.listAccounts(job.id).reduce((s, a) => s + (a.tx_count ?? 0), 0);
+      // Tx count for cost-per-row analytics — recovered from the
+      // persisted accounts (the upload route's ledgerUnit/ledgerRowsTotal
+      // closure isn't visible here).
+      const scrutinyTxCount = ledgerScrutinyRepo.listAccounts(job.id).reduce((s, a) => s + (a.tx_count ?? 0), 0);
       usageRepo.logWithBilling(
         clientIp,
         req.user.id,
@@ -2021,6 +2017,11 @@ router.post('/:id/resume', async (req: AuthRequest, res: Response) => {
   // Token-budget gate (resume = new audit work). Ledger Scrutiny is open to all plans.
   const tokenQuota = enforceTokenQuota(req, res);
   if (!tokenQuota.ok) return;
+
+  // Resolve billing user once for downstream usage logging — needed by
+  // the background scrutiny task below.
+  const tierActor = userRepo.findById(req.user.id);
+  const tierBilling = tierActor ? getBillingUser(tierActor) : undefined;
 
   // Cast for the ALTER-added columns the row type doesn't include.
   const r = job as unknown as Record<string, unknown>;

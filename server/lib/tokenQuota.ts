@@ -29,7 +29,7 @@
 import type { Response } from 'express';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
-import { getUserLimits, getEffectivePlan } from './planLimits.js';
+import { getUserLimits, getEffectivePlan, getUsagePeriodStart } from './planLimits.js';
 import { getBillingUser } from './billing.js';
 import type { AuthRequest } from '../types.js';
 
@@ -75,9 +75,13 @@ export function enforceTokenQuota(
   const limitSource = billingUser ?? actor;
   const budget = limitSource ? getUserLimits(limitSource).monthlyTokenBudget : 0;
 
+  // Period start = yearly billing window for paid users (resets on
+  // Razorpay renewal), or account lifetime for free-trial users (no
+  // reset; lockout at 30 days via the trial wall).
+  const periodStart = limitSource ? getUsagePeriodStart(limitSource) : new Date(0).toISOString().replace('Z', '');
   let used = 0;
   try {
-    used = usageRepo.sumTokensThisMonthByBillingUser(billingUserId);
+    used = usageRepo.sumTokensSinceForBillingUser(billingUserId, periodStart);
   } catch (err) {
     console.error('[tokenQuota] Failed to read usage:', err);
   }
@@ -86,7 +90,7 @@ export function enforceTokenQuota(
   if (budget > 0 && used >= budget) {
     const pct = Math.round((used / budget) * 100);
     res.status(429).json({
-      error: `You've used ${pct}% of your monthly token budget (${used.toLocaleString('en-IN')} / ${budget.toLocaleString('en-IN')} tokens). Upgrade your plan or wait until next month.`,
+      error: `You've used ${pct}% of your token budget (${used.toLocaleString('en-IN')} / ${budget.toLocaleString('en-IN')} tokens). ${plan === 'free' ? 'Upgrade to Pro or Enterprise to continue.' : 'Your budget resets on your next yearly renewal — upgrade your plan if you need more headroom.'}`,
       tokensUsed: used,
       tokenBudget: budget,
       upgrade: plan !== 'enterprise',
@@ -99,7 +103,7 @@ export function enforceTokenQuota(
   // half-way through a chunked run.
   if (estimatedTokens > 0 && estimatedTokens > remaining) {
     res.status(429).json({
-      error: `This file would consume about ${estimatedTokens.toLocaleString('en-IN')} tokens, but you only have ${remaining.toLocaleString('en-IN')} left this month (${used.toLocaleString('en-IN')} of ${budget.toLocaleString('en-IN')} already used). Try a smaller file or split it, or upgrade your plan.`,
+      error: `This file would consume about ${estimatedTokens.toLocaleString('en-IN')} tokens, but you only have ${remaining.toLocaleString('en-IN')} left in your current period (${used.toLocaleString('en-IN')} of ${budget.toLocaleString('en-IN')} already used). Try a smaller file or split it, or upgrade your plan.`,
       tokensUsed: used,
       tokenBudget: budget,
       tokensEstimated: estimatedTokens,
@@ -121,9 +125,10 @@ export function tokensRemainingForUser(req: AuthRequest): { used: number; budget
   const billingUserId = billingUser?.id ?? req.user.id;
   const limitSource = billingUser ?? actor;
   const budget = limitSource ? getUserLimits(limitSource).monthlyTokenBudget : 0;
+  const periodStart = limitSource ? getUsagePeriodStart(limitSource) : new Date(0).toISOString().replace('Z', '');
   let used = 0;
   try {
-    used = usageRepo.sumTokensThisMonthByBillingUser(billingUserId);
+    used = usageRepo.sumTokensSinceForBillingUser(billingUserId, periodStart);
   } catch {
     // best-effort
   }

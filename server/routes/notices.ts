@@ -11,6 +11,7 @@ import { userRepo } from '../db/repositories/userRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { enforceTokenQuota } from '../lib/tokenQuota.js';
 import { getBillingUser } from '../lib/billing.js';
+import { getUsagePeriodStart } from '../lib/planLimits.js';
 import { extractWithRetry } from '../lib/documentExtract.js';
 import { GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST } from '../lib/gemini.js';
 import { AuthRequest } from '../types.js';
@@ -213,7 +214,8 @@ router.post(
   const billingUserId = billingUser?.id ?? req.user.id;
   const plan = billingUser?.plan ?? actor?.plan ?? 'free';
   const limit = NOTICE_LIMITS[plan] ?? NOTICE_LIMITS.free;
-  const used = featureUsageRepo.countThisMonthByBillingUser(billingUserId, 'notice');
+  const periodStart = (billingUser ?? actor) ? getUsagePeriodStart(billingUser ?? actor!) : new Date(0).toISOString().replace('Z', '');
+  const used = featureUsageRepo.countSinceForBillingUser(billingUserId, 'notice', periodStart);
   // Per-feature notice count is now SOFT (analytics display only).
   // Hard quota is the cross-feature token budget.
   const tokenQuota = enforceTokenQuota(req, res);
@@ -451,7 +453,8 @@ router.get('/', async (req: AuthRequest, res: Response) => {
   const billingUserId = billingUser?.id ?? req.user.id;
   const plan = billingUser?.plan ?? actor?.plan ?? 'free';
   const limit = NOTICE_LIMITS[plan] ?? NOTICE_LIMITS.free;
-  const used = featureUsageRepo.countThisMonthByBillingUser(billingUserId, 'notice');
+  const periodStart = (billingUser ?? actor) ? getUsagePeriodStart(billingUser ?? actor!) : new Date(0).toISOString().replace('Z', '');
+  const used = featureUsageRepo.countSinceForBillingUser(billingUserId, 'notice', periodStart);
   res.json({ notices, usage: { used, limit } });
 });
 

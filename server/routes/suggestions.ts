@@ -6,6 +6,7 @@ import { usageRepo } from '../db/repositories/usageRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { getBillingUser } from '../lib/billing.js';
 import { enforceTokenQuota } from '../lib/tokenQuota.js';
+import { getUsagePeriodStart } from '../lib/planLimits.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
@@ -47,7 +48,8 @@ router.post('/optimize', async (req: AuthRequest, res: Response) => {
   // count below stays for analytics display.
   const tokenQuota = enforceTokenQuota(req, res);
   if (!tokenQuota.ok) return;
-  const usedThisMonth = featureUsageRepo.countThisMonthByBillingUser(billingUserId, 'ai_suggestions');
+  const periodStart = (billingUser ?? actor) ? getUsagePeriodStart(billingUser ?? actor!) : new Date(0).toISOString().replace('Z', '');
+  const usedThisMonth = featureUsageRepo.countSinceForBillingUser(billingUserId, 'ai_suggestions', periodStart);
 
   const { grossIncome, taxableIncome, regime, ageCategory, deductions, fy } = req.body;
 

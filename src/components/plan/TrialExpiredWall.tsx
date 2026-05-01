@@ -23,8 +23,7 @@ const PLANS = [
     id: 'pro' as const,
     name: 'Pro',
     icon: Crown,
-    monthly: 400,
-    yearly: 3600,
+    yearly: 6000,
     gradient: 'from-[#0D9668] to-[#0A7B55]',
     shadow: 'shadow-[#0D9668]/30',
     features: ['1,500 chats/month', '15 board resolutions/month', 'Salary optimizer', 'Tax planning PDF'],
@@ -33,8 +32,7 @@ const PLANS = [
     id: 'enterprise' as const,
     name: 'Enterprise',
     icon: Building2,
-    monthly: 700,
-    yearly: 6000,
+    yearly: 9000,
     gradient: 'from-indigo-500 to-purple-600',
     shadow: 'shadow-indigo-500/30',
     features: ['3,000 chats/month', '50 board resolutions/month', '10-seat team', 'Priority SLA'],
@@ -43,7 +41,8 @@ const PLANS = [
 
 export function TrialExpiredWall() {
   const { user, refreshUser } = useAuth();
-  const [billing, setBilling] = useState<'monthly' | 'yearly'>('monthly');
+  // Yearly billing only — monthly was retired.
+  const billing: 'yearly' = 'yearly';
   const [paying, setPaying] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -65,7 +64,7 @@ export function TrialExpiredWall() {
         key: sub.keyId,
         subscription_id: sub.subscriptionId,
         name: 'Smartbiz AI',
-        description: `${planId === 'pro' ? 'Pro' : 'Enterprise'} · ₹${(billing === 'monthly' ? PLANS.find(p => p.id === planId)!.monthly : PLANS.find(p => p.id === planId)!.yearly).toLocaleString('en-IN')}/${billing === 'monthly' ? 'month' : 'year'} · Auto-renews · Cancel any time`,
+        description: `${planId === 'pro' ? 'Pro' : 'Enterprise'} · ₹${PLANS.find(p => p.id === planId)!.yearly.toLocaleString('en-IN')}/year · Auto-renews · Cancel any time`,
         prefill: { name: user?.name ?? '', email: user?.email ?? '' },
         theme: { color: '#0D9668' },
         modal: { ondismiss: () => setPaying(null) },
@@ -115,32 +114,8 @@ export function TrialExpiredWall() {
           </p>
         </div>
 
-        {/* Billing Toggle */}
-        <div className="flex items-center justify-center gap-3 mb-6">
-          <button
-            onClick={() => setBilling('monthly')}
-            className={cn(
-              'px-5 py-2 rounded-xl text-sm font-semibold transition-all',
-              billing === 'monthly'
-                ? 'bg-[#0D9668] text-white'
-                : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
-            )}
-          >
-            Monthly
-          </button>
-          <button
-            onClick={() => setBilling('yearly')}
-            className={cn(
-              'px-5 py-2 rounded-xl text-sm font-semibold transition-all flex items-center gap-2',
-              billing === 'yearly'
-                ? 'bg-[#0D9668] text-white'
-                : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
-            )}
-          >
-            Yearly
-            <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full">Save 25–29%</span>
-          </button>
-        </div>
+        {/* Yearly billing only */}
+        <p className="text-center text-xs text-gray-500 mb-6">Billed yearly · Auto-renews</p>
 
         {/* Error */}
         {error && (
@@ -154,9 +129,8 @@ export function TrialExpiredWall() {
         <div className="grid sm:grid-cols-2 gap-4 mb-6">
           {PLANS.map((plan) => {
             const isPaying = paying === plan.id;
-            const price = billing === 'monthly' ? plan.monthly : plan.yearly;
-            const period = billing === 'monthly' ? '/month' : '/year';
-            const yearSaving = plan.monthly * 12 - plan.yearly;
+            const price = plan.yearly;
+            const period = '/year';
             const Icon = plan.icon;
 
             return (
@@ -177,11 +151,6 @@ export function TrialExpiredWall() {
                     <span className="text-2xl font-bold text-white">₹{price.toLocaleString('en-IN')}</span>
                     <span className="text-sm text-gray-400">{period}</span>
                   </div>
-                  {billing === 'yearly' && (
-                    <p className="text-xs text-[#2DD4A0] font-semibold mt-0.5">
-                      Save ₹{yearSaving.toLocaleString('en-IN')}/year
-                    </p>
-                  )}
                 </div>
 
                 <ul className="space-y-1.5 mb-4 flex-1">

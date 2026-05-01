@@ -235,10 +235,14 @@ export const usageRepo = {
     stmts.logWithBilling.run(ip, userId, billingUserId, inputTokens, outputTokens, cost, isPlugin ? 1 : 0, model ?? null, searchUsed ? 1 : 0, category ?? null, inputUnits ?? 0, status ?? 'success');
   },
 
-  /** Sum tokens (input+output) used this month by this billing user,
-   *  excluding 'failed' calls. Used by enforceTokenQuota. */
-  sumTokensThisMonthByBillingUser(billingUserId: string): number {
-    const since = startOfMonthIST();
+  /** Sum tokens (input+output) used since `since` by this billing user,
+   *  excluding 'failed' calls. Used by enforceTokenQuota.
+   *
+   *  `since` should be the user's usage-period start (see
+   *  getUsagePeriodStart in planLimits.ts) — a one-year window for paid
+   *  yearly subscribers (resets on Razorpay renewal) or the user's
+   *  created_at for free-trial users (never resets; lockout at 30 days). */
+  sumTokensSinceForBillingUser(billingUserId: string, since: string): number {
     const row = stmts.sumTokensThisMonthByBillingUser.get(billingUserId, since) as { tokens: number };
     return row.tokens ?? 0;
   },

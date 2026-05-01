@@ -4,7 +4,7 @@ import { usageRepo } from '../db/repositories/usageRepo.js';
 import { AuthRequest } from '../types.js';
 import db from '../db/index.js';
 import { getBillingUser } from '../lib/billing.js';
-import { getEffectivePlan } from '../lib/planLimits.js';
+import { getEffectivePlan, getUsagePeriodStart } from '../lib/planLimits.js';
 
 const router = Router();
 
@@ -230,14 +230,17 @@ router.get('/users/:id/details', (req: AuthRequest, res: Response) => {
 
   // Token budget — uses the same effective-plan resolver the runtime
   // quota guard uses, so the bar matches what the user actually sees
-  // in their own Settings page.
+  // in their own Settings page. "This period" = current yearly billing
+  // window for paid users (resets only on Razorpay renewal); for free
+  // trial users it covers their entire account lifetime (no reset).
   const billing = getBillingUser(user);
-  const tokensThisMonth = usageRepo.sumTokensThisMonthByBillingUser(billing.id);
+  const periodStart = getUsagePeriodStart(billing);
+  const tokensThisPeriod = usageRepo.sumTokensSinceForBillingUser(billing.id, periodStart);
   const effectivePlan = getEffectivePlan(billing);
   const PLAN_BUDGETS: Record<string, number> = {
     free: 250_000, pro: 2_000_000, enterprise: 6_000_000,
   };
-  const monthlyTokenBudget = PLAN_BUDGETS[effectivePlan] ?? PLAN_BUDGETS.free;
+  const tokenBudget = PLAN_BUDGETS[effectivePlan] ?? PLAN_BUDGETS.free;
 
   // Cumulative totals across api_usage (excluding failed). Same filter
   // sumTokensThisMonth uses, so totals add up.
@@ -330,11 +333,20 @@ router.get('/users/:id/details', (req: AuthRequest, res: Response) => {
       avgCostPer1MInr: Math.round(avgCostPer1MUsd * usdToInr * 100) / 100,
       lastUsed: totals.last_used,
     },
+    period: {
+      tokensUsed: tokensThisPeriod,
+      tokenBudget,
+      periodStart,
+      pct: tokenBudget > 0
+        ? Math.min(100, Math.round((tokensThisPeriod / tokenBudget) * 1000) / 10)
+        : 0,
+    },
+    // Legacy alias — older UIs read `.monthly` for the token bar.
     monthly: {
-      tokensUsed: tokensThisMonth,
-      tokenBudget: monthlyTokenBudget,
-      pct: monthlyTokenBudget > 0
-        ? Math.min(100, Math.round((tokensThisMonth / monthlyTokenBudget) * 1000) / 10)
+      tokensUsed: tokensThisPeriod,
+      tokenBudget,
+      pct: tokenBudget > 0
+        ? Math.min(100, Math.round((tokensThisPeriod / tokenBudget) * 1000) / 10)
         : 0,
     },
     daily: daily.map(d => ({
