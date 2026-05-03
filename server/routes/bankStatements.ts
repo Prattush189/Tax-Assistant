@@ -50,6 +50,14 @@ type ExtractedStatement = {
   periodFrom: string | null;
   periodTo: string | null;
   currency: string | null;
+  // Vision path now reports the bank's printed opening/closing balance
+  // at the top level. Used by deriveAmountsFromBalance to anchor the
+  // first row (which has no prev row to subtract from) and by
+  // verifyClosingBalance to assert the derived chain ties out.
+  // Optional because the TSV path doesn't fill these and the server
+  // falls back gracefully when null.
+  openingBalance?: number | null;
+  closingBalance?: number | null;
   transactions: unknown[];
 };
 
@@ -420,16 +428,33 @@ function normalizeCategory(raw: unknown): string {
 /**
  * Coerce whatever Gemini returned into our canonical transaction shape.
  * Amount is always stored signed (positive = credit / inflow).
+ *
+ * The vision prompt no longer asks for `amount` — the server derives
+ * it deterministically from the printed running balance column, which
+ * is the most legible / least-error-prone field on the page. We still
+ * accept `amount` here for backwards compatibility with the TSV path
+ * (which extracts debit/credit columns and pre-signs them) and for the
+ * fallback case where a row's balance is null.
+ *
+ * `type` ("credit" | "debit") is preserved as a sign hint used only
+ * when balance-derivation can't run for a row (page boundary, blurred
+ * balance cell). When balance IS available on both this row and the
+ * previous one, deriveAmountsFromBalance overrides whatever amount we
+ * stored here.
  */
 function normalizeTransactions(raw: unknown[]): BankTransactionInput[] {
   if (!Array.isArray(raw)) return [];
   return raw.map((t) => {
     const obj = (t && typeof t === 'object') ? t as Record<string, unknown> : {};
     const type = typeof obj.type === 'string' ? obj.type.toLowerCase() : '';
-    let amount = toNumber(obj.amount);
+    let amount = obj.amount === undefined || obj.amount === null ? 0 : toNumber(obj.amount);
     // If the model returned an absolute value and a type, apply sign from type
     if (type === 'debit' && amount > 0) amount = -amount;
     if (type === 'credit' && amount < 0) amount = Math.abs(amount);
+    // When amount is missing entirely (vision path under the new
+    // prompt) but type is present, encode the sign with a sentinel
+    // magnitude of 0 — the actual magnitude lands in deriveAmountsFromBalance.
+    if (amount === 0 && type === 'debit') amount = -0;        // signed zero preserves intent
     const balance = obj.balance === null || obj.balance === undefined ? null : toNumber(obj.balance);
     return {
       date: typeof obj.date === 'string' ? obj.date : null,
@@ -477,6 +502,112 @@ function computeTotals(txs: BankTransactionInput[]): { inflow: number; outflow: 
     else outflow += Math.abs(tx.amount);
   }
   return { inflow, outflow };
+}
+
+/**
+ * Derive each transaction's signed amount from the bank's printed
+ * running balance column instead of trusting the AI's amount read.
+ *
+ * Why: vision OCR is non-deterministic on dense statements — even when
+ * the model gets the credit/debit sign right, it routinely misreads a
+ * digit on the magnitude (e.g. ₹500 instead of ₹5,000). Our previous
+ * sign-only reconciliation passed those rows through silently, leaving
+ * inflow/outflow totals off by tens of thousands. Subtracting the
+ * printed balance column is exact arithmetic — no OCR variance, no
+ * model hallucination, and it falls out of data the bank itself wrote.
+ *
+ * Mutates txs in-place. Returns:
+ *   - amountOverridden: rows where the derived amount differed from
+ *     the AI's value (used to populate the warning banner).
+ *   - phantomDropped: rows filtered because their balance was
+ *     unchanged (zero-delta rows are almost always wrap-induced
+ *     duplicates from a UPI narration that spilled onto two lines).
+ *
+ * Falls back to the AI's amount on any row where balance is null.
+ */
+function deriveAmountsFromBalance(
+  txs: BankTransactionInput[],
+  openingBalance: number | null,
+): {
+  amountOverridden: number;
+  phantomDropped: number;
+} {
+  let amountOverridden = 0;
+  let phantomDropped = 0;
+  const kept: BankTransactionInput[] = [];
+
+  for (let i = 0; i < txs.length; i++) {
+    const cur = txs[i];
+    const prevBalance = i === 0 ? openingBalance : txs[i - 1].balance;
+
+    if (prevBalance != null && cur.balance != null) {
+      const delta = cur.balance - prevBalance;
+      // Phantom row detection: identical balance to the previous row
+      // means no money moved on this line. UPI narrations on dense
+      // statements sometimes wrap onto two visual lines and the AI
+      // emits both as separate transactions. The continuation row
+      // copies the same balance because that's what's printed next
+      // to it. Drop these — keeping them would either inflate the
+      // inflow/outflow with the AI's hallucinated amount or pollute
+      // the row count with empty entries.
+      if (Math.abs(delta) < 0.005) {
+        // Edge case: a genuine 0.00 transaction (very rare — bank
+        // bonus, contra-entry netting). Keep it if the AI did NOT
+        // give it a non-trivial amount.
+        if (Math.abs(cur.amount) < 0.005) {
+          kept.push({ ...cur, amount: 0 });
+        } else {
+          phantomDropped++;
+        }
+        continue;
+      }
+
+      // Override. Track when the AI's value materially disagreed so
+      // the warning banner can surface it.
+      if (Math.abs(delta - cur.amount) > Math.max(1, Math.abs(delta) * 0.005)) {
+        amountOverridden++;
+      }
+      kept.push({ ...cur, amount: delta });
+      continue;
+    }
+
+    // Balance is null on either this row or the previous one — fall
+    // back to whatever the AI gave us. This is the legacy path; on
+    // statements with consistent balance printing it never fires.
+    kept.push(cur);
+  }
+
+  // Replace the array contents in-place so callers using the same
+  // reference see the filtered list.
+  txs.length = 0;
+  txs.push(...kept);
+
+  return { amountOverridden, phantomDropped };
+}
+
+/**
+ * Final integrity check: assert opening + sum(amounts) ≈ closing.
+ * If this fails, the printed-balance chain itself has a gap somewhere
+ * (likely a misread balance on one row that propagated forward via
+ * deriveAmountsFromBalance), and our totals are still suspect even
+ * though they look internally consistent.
+ *
+ * Returns null when either anchor is missing (older statements that
+ * don't print explicit opening/closing) or when the sum ties out.
+ * Returns a warning string the caller surfaces in reconciliationWarning.
+ */
+function verifyClosingBalance(
+  txs: BankTransactionInput[],
+  openingBalance: number | null,
+  closingBalance: number | null,
+): string | null {
+  if (openingBalance == null || closingBalance == null) return null;
+  const sum = txs.reduce((s, t) => s + t.amount, 0);
+  const expected = closingBalance - openingBalance;
+  const tol = Math.max(1, Math.abs(expected) * 0.005);
+  if (Math.abs(sum - expected) <= tol) return null;
+  const drift = sum - expected;
+  return `Opening + sum(transactions) = ${(openingBalance + sum).toLocaleString('en-IN', { minimumFractionDigits: 2 })} but the bank prints a closing balance of ${closingBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })} — a difference of ${Math.abs(drift).toLocaleString('en-IN', { minimumFractionDigits: 2 })}. One or more rows likely had a misread balance digit; please review.`;
 }
 
 interface BalanceMismatch {
@@ -620,12 +751,25 @@ function persistStatement(
   const rules = bankStatementRuleRepo.listByUser(userId);
   const txs = applyUserRules(rawTxs, rules);
 
-  // Auto-correct sign flips against the bank's printed running
-  // balance BEFORE summing. A single misclassified row contributes
-  // 2× its amount to the inflow/outflow drift (it's on the wrong
-  // side of the ledger), so reconciling first is what makes the
-  // dashboard totals match a hand-tied calculation.
+  // Phase 1: derive each amount from the printed running balance
+  // delta. The AI's amount field is treated as a fallback (used only
+  // for rows where balance is null on either side). Phantom rows from
+  // wrapped narrations fall out here automatically because their
+  // balance delta is zero.
+  const opening = typeof data.openingBalance === 'number' ? data.openingBalance : null;
+  const { amountOverridden, phantomDropped } = deriveAmountsFromBalance(txs, opening);
+
+  // Phase 2: legacy sign-flip / column-swap reconciliation. After
+  // deriveAmountsFromBalance most rows already have authoritative
+  // amounts; this catches the residual cases where balance was null
+  // on one side and we fell back to the AI's value. Cheap to keep.
   const { autoCorrected, mismatches } = reconcileBalances(txs);
+
+  // Phase 3: integrity check — opening + sum should equal closing.
+  // If not, the printed-balance chain itself has a misread somewhere
+  // and our derived totals are still suspect. Surface as a warning.
+  const closing = typeof data.closingBalance === 'number' ? data.closingBalance : null;
+  const closingMismatch = verifyClosingBalance(txs, opening, closing);
 
   const { inflow, outflow } = computeTotals(txs);
   const periodLabel = data.periodFrom && data.periodTo
@@ -646,7 +790,7 @@ function persistStatement(
   bankTransactionRepo.bulkInsert(statementId, txs);
   bankStatementRepo.updateTotals(statementId, inflow, outflow, txs.length);
 
-  return { txCount: txs.length, autoCorrected, mismatches };
+  return { txCount: txs.length, autoCorrected, mismatches, amountOverridden, phantomDropped, closingMismatch };
 }
 
 function serializeStatement(row: ReturnType<typeof bankStatementRepo.findByIdForUser>) {
@@ -1559,7 +1703,7 @@ ${JSON.stringify(batch)}`;
         else res.status(200).json(cancelledPayload);
         return;
       }
-      const { txCount, autoCorrected, mismatches } = persistStatement(req.user.id, placeholder.id, extracted, filename ?? 'Bank Statement');
+      const { txCount, autoCorrected, mismatches, amountOverridden, phantomDropped, closingMismatch } = persistStatement(req.user.id, placeholder.id, extracted, filename ?? 'Bank Statement');
 
       // Bill credits based on the actual file size processed. For PDF
       // paths pages_processed reflects chunks completed; for CSV the
@@ -1598,17 +1742,37 @@ ${JSON.stringify(batch)}`;
 
       const transactions = bankTransactionRepo.listByStatement(placeholder.id).map(serializeTransaction);
       const warning = (res.locals as Record<string, unknown>).analyzerWarning as string | undefined;
-      // Reconciliation banner. We auto-fix sign flips against the
-      // printed running balance (totals are already correct in that
-      // case); we only ask the user to review rows where the
-      // magnitude also disagrees.
+      // Reconciliation banner. The vision path now derives every
+      // signed amount directly from the bank's printed running
+      // balance column, so most reads end up exact. The remaining
+      // signals to surface:
+      //   - amountOverridden: rows where the derived amount differed
+      //     materially from what the AI originally read (informational
+      //     — totals are already correct, but tells the user how often
+      //     the AI was off if they're auditing).
+      //   - phantomDropped: rows we filtered because their balance
+      //     was unchanged (wrap-induced duplicates).
+      //   - autoCorrected / mismatches: residual sign-flip and
+      //     column-swap fixes from rows where balance was null and
+      //     we fell back to the AI's amount.
+      //   - closingMismatch: opening + sum != closing. Hard signal
+      //     that one or more printed balances were misread upstream.
       const reconciliationWarning = (() => {
         const parts: string[] = [];
+        if (amountOverridden > 0) {
+          parts.push(`Replaced ${amountOverridden} transaction amount${amountOverridden === 1 ? '' : 's'} with values derived from the printed running balance — totals below reflect the bank's own arithmetic.`);
+        }
+        if (phantomDropped > 0) {
+          parts.push(`Dropped ${phantomDropped} duplicate row${phantomDropped === 1 ? '' : 's'} that had no balance change (typically a wrapped UPI narration parsed twice).`);
+        }
         if (autoCorrected > 0) {
-          parts.push(`Auto-corrected ${autoCorrected} row${autoCorrected === 1 ? '' : 's'} where the AI's credit/debit sign disagreed with the printed running balance — totals below reflect the corrected values.`);
+          parts.push(`Auto-corrected ${autoCorrected} row${autoCorrected === 1 ? '' : 's'} where the AI's credit/debit sign disagreed with the printed running balance.`);
         }
         if (mismatches.length > 0) {
-          parts.push(`${mismatches.length} row${mismatches.length === 1 ? '' : 's'} still need${mismatches.length === 1 ? 's' : ''} manual review — the running balance doesn't match the AI's amount and we couldn't determine the correct value automatically.`);
+          parts.push(`${mismatches.length} row${mismatches.length === 1 ? '' : 's'} still need${mismatches.length === 1 ? 's' : ''} manual review — neither the printed balance nor a known correction pattern resolved the amount.`);
+        }
+        if (closingMismatch) {
+          parts.push(closingMismatch);
         }
         return parts.length > 0 ? parts.join(' ') : null;
       })();
