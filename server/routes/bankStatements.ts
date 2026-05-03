@@ -665,6 +665,63 @@ function verifyClosingBalance(
   return `Opening + sum(transactions) = ${(openingBalance + sum).toLocaleString('en-IN', { minimumFractionDigits: 2 })} but the bank prints a closing balance of ${closingBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })} — a difference of ${Math.abs(drift).toLocaleString('en-IN', { minimumFractionDigits: 2 })}.${breakSuffix} One or more rows likely had a misread balance digit; please review.`;
 }
 
+/**
+ * Drop phantom rows where the AI mistook an inline date inside the
+ * previous row's narration for a new transaction anchor.
+ *
+ * Production examples on a BoB statement:
+ *   - "Int.Pd:01-02-2025 to 30-04-2025" — emits 2 phantom rows dated
+ *     01-02-2025 and 30-04-2025
+ *   - "CMSLI/DMIFINPL/09-08-2025/_LIEN_REV" — emits 1 phantom row
+ *     dated 09-08-2025
+ *
+ * Signature of these phantoms after deriveAmountsFromBalance:
+ *   - balance == null (AI didn't see a balance for the imaginary row)
+ *   - amount near 0 (AI didn't have a real amount to read)
+ *   - cur.date appears as a DD-MM-YYYY or DD/MM/YYYY substring inside
+ *     the previous row's narration
+ *
+ * The triple check is conservative: a real transaction that genuinely
+ * happens to share its date with an inline date in the previous row's
+ * narration would only be dropped if it ALSO has null balance AND
+ * trivial amount, which is vanishingly rare for a real row.
+ *
+ * Returns the number dropped so the reconciliation banner can disclose
+ * it. Mutates txs in place.
+ */
+function dropInlineDatePhantoms(txs: BankTransactionInput[]): number {
+  if (txs.length < 2) return 0;
+  let dropped = 0;
+  const kept: BankTransactionInput[] = [txs[0]];
+  for (let i = 1; i < txs.length; i++) {
+    const cur = txs[i];
+    const prev = txs[i - 1];
+    if (
+      cur.date &&
+      cur.balance == null &&
+      Math.abs(cur.amount) < 0.005 &&
+      prev.narration &&
+      isInlineDateInNarration(cur.date, prev.narration)
+    ) {
+      dropped++;
+      continue;
+    }
+    kept.push(cur);
+  }
+  txs.length = 0;
+  txs.push(...kept);
+  return dropped;
+}
+
+/** True when YYYY-MM-DD `date` appears as a DD-MM-YYYY or DD/MM/YYYY
+ *  substring anywhere inside `narration`. */
+function isInlineDateInNarration(date: string, narration: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  if (!m) return false;
+  const [, yyyy, mm, dd] = m;
+  return narration.includes(`${dd}-${mm}-${yyyy}`) || narration.includes(`${dd}/${mm}/${yyyy}`);
+}
+
 interface BalanceMismatch {
   index: number;
   date: string | null;
@@ -814,6 +871,19 @@ function persistStatement(
   const opening = typeof data.openingBalance === 'number' ? data.openingBalance : null;
   const { amountOverridden, phantomDropped } = deriveAmountsFromBalance(txs, opening);
 
+  // Phase 1b: drop inline-date phantoms that survive Phase 1. These
+  // are rows the AI hallucinated from dates appearing inside the
+  // previous row's narration ("Int.Pd:01-02-2025 to 30-04-2025"
+  // emits two fake rows; "/09-08-2025/_LIEN_REV" emits one). They
+  // pass through Phase 1 because their balance is null (so no zero-
+  // delta drop fires). The detector matches the row's date against
+  // DD-MM-YYYY occurrences in the previous narration, gated on
+  // null-balance + zero-amount so a real same-day transaction
+  // following a narration that happens to mention the same date
+  // isn't dropped.
+  const inlineDatePhantomsDropped = dropInlineDatePhantoms(txs);
+  const totalPhantomDropped = phantomDropped + inlineDatePhantomsDropped;
+
   // Phase 2: legacy sign-flip / column-swap reconciliation. After
   // deriveAmountsFromBalance most rows already have authoritative
   // amounts; this catches the residual cases where balance was null
@@ -845,7 +915,7 @@ function persistStatement(
   bankTransactionRepo.bulkInsert(statementId, txs);
   bankStatementRepo.updateTotals(statementId, inflow, outflow, txs.length);
 
-  return { txCount: txs.length, autoCorrected, mismatches, amountOverridden, phantomDropped, closingMismatch };
+  return { txCount: txs.length, autoCorrected, mismatches, amountOverridden, phantomDropped: totalPhantomDropped, closingMismatch };
 }
 
 function serializeStatement(row: ReturnType<typeof bankStatementRepo.findByIdForUser>) {
