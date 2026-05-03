@@ -6,7 +6,6 @@ import { BankStatementManager } from '../../hooks/useBankStatementManager';
 import type { BankStatementAnalyzeProgress } from '../../services/api';
 import { cn } from '../../lib/utils';
 import { ColumnMappingWizard } from '../shared/ColumnMappingWizard';
-import { ScannedPdfConfirmDialog } from '../shared/ScannedPdfConfirmDialog';
 import {
   applyMapping,
   extractPdfGrid,
@@ -88,7 +87,6 @@ export function BankStatementUploader({ manager }: Props) {
     file: File;
     wrongPassword: boolean;
   } | null>(null);
-  const [pendingScannedPdf, setPendingScannedPdf] = useState<File | null>(null);
 
   // Pull batch progress off the in-flight statement (the placeholder
   // row's analyze_chunks_* fields, polled every 5s by the manager).
@@ -162,8 +160,10 @@ export function BankStatementUploader({ manager }: Props) {
           setPendingGrid({ grid, filename: file.name });
           return;
         }
-        setPendingScannedPdf(file);
-        return;
+        // No text layer — fall through to the AI vision path silently.
+        // The token-cost difference vs digital PDFs is real but not
+        // material enough to interrupt the user with a confirmation
+        // dialog every time.
       } catch (err) {
         if (err instanceof PdfPasswordError) {
           // Encrypted bank PDFs are common — pop the unlock prompt
@@ -331,10 +331,12 @@ export function BankStatementUploader({ manager }: Props) {
                 setPendingGrid({ grid, filename: file.name });
                 return;
               }
-              // Decrypted but no usable text layer: ask before using
-              // the AI scan path, since column mapping is unavailable.
+              // Decrypted but no usable text layer: fall through to
+              // AI vision silently — column mapping is unavailable on
+              // image-only PDFs but the cost difference isn't worth a
+              // separate confirmation step.
               setPendingPassword(null);
-              setPendingScannedPdf(file);
+              await analyzeRawFile(file);
             } catch (err) {
               if (err instanceof PdfPasswordError) {
                 // Wrong password — re-show with the inline error.
@@ -344,18 +346,6 @@ export function BankStatementUploader({ manager }: Props) {
               setPendingPassword(null);
               toast.error(err instanceof Error ? err.message : 'Failed to read PDF');
             }
-          }}
-        />
-      )}
-      {pendingScannedPdf && (
-        <ScannedPdfConfirmDialog
-          filename={pendingScannedPdf.name}
-          documentLabel="statement"
-          onCancel={() => setPendingScannedPdf(null)}
-          onConfirm={() => {
-            const file = pendingScannedPdf;
-            setPendingScannedPdf(null);
-            void analyzeRawFile(file);
           }}
         />
       )}
