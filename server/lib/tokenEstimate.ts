@@ -67,7 +67,9 @@ export function estimateBankStatementVision(fileSizeBytes: number): number {
   const TOKENS_PER_PAGE = 280;
   const pages = Math.max(1, Math.ceil(fileSizeBytes / 1024 / KB_PER_PAGE));
   const inputTokens = pages * TOKENS_PER_PAGE + 800;        // + prompt overhead
-  const outputTokens = Math.min(16_384, pages * 600);       // capped by max_tokens
+  // Output cap matches the route's maxTokens (bumped to 32K for the
+  // native PDF path so 17+ page statements don't truncate mid-JSON).
+  const outputTokens = Math.min(32_768, pages * 600);
   return Math.ceil((inputTokens + outputTokens) * SAFETY_MARGIN);
 }
 
