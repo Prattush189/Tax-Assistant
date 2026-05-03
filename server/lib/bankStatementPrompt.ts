@@ -117,16 +117,21 @@ After the last transaction row, emit exactly one trailer line:
 ---END:<N>---
 where <N> is the total count of transaction rows you just emitted. This is required — we verify it to detect truncation.
 
-BEFORE the first transaction row, emit exactly one header line with the statement metadata, tab-separated with 5 fields:
-HEADER<TAB>bankName<TAB>accountNumberMasked<TAB>periodFrom<TAB>periodTo
+BEFORE the first transaction row, emit exactly one header line with the statement metadata, tab-separated with 7 fields:
+HEADER<TAB>bankName<TAB>accountNumberMasked<TAB>periodFrom<TAB>periodTo<TAB>openingBalance<TAB>closingBalance
 
 CRITICAL — periodFrom and periodTo:
 - Read these from the EXPLICIT statement period line in the header (printed by the bank as "Statement Period: 01-Apr-2024 to 31-Mar-2025" / "Period: From 01/04/2024 To 31/03/2025" / similar).
 - Do NOT use the date of the first transaction or last transaction. The statement's printed period is often wider (e.g., it includes a closing balance line dated after the last transaction, or starts a day before the first).
 - Convert DD/MM/YYYY → YYYY-MM-DD. Use the literal string "null" only if no period header exists in this chunk.
 
+CRITICAL — openingBalance and closingBalance:
+- openingBalance = the bank's printed opening / brought-forward / "B/F" / "Previous Balance" line at the very start of the statement (often dated as of the day before periodFrom). Number with decimals, no commas, no currency symbol.
+- closingBalance = the bank's printed closing / carried-forward / "C/F" balance at the very end of the statement.
+- Use the literal string "null" if the chunk doesn't contain that anchor (e.g., a middle chunk that has neither the B/F nor the C/F line).
+
 Use null (the literal string "null") for any field you can't determine. Example:
-HEADER\tHDFC Bank\tXXXX1234\t2024-04-01\t2024-04-30
+HEADER\tHDFC Bank\tXXXX1234\t2024-04-01\t2024-04-30\t152340.50\t187652.30
 
 CRITICAL — debit and credit fidelity:
 - Read each digit of the amount column directly from the statement; do NOT recompute, round, or guess.
