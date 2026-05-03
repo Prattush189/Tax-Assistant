@@ -65,11 +65,17 @@ export function estimateBankStatementVision(fileSizeBytes: number): number {
   if (fileSizeBytes <= 0) return 0;
   const KB_PER_PAGE = 200;
   const TOKENS_PER_PAGE = 280;
+  const PAGES_PER_BATCH = 3; // matches splitPdfIntoBatches default
   const pages = Math.max(1, Math.ceil(fileSizeBytes / 1024 / KB_PER_PAGE));
-  const inputTokens = pages * TOKENS_PER_PAGE + 800;        // + prompt overhead
-  // Output cap matches the route's maxTokens (bumped to 32K for the
-  // native PDF path so 17+ page statements don't truncate mid-JSON).
-  const outputTokens = Math.min(32_768, pages * 600);
+  // Vision now runs as N batches of ~3 pages each, not one giant
+  // call. Each batch repeats the full prompt (~800 tokens of overhead)
+  // so the per-page input cost is the same, plus a per-batch
+  // multiplier for prompt repetition. Output stays proportional to
+  // page count overall but caps at 8K per batch (no longer 32K
+  // single-shot).
+  const batches = pages <= 4 ? 1 : Math.ceil(pages / PAGES_PER_BATCH);
+  const inputTokens = pages * TOKENS_PER_PAGE + batches * 800;
+  const outputTokens = Math.min(8_192 * batches, pages * 600);
   return Math.ceil((inputTokens + outputTokens) * SAFETY_MARGIN);
 }
 
