@@ -162,6 +162,8 @@ DO NOT invent, summarize, or group transactions. Every row in the input text tha
 
 export const BANK_STATEMENT_PROMPT = `You are parsing an Indian bank statement (PDF or image). Return ONLY a JSON object. No markdown fences. No prose.
 
+This prompt deliberately does NOT ask for transaction amounts. The bank's printed running balance column is the most legible, deterministic data on the page (bold, right-aligned, full-magnitude numbers in their own column). The server derives every signed amount as balance[i] - balance[i-1] from your output, which means you only have to read each balance correctly once. You will NOT be asked to extract the debit/credit column at all — focus all attention on reading dates, narrations, and balances precisely.
+
 Schema (all fields required, use null where unknown):
 {
   "bankName": "string or null",
@@ -169,11 +171,12 @@ Schema (all fields required, use null where unknown):
   "periodFrom": "YYYY-MM-DD or null",
   "periodTo": "YYYY-MM-DD or null",
   "currency": "INR",
+  "openingBalance": number or null,
+  "closingBalance": number or null,
   "transactions": [
     {
       "date": "YYYY-MM-DD",
-      "narration": "string (raw bank narration, max 200 chars)",
-      "amount": number (positive for credit/inflow, negative for debit/outflow),
+      "narration": "string (raw bank narration, max 200 chars; merge wrapped continuation lines into ONE narration — do NOT emit a second row for the wrap)",
       "type": "credit" | "debit",
       "balance": number or null,
       "category": one of ${BANK_STATEMENT_CATEGORIES.map(c => `"${c}"`).join(' | ')},
@@ -184,6 +187,20 @@ Schema (all fields required, use null where unknown):
     }
   ]
 }
+
+CRITICAL — balance fidelity:
+- The "balance" field is the bank's printed running balance for THAT row, copied digit-for-digit. Read every digit; do NOT recompute, round, or guess. Magnitude errors here corrupt every subsequent derived amount.
+- "openingBalance" is the bank's printed opening / brought-forward balance for the statement period (usually the first balance line, often labelled "B/F" / "Opening Balance" / "Previous Balance").
+- "closingBalance" is the bank's printed closing / carried-forward balance at the end of the statement.
+- If a row genuinely has no printed balance (mid-statement page break, summary row), set "balance" to null and we'll fall back to your "type" field for that row.
+
+CRITICAL — wrapped narration rows:
+- UPI / NEFT narrations on dense statements often wrap onto a second visual line. The continuation line ("68-1@ok", "REF/12345" tail, etc.) is NOT a new transaction. Merge it into the previous row's narration.
+- Phantom rows from un-merged wraps will be detected by the server (zero balance change) and dropped, but it's cleaner if you don't emit them in the first place.
+
+"type" rules (used only as a fallback for rows missing balance):
+- "credit" for inflow / deposit / Cr-marker rows.
+- "debit" for outflow / withdrawal / Dr-marker rows.
 
 Counterparty extraction rules (populate counterparty with the cleanest human-readable label):
 - UPI pattern "UPI/<refno>/<note>/<vpa>/..." → use the VPA (e.g. "merchant@okhdfcbank") OR the payee name if clearly after the VPA.
@@ -218,5 +235,5 @@ STRICT RULES:
 - Escape quotes in strings. No literal newlines — use \\n.
 - Include EVERY transaction you can read. Do NOT summarize or group.
 - Dates must be YYYY-MM-DD. If the statement shows DD/MM/YYYY, convert.
-- If you cannot determine the balance for a row, set it to null.
-- subcategory may be null when none of the listed subcategories fit.`;
+- subcategory may be null when none of the listed subcategories fit.
+- DO NOT include an "amount" field on transactions. The server derives it from the balance column.`;
