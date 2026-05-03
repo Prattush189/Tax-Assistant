@@ -107,13 +107,31 @@ async function callOnce<T>(
     throw new GeminiNativeError(`Gemini ${model} error: ${json.error.message ?? 'unknown'}`, 500);
   }
   const raw = json.candidates?.[0]?.content?.parts?.map(p => p.text ?? '').join('') ?? '{}';
+  const finishReason = json.candidates?.[0]?.finishReason ?? '';
   const inputTokens = json.usageMetadata?.promptTokenCount ?? 0;
   const outputTokens = json.usageMetadata?.candidatesTokenCount ?? 0;
+
+  // Surface MAX_TOKENS truncation as a distinct, actionable signal:
+  // safeParseJson tries to repair brace-imbalance but a truncated array
+  // of transactions almost always loses its tail row mid-string, and
+  // even a successful repair quietly loses data. Flag it so the retry
+  // layer escalates (a higher-output model has a real chance) and the
+  // server logs make the cause obvious instead of "Failed to parse".
+  const truncated = finishReason === 'MAX_TOKENS';
 
   let succeeded = false;
   try {
     const parsed = safeParseJson<T>(raw);
-    if (parsed === null) throw new Error('Failed to parse Gemini JSON response');
+    if (parsed === null) throw new Error(truncated
+      ? `Failed to parse Gemini JSON response (truncated at MAX_TOKENS=${outputTokens}; PDF likely needs higher output budget or page chunking)`
+      : 'Failed to parse Gemini JSON response');
+    if (truncated) {
+      // Even if repair "succeeded", the data lost its tail. Refuse
+      // the result so the retry / fallback chain gets a chance with
+      // a stronger model rather than persisting a silently-incomplete
+      // extraction.
+      throw new Error(`Failed to parse Gemini JSON response (truncated at MAX_TOKENS=${outputTokens})`);
+    }
     succeeded = true;
     return { data: parsed, inputTokens, outputTokens, modelUsed: model };
   } finally {

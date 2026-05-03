@@ -1013,13 +1013,20 @@ router.post(
         // thinking models are unhealthy at once. It's faster and lighter,
         // not as strong on dense OCR, but a slightly weaker extraction is
         // strictly better than asking the user to retry.
+        // Output budget bumped to 32K for the native PDF path. With
+        // multi-page now actually working (vs the OpenAI compat shim
+        // dropping pages 2+), a 17-page dense statement easily emits
+        // 25K+ tokens of JSON. 16K was truncating mid-array, which
+        // surfaced as `Failed to parse Gemini JSON response` after
+        // exhausting all three fallback models. Image uploads stay
+        // at 16K — they're inherently single-page.
         const visionResult = isPdfFile
           ? await extractVisionPdf<ExtractedStatement>(
               req.file.buffer,
               mimeType,
               `${conditionsBlock}${BANK_STATEMENT_PROMPT}`,
               {
-                maxTokens: 16_384,
+                maxTokens: 32_768,
                 primaryModel: 'gemini-2.5-flash',
                 fallbackModels: [GEMINI_CHAT_MODEL_THINK_FB, GEMINI_CHAT_MODEL_T1],
                 retryParseFailures: true,

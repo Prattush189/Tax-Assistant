@@ -1553,9 +1553,11 @@ router.post(
         console.log(`[ledger-scrutiny] vision path: scanned PDF, no text layer`);
         ledgerScrutinyRepo.setStatus(job.id, req.user.id, 'extracting');
         // Native generateContent — required for multi-page PDFs (the
-        // OpenAI compat shim only sees page 1).
+        // OpenAI compat shim only sees page 1). 32K output budget for
+        // the same reason as bank-statements: dense multi-page ledgers
+        // emit JSON that overflows 16K and gets silently truncated.
         const result = await extractVisionPdf<ExtractedLedger>(req.file!.buffer, mimeType, LEDGER_EXTRACT_PROMPT, {
-          maxTokens: 16384,
+          maxTokens: 32_768,
         });
         extracted = normalizeExtraction(result.data);
         rawJson = JSON.stringify(extracted);

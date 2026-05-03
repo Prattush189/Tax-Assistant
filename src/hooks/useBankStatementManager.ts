@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import {
   fetchBankStatements,
   fetchBankStatement,
@@ -139,6 +139,23 @@ export function useBankStatementManager(enabled: boolean) {
     }, 5000);
     return () => { clearTimeout(fast); clearInterval(handle); };
   }, [enabled, isAnalyzing, statements, currentId, refresh, load]);
+
+  // When the active row's status flips out of 'analyzing' (to 'done',
+  // 'error', or 'cancelled'), the polling loop above tears itself down
+  // before the next tick fires its companion load(currentId). That left
+  // the active view holding a stale `current` with status='analyzing'
+  // and no error message, so the user saw the analyzing banner stuck
+  // under an ERROR sidebar badge. Forcing a single load on the
+  // observed transition catches the final state for the open view.
+  const previousStatusRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!currentId) { previousStatusRef.current = null; return; }
+    const liveStatus = statements.find(s => s.id === currentId)?.status ?? null;
+    if (previousStatusRef.current === 'analyzing' && liveStatus && liveStatus !== 'analyzing') {
+      void load(currentId);
+    }
+    previousStatusRef.current = liveStatus;
+  }, [currentId, statements, load]);
 
   const analyzeFile = useCallback(async (file: File): Promise<BankStatementDetail> => {
     setIsAnalyzing(true);

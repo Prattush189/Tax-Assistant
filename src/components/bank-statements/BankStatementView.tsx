@@ -138,7 +138,18 @@ export function BankStatementView({ manager }: Props) {
   // 5 s polling loop in the manager) we show a progress banner with a
   // Cancel button instead of the (empty) tables. Same shape as the
   // ledger ScrutinyReport progress UI.
-  const stmtStatus = manager.current.statement.status;
+  //
+  // Source-of-truth for status: prefer the polled `statements` list row
+  // over `current.statement.status`. The list is refreshed every 5s
+  // while any analysis is in flight; `current` is loaded on click and
+  // re-loaded by the same polling tick, but the polling effect tears
+  // itself down the moment NO statements are 'analyzing' — so the
+  // last refresh that flipped status to 'error' or 'done' may not have
+  // a matching `load(currentId)` companion. Reading the list value
+  // directly closes that race so the user doesn't see an "Analyzing…"
+  // banner stuck under an "ERROR" sidebar badge.
+  const polledStatus = manager.statements.find(s => s.id === manager.current?.statement.id)?.status;
+  const stmtStatus = polledStatus ?? manager.current.statement.status;
   const isAnalyzing = stmtStatus === 'analyzing';
   const isError = stmtStatus === 'error';
   const isCancelled = stmtStatus === 'cancelled';
