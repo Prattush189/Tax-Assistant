@@ -75,7 +75,7 @@ export function estimateBankStatementVision(fileSizeBytes: number): number {
   // single-shot).
   const batches = pages <= 4 ? 1 : Math.ceil(pages / PAGES_PER_BATCH);
   const inputTokens = pages * TOKENS_PER_PAGE + batches * 800;
-  const outputTokens = Math.min(8_192 * batches, pages * 600);
+  const outputTokens = Math.min(16_384 * batches, pages * 600);
   return Math.ceil((inputTokens + outputTokens) * SAFETY_MARGIN);
 }
 
