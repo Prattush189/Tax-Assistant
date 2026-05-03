@@ -5,6 +5,7 @@ import multer, { MulterError } from 'multer';
 import Papa from 'papaparse';
 import { extractWithRetry } from '../lib/documentExtract.js';
 import { extractVisionPdf } from '../lib/geminiVisionPdf.js';
+import { splitPdfIntoBatches, runBatchesWithConcurrency } from '../lib/pdfPageChunks.js';
 import { callGeminiJson, type GeminiJsonResult } from '../lib/geminiJson.js';
 import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_TSV_PROMPT, BANK_STATEMENT_CATEGORIES, buildConditionsBlock, countWords, MAX_CONDITION_WORDS } from '../lib/bankStatementPrompt.js';
 import { gemini, GEMINI_CHAT_MODEL_THINK_FB, GEMINI_CHAT_MODEL_T2, costForModel } from '../lib/gemini.js';
@@ -1157,48 +1158,110 @@ router.post(
         // thinking models are unhealthy at once. It's faster and lighter,
         // not as strong on dense OCR, but a slightly weaker extraction is
         // strictly better than asking the user to retry.
-        // Output budget bumped to 32K for the native PDF path. With
-        // multi-page now actually working (vs the OpenAI compat shim
-        // dropping pages 2+), a 17-page dense statement easily emits
-        // 25K+ tokens of JSON. 16K was truncating mid-array, which
-        // surfaced as `Failed to parse Gemini JSON response` after
-        // exhausting all three fallback models. Image uploads stay
-        // at 16K — they're inherently single-page.
-        //
         // Model order: 2.5-flash-lite primary, escalate to 2.5-flash
         // and then 3-flash-preview. Empirically, 2.5-flash was over-
         // thinking dense statements and emitting malformed JSON
-        // tails — even on the bumped output budget — while flash-lite
-        // produced cleaner extractions on the same files. Putting the
-        // simpler model first also caps cost on the common case.
-        const visionResult = isPdfFile
-          ? await extractVisionPdf<ExtractedStatement>(
-              req.file.buffer,
+        // tails, while flash-lite produced cleaner extractions on the
+        // same files. Putting the simpler model first also caps cost
+        // on the common case.
+        const visionOpts = {
+          maxTokens: 8_192,
+          primaryModel: GEMINI_CHAT_MODEL_T2,
+          fallbackModels: ['gemini-2.5-flash', GEMINI_CHAT_MODEL_THINK_FB],
+          retryParseFailures: true,
+        };
+        const fullPrompt = `${conditionsBlock}${BANK_STATEMENT_PROMPT}`;
+
+        if (isPdfFile) {
+          // Multi-page PDFs go through page-range chunking. A single
+          // vision call on a 17-page dense statement was losing ~13/149
+          // rows in production — the model ran out of attention on the
+          // long tail and silently emitted a truncated transactions
+          // array. Splitting the PDF into 3-page batches keeps each
+          // call's output well under the truncation ceiling and lets
+          // the model be exhaustive on a small visual region. Per-batch
+          // openingBalance / closingBalance let the server validate
+          // each chunk's chain integrity before merging.
+          //
+          // Each batch is a real PDF (pdf-lib subset) so Gemini's
+          // native generateContent endpoint handles it the same way
+          // it handles the full file — no per-page rendering needed.
+          const batches = await splitPdfIntoBatches(req.file.buffer, { pagesPerBatch: 3 });
+          const usages: Array<{ inputTokens: number; outputTokens: number; modelUsed: string }> = [];
+
+          // Bounded concurrency: 2 batches in flight. Each call hits
+          // Gemini's per-key rate limit; unbounded parallelism on a
+          // 6-batch statement was tripping 429s and burning fallback
+          // retries. 2 finishes a 17-page statement in ~half the
+          // sequential wall time without compounding 429s.
+          const batchResults = await runBatchesWithConcurrency(batches, 2, async (batch) => {
+            const result = await extractVisionPdf<ExtractedStatement>(
+              batch.buffer,
               mimeType,
-              `${conditionsBlock}${BANK_STATEMENT_PROMPT}`,
-              {
-                maxTokens: 32_768,
-                primaryModel: GEMINI_CHAT_MODEL_T2,
-                fallbackModels: ['gemini-2.5-flash', GEMINI_CHAT_MODEL_THINK_FB],
-                retryParseFailures: true,
-              },
-            )
-          : await extractWithRetry<ExtractedStatement>(
-              `data:${mimeType};base64,${req.file.buffer.toString('base64')}`,
-              `${conditionsBlock}${BANK_STATEMENT_PROMPT}`,
-              {
-                maxTokens: 16_384,
-                primaryModel: GEMINI_CHAT_MODEL_T2,
-                fallbackModels: ['gemini-2.5-flash', GEMINI_CHAT_MODEL_THINK_FB],
-                retryParseFailures: true,
-              },
+              fullPrompt,
+              visionOpts,
             );
-        extracted = visionResult.data;
-        (res.locals as Record<string, unknown>).geminiUsages = [{
-          inputTokens: visionResult.inputTokens,
-          outputTokens: visionResult.outputTokens,
-          modelUsed: visionResult.modelUsed,
-        }];
+            usages.push({
+              inputTokens: result.inputTokens,
+              outputTokens: result.outputTokens,
+              modelUsed: result.modelUsed,
+            });
+            return { batch, data: result.data };
+          });
+
+          // Merge batches back into a single ExtractedStatement.
+          // Metadata (bankName, account, period) takes the first
+          // non-null value across batches — usually batch 0 has the
+          // header. Opening balance comes from batch 0's reported
+          // openingBalance (the bank's "B/F" line on page 1). Closing
+          // balance comes from the LAST batch (the last page's
+          // running-balance row).
+          const firstWith = <K extends keyof ExtractedStatement>(key: K): ExtractedStatement[K] | null => {
+            for (const r of batchResults) {
+              const v = r.data[key];
+              if (v !== undefined && v !== null && v !== '') return v as ExtractedStatement[K];
+            }
+            return null;
+          };
+          const allTransactions: unknown[] = [];
+          for (const r of batchResults) {
+            if (Array.isArray(r.data.transactions)) allTransactions.push(...r.data.transactions);
+          }
+          const opening = (() => {
+            const v = batchResults[0]?.data.openingBalance;
+            return typeof v === 'number' ? v : null;
+          })();
+          const closing = (() => {
+            const v = batchResults[batchResults.length - 1]?.data.closingBalance;
+            return typeof v === 'number' ? v : null;
+          })();
+          extracted = {
+            bankName: firstWith('bankName') as string | null,
+            accountNumberMasked: firstWith('accountNumberMasked') as string | null,
+            periodFrom: firstWith('periodFrom') as string | null,
+            periodTo: firstWith('periodTo') as string | null,
+            currency: firstWith('currency') as string | null,
+            openingBalance: opening,
+            closingBalance: closing,
+            transactions: allTransactions,
+          };
+          console.log(`[bank-statements] vision chunked: ${batches.length} batch(es), ${allTransactions.length} total transactions`);
+          (res.locals as Record<string, unknown>).geminiUsages = usages;
+        } else {
+          // Image uploads (jpeg/png/webp) — single-page by definition,
+          // OpenAI compat path is fine.
+          const visionResult = await extractWithRetry<ExtractedStatement>(
+            `data:${mimeType};base64,${req.file.buffer.toString('base64')}`,
+            fullPrompt,
+            { ...visionOpts, maxTokens: 16_384 },
+          );
+          extracted = visionResult.data;
+          (res.locals as Record<string, unknown>).geminiUsages = [{
+            inputTokens: visionResult.inputTokens,
+            outputTokens: visionResult.outputTokens,
+            modelUsed: visionResult.modelUsed,
+          }];
+        }
       } else if (isPdfText) {
         // Fast path: the frontend extracted the PDF text layer via pdfjs-dist
         // and sent it here. Gemini parses plain text ~3-5× faster than vision
