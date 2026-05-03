@@ -73,6 +73,11 @@ interface TsvExtractResult {
   accountNumberMasked: string | null;
   periodFrom: string | null;
   periodTo: string | null;
+  /** Bank's printed opening / closing balance for the chunk. The TSV
+   *  prompt now asks for these so verifyClosingBalance fires on the
+   *  digital-PDF path too — same row-level diagnostic as vision. */
+  openingBalance: number | null;
+  closingBalance: number | null;
   transactions: unknown[];
   inputTokens: number;
   outputTokens: number;
@@ -96,6 +101,8 @@ function parseTsvResponse(raw: string): Omit<TsvExtractResult, 'inputTokens' | '
   let accountNumberMasked: string | null = null;
   let periodFrom: string | null = null;
   let periodTo: string | null = null;
+  let openingBalance: number | null = null;
+  let closingBalance: number | null = null;
   const rows: unknown[] = [];
   const droppedReasons: string[] = [];
   let declaredCount = -1;
@@ -108,6 +115,16 @@ function parseTsvResponse(raw: string): Omit<TsvExtractResult, 'inputTokens' | '
       accountNumberMasked = cleanTsvCell(h[2] ?? '') || null;
       periodFrom = cleanTsvCell(h[3] ?? '') || null;
       periodTo = cleanTsvCell(h[4] ?? '') || null;
+      // openingBalance / closingBalance are new — fields 5 and 6.
+      // Older chunks that pre-date the prompt update emit only 5
+      // fields and these fall through as null, which is fine
+      // (verifyClosingBalance just no-ops in that case).
+      const openStr = cleanTsvCell(h[5] ?? '');
+      const closeStr = cleanTsvCell(h[6] ?? '');
+      const openNum = openStr === '' ? NaN : Number(openStr.replace(/[,\s]/g, ''));
+      const closeNum = closeStr === '' ? NaN : Number(closeStr.replace(/[,\s]/g, ''));
+      openingBalance = Number.isFinite(openNum) ? openNum : null;
+      closingBalance = Number.isFinite(closeNum) ? closeNum : null;
       continue;
     }
     const endMatch = /^---END:(\d+)---$/.exec(line.trim());
@@ -172,6 +189,8 @@ function parseTsvResponse(raw: string): Omit<TsvExtractResult, 'inputTokens' | '
     accountNumberMasked,
     periodFrom,
     periodTo,
+    openingBalance,
+    closingBalance,
     transactions: rows,
     declaredCount,
     actualCount: rows.length,
@@ -608,7 +627,42 @@ function verifyClosingBalance(
   const tol = Math.max(1, Math.abs(expected) * 0.005);
   if (Math.abs(sum - expected) <= tol) return null;
   const drift = sum - expected;
-  return `Opening + sum(transactions) = ${(openingBalance + sum).toLocaleString('en-IN', { minimumFractionDigits: 2 })} but the bank prints a closing balance of ${closingBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })} — a difference of ${Math.abs(drift).toLocaleString('en-IN', { minimumFractionDigits: 2 })}. One or more rows likely had a misread balance digit; please review.`;
+
+  // Walk the chain to find the FIRST row where opening + cumsum
+  // diverges from the printed running balance — that's the misread.
+  // Without this we only know "totals are off by ₹X" and have no way
+  // to point at the specific cell. With it the server log says
+  // exactly which row to look at.
+  let cum = openingBalance;
+  let firstBreak: { index: number; date: string | null; narration: string | null; expectedBalance: number; actualBalance: number; rowDelta: number } | null = null;
+  for (let i = 0; i < txs.length; i++) {
+    cum += txs[i].amount;
+    const actual = txs[i].balance;
+    if (actual == null) continue;
+    const rowTol = Math.max(1, Math.abs(actual) * 0.005);
+    if (Math.abs(cum - actual) > rowTol) {
+      firstBreak = {
+        index: i,
+        date: txs[i].date,
+        narration: txs[i].narration,
+        expectedBalance: cum,
+        actualBalance: actual,
+        rowDelta: cum - actual,
+      };
+      break;
+    }
+  }
+  if (firstBreak) {
+    const narrationPreview = (firstBreak.narration ?? '').slice(0, 80);
+    console.warn(`[bank-statements] balance chain first diverges at row ${firstBreak.index + 1} (date ${firstBreak.date ?? 'unknown'}, narration "${narrationPreview}"): expected balance ${firstBreak.expectedBalance.toFixed(2)}, printed balance ${firstBreak.actualBalance.toFixed(2)}, delta ${firstBreak.rowDelta.toFixed(2)}. Total drift across statement: ${drift.toFixed(2)}.`);
+  } else {
+    console.warn(`[bank-statements] closing-balance mismatch (drift ${drift.toFixed(2)}) but every row's printed balance ties to cumsum within tolerance — likely an opening- or closing-balance OCR error rather than a per-row issue.`);
+  }
+
+  const breakSuffix = firstBreak
+    ? ` First divergence at row ${firstBreak.index + 1} on ${firstBreak.date ?? 'unknown date'} — printed balance differs from running total by ${Math.abs(firstBreak.rowDelta).toLocaleString('en-IN', { minimumFractionDigits: 2 })}.`
+    : '';
+  return `Opening + sum(transactions) = ${(openingBalance + sum).toLocaleString('en-IN', { minimumFractionDigits: 2 })} but the bank prints a closing balance of ${closingBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })} — a difference of ${Math.abs(drift).toLocaleString('en-IN', { minimumFractionDigits: 2 })}.${breakSuffix} One or more rows likely had a misread balance digit; please review.`;
 }
 
 interface BalanceMismatch {
@@ -1436,12 +1490,21 @@ router.post(
         );
 
         const merged = chunkResults.flatMap(r => r.transactions);
+        // openingBalance from the FIRST chunk that reported one (chunk 0
+        // covers page 1 where the bank prints the B/F line). closingBalance
+        // from the LAST chunk that reported one (final page's C/F line).
+        // Lets verifyClosingBalance fire on the digital-PDF path too,
+        // surfacing the same first-divergence diagnostic as vision.
+        const firstOpening = chunkResults.find(r => typeof r.openingBalance === 'number')?.openingBalance ?? null;
+        const lastClosing = [...chunkResults].reverse().find(r => typeof r.closingBalance === 'number')?.closingBalance ?? null;
         extracted = {
           bankName: chunkResults.map(r => r.bankName).find(v => !!v) ?? null,
           accountNumberMasked: chunkResults.map(r => r.accountNumberMasked).find(v => !!v) ?? null,
           periodFrom: chunkResults.map(r => r.periodFrom).find(v => !!v) ?? null,
           periodTo: chunkResults.map(r => r.periodTo).find(v => !!v) ?? null,
           currency: 'INR',
+          openingBalance: firstOpening,
+          closingBalance: lastClosing,
           transactions: merged,
         };
 
