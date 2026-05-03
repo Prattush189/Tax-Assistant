@@ -1165,7 +1165,7 @@ router.post(
         // same files. Putting the simpler model first also caps cost
         // on the common case.
         const visionOpts = {
-          maxTokens: 8_192,
+          maxTokens: 16_384,
           primaryModel: GEMINI_CHAT_MODEL_T2,
           fallbackModels: ['gemini-2.5-flash', GEMINI_CHAT_MODEL_THINK_FB],
           retryParseFailures: true,

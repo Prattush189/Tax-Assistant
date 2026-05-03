@@ -176,7 +176,7 @@ Schema (all fields required, use null where unknown):
   "transactions": [
     {
       "date": "YYYY-MM-DD",
-      "narration": "string (raw bank narration, max 200 chars; merge wrapped continuation lines into ONE narration — do NOT emit a second row for the wrap)",
+      "narration": "string (raw bank narration, max 120 chars — trim trailing padding/timestamps; merge wrapped continuation lines into ONE narration — do NOT emit a second row for the wrap)",
       "type": "credit" | "debit",
       "balance": number or null,
       "category": one of ${BANK_STATEMENT_CATEGORIES.map(c => `"${c}"`).join(' | ')},
