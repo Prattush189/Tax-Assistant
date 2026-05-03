@@ -7,7 +7,7 @@ import { extractWithRetry } from '../lib/documentExtract.js';
 import { extractVisionPdf } from '../lib/geminiVisionPdf.js';
 import { callGeminiJson, type GeminiJsonResult } from '../lib/geminiJson.js';
 import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_TSV_PROMPT, BANK_STATEMENT_CATEGORIES, buildConditionsBlock, countWords, MAX_CONDITION_WORDS } from '../lib/bankStatementPrompt.js';
-import { gemini, GEMINI_CHAT_MODEL_THINK_FB, GEMINI_CHAT_MODEL_T1, costForModel } from '../lib/gemini.js';
+import { gemini, GEMINI_CHAT_MODEL_THINK_FB, GEMINI_CHAT_MODEL_T2, costForModel } from '../lib/gemini.js';
 import { creditsForPages, creditsForCsvRows, PAGES_PER_CREDIT, CSV_ROWS_PER_CREDIT } from '../lib/creditPolicy.js';
 import { enforceTokenQuota } from '../lib/tokenQuota.js';
 import { estimateBankStatementText, estimateBankStatementVision, estimateFromChars } from '../lib/tokenEstimate.js';
@@ -1020,6 +1020,13 @@ router.post(
         // surfaced as `Failed to parse Gemini JSON response` after
         // exhausting all three fallback models. Image uploads stay
         // at 16K — they're inherently single-page.
+        //
+        // Model order: 2.5-flash-lite primary, escalate to 2.5-flash
+        // and then 3-flash-preview. Empirically, 2.5-flash was over-
+        // thinking dense statements and emitting malformed JSON
+        // tails — even on the bumped output budget — while flash-lite
+        // produced cleaner extractions on the same files. Putting the
+        // simpler model first also caps cost on the common case.
         const visionResult = isPdfFile
           ? await extractVisionPdf<ExtractedStatement>(
               req.file.buffer,
@@ -1027,8 +1034,8 @@ router.post(
               `${conditionsBlock}${BANK_STATEMENT_PROMPT}`,
               {
                 maxTokens: 32_768,
-                primaryModel: 'gemini-2.5-flash',
-                fallbackModels: [GEMINI_CHAT_MODEL_THINK_FB, GEMINI_CHAT_MODEL_T1],
+                primaryModel: GEMINI_CHAT_MODEL_T2,
+                fallbackModels: ['gemini-2.5-flash', GEMINI_CHAT_MODEL_THINK_FB],
                 retryParseFailures: true,
               },
             )
@@ -1037,8 +1044,8 @@ router.post(
               `${conditionsBlock}${BANK_STATEMENT_PROMPT}`,
               {
                 maxTokens: 16_384,
-                primaryModel: 'gemini-2.5-flash',
-                fallbackModels: [GEMINI_CHAT_MODEL_THINK_FB, GEMINI_CHAT_MODEL_T1],
+                primaryModel: GEMINI_CHAT_MODEL_T2,
+                fallbackModels: ['gemini-2.5-flash', GEMINI_CHAT_MODEL_THINK_FB],
                 retryParseFailures: true,
               },
             );
