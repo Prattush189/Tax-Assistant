@@ -48,6 +48,13 @@ export const BANK_STATEMENT_CATEGORIES = [
   'Investments',
   'Loan EMI',
   'Taxes Paid',
+  'Bank Charges',
+  'Bank Interest (Dr)',
+  'Bank Interest (Cr)',
+  'Insurance',
+  'Mobile Charges',
+  'Electricity Charges',
+  'Water Charges',
   'Other',
 ] as const;
 
@@ -67,6 +74,13 @@ export const BANK_STATEMENT_SUBCATEGORIES: Record<BankStatementCategory, string[
   Investments: ['SIP', 'MF', 'Stocks', 'FD'],
   'Loan EMI': ['Home', 'Car', 'Business', 'Personal'],
   'Taxes Paid': ['Advance Tax', 'Self Assessment'],
+  'Bank Charges': ['ATM', 'NEFT/IMPS/RTGS', 'SMS', 'Min Balance', 'Loan Processing', 'Cheque', 'GST', 'Other'],
+  'Bank Interest (Dr)': [],
+  'Bank Interest (Cr)': ['Savings', 'FD', 'Other'],
+  Insurance: [],
+  'Mobile Charges': [],
+  'Electricity Charges': [],
+  'Water Charges': [],
   Other: [],
 };
 
