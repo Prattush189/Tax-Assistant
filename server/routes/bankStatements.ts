@@ -8,7 +8,7 @@ import { extractVisionPdf } from '../lib/geminiVisionPdf.js';
 import { splitPdfIntoBatches, runBatchesWithConcurrency } from '../lib/pdfPageChunks.js';
 import { callGeminiJson, type GeminiJsonResult } from '../lib/geminiJson.js';
 import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_TSV_PROMPT, BANK_STATEMENT_CATEGORIES, buildConditionsBlock, countWords, MAX_CONDITION_WORDS } from '../lib/bankStatementPrompt.js';
-import { gemini, GEMINI_CHAT_MODEL_THINK_FB, GEMINI_CHAT_MODEL_T2, costForModel } from '../lib/gemini.js';
+import { gemini, GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, costForModel } from '../lib/gemini.js';
 import { creditsForPages, creditsForCsvRows, PAGES_PER_CREDIT, CSV_ROWS_PER_CREDIT } from '../lib/creditPolicy.js';
 import { enforceTokenQuota } from '../lib/tokenQuota.js';
 import { estimateBankStatementText, estimateBankStatementVision, estimateFromChars } from '../lib/tokenEstimate.js';
@@ -345,14 +345,14 @@ async function extractBankStatementTsv(chunkText: string, maxTokens: number, con
   const PRIMARY_BACKOFFS_MS = [2_000, 5_000, 12_000];
   for (let attempt = 0; attempt < MAX_PRIMARY_ATTEMPTS; attempt++) {
     try {
-      // gemini-2.5-flash supports thinking_budget=0 (reasoning_effort='none').
-      return await extractBankStatementTsvOnce(chunkText, 'gemini-2.5-flash', maxTokens, 'none', conditionsBlock, recordAttempt);
+      // T2 (gemini-2.5-flash-lite) supports thinking_budget=0 — no overhead.
+      return await extractBankStatementTsvOnce(chunkText, GEMINI_CHAT_MODEL_T2, maxTokens, 'none', conditionsBlock, recordAttempt);
     } catch (err) {
       lastErr = err;
       const status = (err as { status?: number })?.status ?? 0;
       const msg = (err as Error).message?.slice(0, 140) ?? '';
       if (tierDone(err)) {
-        console.warn(`[bank-statements] primary gemini-2.5-flash giving up after attempt ${attempt + 1}: ${status || 'no status'} — ${msg}`);
+        console.warn(`[bank-statements] primary ${GEMINI_CHAT_MODEL_T2} giving up after attempt ${attempt + 1}: ${status || 'no status'} — ${msg}`);
         break;
       }
       if (attempt < MAX_PRIMARY_ATTEMPTS - 1) {
@@ -363,21 +363,18 @@ async function extractBankStatementTsv(chunkText: string, maxTokens: number, con
     }
   }
 
-  // Fallback: gemini-3-flash-preview with 2× the output ceiling. Handles the
-  // two failure modes the primary can't cheaply escape — a GA-model blip
-  // that outlasts the primary's 19s retry window, and truncation on dense
-  // chunks that exceed the primary's 8K-token output ceiling.
+  // Fallback: T1 (gemini-3.1-flash-lite-preview) — different model
+  // family, independent capacity. Doubles the output ceiling to absorb
+  // the truncation case the primary can't escape on dense chunks.
   for (let attempt = 0; attempt < MAX_FALLBACK_ATTEMPTS; attempt++) {
     try {
-      // gemini-3-flash-preview can't fully disable thinking but accepts 'low',
-      // which is still dramatically cheaper than the default 'medium' budget.
-      return await extractBankStatementTsvOnce(chunkText, GEMINI_CHAT_MODEL_THINK_FB, maxTokens * 2, 'low', conditionsBlock, recordAttempt);
+      return await extractBankStatementTsvOnce(chunkText, GEMINI_CHAT_MODEL_T1, maxTokens * 2, 'none', conditionsBlock, recordAttempt);
     } catch (err) {
       lastErr = err;
       const status = (err as { status?: number })?.status ?? 0;
       const msg = (err as Error).message?.slice(0, 140) ?? '';
       if (tierDone(err)) {
-        console.warn(`[bank-statements] fallback ${GEMINI_CHAT_MODEL_THINK_FB} giving up after attempt ${attempt + 1}: ${status || 'no status'} — ${msg}`);
+        console.warn(`[bank-statements] fallback ${GEMINI_CHAT_MODEL_T1} giving up after attempt ${attempt + 1}: ${status || 'no status'} — ${msg}`);
         break;
       }
       if (attempt < MAX_FALLBACK_ATTEMPTS - 1) {
@@ -1308,7 +1305,7 @@ router.post(
         const visionOpts = {
           maxTokens: 16_384,
           primaryModel: GEMINI_CHAT_MODEL_T2,
-          fallbackModels: ['gemini-2.5-flash', GEMINI_CHAT_MODEL_THINK_FB],
+          fallbackModels: [GEMINI_CHAT_MODEL_T1],
           retryParseFailures: true,
         };
         const fullPrompt = `${conditionsBlock}${BANK_STATEMENT_PROMPT}`;

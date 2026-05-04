@@ -22,7 +22,7 @@ import { extractVisionPdf } from '../lib/geminiVisionPdf.js';
 import { safeParseJson } from '../lib/geminiJson.js';
 import { pickChatProvider } from '../lib/chatProvider.js';
 import { SseWriter } from '../lib/sseStream.js';
-import { gemini, GEMINI_CHAT_MODEL_THINK_FB, costForModel } from '../lib/gemini.js';
+import { gemini, GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, costForModel } from '../lib/gemini.js';
 import { creditsForPages, creditsForCsvRows, PAGES_PER_CREDIT, CSV_ROWS_PER_CREDIT } from '../lib/creditPolicy.js';
 import { enforceTokenQuota } from '../lib/tokenQuota.js';
 import { estimateLedgerText, estimateLedgerVision, estimateFromChars } from '../lib/tokenEstimate.js';
@@ -564,7 +564,7 @@ async function extractLedgerTsv(chunkText: string, maxTokens: number, recordAtte
   const PRIMARY_BACKOFFS_MS = [2_000, 5_000, 12_000];
   for (let attempt = 0; attempt < MAX_PRIMARY_ATTEMPTS; attempt++) {
     try {
-      return await extractLedgerTsvOnce(chunkText, 'gemini-2.5-flash', maxTokens, 'none', recordAttempt);
+      return await extractLedgerTsvOnce(chunkText, GEMINI_CHAT_MODEL_T2, maxTokens, 'none', recordAttempt);
     } catch (err) {
       lastErr = err;
       const status = (err as { status?: number })?.status ?? 0;
@@ -583,13 +583,13 @@ async function extractLedgerTsv(chunkText: string, maxTokens: number, recordAtte
 
   for (let attempt = 0; attempt < MAX_FALLBACK_ATTEMPTS; attempt++) {
     try {
-      return await extractLedgerTsvOnce(chunkText, GEMINI_CHAT_MODEL_THINK_FB, maxTokens * 2, 'low', recordAttempt);
+      return await extractLedgerTsvOnce(chunkText, GEMINI_CHAT_MODEL_T1, maxTokens * 2, 'none', recordAttempt);
     } catch (err) {
       lastErr = err;
       const status = (err as { status?: number })?.status ?? 0;
       const msg = (err as Error).message?.slice(0, 140) ?? '';
       if (tierDone(err)) {
-        console.warn(`[ledger-scrutiny] fallback ${GEMINI_CHAT_MODEL_THINK_FB} giving up after attempt ${attempt + 1}: ${status || 'no status'} — ${msg}`);
+        console.warn(`[ledger-scrutiny] fallback ${GEMINI_CHAT_MODEL_T1} giving up after attempt ${attempt + 1}: ${status || 'no status'} — ${msg}`);
         break;
       }
       if (attempt < MAX_FALLBACK_ATTEMPTS - 1) {
@@ -900,7 +900,7 @@ async function scrutinizeAccountGroup(
 
   for (let attempt = 0; attempt < MAX_PRIMARY_ATTEMPTS; attempt++) {
     try {
-      return await scrutinizeAccountGroupOnce(extracted, groupAccounts, txPerAccount, totalAccounts, 'gemini-2.5-flash', 16384, recordAttempt);
+      return await scrutinizeAccountGroupOnce(extracted, groupAccounts, txPerAccount, totalAccounts, GEMINI_CHAT_MODEL_T2, 16384, recordAttempt);
     } catch (err) {
       lastErr = err;
       const status = (err as { status?: number })?.status ?? 0;
@@ -913,7 +913,7 @@ async function scrutinizeAccountGroup(
   }
   for (let attempt = 0; attempt < MAX_FALLBACK_ATTEMPTS; attempt++) {
     try {
-      return await scrutinizeAccountGroupOnce(extracted, groupAccounts, txPerAccount, totalAccounts, GEMINI_CHAT_MODEL_THINK_FB, 32768, recordAttempt);
+      return await scrutinizeAccountGroupOnce(extracted, groupAccounts, txPerAccount, totalAccounts, GEMINI_CHAT_MODEL_T1, 32768, recordAttempt);
     } catch (err) {
       lastErr = err;
       if (attempt < MAX_FALLBACK_ATTEMPTS - 1) {
@@ -1024,7 +1024,7 @@ async function runChunkedScrutiny(
 
   const accounts = extracted.accounts;
   if (accounts.length === 0) {
-    return { observations: [], inputTokens: 0, outputTokens: 0, modelUsed: 'gemini-2.5-flash', paused: false };
+    return { observations: [], inputTokens: 0, outputTokens: 0, modelUsed: GEMINI_CHAT_MODEL_T2, paused: false };
   }
   const groups: ExtractedAccount[][] = [];
   for (let i = 0; i < accounts.length; i += ACCOUNTS_PER_CHUNK) {
@@ -1125,7 +1125,7 @@ async function runChunkedScrutiny(
     };
   }).filter((o) => o.message);
 
-  return { observations: observationInputs, inputTokens: totalInput, outputTokens: totalOutput, modelUsed: modelUsed || 'gemini-2.5-flash', paused: pausedFlag };
+  return { observations: observationInputs, inputTokens: totalInput, outputTokens: totalOutput, modelUsed: modelUsed || GEMINI_CHAT_MODEL_T2, paused: pausedFlag };
 }
 
 // ── Routes ──────────────────────────────────────────────────────────────
@@ -1519,7 +1519,7 @@ router.post(
           const inputTok = chunkResults.reduce((s, r) => s + r.inputTokens, 0);
           const outputTok = chunkResults.reduce((s, r) => s + r.outputTokens, 0);
           const cost = chunkResults.reduce((s, r) => s + costForModel(r.modelUsed, r.inputTokens, r.outputTokens), 0);
-          const modelUsed = chunkResults[0]?.modelUsed ?? 'gemini-2.5-flash';
+          const modelUsed = chunkResults[0]?.modelUsed ?? GEMINI_CHAT_MODEL_T2;
           usageRepo.logWithBilling(
             ledgerClientIp,
             req.user.id,
