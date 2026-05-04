@@ -67,16 +67,11 @@ async function callOnce<T>(
   if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY is not configured');
   const url = `${NATIVE_BASE}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
 
-  // Thinking config — Gemini 2.5 family counts internal "thinking"
-  // tokens against maxOutputTokens but doesn't return them in
-  // candidates[].text. Production hit MAX_TOKENS=317 visible tokens
-  // on an 8K budget because the model spent ~7,700 thinking and only
-  // had room for 317 of actual JSON. For deterministic OCR-style
-  // extraction we don't need thinking — set the budget to 0 on the
-  // models that allow it (2.5-flash, 2.5-flash-lite) and to a small
-  // floor on the preview models that don't (gemini-3-flash-preview
-  // doesn't accept 0 but accepts 256).
-  const thinkingBudget = /3-flash-preview/i.test(model) ? 256 : 0;
+  // Thinking budget is always 0 — both active models (T2, T1) accept
+  // it and we don't want internal "thinking" tokens eating the output
+  // budget on deterministic OCR-style extraction. Earlier versions
+  // had a per-model branch for gemini-3-flash-preview which couldn't
+  // fully disable thinking; that model is no longer in the line-up.
   const body = {
     contents: [{
       role: 'user',
@@ -89,7 +84,7 @@ async function callOnce<T>(
       responseMimeType: 'application/json',
       maxOutputTokens: maxTokens,
       temperature: 0,
-      thinkingConfig: { thinkingBudget },
+      thinkingConfig: { thinkingBudget: 0 },
     },
   };
 

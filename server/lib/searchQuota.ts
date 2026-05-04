@@ -1,13 +1,16 @@
 /**
- * Search quota tracker for dual-mode Gemini cascade with dual API key rotation.
+ * Search quota tracker for the two-model Gemini cascade with dual API
+ * key rotation. The line-up tracked by this module is:
  *
- * Gemini 3.x family: 5,000 free searches/month (shared across all 3.x models)
- *   - gemini-3-flash-preview       (Think fallback)
- *   - gemini-3.1-flash-lite-preview (Fast fallback)
+ *   Tier 'gemini-2.5' — gemini-2.5-flash-lite        (primary)
+ *                       1,500 free searches/day per key
+ *   Tier 'gemini-3'   — gemini-3.1-flash-lite-preview (fallback)
+ *                       5,000 free searches/month per key
  *
- * Gemini 2.5 family: 1,500 free searches/day (shared across all 2.5 models)
- *   - gemini-2.5-flash-lite  (Fast primary)
- *   - gemini-2.5-flash       (Think primary)
+ * Tier names ('gemini-3' / 'gemini-2.5') refer to the model FAMILY
+ * the search quota is shared under at Google's end, not the order in
+ * which we route — selectTier() prefers the monthly Gemini 3.x bucket
+ * first because it's the cheaper free quota to burn.
  *
  * Each API key gets its own set of counters.
  * Counters only increment on SUCCESS (not on attempt).
@@ -259,8 +262,8 @@ export function getQuotaStatus() {
       index: i,
       label: k.label,
       active: i === activeKeyIndex,
-      tier1: { model: 'Gemini 3.x family (3 Flash + 3.1 Flash-Lite)', used: k.t1Count, limit: t1Limit, remaining: Math.max(0, t1Limit - k.t1Count), period: 'monthly' },
-      tier2: { model: 'Gemini 2.5 family (Flash + Flash-Lite)', used: k.t2Count, limit: t2Limit, remaining: Math.max(0, t2Limit - k.t2Count), period: 'daily' },
+      tier1: { model: 'Gemini 3.1 Flash-Lite Preview', used: k.t1Count, limit: t1Limit, remaining: Math.max(0, t1Limit - k.t1Count), period: 'monthly' },
+      tier2: { model: 'Gemini 2.5 Flash-Lite', used: k.t2Count, limit: t2Limit, remaining: Math.max(0, t2Limit - k.t2Count), period: 'daily' },
     })),
     totalFreeSearchCapacity: {
       monthly: t1Limit * keys.length,

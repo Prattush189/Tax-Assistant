@@ -213,12 +213,11 @@ async function extractBankStatementTsvOnce(
     role: 'user',
     content: `${conditionsBlock}${BANK_STATEMENT_TSV_PROMPT}\n\nINPUT_TEXT:\n${chunkText}`,
   }];
-  // `reasoning_effort` is the OpenAI-compat knob for Gemini's thinking budget.
-  // Both gemini-2.5-flash and gemini-3-flash-preview are thinking models: by
-  // default they burn a large fraction of `max_tokens` on internal reasoning
-  // before emitting a single TSV row, which was producing finish_reason=length
-  // at 1-59 rows. Transcribing rows from already-extracted text needs no
-  // reasoning, so we drop the budget to the floor for each model.
+  // `reasoning_effort` is the OpenAI-compat knob for Gemini's
+  // thinking budget. Always 'none' on this path — transcribing rows
+  // from already-extracted text has no creative component, so any
+  // thinking tokens just eat into max_tokens and produce truncated
+  // TSV. Both active models (T2, T1) accept 'none'.
   //
   // `temperature: 0` makes the extraction deterministic — without it, the
   // same statement run twice produced different categorizations, amount
@@ -293,19 +292,13 @@ async function extractBankStatementTsvOnce(
  * Retry + fallback wrapper around the TSV extraction.
  *
  * Two-tier Gemini cascade:
- *   - Primary : `gemini-2.5-flash`        — stable GA model, the most reliable
- *                                           flash-tier option for a long
- *                                           JSON-adjacent extraction.
- *   - Fallback: `gemini-3-flash-preview`  — stronger on dense chunks but
- *                                           flakier (400/503 bursts); only
- *                                           asked when the GA model fails.
- *
- * Earlier versions had these reversed. Empirically the preview model was
- * producing intermittent 400 (no body) and 503 (no body) errors that the
- * retry loop couldn't recover from inside one request, while the GA model
- * has been boringly reliable. Putting the reliable one first gets far more
- * statements across the line on the first try, and the preview model still
- * acts as an escape hatch.
+ *   - Primary : T2 (gemini-2.5-flash-lite) — fast, cheap, thinking off.
+ *   - Fallback: T1 (gemini-3.1-flash-lite-preview) — different model
+ *                                                   family, independent
+ *                                                   capacity. Doubled
+ *                                                   output ceiling
+ *                                                   absorbs truncation
+ *                                                   on dense chunks.
  *
  * Retry shape:
  *   - Primary  × 4 attempts, exp backoff 2s/5s/12s with jitter, on 429/5xx.
@@ -1196,7 +1189,7 @@ router.post(
       // second upload of the same file re-runs Gemini and produces
       // slightly different totals than the first run because
       //   - chunks that 503 on one run vs the next get routed to the
-      //     fallback model with different reasoning_effort,
+      //     fallback model (T1 instead of T2),
       //   - the per-row salvage logic (both-debit-credit, trailer-undercount
       //     accept) makes interpretation calls that aren't bit-stable.
       // Reusing the existing row keeps the user's view consistent and
@@ -1276,32 +1269,16 @@ router.post(
         // of 17"). For images (jpeg/png/webp) the OpenAI shim works
         // fine since they're inherently single-page.
         const isPdfFile = mimeType === 'application/pdf' || /\.pdf$/i.test(filename);
-        // Vision fallback path — used only for scanned/image PDFs or direct
-        // image uploads. Digital PDFs get pre-extracted client-side and hit
-        // the faster `pdfText` branch below.
+        // Vision path — used for scanned / image-only PDFs and direct
+        // image uploads. Digital PDFs get pre-extracted client-side
+        // and hit the faster `pdfText` branch below.
         //
-        // Scanned statements are the least deterministic path: OCR/layout
-        // plus full JSON output can produce malformed/truncated JSON, and
-        // the 2.5 family occasionally returns 503 bursts. Use the stronger
-        // OCR model first, a separate-family fallback, a larger JSON budget,
-        // and retry parse failures. Keep this scoped to vision so the
-        // deterministic wizard/CSV paths do not get slower or more costly.
-        //
-        // Three-tier chain: 2.5-flash → 3-flash-preview → 3.1-flash-lite.
-        // Production logs showed both thinking models (2.5-flash and the
-        // preview 3-flash) failing in the same window — 503 bursts on the
-        // GA model followed by parse failures on the preview — leaving the
-        // user with a hard error. Adding the T1 family as a third tier
-        // gives an independent model family to absorb the case where both
-        // thinking models are unhealthy at once. It's faster and lighter,
-        // not as strong on dense OCR, but a slightly weaker extraction is
-        // strictly better than asking the user to retry.
-        // Model order: 2.5-flash-lite primary, escalate to 2.5-flash
-        // and then 3-flash-preview. Empirically, 2.5-flash was over-
-        // thinking dense statements and emitting malformed JSON
-        // tails, while flash-lite produced cleaner extractions on the
-        // same files. Putting the simpler model first also caps cost
-        // on the common case.
+        // Two-tier cascade: T2 primary → T1 fallback. retryParseFailures
+        // covers the dense-OCR case where the model emits a JSON tail
+        // that won't parse — same model + same prompt sometimes
+        // re-samples cleanly. The native generateContent endpoint
+        // disables thinking on both models so the full output budget
+        // is available for the JSON.
         const visionOpts = {
           maxTokens: 16_384,
           primaryModel: GEMINI_CHAT_MODEL_T2,

@@ -536,9 +536,9 @@ async function extractLedgerTsvOnce(
 
 /**
  * Retry + fallback wrapper. Mirrors the bank-statement two-tier cascade:
- *   - Primary : gemini-2.5-flash       — stable GA, most reliable on long TSV.
- *   - Fallback: gemini-3-flash-preview — stronger on dense chunks but flakier;
- *                                        only invoked when the GA model fails.
+ *   - Primary : T2 (gemini-2.5-flash-lite).
+ *   - Fallback: T1 (gemini-3.1-flash-lite-preview), with doubled
+ *               output ceiling.
  *
  * Truncation / trailer-mismatch errors break out of the current tier
  * immediately — retrying the same params on the same model can't fix a
@@ -570,7 +570,7 @@ async function extractLedgerTsv(chunkText: string, maxTokens: number, recordAtte
       const status = (err as { status?: number })?.status ?? 0;
       const msg = (err as Error).message?.slice(0, 140) ?? '';
       if (tierDone(err)) {
-        console.warn(`[ledger-scrutiny] primary gemini-2.5-flash giving up after attempt ${attempt + 1}: ${status || 'no status'} — ${msg}`);
+        console.warn(`[ledger-scrutiny] primary ${GEMINI_CHAT_MODEL_T2} giving up after attempt ${attempt + 1}: ${status || 'no status'} — ${msg}`);
         break;
       }
       if (attempt < MAX_PRIMARY_ATTEMPTS - 1) {
@@ -855,12 +855,10 @@ async function scrutinizeAccountGroupOnce(
   }, {
     // Per-call timeout override: scrutiny chunks pack 8 × 60 = 480
     // transactions into a single Gemini call with 16-24K of output
-    // budget. With Gemini 2.5 Flash's thinking phase eating 5-7K
-    // tokens before generation starts, real wall time on a dense
-    // chunk is 90-150s. The default 90s client timeout was clipping
-    // these mid-stream and surfacing as "Request timed out". 180s
-    // gives comfortable margin without leaving truly hung calls
-    // wedged forever.
+    // budget. Real wall time on a dense chunk is 60-120s on T2; the
+    // default 90s client timeout was clipping these mid-stream on
+    // the slower end. 180s gives comfortable margin without leaving
+    // truly hung calls wedged forever.
     timeout: 180_000,
   });
   const raw = response.choices[0]?.message?.content ?? '{}';
@@ -1011,8 +1009,8 @@ async function runChunkedScrutiny(
   // personal-expense and round-tripping signals for the rubric. The old
   // 200-row digest was paying input cost without proportional accuracy.
   const TX_PER_ACCOUNT = 60;
-  // 6 accounts × 60 tx ≈ 14K input tokens — well under the
-  // gemini-2.5-flash window. Output ceiling is 16K primary / 32K
+  // 6 accounts × 60 tx ≈ 14K input tokens — well under the T2
+  // context window. Output ceiling is 16K primary / 32K
   // fallback, which holds 30+ observations comfortably even on a
   // chunk full of dense bank-account flags. Was 8; dropped to 6 so
   // chunks have more output headroom by default. Edge cases that
@@ -1397,11 +1395,11 @@ router.post(
       } else if (pdfText !== null) {
         extractPath = 'tsv-chunked';
         // ── TSV chunked path (digital PDFs) ─────────────────────────────
-        // Sized to mirror the bank-statement pipeline. 8K-char chunks fit
-        // comfortably inside gemini-2.5-flash with a 16K-token output
-        // budget once thinking is disabled (~500 TSV rows of headroom),
-        // which leaves enough slack for dense Tally exports where a single
-        // narration can run 200+ chars. 50 chunks covers ~150 pages.
+        // Sized to mirror the bank-statement pipeline. 8K-char chunks
+        // fit comfortably inside T2 with a 16K-token output budget
+        // (~500 TSV rows of headroom), which leaves enough slack for
+        // dense Tally exports where a single narration can run 200+
+        // chars. 50 chunks covers ~150 pages.
         ledgerScrutinyRepo.setStatus(job.id, req.user.id, 'extracting');
         const MAX_CHARS_PER_CHUNK = 8_000;
         const MAX_OUTPUT_TOKENS = 16_384;
@@ -1509,11 +1507,11 @@ router.post(
         extracted = normalizeExtraction(extracted);
         rawJson = JSON.stringify(extracted);
 
-        // Aggregate cost across all successful chunks. Price each chunk
-        // by the model that actually produced it (gemini-2.5-flash on the
-        // primary path, gemini-3-flash-preview on the fallback) — using a
-        // flat T2 / Flash-Lite rate here was under-counting by 3-6x
-        // because the chunks never run on Flash-Lite. Failed attempts
+        // Aggregate cost across all successful chunks. Price each
+        // chunk by the model that actually produced it (T2 on the
+        // primary path, T1 on the fallback) — generic flat-rating
+        // would mis-attribute the T1 fallback runs by ~2.5×. Failed
+        // attempts
         // are already logged separately via recordLedgerAttempt.
         try {
           const inputTok = chunkResults.reduce((s, r) => s + r.inputTokens, 0);
