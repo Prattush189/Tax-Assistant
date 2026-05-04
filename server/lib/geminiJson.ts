@@ -16,11 +16,11 @@ export interface GeminiJsonOptions {
   /** Override the fallback model. Ignored if `fallbackModels` is set. */
   fallbackModel?: string;
   /**
-   * Ordered chain of fallback models tried after the primary exhausts. Each
-   * tier gets its own retry loop with exponential backoff on 5xx/429. Use
-   * this when one fallback isn't enough — e.g. the bank-statements vision
-   * path wants a third independent model family for the case where both
-   * thinking models (2.5-flash, 3-flash-preview) are simultaneously flaky.
+   * Ordered chain of fallback models tried after the primary exhausts.
+   * Each tier gets its own retry loop with exponential backoff on
+   * 5xx/429. With the current two-model line-up (T2 → T1) most callers
+   * just leave this unset and use the default; kept extensible for
+   * cases where a route wants additional escalation tiers.
    */
   fallbackModels?: string[];
   /** Pass through to OpenAI SDK — defaults to `{ type: 'json_object' }`. Set to `null` to omit. */
