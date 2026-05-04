@@ -157,18 +157,21 @@ export function UserCard({
               {user.plan}
             </span>
           ) : (
-            <select
-              value={user.plan}
-              onChange={e => onPlanChange(user.id, e.target.value as 'free' | 'pro' | 'enterprise')}
+            // Plan changes go through license issuance now (admin
+            // Licenses tab → Generate License). Showing a static
+            // badge here keeps the at-a-glance plan view; mutation
+            // happens in one place. The dropdown was removed in
+            // licensing Stage 4 — server already 410's direct
+            // POSTs to /api/admin/users/:id/plan.
+            <span
               className={cn(
-                'px-2 py-1 text-xs rounded-md border cursor-pointer',
-                'bg-transparent border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300',
+                'px-2 py-1 text-xs rounded-md border uppercase font-medium',
+                PLAN_BADGE[user.plan] ?? PLAN_BADGE.free,
               )}
+              title="Plan is set by license issuance — open the Licenses tab to change"
             >
-              <option value="free">Free</option>
-              <option value="pro">Pro</option>
-              <option value="enterprise">Enterprise</option>
-            </select>
+              {user.plan}
+            </span>
           )}
         </div>
 
