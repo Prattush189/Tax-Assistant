@@ -204,6 +204,53 @@ export const licenseKeyRepo = {
     }
   },
 
+  /** Admin Licenses tab — paginated list with joined user metadata
+   *  + optional filters. Status / plan filters are exact-match,
+   *  search is case-insensitive substring across name / email / key. */
+  findAllForAdmin(opts: {
+    search?: string | null;
+    plan?: string | null;
+    status?: string | null;
+    limit?: number;
+    offset?: number;
+  } = {}): {
+    rows: Array<LicenseKeyRow & { user_name: string; user_email: string }>;
+    total: number;
+  } {
+    const search = (opts.search ?? '').trim().toLowerCase() || null;
+    const likeSearch = search ? `%${search}%` : null;
+    const plan = opts.plan ?? null;
+    const status = opts.status ?? null;
+    const limit = opts.limit ?? 50;
+    const offset = opts.offset ?? 0;
+    const params = { search, likeSearch, plan, status, limit, offset };
+    const rows = db.prepare(`
+      SELECT lk.*, u.name AS user_name, u.email AS user_email
+      FROM license_keys lk
+      JOIN users u ON u.id = lk.user_id
+      WHERE (@search IS NULL
+        OR LOWER(u.name) LIKE @likeSearch
+        OR LOWER(u.email) LIKE @likeSearch
+        OR LOWER(lk.key) LIKE @likeSearch)
+        AND (@plan IS NULL OR lk.plan = @plan)
+        AND (@status IS NULL OR lk.status = @status)
+      ORDER BY lk.created_at DESC
+      LIMIT @limit OFFSET @offset
+    `).all(params) as Array<LicenseKeyRow & { user_name: string; user_email: string }>;
+    const { count } = db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM license_keys lk
+      JOIN users u ON u.id = lk.user_id
+      WHERE (@search IS NULL
+        OR LOWER(u.name) LIKE @likeSearch
+        OR LOWER(u.email) LIKE @likeSearch
+        OR LOWER(lk.key) LIKE @likeSearch)
+        AND (@plan IS NULL OR lk.plan = @plan)
+        AND (@status IS NULL OR lk.status = @status)
+    `).get(params) as { count: number };
+    return { rows, total: count };
+  },
+
   /** Active licenses by plan — for the admin Overview tile. */
   countActiveByPlan(): Record<string, number> {
     const rows = stmts.countByPlan.all() as Array<{ plan: string; count: number }>;

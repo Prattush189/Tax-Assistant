@@ -48,6 +48,35 @@ const stmts = {
     ORDER BY paid_at DESC
     LIMIT 1
   `),
+  findById: db.prepare('SELECT * FROM payments WHERE id = ?'),
+  /** Admin Payments tab: paginated list with optional case-insensitive
+   *  search on user name / email / order id. */
+  findAllForAdmin: db.prepare(`
+    SELECT p.*, u.name AS user_name, u.email AS user_email, u.billing_details AS billing_details
+    FROM payments p
+    JOIN users u ON u.id = p.user_id
+    WHERE (
+      @search IS NULL
+      OR LOWER(u.name) LIKE @likeSearch
+      OR LOWER(u.email) LIKE @likeSearch
+      OR LOWER(p.razorpay_order_id) LIKE @likeSearch
+      OR LOWER(p.razorpay_payment_id) LIKE @likeSearch
+    )
+    ORDER BY p.created_at DESC
+    LIMIT @limit OFFSET @offset
+  `),
+  countAllForAdmin: db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM payments p
+    JOIN users u ON u.id = p.user_id
+    WHERE (
+      @search IS NULL
+      OR LOWER(u.name) LIKE @likeSearch
+      OR LOWER(u.email) LIKE @likeSearch
+      OR LOWER(p.razorpay_order_id) LIKE @likeSearch
+      OR LOWER(p.razorpay_payment_id) LIKE @likeSearch
+    )
+  `),
 };
 
 export const paymentRepo = {
@@ -81,5 +110,27 @@ export const paymentRepo = {
 
   markFailed(orderId: string): void {
     stmts.markFailed.run(orderId);
+  },
+
+  findById(id: string): PaymentRow | undefined {
+    return stmts.findById.get(id) as PaymentRow | undefined;
+  },
+
+  /** Admin Payments tab — paginated list with joined user metadata
+   *  (name, email, billing_details JSON). Returns rows + total
+   *  count for pagination. */
+  findAllForAdmin(opts: { search?: string | null; limit?: number; offset?: number } = {}): {
+    rows: Array<PaymentRow & { user_name: string; user_email: string; billing_details: string | null }>;
+    total: number;
+  } {
+    const search = (opts.search ?? '').trim().toLowerCase() || null;
+    const likeSearch = search ? `%${search}%` : null;
+    const limit = opts.limit ?? 50;
+    const offset = opts.offset ?? 0;
+    const rows = stmts.findAllForAdmin.all({ search, likeSearch, limit, offset }) as Array<
+      PaymentRow & { user_name: string; user_email: string; billing_details: string | null }
+    >;
+    const { count } = stmts.countAllForAdmin.get({ search, likeSearch }) as { count: number };
+    return { rows, total: count };
   },
 };
