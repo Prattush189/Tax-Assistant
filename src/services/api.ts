@@ -429,6 +429,22 @@ export async function fetchUserUsage(): Promise<UserUsageResponse> {
   return authFetch('/api/usage');
 }
 
+export interface UserLicenseInfo {
+  license: {
+    id: string;
+    key: string;
+    plan: 'free' | 'pro' | 'enterprise' | 'admin';
+    starts_at: string;
+    expires_at: string | null;
+    status: 'active' | 'expired' | 'revoked' | 'superseded';
+  } | null;
+  isActive: boolean;
+}
+
+export async function fetchUserLicense(): Promise<UserLicenseInfo> {
+  return authFetch('/api/usage/license');
+}
+
 // ── Payments API ─────────────────────────────────────────────────────────
 
 export interface CreateOrderResponse {

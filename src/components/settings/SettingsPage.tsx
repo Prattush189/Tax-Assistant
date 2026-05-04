@@ -12,10 +12,12 @@ import {
   updateAccountPassword,
   deleteAccount,
   fetchUserUsage,
+  fetchUserLicense,
   fetchPaymentHistory,
   fetchBillingDetails,
   saveBillingDetails,
   type UserUsageResponse,
+  type UserLicenseInfo,
   type PaymentHistoryResponse,
   type BillingDetails,
 } from '../../services/api';
@@ -163,6 +165,90 @@ function TokenBudgetBar({ tokens, plan, trialDaysLeft, planExpiresAt }: { tokens
         {' '}OR <span className="font-semibold text-gray-700 dark:text-gray-300">{remainingChats.toLocaleString('en-IN')} chats</span>.
         Mix and match.
       </p>
+    </div>
+  );
+}
+
+// ── LicensePanel ──────────────────────────────────────────────────────────────
+// Shows the user's active license key + expiry. The key itself is the
+// answer to "is this account legit?" — surface it copy-able rather
+// than buried so it's easy to share with support / CA when needed.
+
+function LicensePanel({ plan, planExpiresAt }: { plan: string; planExpiresAt: string | null }) {
+  const [info, setInfo] = useState<UserLicenseInfo | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchUserLicense().then(r => { if (!cancelled) setInfo(r); }).catch(() => { /* silent */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  if (!info?.license) {
+    return (
+      <div className="bg-amber-50 dark:bg-amber-900/15 border border-amber-200 dark:border-amber-800/60 rounded-xl p-4 text-xs text-amber-800 dark:text-amber-300">
+        No license key on file. If this is unexpected, please contact support.
+      </div>
+    );
+  }
+  const lic = info.license;
+  const expiresLabel = lic.expires_at
+    ? new Date(lic.expires_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+    : 'Never';
+  const isPaid = plan === 'pro' || plan === 'enterprise';
+  const statusColor = lic.status === 'active'
+    ? 'text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20'
+    : lic.status === 'expired'
+      ? 'text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20'
+      : 'text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-900/20';
+
+  const onCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(lic.key);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch { /* clipboard blocked — silent */ }
+  };
+
+  return (
+    <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4">
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-semibold text-gray-700 dark:text-gray-200">License key</p>
+          <span className={cn('px-2 py-0.5 rounded text-[10px] font-medium uppercase', statusColor)}>{lic.status}</span>
+        </div>
+        <p className="text-[11px] text-gray-500 dark:text-gray-400">
+          {lic.expires_at ? `Expires ${expiresLabel}` : 'Never expires'}
+        </p>
+      </div>
+      <div className="flex items-center gap-2 flex-wrap">
+        <code className="flex-1 min-w-0 px-3 py-2 text-sm font-mono bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-gray-100 break-all">
+          {lic.key}
+        </code>
+        <button
+          type="button"
+          onClick={onCopy}
+          className="px-3 py-2 text-xs font-medium text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg"
+        >
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+        {isPaid && (
+          <a
+            href="/plan"
+            className="px-3 py-2 text-xs font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg"
+          >
+            Renew
+          </a>
+        )}
+      </div>
+      {!info.isActive && lic.status === 'expired' && (
+        <p className="mt-3 text-xs text-amber-700 dark:text-amber-400">
+          This license has expired. {plan === 'free' ? 'Upgrade to Pro to continue using AI features.' : 'Renew to restore access.'}
+        </p>
+      )}
+      {planExpiresAt && lic.status === 'active' && (
+        <p className="mt-2 text-[11px] text-gray-400">Plan record expires {new Date(planExpiresAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}.</p>
+      )}
     </div>
   );
 }
@@ -515,6 +601,7 @@ function BillingTab({ userName, userEmail }: { userName: string; userEmail: stri
           {/* Token budget — the only hard quota gate. Spans full
               width so users see one number to track. */}
           <TokenBudgetBar tokens={usage.tokens} plan={usage.plan} trialDaysLeft={usage.trialDaysLeft} planExpiresAt={usage.planExpiresAt} />
+          <LicensePanel plan={usage.plan} planExpiresAt={usage.planExpiresAt} />
           {/* Per-feature counts kept as soft display below — useful
               for "you've drafted 22 notices this month" but no longer
               gates anything. Compact 3-up grid; smaller font. */}

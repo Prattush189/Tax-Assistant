@@ -149,12 +149,12 @@ export function AdminDashboard() {
     } catch { toast.error('Failed to unsuspend'); }
   };
 
-  const handlePlanChange = async (userId: string, plan: 'free' | 'pro' | 'enterprise') => {
-    try {
-      await adminChangePlan(userId, plan);
-      toast.success(`Plan changed to ${plan}`);
-      loadData();
-    } catch { toast.error('Failed to change plan'); }
+  // Plan changes now go through license issuance (Licenses tab →
+  // Generate License). Kept as a no-op so UserCard can still pass
+  // the prop through without a TS error; clicking the badge in the
+  // user row no longer triggers a server call.
+  const handlePlanChange = async (_userId: string, _plan: 'free' | 'pro' | 'enterprise') => {
+    toast('Use the Licenses tab → Generate License to change a user\'s plan.', { icon: 'ℹ️' });
   };
 
   const [adminTab, setAdminTab] = useState<AdminTab>('overview');

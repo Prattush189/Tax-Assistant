@@ -9,6 +9,7 @@ import { getUserLimits, getEffectivePlan, getTrialEndsAt, isTrialExpired, TRIAL_
 import { getBillingUser, countSeats, SEAT_CAP } from '../lib/billing.js';
 import { CSV_ROWS_PER_CREDIT } from '../lib/creditPolicy.js';
 import { tokensRemainingForUser } from '../lib/tokenQuota.js';
+import { licenseKeyRepo } from '../db/repositories/licenseKeyRepo.js';
 
 const router = Router();
 
@@ -188,6 +189,24 @@ router.get('/', (req: AuthRequest, res: Response) => {
       },
     },
   });
+});
+
+// GET /api/usage/license — current user's active license (or most
+// recent if none active). Used by Settings to show the user's key
+// + expiry + a Renew CTA when relevant.
+router.get('/license', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const user = userRepo.findById(req.user.id);
+  if (!user) { res.status(404).json({ error: 'User not found' }); return; }
+  const active = licenseKeyRepo.loadActive(user.id);
+  if (active) {
+    res.json({ license: active, isActive: true });
+    return;
+  }
+  // Fall back to the most-recent row even if expired/revoked so the
+  // UI can show "your last key was X, expired on Y" instead of empty.
+  const all = licenseKeyRepo.listByUser(user.id);
+  res.json({ license: all[0] ?? null, isActive: false });
 });
 
 export default router;
