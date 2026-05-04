@@ -14,6 +14,7 @@ import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { invitationRepo, hashInviteToken, generateInviteToken, InvitationStatus } from '../db/repositories/invitationRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
+import { issueSignupLicense } from '../lib/issueLicense.js';
 import { canInvite, countSeats, SEAT_CAP } from '../lib/billing.js';
 import { mailerConfigured, sendInviteEmail } from '../lib/mailer.js';
 import { generateTokens, toUserResponse } from './auth.js';
@@ -100,6 +101,11 @@ publicInvitationRouter.post('/accept', async (req: Request, res: Response) => {
   const created = userRepo.create(row.email.toLowerCase(), hashedPassword, name.trim());
   // Invited users skip email OTP — the inviter vouches for them
   userRepo.markEmailVerified(created.id);
+  // Issue a FREE-trial license. Enterprise-pool sharing is a
+  // separate concern handled at plan-resolution time (the invitee's
+  // effective plan resolves through their inviter's billing user
+  // when the inviter has an active paid license).
+  issueSignupLicense(created.id, created.created_at);
   userRepo.setInviterId(created.id, inviter.id);
   invitationRepo.markAccepted(row.id, created.id);
 
