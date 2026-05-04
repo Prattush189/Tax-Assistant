@@ -87,6 +87,12 @@ export function BankStatementUploader({ manager }: Props) {
     file: File;
     wrongPassword: boolean;
   } | null>(null);
+  // True while extractPdfGrid is parsing a freshly-picked PDF, before
+  // the column-mapping wizard opens. Without this the dropzone looks
+  // idle for the 1-3s pdfjs takes on a multi-page statement, which
+  // reads as "did my click register?". Cleared when the wizard opens
+  // OR when we route to the analyze pipeline.
+  const [isReadingPdf, setIsReadingPdf] = useState(false);
 
   // Pull batch progress off the in-flight statement (the placeholder
   // row's analyze_chunks_* fields, polled every 5s by the manager).
@@ -154,9 +160,11 @@ export function BankStatementUploader({ manager }: Props) {
     // (no LLM in the credit/debit decision). Scanned PDFs with no text
     // layer fall through to the legacy multipart vision path.
     if (isPdf) {
+      setIsReadingPdf(true);
       try {
         const grid = await extractPdfGrid(file);
         if (grid && grid.rows.length >= 3) {
+          setIsReadingPdf(false);
           setPendingGrid({ grid, filename: file.name });
           return;
         }
@@ -169,11 +177,13 @@ export function BankStatementUploader({ manager }: Props) {
           // Encrypted bank PDFs are common — pop the unlock prompt
           // instead of falling through to the vision path (which
           // would also fail without the password).
+          setIsReadingPdf(false);
           setPendingPassword({ file, wrongPassword: false });
           return;
         }
         console.warn('[BankStatementUploader] grid extraction failed; falling back to vision:', err);
       }
+      setIsReadingPdf(false);
     }
 
     await analyzeRawFile(file);
@@ -245,13 +255,17 @@ export function BankStatementUploader({ manager }: Props) {
       )}
     >
       <div className="w-16 h-16 rounded-2xl bg-blue-100 dark:bg-blue-900/40 flex items-center justify-center">
-        {manager.isAnalyzing
+        {(manager.isAnalyzing || isReadingPdf)
           ? <Loader2 className="w-8 h-8 text-blue-600 dark:text-blue-400 animate-spin" />
           : <Upload className="w-8 h-8 text-blue-600 dark:text-blue-400" />}
       </div>
       <div className="text-center w-full max-w-md">
         <p className="font-semibold text-gray-800 dark:text-gray-100">
-          {manager.isAnalyzing ? 'Analyzing your statement…' : 'Drop your bank statement here'}
+          {manager.isAnalyzing
+            ? 'Analyzing your statement…'
+            : isReadingPdf
+              ? 'Reading PDF…'
+              : 'Drop your bank statement here'}
         </p>
         {manager.isAnalyzing || chunksTotal > 0 ? (
           <AnalyzeProgressBar
