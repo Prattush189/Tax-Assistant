@@ -386,7 +386,10 @@ export async function adminFetchPlans() {
 
 export interface UsageMetric {
   used: number;
-  limit: number;
+  /** Per-feature limit. Omitted on metrics where the per-feature cap
+   *  was removed (everything except `profiles`). When absent the UI
+   *  should show only `used` and skip the "of Y" segment of the bar. */
+  limit?: number;
   period: 'day' | 'month' | 'total';
   label: string;
   /** Optional unit-conversion multiplier (credits → user-visible unit
@@ -637,7 +640,7 @@ export async function generateNotice(
   }
 }
 
-export async function fetchNotices(): Promise<{ notices: NoticeItem[]; usage: { used: number; limit: number } }> {
+export async function fetchNotices(): Promise<{ notices: NoticeItem[]; usage: { used: number } }> {
   return authFetch('/api/notices');
 }
 
@@ -962,7 +965,7 @@ export interface PartnershipDeedDraft {
 
 export async function fetchPartnershipDeedDrafts(): Promise<{
   drafts: PartnershipDeedDraft[];
-  usage: { used: number; limit: number };
+  usage: { used: number };
 }> {
   return authFetch('/api/partnership-deeds/drafts');
 }

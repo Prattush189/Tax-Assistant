@@ -61,13 +61,6 @@ const router = Router();
 
 const MAX_TOKENS = 8192;
 
-// ── Plan-based notice limits (per month) ──
-const NOTICE_LIMITS: Record<string, number> = {
-  free: 3,
-  pro: 30,
-  enterprise: 100,
-};
-
 function istDateString(): string {
   const today = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
   return `${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')}/${today.getFullYear()}`;
@@ -213,12 +206,10 @@ router.post(
   const actor = userRepo.findById(req.user.id);
   const billingUser = actor ? getBillingUser(actor) : undefined;
   const billingUserId = billingUser?.id ?? req.user.id;
-  const plan = billingUser?.plan ?? actor?.plan ?? 'free';
-  const limit = NOTICE_LIMITS[plan] ?? NOTICE_LIMITS.free;
   const periodStart = (billingUser ?? actor) ? getUsagePeriodStart(billingUser ?? actor!) : new Date(0).toISOString().replace('Z', '');
-  const used = featureUsageRepo.countSinceForBillingUser(billingUserId, 'notice', periodStart);
-  // Per-feature notice count is now SOFT (analytics display only).
-  // Hard quota is the cross-feature token budget.
+  // Per-feature notice cap removed — only the cross-feature token
+  // budget gates now. `used` still tracked for analytics logging.
+  void featureUsageRepo.countSinceForBillingUser(billingUserId, 'notice', periodStart);
   const tokenQuota = enforceTokenQuota(req, res);
   if (!tokenQuota.ok) return;
 
@@ -463,11 +454,12 @@ router.get('/', async (req: AuthRequest, res: Response) => {
   const actor = userRepo.findById(req.user.id);
   const billingUser = actor ? getBillingUser(actor) : undefined;
   const billingUserId = billingUser?.id ?? req.user.id;
-  const plan = billingUser?.plan ?? actor?.plan ?? 'free';
-  const limit = NOTICE_LIMITS[plan] ?? NOTICE_LIMITS.free;
   const periodStart = (billingUser ?? actor) ? getUsagePeriodStart(billingUser ?? actor!) : new Date(0).toISOString().replace('Z', '');
   const used = featureUsageRepo.countSinceForBillingUser(billingUserId, 'notice', periodStart);
-  res.json({ notices, usage: { used, limit } });
+  // `usage.limit` removed — there's no per-feature cap any more, only
+  // the cross-feature token budget. Clients should fall back to
+  // displaying just `used` (analytics counter).
+  res.json({ notices, usage: { used } });
 });
 
 // ── Get single notice ──

@@ -223,7 +223,7 @@ export function UserCard({
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2 text-xs font-medium text-gray-600 dark:text-gray-400">
                     <BarChart3 className="w-3.5 h-3.5" />
-                    This month's token budget ({details.user.effectivePlan})
+                    {details.user.effectivePlan === 'free' ? 'Trial token budget' : 'Yearly token budget'} ({details.user.effectivePlan})
                   </div>
                   <div className="text-xs font-mono text-gray-700 dark:text-gray-200">
                     {formatTokens(details.monthly.tokensUsed)} / {formatTokens(details.monthly.tokenBudget)}

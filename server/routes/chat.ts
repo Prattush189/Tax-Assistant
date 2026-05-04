@@ -133,19 +133,12 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
   const billingUser = getBillingUser(user);
   const billingUserId = billingUser.id;
   const effectivePlan = getEffectivePlan(billingUser);
-  const limits = getUserLimits(billingUser);
-  const used = getMessageCount(billingUserId, limits.messages.period);
 
-  // Per-feature message count is now soft (analytics display). Token
-  // budget is the hard quota — gate it here so a chat that would
-  // push the user over budget rejects cleanly without burning tokens.
+  // Cross-feature token budget is the only quota gate. The per-feature
+  // message-count check that used to live here was already soft (just
+  // logged a warning) and the field it read no longer exists.
   const tokenQuota = enforceTokenQuota(req, res);
   if (!tokenQuota.ok) return;
-  if (used + 1 > limits.messages.limit) {
-    // Soft-display only — log a warning and let it through. Token
-    // budget above is what actually rejects.
-    console.log(`[chat] user ${req.user.id} past per-feature msg limit (${used}/${limits.messages.limit}) but within token budget; allowing`);
-  }
 
   // Check per-message attachment ceiling (separate from monthly attachment quota)
   const attachLimit = ATTACHMENTS_PER_MESSAGE[effectivePlan] ?? 1;

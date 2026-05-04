@@ -55,23 +55,15 @@ router.get('/drafts', (req: AuthRequest, res: Response) => {
 router.post('/drafts', (req: AuthRequest, res: Response) => {
   if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
 
-  // Enforce monthly board resolution limit
   const user = userRepo.findById(req.user.id);
   if (!user) { res.status(401).json({ error: 'User not found' }); return; }
 
+  // Per-feature board-resolution caps were removed in favour of the
+  // single cross-feature token budget (enforceTokenQuota). The user
+  // can draft as many resolutions as their token budget allows.
+  // billingUser is still resolved here because the analytics counter
+  // log below keys on it.
   const billingUser = getBillingUser(user);
-  const limits = getUserLimits(billingUser);
-  const periodStart = getUsagePeriodStart(billingUser);
-  const usedThisMonth = featureUsageRepo.countSinceForBillingUser(billingUser.id, 'board_resolution', periodStart);
-
-  if (usedThisMonth >= limits.boardResolutions) {
-    res.status(429).json({
-      error: `Board resolution limit reached (${limits.boardResolutions}/month). Upgrade your plan for more.`,
-      used: usedThisMonth,
-      limit: limits.boardResolutions,
-    });
-    return;
-  }
 
   const { template_id, name, ui_payload } = req.body ?? {};
 

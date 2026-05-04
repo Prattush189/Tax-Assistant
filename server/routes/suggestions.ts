@@ -11,13 +11,6 @@ import { AuthRequest } from '../types.js';
 
 const router = Router();
 
-// Monthly AI suggestion limits per plan
-const MONTHLY_LIMITS: Record<string, number> = {
-  free: 50,
-  pro: 200,
-  enterprise: 1000,
-};
-
 const SUGGESTION_PROMPT = `You are an expert Indian tax advisor. Given the user's income and deduction details, provide exactly 5 personalized tax-saving suggestions.
 
 For each suggestion, return a JSON array with objects containing:
@@ -37,15 +30,13 @@ router.post('/optimize', async (req: AuthRequest, res: Response) => {
     return;
   }
 
-  // Get plan + monthly limit from the BILLING (pool) user
+  // Resolve billing user (downstream usage logging needs it).
   const actor = userRepo.findById(req.user.id);
   const billingUser = actor ? getBillingUser(actor) : undefined;
   const billingUserId = billingUser?.id ?? req.user.id;
-  const plan = billingUser?.plan ?? actor?.plan ?? 'free';
-  const monthlyLimit = MONTHLY_LIMITS[plan] ?? 50;
 
-  // Token-budget gate — the only HARD quota check now. Per-feature
-  // count below stays for analytics display.
+  // Token-budget gate — the only quota check. Per-feature limits
+  // were removed.
   const tokenQuota = enforceTokenQuota(req, res);
   if (!tokenQuota.ok) return;
   const periodStart = (billingUser ?? actor) ? getUsagePeriodStart(billingUser ?? actor!) : new Date(0).toISOString().replace('Z', '');
@@ -94,7 +85,7 @@ Suggest 5 personalized tax-saving strategies.`;
 
     res.json({
       suggestions,
-      usage: { used: usedThisMonth + 1, limit: monthlyLimit },
+      usage: { used: usedThisMonth + 1 },
     });
   } catch (err) {
     console.error('[suggestions] Error:', err);

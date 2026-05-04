@@ -183,12 +183,11 @@ function enforceQuota(
     return { ok: false };
   }
   const billingUser = getBillingUser(actor);
-  // Plan limit is now interpreted as a credit cap (1 credit = 10
-  // ledger pages). Same number, far more capacity per credit since
-  // a typical ledger run is one job, but a 200-page export now spans
-  // 20 credits — preventing huge ledgers from consuming a whole
-  // month of allowance in one call.
-  const creditsLimit = getUserLimits(billingUser).ledgerScrutiny;
+  // Per-feature ledger-scrutiny credit cap removed in favour of the
+  // single cross-feature token budget. We still surface the analytics
+  // counter (creditsUsed) so the dashboard can show "X ledger pages
+  // analysed this period", but creditsLimit/creditsRemaining are
+  // synthesised as 0 — UI should hide the "of Y" portion.
   const periodStart = getUsagePeriodStart(billingUser);
   let creditsUsed = 0;
   try {
@@ -196,11 +195,7 @@ function enforceQuota(
   } catch (err) {
     console.error('[ledger-scrutiny] usage read failed', err);
   }
-  const creditsRemaining = Math.max(0, creditsLimit - creditsUsed);
-  // No longer hard-rejects on per-feature credits — token-budget gate
-  // upstream (enforceTokenQuota) is the only quota gate. Per-feature
-  // counters here stay for analytics display only.
-  return { ok: true, billingUserId: billingUser.id, plan: billingUser.plan, creditsLimit, creditsUsed, creditsRemaining };
+  return { ok: true, billingUserId: billingUser.id, plan: billingUser.plan, creditsLimit: 0, creditsUsed, creditsRemaining: 0 };
 }
 
 // ── Serializers ─────────────────────────────────────────────────────────
@@ -1141,23 +1136,20 @@ router.get('/', (req: AuthRequest, res: Response) => {
   const rows = ledgerScrutinyRepo.listByUser(req.user.id);
   const actor = userRepo.findById(req.user.id);
   const billingUser = actor ? getBillingUser(actor) : null;
-  const limits = billingUser ? getUserLimits(billingUser) : null;
   const periodStart = billingUser ? getUsagePeriodStart(billingUser) : new Date(0).toISOString().replace('Z', '');
   const creditsUsed = billingUser
     ? featureUsageRepo.sumCreditsSinceForBillingUser(billingUser.id, 'ledger_scrutiny', periodStart)
     : 0;
-  const creditsLimit = limits?.ledgerScrutiny ?? 0;
+  // Per-feature limit removed — only the cross-feature token budget
+  // gates now. `limit` / `creditsLimit` reported as 0 so the UI can
+  // hide the "of Y" portion of the usage bar.
   res.json({
     jobs: rows.map(serializeJob),
     usage: {
-      // Legacy fields kept for any caller still reading them; both
-      // values now refer to credits, not run counts.
       used: creditsUsed,
-      limit: creditsLimit,
-      // Credit accounting fields the UI uses to render the percentage
-      // bar and the "X / Y pages" / "X / Y rows" subtitle.
+      limit: 0,
       creditsUsed,
-      creditsLimit,
+      creditsLimit: 0,
       pagesPerCredit: PAGES_PER_CREDIT.ledger_scrutiny,
       csvRowsPerCredit: CSV_ROWS_PER_CREDIT.ledger_scrutiny ?? 0,
     },
