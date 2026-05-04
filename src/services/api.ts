@@ -1320,6 +1320,12 @@ export interface RecentApiCall {
   model: string | null;
   input_tokens: number;
   output_tokens: number;
+  /** Pre-flight estimate stored on the summary row only — 0 on
+   *  per-chunk / failure / cancel rows. Used for the Δ% column. */
+  estimated_tokens: number;
+  /** Per-row weighted tokens (input × wIn + output × wOut for the
+   *  row's model). What the cross-feature quota gate sums. */
+  weighted_tokens: number;
   cost: number;
   cost_inr: number;
   search_used: boolean;

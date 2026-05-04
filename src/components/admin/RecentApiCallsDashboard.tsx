@@ -170,6 +170,8 @@ export function RecentApiCallsDashboard() {
                 <th className="text-center px-3 py-2 text-gray-500 font-medium">Plugin</th>
                 <th className="text-right px-3 py-2 text-gray-500 font-medium">In tok</th>
                 <th className="text-right px-3 py-2 text-gray-500 font-medium">Out tok</th>
+                <th className="text-right px-3 py-2 text-gray-500 font-medium" title="Pre-flight token estimate from the quota gate. Only set on the summary row of a request; — when not estimated.">Est.</th>
+                <th className="text-right px-3 py-2 text-gray-500 font-medium" title="Estimate drift: (actual − estimate) / estimate. Amber = under-estimated by 20-50%, rose = under-estimated by >50% (the dangerous direction). Over-estimates are neutral grey.">Δ %</th>
                 <th className="text-right px-3 py-2 text-gray-500 font-medium" title="User-input size — txns for bank/ledger, pages for notice/document, msgs for chat">User input</th>
                 <th className="text-right px-3 py-2 text-gray-500 font-medium">Cost</th>
                 <th className="text-right px-3 py-2 text-gray-500 font-medium" title="Cost per user-input unit (cost ÷ input units)">₹ / unit</th>
@@ -224,6 +226,28 @@ export function RecentApiCallsDashboard() {
                     </td>
                     <td className="px-3 py-2 text-right text-gray-500">{fmtTokens(c.input_tokens)}</td>
                     <td className="px-3 py-2 text-right text-gray-500">{fmtTokens(c.output_tokens)}</td>
+                    <td className="px-3 py-2 text-right font-mono text-gray-500 dark:text-gray-400">
+                      {c.estimated_tokens > 0 ? fmtTokens(c.estimated_tokens) : '—'}
+                    </td>
+                    <td className={cn(
+                      'px-3 py-2 text-right font-mono whitespace-nowrap',
+                      // Same drift-colouring rule as UserCard. Under-estimate
+                      // (actual > estimate) is the dangerous direction —
+                      // amber at >20%, rose at >50%. Over-estimate stays
+                      // neutral grey.
+                      (() => {
+                        if (c.estimated_tokens <= 0) return 'text-gray-400';
+                        const actual = c.input_tokens + c.output_tokens;
+                        const drift = (actual - c.estimated_tokens) / c.estimated_tokens;
+                        if (drift > 0.5) return 'text-rose-500 dark:text-rose-400';
+                        if (drift > 0.2) return 'text-amber-500 dark:text-amber-400';
+                        return 'text-gray-500 dark:text-gray-400';
+                      })(),
+                    )}>
+                      {c.estimated_tokens > 0
+                        ? `${(((c.input_tokens + c.output_tokens) - c.estimated_tokens) / c.estimated_tokens * 100).toFixed(0)}%`
+                        : '—'}
+                    </td>
                     <td className="px-3 py-2 text-right text-gray-700 dark:text-gray-300 whitespace-nowrap">
                       {inputUnitLabel(c.category, c.input_units ?? 0)}
                     </td>
@@ -236,7 +260,7 @@ export function RecentApiCallsDashboard() {
               })}
               {calls.length === 0 && !loading && (
                 <tr>
-                  <td colSpan={12} className="px-3 py-8 text-center text-gray-400">No API calls recorded</td>
+                  <td colSpan={14} className="px-3 py-8 text-center text-gray-400">No API calls recorded</td>
                 </tr>
               )}
             </tbody>
