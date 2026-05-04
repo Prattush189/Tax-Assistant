@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Cpu, Zap, Shield, Key, Save, RotateCcw, FileText, Landmark } from 'lucide-react';
+import { Cpu, Zap, Shield, Key, Save, RotateCcw } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { cn } from '../../lib/utils';
 import {
@@ -23,21 +23,28 @@ function fmtTokens(n: number): string {
   return String(n);
 }
 
+// Bar colours and human labels for the per-model breakdown table.
+// Active models live alongside "(retired)" entries so historic
+// api_usage rows logged before the trim still render with a sensible
+// label instead of the raw string. Add new active models above the
+// retired block so they get a distinct colour.
 const MODEL_COLORS: Record<string, string> = {
-  'claude-haiku-4-5': 'bg-orange-500',
-  'gemini-3-flash-preview': 'bg-purple-500',
-  'gemini-3.1-flash-lite-preview': 'bg-violet-400',
-  'gemini-2.5-flash-lite': 'bg-blue-500',
-  'gemini-2.5-flash': 'bg-sky-400',
-  'unknown': 'bg-gray-400',
+  'gemini-2.5-flash-lite':         'bg-blue-500',     // T2 — active primary
+  'gemini-3.1-flash-lite-preview': 'bg-violet-400',   // T1 — active fallback
+  // Retired — kept only so historic rows are still recognisable.
+  'gemini-3-flash-preview':        'bg-gray-400',
+  'gemini-2.5-flash':              'bg-gray-400',
+  'claude-haiku-4-5':              'bg-gray-400',
+  'unknown':                       'bg-gray-400',
 };
 
 const MODEL_LABELS: Record<string, string> = {
-  'claude-haiku-4-5': 'Claude Haiku 4.5 (Notices)',
-  'gemini-3-flash-preview': 'Gemini 3 Flash (Notices Fallback)',
-  'gemini-3.1-flash-lite-preview': 'Gemini 3.1 Flash-Lite (Chat Fallback)',
-  'gemini-2.5-flash-lite': 'Gemini 2.5 Flash-Lite (Chat + Suggestions + Bank Statements)',
-  'gemini-2.5-flash': 'Gemini 2.5 Flash (Bank Statements Escalation)',
+  'gemini-2.5-flash-lite':         'Gemini 2.5 Flash-Lite (primary, all features)',
+  'gemini-3.1-flash-lite-preview': 'Gemini 3.1 Flash-Lite (fallback, all features)',
+  // Retired models still appear in historic rows.
+  'gemini-3-flash-preview':        'Gemini 3 Flash Preview (retired)',
+  'gemini-2.5-flash':              'Gemini 2.5 Flash (retired)',
+  'claude-haiku-4-5':              'Claude Haiku 4.5 (retired)',
 };
 
 interface ModelEntry {
@@ -163,50 +170,31 @@ export function ModelUsageDashboard() {
         </div>
       </div>
 
-      {/* Chat model cascade (single-tier, post Think-mode removal) */}
+      {/* Active model cascade. Same two-tier line-up across every AI
+          feature now — chat, notices, suggestions, bank-statement
+          analysis, ledger scrutiny, document upload, Form 16 import. */}
       <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5">
-        <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1">Chat Cascade</h3>
-        <p className="text-[11px] text-gray-500 dark:text-gray-400 mb-4">Single-tier (1 credit per message). Think mode has been retired — every chat message now uses the Flash-Lite cascade below.</p>
+        <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1">Model Cascade</h3>
+        <p className="text-[11px] text-gray-500 dark:text-gray-400 mb-4">
+          Two-tier cascade used by every AI feature: chat, notices, suggestions, bank-statement analysis, ledger scrutiny, document upload, Form 16 import. The previous "think-tier" cascade (gemini-2.5-flash, gemini-3-flash-preview) is retired — those models charged 5–7× per token with no proportional reliability gain on the structured-output workloads we run.
+        </p>
         <div className="rounded-xl border-2 border-blue-400 bg-blue-50 dark:bg-blue-900/10 p-4">
           <div className="flex items-center gap-2 mb-3">
             <Zap className="w-4 h-4 text-blue-500" />
-            <span className="text-xs font-bold uppercase text-blue-700 dark:text-blue-400">Chat (1 credit)</span>
+            <span className="text-xs font-bold uppercase text-blue-700 dark:text-blue-400">All AI features</span>
           </div>
           <div className="space-y-2">
             <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold text-blue-500 bg-blue-100 dark:bg-blue-900/30 px-1.5 py-0.5 rounded">PRIMARY</span>
+              <span className="text-[10px] font-bold text-blue-500 bg-blue-100 dark:bg-blue-900/30 px-1.5 py-0.5 rounded">PRIMARY (T2)</span>
               <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Gemini 2.5 Flash-Lite</span>
+              <span className="text-[10px] text-gray-500 dark:text-gray-400">$0.10 in / $0.40 out per 1M</span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold text-violet-500 bg-violet-100 dark:bg-violet-900/30 px-1.5 py-0.5 rounded">FALLBACK</span>
-              <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Gemini 3.1 Flash-Lite</span>
+              <span className="text-[10px] font-bold text-violet-500 bg-violet-100 dark:bg-violet-900/30 px-1.5 py-0.5 rounded">FALLBACK (T1)</span>
+              <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Gemini 3.1 Flash-Lite Preview</span>
+              <span className="text-[10px] text-gray-500 dark:text-gray-400">$0.25 in / $1.50 out per 1M</span>
             </div>
-            <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">4,096 tokens | Selective web search | 2.5 family: 1,500 RPD, 3.x family: 5,000/month</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Think-tier models still power these non-chat AI features */}
-      <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5">
-        <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1 flex items-center gap-2">
-          <Shield className="w-4 h-4 text-purple-500" />
-          Other AI Features (Think-tier Models)
-        </h3>
-        <p className="text-[11px] text-gray-500 dark:text-gray-400 mb-3">Think-tier Gemini models are retained for heavier non-chat workloads.</p>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div className="rounded-xl border border-purple-200 dark:border-purple-800 bg-purple-50 dark:bg-purple-900/10 p-3">
-            <div className="flex items-center gap-2 mb-1">
-              <FileText className="w-3.5 h-3.5 text-purple-500" />
-              <span className="text-xs font-semibold text-gray-900 dark:text-gray-100">Notice Drafting</span>
-            </div>
-            <p className="text-[11px] text-gray-500 dark:text-gray-400">Claude Haiku 4.5 primary, Gemini 3 Flash Preview fallback.</p>
-          </div>
-          <div className="rounded-xl border border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-900/10 p-3">
-            <div className="flex items-center gap-2 mb-1">
-              <Landmark className="w-3.5 h-3.5 text-sky-500" />
-              <span className="text-xs font-semibold text-gray-900 dark:text-gray-100">Bank-statement Escalation</span>
-            </div>
-            <p className="text-[11px] text-gray-500 dark:text-gray-400">Escalates to Gemini 2.5 Flash on long/complex statement chunks.</p>
+            <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">Thinking disabled on both. Search grounding for chat: 2.5 family 1,500/day, 3.x family 5,000/month — limits below.</p>
           </div>
         </div>
       </div>
@@ -278,7 +266,7 @@ export function ModelUsageDashboard() {
                 Free-Tier Limit Overrides
               </h3>
               <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
-                Lower the Gemini search-grounding limits below the free-tier maximum. Values above the default are clamped — admin cannot raise limits above free tier.
+                Lower the AI search-grounding limits below the free-tier maximum. Values above the default are clamped — admin cannot raise limits above free tier.
               </p>
             </div>
             <button
@@ -352,7 +340,7 @@ export function ModelUsageDashboard() {
             Active API Key
           </h3>
           <p className="text-[11px] text-gray-500 dark:text-gray-400 mb-3">
-            Chooses which Gemini API key is used as the primary for chat requests. Fallback rotation still considers all keys.
+            Chooses which API key is used as the primary for chat requests. Fallback rotation still considers all keys.
           </p>
           <div className="space-y-2">
             {config.keys.map(k => {
@@ -406,16 +394,16 @@ export function ModelUsageDashboard() {
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <QuotaCard
-                label={key.tier1?.model ?? 'Gemini 3.x family'}
-                tier="3.x Pool"
+                label={key.tier1?.model ?? 'Gemini 3.1 Flash-Lite Preview'}
+                tier="3.x Pool (T1 fallback)"
                 used={key.tier1?.used ?? 0}
                 limit={key.tier1?.limit ?? 5000}
                 period={key.tier1?.period ?? 'monthly'}
                 color="purple"
               />
               <QuotaCard
-                label={key.tier2?.model ?? 'Gemini 2.5 family'}
-                tier="2.5 Pool"
+                label={key.tier2?.model ?? 'Gemini 2.5 Flash-Lite'}
+                tier="2.5 Pool (T2 primary)"
                 used={key.tier2?.used ?? 0}
                 limit={key.tier2?.limit ?? 1500}
                 period={key.tier2?.period ?? 'daily'}
