@@ -25,6 +25,7 @@ export interface UserRow {
   subscription_status: string | null;       // 'active' | 'halted' | 'cancelled' | 'completed' | null
   renewal_reminder_sent_at: string | null;  // last time 48hr reminder email was sent
   billing_details: string | null;           // JSON — BillingDetails
+  license_key_id: string | null;            // FK to license_keys.id — current active license
   created_at: string;
   updated_at: string;
 }

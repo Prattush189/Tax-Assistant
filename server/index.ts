@@ -43,6 +43,7 @@ import {
 } from './middleware/rateLimiter.js';
 import { startRenewalReminderJob } from './jobs/renewalReminder.js';
 import { startStuckJobSweeper } from './lib/sweepStuckJobs.js';
+import { licenseKeyRepo } from './db/repositories/licenseKeyRepo.js';
 import helmet from 'helmet';
 import cors from 'cors';
 import path from 'path';
@@ -182,6 +183,16 @@ if (process.env.NODE_ENV === 'production') {
 
 app.listen(PORT, () => {
   console.log(`[API] Server running on :${PORT} (${process.env.NODE_ENV ?? 'development'})`);
+
+  // License-key backfill — issues keys for any user that's been
+  // around since before the licensing system shipped. Idempotent.
+  // Sweeps expired keys before returning so the gate has a clean
+  // baseline for the first request.
+  try {
+    licenseKeyRepo.backfillExistingUsers();
+  } catch (e) {
+    console.error('[boot] license-key backfill failed:', (e as Error).message);
+  }
 
   // Start 48-hour renewal reminder email job (runs hourly)
   startRenewalReminderJob();

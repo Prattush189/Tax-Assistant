@@ -533,6 +533,47 @@ if (!colNames.includes('billing_details')) {
   db.exec("ALTER TABLE users ADD COLUMN billing_details TEXT");
   // JSON: { name, addressLine1, addressLine2?, city, state, pincode, gstin? }
 }
+// Active license key id (FK to license_keys.id). Set by:
+//   - Razorpay webhook on successful payment
+//   - Free-plan signup (auto-issues a 30-day FREE- key)
+//   - Admin signup (auto-issues a never-expiring ADMIN- key)
+//   - Admin "Generate License" UI for offline payments
+// Plan resolution always consults this column first; users.plan is now
+// a denormalised cache that mirrors the active license's plan.
+if (!colNames.includes('license_key_id')) {
+  db.exec("ALTER TABLE users ADD COLUMN license_key_id TEXT");
+}
+
+// license_keys — every plan grant lives here. Includes free trials
+// and admin grants. plan='admin' rows have expires_at = NULL (never
+// expires). Renewal generates a NEW row with status='active' and
+// supersedes the previous one (status='superseded') so we keep an
+// audit trail of paid periods rather than overwriting expires_at.
+db.exec(`CREATE TABLE IF NOT EXISTS license_keys (
+  id TEXT PRIMARY KEY,
+  key TEXT NOT NULL UNIQUE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  plan TEXT NOT NULL,
+  starts_at TEXT NOT NULL,
+  expires_at TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  generated_via TEXT NOT NULL,
+  payment_id TEXT REFERENCES payments(id) ON DELETE SET NULL,
+  issued_by_admin_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  issued_notes TEXT,
+  superseded_by_id TEXT REFERENCES license_keys(id) ON DELETE SET NULL,
+  revoked_at TEXT,
+  revoke_reason TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+)`);
+db.exec("CREATE INDEX IF NOT EXISTS idx_license_keys_user_id ON license_keys(user_id)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_license_keys_status ON license_keys(status)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_license_keys_expires_at ON license_keys(expires_at)");
+
+// Backfill of license keys for existing users runs from server/index.ts
+// on boot via licenseKeyRepo.backfillExistingUsers(). It needs both this
+// module and licenseKeyRepo to be fully loaded, which can't be done
+// inline here without making the module async. Schema only at this site.
 
 // razorpay_plan_cache — stores the 4 Razorpay Plan IDs so we only create them once.
 // Key: e.g. 'pro_monthly' | 'pro_yearly' | 'enterprise_monthly' | 'enterprise_yearly'
