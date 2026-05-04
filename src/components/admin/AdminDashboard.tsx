@@ -229,7 +229,7 @@ export function AdminDashboard() {
             <button
               onClick={() => setResetOpen(true)}
               disabled={resetPending}
-              title="Reset my own monthly usage counters to 0%"
+              title="Reset my own usage counters to 0%"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-amber-200 dark:border-amber-800/60 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-900/20 rounded-lg transition-colors disabled:opacity-50"
             >
               <RotateCcw className={cn('w-3.5 h-3.5', resetPending && 'animate-spin')} />
@@ -470,8 +470,8 @@ export function AdminDashboard() {
       </div>
       <ConfirmDialog
         open={resetOpen}
-        title="Reset your monthly usage?"
-        description="This wipes THIS month's quota counters for your account only — all bars will return to 0%. Cost history, transactions, and saved drafts are untouched. Use for testing or after hitting a limit during QA."
+        title="Reset your usage counters?"
+        description="This wipes the current period's quota counters for your account only — all bars will return to 0%. Cost history, transactions, and saved drafts are untouched. Use for testing or after hitting a limit during QA."
         confirmLabel="Reset usage"
         cancelLabel="Keep current"
         destructive

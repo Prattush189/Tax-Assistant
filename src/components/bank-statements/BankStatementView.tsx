@@ -217,7 +217,7 @@ export function BankStatementView({ manager }: Props) {
           <div className="rounded-2xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/30 p-5">
             <p className="font-semibold text-gray-800 dark:text-gray-200">Cancelled</p>
             <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
-              You cancelled this analysis. The slot was counted toward your monthly limit.
+              You cancelled this analysis. Tokens already consumed count toward your token budget.
             </p>
           </div>
         )}
@@ -234,7 +234,7 @@ export function BankStatementView({ manager }: Props) {
       <ConfirmDialog
         open={cancelOpen}
         title="Cancel this analysis?"
-        description="It will still count toward your monthly limit. The analysis can't be resumed once cancelled."
+        description="Tokens already consumed will still count toward your token budget. The analysis can't be resumed once cancelled."
         confirmLabel="Cancel analysis"
         cancelLabel="Keep running"
         destructive
