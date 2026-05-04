@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { Download, Trash2 } from 'lucide-react';
+import { Download, Trash2, Filter } from 'lucide-react';
 import { formatINRPrecise, formatDate } from '../../lib/utils';
 import { BankStatementDetail } from '../../hooks/useBankStatementManager';
 import { downloadBankStatementCsv } from '../../services/api';
+import { CustomExportDialog } from './CustomExportDialog';
 
 interface Props {
   detail: BankStatementDetail;
@@ -13,6 +14,7 @@ export function BankStatementSummary({ detail, onDelete }: Props) {
   const { statement } = detail;
   const net = statement.totalInflow - statement.totalOutflow;
   const [downloading, setDownloading] = useState(false);
+  const [customOpen, setCustomOpen] = useState(false);
   // Disable destructive / export actions while the statement is
   // mid-analysis. CSV would download an empty file; Delete would
   // race the in-flight Gemini chunks and confuse the analyze
@@ -52,6 +54,16 @@ export function BankStatementSummary({ detail, onDelete }: Props) {
         <div className="flex items-center gap-2">
           <button
             type="button"
+            onClick={() => setCustomOpen(true)}
+            disabled={isRunning || detail.transactions.length === 0}
+            title={isRunning ? 'Wait for the analysis to finish before exporting' : 'Filter by direction, category, amount, or date and export the matching subset'}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Filter className="w-4 h-4" />
+            Custom
+          </button>
+          <button
+            type="button"
             onClick={handleCsvDownload}
             disabled={downloading || isRunning}
             title={isRunning ? "Wait for the analysis to finish before exporting" : undefined}
@@ -89,6 +101,13 @@ export function BankStatementSummary({ detail, onDelete }: Props) {
           </p>
         </div>
       </div>
+      {customOpen && (
+        <CustomExportDialog
+          transactions={detail.transactions}
+          filenameBase={statement.name ?? statement.bankName ?? 'statement'}
+          onClose={() => setCustomOpen(false)}
+        />
+      )}
     </div>
   );
 }

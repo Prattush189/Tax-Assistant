@@ -1,10 +1,18 @@
 import { jsPDF } from 'jspdf';
 import type { LedgerScrutinyDetail, LedgerScrutinyObservation } from '../../services/api';
 
-const MARGIN = 14;
+// Page geometry. MARGIN is symmetric (left + right + top + bottom) and
+// 18mm gives a comfortable visual gutter on A4 — 14mm was producing
+// reports where amount values like "Rs. 2,62,879" sat flush against
+// the right print edge with no breathing room.
+const MARGIN = 18;
 const PAGE_W = 210;
 const PAGE_H = 297;
 const LINE = 5;
+// Right edge of the printable area. Used by every element that
+// right-aligns text or that needs the actual content boundary —
+// amount values, separator lines, the disclaimer wrap width.
+const CONTENT_R = PAGE_W - MARGIN;
 
 function fmtINR(n: number | null | undefined): string {
   if (n === null || n === undefined || !Number.isFinite(n)) return '-';
