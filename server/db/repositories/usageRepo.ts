@@ -1,4 +1,5 @@
 import db from '../index.js';
+import { computeWeightedTokens } from '../../lib/modelWeights.js';
 
 export interface UsageByIp {
   ip: string;
@@ -37,7 +38,7 @@ const stmts = {
     'INSERT INTO api_usage (ip, user_id, input_tokens, output_tokens, cost, is_plugin) VALUES (?, ?, ?, ?, ?, ?)'
   ),
   logWithBilling: db.prepare(
-    'INSERT INTO api_usage (ip, user_id, billing_user_id, input_tokens, output_tokens, cost, is_plugin, model, search_used, category, input_units, status, estimated_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO api_usage (ip, user_id, billing_user_id, input_tokens, output_tokens, cost, is_plugin, model, search_used, category, input_units, status, estimated_tokens, weighted_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ),
   // Token quota query: sum input + output tokens for the current month
   // for THIS billing user, EXCLUDING failed calls. Cancelled calls
@@ -51,9 +52,16 @@ const stmts = {
   // this fallback, the admin "this period" widget reads 0 while the
   // cumulative "Total tokens" tile reads the real number — the mismatch
   // we hit on the Suresh Sethi free account.
+  // Weighted tokens — what the cross-feature quota gate sums. Each
+  // row's weighted_tokens column was computed at insertion time from
+  // input_tokens × wIn + output_tokens × wOut for that row's model.
+  // Falls back to (input + output) when weighted_tokens is 0 so the
+  // gate stays correct for any row written before the column was
+  // populated (the boot backfill should fill all of them, but this
+  // is defence in depth).
   sumTokensThisMonthByBillingUser: db.prepare(`
     SELECT
-      COALESCE(SUM(input_tokens + output_tokens), 0) AS tokens
+      COALESCE(SUM(CASE WHEN weighted_tokens > 0 THEN weighted_tokens ELSE (input_tokens + output_tokens) END), 0) AS tokens
     FROM api_usage
     WHERE (billing_user_id = ? OR (billing_user_id IS NULL AND user_id = ?))
       AND created_at >= ?
@@ -245,7 +253,8 @@ export const usageRepo = {
      *  from double-counting a single logical request. */
     estimatedTokens?: number,
   ): void {
-    stmts.logWithBilling.run(ip, userId, billingUserId, inputTokens, outputTokens, cost, isPlugin ? 1 : 0, model ?? null, searchUsed ? 1 : 0, category ?? null, inputUnits ?? 0, status ?? 'success', estimatedTokens ?? 0);
+    const weighted = computeWeightedTokens(model, inputTokens, outputTokens);
+    stmts.logWithBilling.run(ip, userId, billingUserId, inputTokens, outputTokens, cost, isPlugin ? 1 : 0, model ?? null, searchUsed ? 1 : 0, category ?? null, inputUnits ?? 0, status ?? 'success', estimatedTokens ?? 0, weighted);
   },
 
   /** Sum tokens (input+output) used since `since` by this billing user,
@@ -335,5 +344,31 @@ export const usageRepo = {
   countRecentRequests(): number {
     const row = analyticsStmts.recentRequestsCount.get() as { count: number };
     return row.count;
+  },
+
+  /**
+   * One-shot backfill — computes weighted_tokens for every api_usage
+   * row that's still 0. Called from server/index.ts on boot. Idempotent;
+   * a row that already has weighted_tokens > 0 is skipped via the WHERE
+   * clause. Wrapped in a transaction so the whole batch commits or
+   * rolls back together.
+   */
+  backfillWeightedTokens(): { updated: number } {
+    const rows = db.prepare(`
+      SELECT id, model, input_tokens, output_tokens
+      FROM api_usage
+      WHERE weighted_tokens = 0
+        AND (input_tokens > 0 OR output_tokens > 0)
+    `).all() as Array<{ id: number; model: string | null; input_tokens: number; output_tokens: number }>;
+    if (rows.length === 0) return { updated: 0 };
+    const upd = db.prepare('UPDATE api_usage SET weighted_tokens = ? WHERE id = ?');
+    const tx = db.transaction(() => {
+      for (const r of rows) {
+        upd.run(computeWeightedTokens(r.model, r.input_tokens, r.output_tokens), r.id);
+      }
+    });
+    tx();
+    console.log(`[usage-backfill] weighted_tokens populated for ${rows.length} row(s)`);
+    return { updated: rows.length };
   },
 };

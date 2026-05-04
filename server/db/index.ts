@@ -500,6 +500,19 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_obs_account_id ON ledger_observat
   if (!usageCols.includes('estimated_tokens')) {
     db.exec("ALTER TABLE api_usage ADD COLUMN estimated_tokens INTEGER NOT NULL DEFAULT 0");
   }
+  // weighted_tokens: per-row token count multiplied by the model's
+  // weight (lib/modelWeights.ts). The cross-feature quota gate sums
+  // this column instead of raw input+output so a Sonnet call counts
+  // ~30× a flash-lite-input call against the user's budget. Plan
+  // budgets stay at the same headline numbers (250K / 20M / 60M)
+  // but represent T2-input-equivalent units.
+  if (!usageCols.includes('weighted_tokens')) {
+    db.exec("ALTER TABLE api_usage ADD COLUMN weighted_tokens INTEGER NOT NULL DEFAULT 0");
+    // Backfill happens from server/index.ts on boot via
+    // usageRepo.backfillWeightedTokens() — needs lib/modelWeights to
+    // be loadable, which can't be done from this synchronous module
+    // init block. The schema add is here; the data-fill is deferred.
+  }
 }
 
 // Add filing_status + notes to profiles (merge clients into profiles)

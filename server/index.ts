@@ -44,6 +44,7 @@ import {
 import { startRenewalReminderJob } from './jobs/renewalReminder.js';
 import { startStuckJobSweeper } from './lib/sweepStuckJobs.js';
 import { licenseKeyRepo } from './db/repositories/licenseKeyRepo.js';
+import { usageRepo } from './db/repositories/usageRepo.js';
 import helmet from 'helmet';
 import cors from 'cors';
 import path from 'path';
@@ -192,6 +193,15 @@ app.listen(PORT, () => {
     licenseKeyRepo.backfillExistingUsers();
   } catch (e) {
     console.error('[boot] license-key backfill failed:', (e as Error).message);
+  }
+
+  // Weighted-tokens backfill — populates the new column on every
+  // historic api_usage row so the gate sums consistently across
+  // the migration. Idempotent on subsequent boots.
+  try {
+    usageRepo.backfillWeightedTokens();
+  } catch (e) {
+    console.error('[boot] weighted-tokens backfill failed:', (e as Error).message);
   }
 
   // Start 48-hour renewal reminder email job (runs hourly)
