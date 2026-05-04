@@ -1771,7 +1771,7 @@ router.post(
       // is in play — chunked failures usually mean a chunk consistently
       // truncated or sanity-failed, which a smaller export won't fix.
       const hint = extractPath === 'tsv-chunked'
-        ? `Failed in the chunked extractor (${chunkCount} chunk(s) attempted). If a section keeps timing out, retry — Gemini may have been throttling. If the error mentions "trailer" or "truncated", a single chunk genuinely overflowed and you'll need a smaller export.`
+        ? `Failed in the chunked extractor (${chunkCount} chunk(s) attempted). If a section keeps timing out, retry — the AI service may have been throttling. If the error mentions "trailer" or "truncated", a single chunk genuinely overflowed and you'll need a smaller export.`
         : extractPath === 'vision'
           ? 'Vision extractor used (PDF has no text layer or text extraction failed in the browser). Re-save the PDF as a digital export rather than a scan, or split the year into halves.'
           : 'Re-export from Tally / Busy with smaller account groups, or split the year into halves.';

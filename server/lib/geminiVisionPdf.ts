@@ -32,7 +32,7 @@ const MAX_FALLBACK_ATTEMPTS = 3;
 const MAX_PARSE_FAILURE_ATTEMPTS = 2;
 
 const isParseFailure = (err: unknown): boolean =>
-  err instanceof Error && /Failed to parse Gemini JSON response/i.test(err.message);
+  err instanceof Error && /Failed to parse AI response/i.test(err.message);
 
 class GeminiNativeError extends Error {
   constructor(message: string, readonly status: number) {
@@ -106,12 +106,12 @@ async function callOnce<T>(
     // Attach status so the retry layer can decide whether to retry.
     let detail = '';
     try { detail = (await res.text()).slice(0, 280); } catch { /* swallow */ }
-    throw new GeminiNativeError(`Gemini ${model} returned ${res.status}${detail ? ` — ${detail}` : ''}`, res.status);
+    throw new GeminiNativeError(`AI service returned ${res.status}${detail ? ` — ${detail}` : ''}`, res.status);
   }
 
   const json = await res.json() as NativeResponse;
   if (json.error) {
-    throw new GeminiNativeError(`Gemini ${model} error: ${json.error.message ?? 'unknown'}`, 500);
+    throw new GeminiNativeError(`AI service error: ${json.error.message ?? 'unknown'}`, 500);
   }
   const raw = json.candidates?.[0]?.content?.parts?.map(p => p.text ?? '').join('') ?? '{}';
   const finishReason = json.candidates?.[0]?.finishReason ?? '';
@@ -130,14 +130,14 @@ async function callOnce<T>(
   try {
     const parsed = safeParseJson<T>(raw);
     if (parsed === null) throw new Error(truncated
-      ? `Failed to parse Gemini JSON response (truncated at MAX_TOKENS=${outputTokens}; PDF likely needs higher output budget or page chunking)`
-      : 'Failed to parse Gemini JSON response');
+      ? `Failed to parse AI response (truncated at MAX_TOKENS=${outputTokens}; PDF likely needs higher output budget or page chunking)`
+      : 'Failed to parse AI response');
     if (truncated) {
       // Even if repair "succeeded", the data lost its tail. Refuse
       // the result so the retry / fallback chain gets a chance with
       // a stronger model rather than persisting a silently-incomplete
       // extraction.
-      throw new Error(`Failed to parse Gemini JSON response (truncated at MAX_TOKENS=${outputTokens})`);
+      throw new Error(`Failed to parse AI response (truncated at MAX_TOKENS=${outputTokens})`);
     }
     succeeded = true;
     return { data: parsed, inputTokens, outputTokens, modelUsed: model };

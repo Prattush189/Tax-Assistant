@@ -255,7 +255,7 @@ export function ScrutinyReport({ manager }: Props) {
         const raw = job.errorMessage ?? '';
         const isTransient = /\b50[234]\b|service unavailable|no body|temporarily unavailable|ECONNRESET|ETIMEDOUT/i.test(raw);
         const friendly = isTransient
-          ? "Gemini's API was temporarily unavailable. This usually clears in a minute — re-upload the same file to try again. The credit hasn't been charged."
+          ? "The AI service was temporarily unavailable. This usually clears in a minute — re-upload the same file to try again. The credit hasn't been charged."
           : (raw || 'Unknown error. Try uploading the ledger again.');
         return (
           <div className="rounded-2xl border border-rose-200 dark:border-rose-800/60 bg-rose-50/60 dark:bg-rose-900/15 p-5">

@@ -67,7 +67,7 @@ STRICT RULES:
  * the JSON prompt above is fine for a single-call vision pass on a small file,
  * but breaks on year-long ledgers because (a) deeply nested JSON spends ~3×
  * more tokens per row than TSV and (b) mid-JSON truncation is invisible — the
- * parser silently gives up and we surface "Failed to parse Gemini JSON
+ * parser silently gives up and we surface "Failed to parse AI
  * response" with no hint about what went wrong.
  *
  * With TSV:
