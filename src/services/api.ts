@@ -1361,6 +1361,85 @@ export async function adminSetActiveKey(keyIndex: number): Promise<GeminiConfig>
   });
 }
 
+// ── Licensing (admin) ──────────────────────────────────────────────────
+
+export interface AdminLicenseRow {
+  id: string;
+  key: string;
+  user_id: string;
+  user_name: string;
+  user_email: string;
+  plan: 'free' | 'pro' | 'enterprise' | 'admin';
+  starts_at: string;
+  expires_at: string | null;
+  status: 'active' | 'expired' | 'revoked' | 'superseded';
+  generated_via: 'razorpay' | 'offline' | 'seed' | 'free-signup' | 'admin-signup';
+  payment_id: string | null;
+  issued_by_admin_id: string | null;
+  issued_notes: string | null;
+  superseded_by_id: string | null;
+  revoked_at: string | null;
+  revoke_reason: string | null;
+  created_at: string;
+}
+
+export interface AdminPaymentRow {
+  id: string;
+  user_id: string;
+  user_name: string;
+  user_email: string;
+  razorpay_order_id: string;
+  razorpay_payment_id: string | null;
+  plan: 'pro' | 'enterprise';
+  billing: string;
+  amount: number;       // paise
+  currency: string;
+  status: 'created' | 'paid' | 'failed';
+  created_at: string;
+  paid_at: string | null;
+  expires_at: string | null;
+  billing_details: string | null;
+  license: { id: string; key: string; plan: string; status: string; expires_at: string | null } | null;
+}
+
+export async function adminFetchLicenses(opts: { search?: string; plan?: string; status?: string; page?: number } = {}): Promise<{ rows: AdminLicenseRow[]; total: number; page: number; limit: number }> {
+  const qs = new URLSearchParams();
+  if (opts.search) qs.set('search', opts.search);
+  if (opts.plan) qs.set('plan', opts.plan);
+  if (opts.status) qs.set('status', opts.status);
+  if (opts.page) qs.set('page', String(opts.page));
+  const tail = qs.toString() ? `?${qs}` : '';
+  return authFetch(`/api/admin/licenses${tail}`);
+}
+
+export async function adminGenerateLicense(input: {
+  userId: string;
+  plan: 'free' | 'pro' | 'enterprise';
+  durationMonths: number;
+  generateInvoice?: boolean;
+  generateReceipt?: boolean;
+  amount?: number; // paise
+  notes?: string;
+}): Promise<{ license: AdminLicenseRow; paymentId: string | null; invoiceUrl: string | null; receiptUrl: string | null }> {
+  return authFetch('/api/admin/licenses', { method: 'POST', body: JSON.stringify(input) });
+}
+
+export async function adminRenewLicense(licenseId: string, durationMonths: number): Promise<{ license: AdminLicenseRow }> {
+  return authFetch(`/api/admin/licenses/${licenseId}/renew`, { method: 'POST', body: JSON.stringify({ durationMonths }) });
+}
+
+export async function adminRevokeLicense(licenseId: string, reason?: string): Promise<{ success: boolean }> {
+  return authFetch(`/api/admin/licenses/${licenseId}/revoke`, { method: 'POST', body: JSON.stringify({ reason }) });
+}
+
+export async function adminFetchPayments(opts: { search?: string; page?: number } = {}): Promise<{ rows: AdminPaymentRow[]; total: number; page: number; limit: number }> {
+  const qs = new URLSearchParams();
+  if (opts.search) qs.set('search', opts.search);
+  if (opts.page) qs.set('page', String(opts.page));
+  const tail = qs.toString() ? `?${qs}` : '';
+  return authFetch(`/api/admin/payments${tail}`);
+}
+
 // ── Income Tax portal import ────────────────────────────────────────────
 
 export async function importFromItPortal(input: {

@@ -5,6 +5,8 @@ import { AuthRequest } from '../types.js';
 import db from '../db/index.js';
 import { getBillingUser } from '../lib/billing.js';
 import { getEffectivePlan, getUsagePeriodStart } from '../lib/planLimits.js';
+import { licenseKeyRepo } from '../db/repositories/licenseKeyRepo.js';
+import { paymentRepo } from '../db/repositories/paymentRepo.js';
 
 const router = Router();
 
@@ -488,6 +490,194 @@ router.post('/active-key', (req: AuthRequest, res: Response) => {
     return;
   }
   res.json(getGeminiConfig());
+});
+
+// ── Licensing endpoints ─────────────────────────────────────────────────
+// All require admin auth (already enforced by router-level middleware
+// at admin route registration in server/index.ts).
+
+// GET /api/admin/licenses?search=&plan=&status=&page=
+//   List licenses with filters + pagination. Joined user name/email
+//   so the table doesn't need a per-row lookup on the client.
+router.get('/licenses', (req: AuthRequest, res: Response) => {
+  const search = typeof req.query.search === 'string' ? req.query.search : null;
+  const plan = typeof req.query.plan === 'string' && req.query.plan ? req.query.plan : null;
+  const status = typeof req.query.status === 'string' && req.query.status ? req.query.status : null;
+  const page = Math.max(1, parseInt(String(req.query.page ?? '1'), 10) || 1);
+  const limit = 50;
+  const offset = (page - 1) * limit;
+  const result = licenseKeyRepo.findAllForAdmin({ search, plan, status, limit, offset });
+  res.json({ ...result, page, limit });
+});
+
+// POST /api/admin/licenses — issue a license offline. Used for cash /
+// dealer-collected payments where Razorpay isn't involved. Optionally
+// generates an invoice + receipt PDF the admin can email or print.
+//   Body: {
+//     userId: string,
+//     plan: 'free' | 'pro' | 'enterprise',
+//     durationMonths: number,             // 1 .. 60
+//     generateInvoice?: boolean,
+//     generateReceipt?: boolean,
+//     amount?: number,                    // paise — required if generating invoice/receipt
+//     notes?: string,
+//   }
+router.post('/licenses', async (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const { userId, plan, durationMonths, generateInvoice, generateReceipt, amount, notes } = req.body ?? {};
+  if (typeof userId !== 'string' || !userId) {
+    res.status(400).json({ error: 'userId is required' });
+    return;
+  }
+  if (!['free', 'pro', 'enterprise'].includes(plan)) {
+    res.status(400).json({ error: 'plan must be free, pro, or enterprise' });
+    return;
+  }
+  const months = parseInt(String(durationMonths), 10);
+  if (!Number.isFinite(months) || months < 1 || months > 60) {
+    res.status(400).json({ error: 'durationMonths must be 1..60' });
+    return;
+  }
+  const targetUser = userRepo.findById(userId);
+  if (!targetUser) { res.status(404).json({ error: 'User not found' }); return; }
+
+  // Build start/end timestamps in IST format the rest of the codebase
+  // uses ('YYYY-MM-DD HH:MM:SS' with no Z).
+  const startsAt = new Date();
+  const expiresAt = new Date(startsAt);
+  expiresAt.setMonth(expiresAt.getMonth() + months);
+  const startStr = startsAt.toISOString().replace('Z', '');
+  const expStr = expiresAt.toISOString().replace('Z', '');
+
+  // Optional invoice/receipt: caller must have supplied an amount
+  // for these to be meaningful. We log a payment row tagged with
+  // the offline-license origin so the Payments tab surfaces this
+  // grant alongside Razorpay-driven ones — gives admins one place
+  // to look for "what's been issued".
+  let paymentRowId: string | null = null;
+  if (generateInvoice || generateReceipt) {
+    if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) {
+      res.status(400).json({ error: 'amount (in paise) is required when generating invoice or receipt' });
+      return;
+    }
+    try {
+      // Synthetic order id so the unique constraint doesn't collide
+      // and so Razorpay-side reports can ignore these.
+      const offlineOrderId = `offline_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      paymentRepo.create(userId, offlineOrderId, plan, 'yearly', amount);
+      paymentRepo.markPaid(offlineOrderId, `offline_pay_${Date.now()}`, expStr);
+      paymentRowId = paymentRepo.findByOrderId(offlineOrderId)?.id ?? null;
+    } catch (err) {
+      console.error('[admin/licenses] payment row create failed:', err);
+      // Continue — license issuance is the primary action.
+    }
+  }
+
+  const license = licenseKeyRepo.issue({
+    userId,
+    plan: plan as 'free' | 'pro' | 'enterprise',
+    startsAt: startStr,
+    expiresAt: expStr,
+    generatedVia: 'offline',
+    paymentId: paymentRowId,
+    issuedByAdminId: req.user.id,
+    issuedNotes: typeof notes === 'string' && notes.trim() ? notes.trim() : null,
+  });
+
+  res.json({
+    license,
+    paymentId: paymentRowId,
+    invoiceUrl: paymentRowId && generateInvoice ? `/api/admin/payments/${paymentRowId}/invoice.pdf` : null,
+    receiptUrl: paymentRowId && generateReceipt ? `/api/admin/payments/${paymentRowId}/receipt.pdf` : null,
+  });
+});
+
+// POST /api/admin/licenses/:id/renew — body: { durationMonths }
+//   Generates a NEW key with status='active', supersedes the
+//   targeted key. The user's license_key_id is updated to point at
+//   the new row inside licenseKeyRepo.issue's transaction.
+router.post('/licenses/:id/renew', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const { id } = req.params;
+  const months = parseInt(String(req.body?.durationMonths ?? '12'), 10);
+  if (!Number.isFinite(months) || months < 1 || months > 60) {
+    res.status(400).json({ error: 'durationMonths must be 1..60' });
+    return;
+  }
+  const existing = licenseKeyRepo.findById(id);
+  if (!existing) { res.status(404).json({ error: 'License not found' }); return; }
+  if (existing.plan === 'admin') {
+    res.status(400).json({ error: 'ADMIN- licenses don\'t expire and cannot be renewed' });
+    return;
+  }
+  const startsAt = new Date();
+  const expiresAt = new Date(startsAt);
+  expiresAt.setMonth(expiresAt.getMonth() + months);
+  const license = licenseKeyRepo.issue({
+    userId: existing.user_id,
+    plan: existing.plan as 'free' | 'pro' | 'enterprise',
+    startsAt: startsAt.toISOString().replace('Z', ''),
+    expiresAt: expiresAt.toISOString().replace('Z', ''),
+    generatedVia: 'offline',
+    issuedByAdminId: req.user.id,
+    issuedNotes: `Renewed from ${existing.key} for ${months} month(s)`,
+  });
+  res.json({ license });
+});
+
+// POST /api/admin/licenses/:id/revoke — body: { reason? }
+router.post('/licenses/:id/revoke', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const { id } = req.params;
+  const reason = typeof req.body?.reason === 'string' ? req.body.reason.slice(0, 500) : 'Revoked by admin';
+  const existing = licenseKeyRepo.findById(id);
+  if (!existing) { res.status(404).json({ error: 'License not found' }); return; }
+  licenseKeyRepo.revoke(id, reason);
+  // If this was the user's active license, demote them to free
+  // immediately. (expirePastDue handles natural expiry; this is the
+  // forced path.)
+  if (existing.status === 'active' && existing.plan !== 'admin' && existing.plan !== 'free') {
+    userRepo.updatePlan(existing.user_id, 'free');
+  }
+  res.json({ success: true });
+});
+
+// GET /api/admin/payments?search=&page= — paginated payment history
+router.get('/payments', (req: AuthRequest, res: Response) => {
+  const search = typeof req.query.search === 'string' ? req.query.search : null;
+  const page = Math.max(1, parseInt(String(req.query.page ?? '1'), 10) || 1);
+  const limit = 50;
+  const offset = (page - 1) * limit;
+  const { rows, total } = paymentRepo.findAllForAdmin({ search, limit, offset });
+  // Resolve license_key_id per payment for the table's "License"
+  // column. One JOIN would be cleaner but each payment has at most a
+  // handful of rows — N+1 is fine at this volume.
+  const enriched = rows.map(r => {
+    const license = db.prepare('SELECT id, key, plan, status, expires_at FROM license_keys WHERE payment_id = ? LIMIT 1').get(r.id) as
+      { id: string; key: string; plan: string; status: string; expires_at: string | null } | undefined;
+    return { ...r, license: license ?? null };
+  });
+  res.json({ rows: enriched, total, page, limit });
+});
+
+// GET /api/admin/payments/:id/invoice.pdf — generate invoice on demand
+// GET /api/admin/payments/:id/receipt.pdf — generate receipt on demand
+router.get('/payments/:id/:kind(invoice|receipt).pdf', async (req: AuthRequest, res: Response) => {
+  const { id, kind } = req.params as { id: string; kind: 'invoice' | 'receipt' };
+  const pay = paymentRepo.findById(id);
+  if (!pay) { res.status(404).json({ error: 'Payment not found' }); return; }
+  const buyer = userRepo.findById(pay.user_id);
+  if (!buyer) { res.status(404).json({ error: 'Payment user not found' }); return; }
+  const billingDetails = userRepo.getBillingDetails(buyer.id);
+  const { buildInvoiceBuffer, buildReceiptBuffer } = await import('../lib/serverPdf.js');
+  const buildFn = kind === 'invoice' ? buildInvoiceBuffer : buildReceiptBuffer;
+  const buffer = buildFn({
+    id: pay.id, plan: pay.plan, billing: pay.billing,
+    amount: pay.amount, paidAt: pay.paid_at, expiresAt: pay.expires_at,
+  }, { name: buyer.name ?? '', email: buyer.email ?? '', billingDetails });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="${kind}-${pay.id}.pdf"`);
+  res.send(buffer);
 });
 
 export default router;
