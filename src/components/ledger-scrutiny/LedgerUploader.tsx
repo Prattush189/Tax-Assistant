@@ -101,6 +101,10 @@ export function LedgerUploader({ manager }: Props) {
     file: File;
     wrongPassword: boolean;
   } | null>(null);
+  // True while extractPdfGrid is parsing a freshly-picked PDF, before
+  // the column-mapping wizard opens. Bridges the silent 1-3s gap so
+  // the dropzone doesn't look idle after the user clicks.
+  const [isReadingPdf, setIsReadingPdf] = useState(false);
 
   const handleFiles = async (files: FileList | null) => {
     const file = files?.[0];
@@ -152,21 +156,26 @@ export function LedgerUploader({ manager }: Props) {
     // §40A(3) / §269ST checks would silently mis-fire on any
     // sign-flipped row. Better to refuse and ask for a digital export
     // than to ship audit findings the user can't trust.
+    setIsReadingPdf(true);
     try {
       const grid = await extractPdfGrid(file);
       if (grid && grid.rows.length >= 3) {
+        setIsReadingPdf(false);
         setPendingGrid({ grid, filename: file.name });
         return;
       }
+      setIsReadingPdf(false);
       toast.error('This PDF appears to be scanned or image-only. Ledger audits need a digital PDF or CSV export — please upload one of those.');
       return;
     } catch (err) {
       if (err instanceof PdfPasswordError) {
+        setIsReadingPdf(false);
         setPendingPassword({ file, wrongPassword: false });
         return;
       }
       console.warn('[LedgerUploader] grid extraction failed:', err);
       toast.error('Could not read this PDF. If it is scanned or image-only, export the ledger as a digital PDF or CSV and re-upload.');
+      setIsReadingPdf(false);
     }
   };
 
@@ -230,6 +239,7 @@ export function LedgerUploader({ manager }: Props) {
     || currentStatus === 'pending';
   const stage = currentStatus === 'scrutinizing' ? 'Auditing for tax exposure…'
     : currentStatus === 'extracting' || manager.isUploading ? 'Extracting accounts…'
+    : isReadingPdf ? 'Reading PDF…'
     : 'Drop your ledger PDF here';
 
   return (
@@ -249,7 +259,7 @@ export function LedgerUploader({ manager }: Props) {
       )}
     >
       <div className="w-16 h-16 rounded-2xl bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center">
-        {busy
+        {(busy || isReadingPdf)
           ? <Loader2 className="w-8 h-8 text-emerald-600 dark:text-emerald-400 animate-spin" />
           : <Upload className="w-8 h-8 text-emerald-600 dark:text-emerald-400" />}
       </div>
