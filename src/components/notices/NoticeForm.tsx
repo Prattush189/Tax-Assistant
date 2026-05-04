@@ -47,7 +47,7 @@ const SUB_TYPES: Record<string, { value: string; label: string }[]> = {
 interface NoticeFormProps {
   onGenerate: (input: NoticeGenerateInput, file?: File) => void;
   isGenerating: boolean;
-  usage: { used: number; limit: number };
+  usage: { used: number };
   letterhead: LetterheadConfig;
   onLetterheadChange: (config: LetterheadConfig) => void;
   currentNoticeId: string | null;
@@ -227,12 +227,10 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
           fieldset participate in the form's flexbox flow without its
           default border / padding box. */}
       <fieldset disabled={isGenerating} className="contents">
-      {/* Usage counter */}
+      {/* Usage counter — analytics display only. The cross-feature
+          token budget (shown in Settings) is the hard quota. */}
       <div className="flex items-center justify-between px-1">
-        <span className="text-xs text-gray-400">{usage.used}/{usage.limit} drafts this month</span>
-        {usage.used >= usage.limit && (
-          <span className="text-xs text-red-500 font-medium">Limit reached</span>
-        )}
+        <span className="text-xs text-gray-400">{usage.used} draft{usage.used === 1 ? '' : 's'} this period</span>
       </div>
 
       {/* Notice Type + Sub-type */}
@@ -583,7 +581,7 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
       {/* Generate button */}
       <button
         type="submit"
-        disabled={isGenerating || usage.used >= usage.limit || (!keyPoints.trim() && !noticeFile)}
+        disabled={isGenerating || (!keyPoints.trim() && !noticeFile)}
         className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-[#059669] to-[#047857] hover:from-[#047857] hover:to-[#065F46] text-white font-medium rounded-xl shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {isGenerating ? (

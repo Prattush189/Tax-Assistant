@@ -844,11 +844,10 @@ function enforceQuota(req: AuthRequest, res: Response): { ok: true; billingUserI
   const billingUserId = billingUser?.id ?? req.user!.id;
   const plan = billingUser?.plan ?? actor?.plan ?? 'free';
   const limitSource = billingUser ?? actor;
-  // The bank statement plan limit is now interpreted as a CREDIT cap.
-  // Same number as before (3 / 15 / 50) — but each credit buys 5 PDF
-  // pages or 100 CSV rows, so the user-facing capacity is far larger
-  // and rejection happens up-front based on file size, not run count.
-  const creditsLimit = limitSource ? getUserLimits(limitSource).bankStatements : 3;
+  // Per-feature bank-statement credit cap removed in favour of the
+  // single cross-feature token budget. Track creditsUsed for analytics
+  // display (still useful) but report creditsLimit/creditsRemaining as
+  // 0 — UI should hide the "of Y" portion.
   const periodStart = limitSource ? getUsagePeriodStart(limitSource) : new Date(0).toISOString().replace('Z', '');
   let creditsUsed = 0;
   try {
@@ -856,12 +855,7 @@ function enforceQuota(req: AuthRequest, res: Response): { ok: true; billingUserI
   } catch (err) {
     console.error('[bank-statements] Failed to read usage:', err);
   }
-  const creditsRemaining = Math.max(0, creditsLimit - creditsUsed);
-  // No longer hard-rejects on per-feature credits — the token budget
-  // (enforceTokenQuota at the route entry) is the only quota gate
-  // now. We still compute these so the dashboard can show "you've
-  // used 3 of 15 bank statements this month" as a soft display.
-  return { ok: true, billingUserId, plan, creditsLimit, creditsUsed, creditsRemaining };
+  return { ok: true, billingUserId, plan, creditsLimit: 0, creditsUsed, creditsRemaining: 0 };
 }
 
 /** Persist a completed analysis into a placeholder row created upfront.
@@ -1000,16 +994,18 @@ router.get('/', (req: AuthRequest, res: Response) => {
   const rows = bankStatementRepo.findByUserId(req.user.id);
   const actor = userRepo.findById(req.user.id);
   const billingUser = actor ? getBillingUser(actor) : null;
-  const creditsLimit = (billingUser ?? actor) ? getUserLimits(billingUser ?? actor!).bankStatements : 3;
   const periodStart = (billingUser ?? actor) ? getUsagePeriodStart(billingUser ?? actor!) : new Date(0).toISOString().replace('Z', '');
   const creditsUsed = billingUser
     ? featureUsageRepo.sumCreditsSinceForBillingUser(billingUser.id, 'bank_statement_analyze', periodStart)
     : 0;
+  // Per-feature limit removed — only the cross-feature token budget
+  // gates now. creditsLimit reported as 0 so the UI can hide the
+  // "of Y" portion of the usage bar.
   res.json({
     statements: rows.map(serializeStatement),
     usage: {
       creditsUsed,
-      creditsLimit,
+      creditsLimit: 0,
       pagesPerCredit: PAGES_PER_CREDIT.bank_statement,
       csvRowsPerCredit: CSV_ROWS_PER_CREDIT.bank_statement ?? 0,
     },

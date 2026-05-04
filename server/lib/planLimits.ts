@@ -1,15 +1,25 @@
 /**
  * Centralized plan-limit resolution.
  *
+ * Single hard quota gate now: `monthlyTokenBudget`. Every per-feature
+ * limit (notices/3, deeds/15, statements/50, etc.) was removed in
+ * favour of one cross-feature token budget — those numbers were
+ * confusing users (a "Limit reached" UI badge fired even when they
+ * had 80% of their tokens left) and the routes enforced them
+ * inconsistently (some hard-rejected, some only displayed). The token
+ * budget already captures the real cost ceiling we care about.
+ *
  * Two sources of truth, checked in order:
- *   1. `plugin_limits` JSON column on the user row — per-feature overrides
- *      pushed by a parent/consultant app via the plugin SSO handshake.
- *   2. `plugin_plan` column — an override plan id whose defaults apply if
- *      plugin_limits doesn't specify a given field.
+ *   1. `plugin_limits` JSON column on the user row — token-budget
+ *      override pushed by a parent/consultant app via the plugin SSO
+ *      handshake.
+ *   2. `plugin_plan` column — an override plan id whose defaults apply
+ *      if plugin_limits doesn't specify a token budget.
  *   3. `plan` column — the user's standalone Smartbiz AI plan.
  *
- * All route-level enforcement (chat, notices, upload, suggestions, profiles,
- * usage) should call `getUserLimits()` instead of defining its own constants.
+ * `profiles` is kept on UserLimits because it's a multi-tenant
+ * structure cap (max # client profiles per consultant), not an AI
+ * cost gate — it doesn't make sense to fold into the token budget.
  */
 
 import type { UserRow } from '../db/repositories/userRepo.js';
@@ -19,75 +29,35 @@ export type PlanId = 'free' | 'pro' | 'enterprise';
 /** Number of days a free-plan trial lasts before the account is locked. */
 export const TRIAL_DAYS = 30;
 
-export interface MessageLimit {
-  limit: number;
-  period: 'day' | 'month';
-}
-
 export interface UserLimits {
-  messages: MessageLimit;
-  attachments: number;        // monthly
-  suggestions: number;        // monthly
-  notices: number;            // monthly
-  profiles: number;           // total
-  boardResolutions: number;   // monthly
-  partnershipDeeds: number;   // monthly
-  bankStatements: number;     // monthly
-  ledgerScrutiny: number;     // monthly
-  /** Cross-feature monthly token budget — the only HARD quota gate.
-   *  Per-feature limits above stay as soft analytics counters: we
-   *  still log them so the dashboard can show "you've used 22 notices
-   *  this month", but they no longer block. The only thing that can
-   *  reject a request is the user being out of tokens. */
+  /** Max number of client profiles the user can create. Multi-tenant
+   *  structural cap — not an AI cost gate. */
+  profiles: number;
+  /** Cross-feature token budget — the ONLY hard quota gate.
+   *
+   *  Period semantics (see getUsagePeriodStart):
+   *    - Paid: yearly window, resets on Razorpay renewal.
+   *    - Free trial: account lifetime (no reset; trial wall at 30 days). */
   monthlyTokenBudget: number;
 }
 
 /** Baseline defaults for each plan tier.
  *
- *  Token-budget sizing (the only hard gate now) — yearly totals for paid plans:
+ *  Token-budget sizing — yearly totals for paid plans:
  *    Free       250 K  ≈ 30 notices  /  1.5 K bank txns  /  500 chats
  *    Pro         20 M  ≈ yearly budget across all features
- *    Enterprise  60 M  ≈ yearly budget across all features   (3× Pro)
- *
- *  Per-feature counts (notices: 3/15/50, etc.) are kept as SOFT
- *  display in the UI and analytics — useful for "you've drafted
- *  22 notices this month" surfacing — but the routes no longer
- *  enforce them. Only monthlyTokenBudget can reject a request. */
+ *    Enterprise  60 M  ≈ yearly budget across all features (3× Pro) */
 export const PLAN_DEFAULTS: Record<PlanId, UserLimits> = {
   free: {
-    messages: { limit: 50, period: 'month' },
-    attachments: 5,
-    suggestions: 20,
-    notices: 3,
     profiles: 1,
-    boardResolutions: 3,
-    partnershipDeeds: 3,
-    bankStatements: 3,
-    ledgerScrutiny: 3,
     monthlyTokenBudget: 250_000,
   },
   pro: {
-    messages: { limit: 1500, period: 'month' },
-    attachments: 30,
-    suggestions: 100,
-    notices: 15,
     profiles: 5,
-    boardResolutions: 15,
-    partnershipDeeds: 15,
-    bankStatements: 15,
-    ledgerScrutiny: 50,
     monthlyTokenBudget: 20_000_000,
   },
   enterprise: {
-    messages: { limit: 3000, period: 'month' },
-    attachments: 200,
-    suggestions: 500,
-    notices: 50,
     profiles: 25,
-    boardResolutions: 50,
-    partnershipDeeds: 50,
-    bankStatements: 50,
-    ledgerScrutiny: 250,
     monthlyTokenBudget: 60_000_000,
   },
 };
@@ -108,8 +78,8 @@ export function getEffectivePlan(user: LimitUserInput): PlanId {
 }
 
 /**
- * Resolve effective per-feature limits for a user.
- * Precedence (per field): plugin_limits > PLAN_DEFAULTS[effective plan].
+ * Resolve effective limits for a user. Precedence per field:
+ * plugin_limits > PLAN_DEFAULTS[effective plan].
  */
 export function getUserLimits(user: LimitUserInput): UserLimits {
   const plan = getEffectivePlan(user);
@@ -125,20 +95,7 @@ export function getUserLimits(user: LimitUserInput): UserLimits {
   }
 
   return {
-    messages: overrides.messages
-      ? {
-          limit: overrides.messages.limit ?? base.messages.limit,
-          period: overrides.messages.period ?? base.messages.period,
-        }
-      : base.messages,
-    attachments: overrides.attachments ?? base.attachments,
-    suggestions: overrides.suggestions ?? base.suggestions,
-    notices: overrides.notices ?? base.notices,
     profiles: overrides.profiles ?? base.profiles,
-    boardResolutions: overrides.boardResolutions ?? base.boardResolutions,
-    partnershipDeeds: overrides.partnershipDeeds ?? base.partnershipDeeds,
-    bankStatements: overrides.bankStatements ?? base.bankStatements,
-    ledgerScrutiny: overrides.ledgerScrutiny ?? base.ledgerScrutiny,
     // Token budget falls back to plan default unless the override
     // explicitly sets a positive value. Zero means "no override"
     // because sanitizePluginLimits stores 0 when the parent app
@@ -161,50 +118,16 @@ export function sanitizePluginLimits(raw: unknown): UserLimits | null {
   const numeric = (v: unknown): number | undefined =>
     typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.floor(v) : undefined;
 
-  let messages: MessageLimit | undefined;
-  if (r.messages && typeof r.messages === 'object') {
-    const m = r.messages as Record<string, unknown>;
-    const limit = numeric(m.limit);
-    const period = m.period === 'day' || m.period === 'month' ? m.period : 'month';
-    if (limit !== undefined) messages = { limit, period };
-  }
-
-  const attachments = numeric(r.attachments);
-  const suggestions = numeric(r.suggestions);
-  const notices = numeric(r.notices);
   const profiles = numeric(r.profiles);
-  const boardResolutions = numeric(r.boardResolutions);
-  const partnershipDeeds = numeric(r.partnershipDeeds);
-  const bankStatements = numeric(r.bankStatements);
-  const ledgerScrutiny = numeric(r.ledgerScrutiny);
+  const monthlyTokenBudget = numeric(r.monthlyTokenBudget);
 
-  // Require at least one field to be set
-  if (
-    !messages &&
-    attachments === undefined &&
-    suggestions === undefined &&
-    notices === undefined &&
-    profiles === undefined &&
-    boardResolutions === undefined &&
-    partnershipDeeds === undefined &&
-    bankStatements === undefined &&
-    ledgerScrutiny === undefined
-  ) {
+  if (profiles === undefined && monthlyTokenBudget === undefined) {
     return null;
   }
 
-  // Fill missing fields with sensible zeros — but those are overridable per feature
   return {
-    messages: messages ?? { limit: 0, period: 'month' },
-    attachments: attachments ?? 0,
-    suggestions: suggestions ?? 0,
-    notices: notices ?? 0,
     profiles: profiles ?? 0,
-    boardResolutions: boardResolutions ?? 0,
-    partnershipDeeds: partnershipDeeds ?? 0,
-    bankStatements: bankStatements ?? 0,
-    ledgerScrutiny: ledgerScrutiny ?? 0,
-    monthlyTokenBudget: 0, // plugin overrides don't set token budget — use plan default
+    monthlyTokenBudget: monthlyTokenBudget ?? 0,
   };
 }
 

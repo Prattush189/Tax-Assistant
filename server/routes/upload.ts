@@ -87,29 +87,13 @@ router.post(
       return;
     }
 
-    // Enforce monthly attachment upload cap against the BILLING (pool) user so
-    // invitees share the inviter's allowance. Resilient — fail open on DB err.
+    // Per-feature attachment cap removed in favour of the single
+    // cross-feature token budget (vision OCR cost on the upload path
+    // already counts toward the user's tokens). Billing user is still
+    // resolved here because downstream usage logging needs it.
     const actor = userRepo.findById(req.user.id);
     const billingUser = actor ? getBillingUser(actor) : undefined;
     const billingUserId = billingUser?.id ?? req.user.id;
-    const plan = billingUser?.plan ?? actor?.plan ?? 'free';
-    const monthlyLimit = MONTHLY_ATTACHMENT_LIMITS[plan] ?? 10;
-    const periodStart = (billingUser ?? actor) ? getUsagePeriodStart(billingUser ?? actor!) : new Date(0).toISOString().replace('Z', '');
-    let usedThisMonth = 0;
-    try {
-      usedThisMonth = featureUsageRepo.countSinceForBillingUser(billingUserId, 'attachment_upload', periodStart);
-    } catch (err) {
-      console.error('[upload] Failed to check attachment usage:', err);
-      // Fail open — allow upload if we can't check usage
-    }
-
-    if (usedThisMonth >= monthlyLimit) {
-      res.status(429).json({
-        error: `You've reached your monthly attachment upload limit (${monthlyLimit}). Upgrade your plan for more, or wait until the 1st.`,
-        upgrade: plan !== 'enterprise',
-      });
-      return;
-    }
 
     const { originalname, mimetype, size } = req.file;
     console.log(`[upload] Received: ${originalname} (${mimetype}, ${size} bytes)`);
@@ -158,7 +142,6 @@ router.post(
       sizeBytes: size,
       fileUri: null,
       extractedData,
-      usage: { used: usedThisMonth + 1, limit: monthlyLimit },
     });
   }
 );

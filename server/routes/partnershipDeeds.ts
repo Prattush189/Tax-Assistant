@@ -148,11 +148,13 @@ router.get('/drafts', (req: AuthRequest, res: Response) => {
   const actor = userRepo.findById(req.user.id);
   if (!actor) { res.status(401).json({ error: 'User not found' }); return; }
   const billingUser = getBillingUser(actor);
-  const limits = getUserLimits(billingUser);
   const periodStart = getUsagePeriodStart(billingUser);
   const used = featureUsageRepo.countSinceForBillingUser(billingUser.id, 'partnership_deeds', periodStart);
 
-  res.json({ drafts, usage: { used, limit: limits.partnershipDeeds } });
+  // `usage.limit` removed — there's no per-feature cap any more, only
+  // the cross-feature token budget. Clients should fall back to
+  // displaying just `used` (analytics counter).
+  res.json({ drafts, usage: { used } });
 });
 
 // ── Create empty draft (no AI yet, no quota debit) ──────────────────────
@@ -254,18 +256,9 @@ router.post('/drafts/:id/generate', async (req: AuthRequest, res: Response) => {
   if (!actor) { res.status(401).json({ error: 'User not found' }); return; }
   const billingUser = getBillingUser(actor);
   const billingUserId = billingUser.id;
-  const limits = getUserLimits(billingUser);
-  const periodStart = getUsagePeriodStart(billingUser);
-  const used = featureUsageRepo.countSinceForBillingUser(billingUserId, 'partnership_deeds', periodStart);
-  if (used >= limits.partnershipDeeds) {
-    res.status(429).json({
-      error: `You've reached your monthly partnership deed limit (${limits.partnershipDeeds}). Upgrade your plan for more.`,
-      upgrade: true,
-      used,
-      limit: limits.partnershipDeeds,
-    });
-    return;
-  }
+  // Per-feature partnership-deed cap removed in favour of the single
+  // cross-feature token budget. The token gate (enforceTokenQuota) is
+  // the only quota check now.
 
   // ── Build the user prompt ────────────────────────────────────────────
   const payload = parseUiPayload(draft) as Record<string, unknown>;

@@ -104,7 +104,7 @@ function Toggle({ enabled, onChange }: { enabled: boolean; onChange: (v: boolean
 // Single, prominent bar for the cross-feature token budget — the only
 // HARD quota gate now. Per-feature counters live in a collapsed
 // "analytics" section below this so the eye lands here first.
-function TokenBudgetBar({ tokens, plan }: { tokens: { used: number; budget: number; remaining: number }; plan: string }) {
+function TokenBudgetBar({ tokens, plan, trialDaysLeft, planExpiresAt }: { tokens: { used: number; budget: number; remaining: number }; plan: string; trialDaysLeft?: number | null; planExpiresAt?: string | null }) {
   const pct = tokens.budget > 0 ? Math.min(100, (tokens.used / tokens.budget) * 100) : 0;
   const barColor =
     pct >= 90 ? 'bg-red-500' :
@@ -125,9 +125,17 @@ function TokenBudgetBar({ tokens, plan }: { tokens: { used: number; budget: numb
     <div className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-5 border border-gray-200/60 dark:border-gray-700/60">
       <div className="flex items-center justify-between mb-3">
         <div>
-          <p className="text-sm font-semibold text-gray-700 dark:text-gray-200">Monthly token budget</p>
+          <p className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+            {isPaid ? 'Yearly token budget' : 'Trial token budget'}
+          </p>
           <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
             One pool across every feature — {isPaid ? 'chat, notices, bank statements, ledger audits.' : 'chat, notices, calculators, document tools.'}
+            {!isPaid && typeof trialDaysLeft === 'number' && trialDaysLeft > 0 && (
+              <> · {trialDaysLeft} day{trialDaysLeft === 1 ? '' : 's'} left in trial</>
+            )}
+            {isPaid && planExpiresAt && (
+              <> · renews on {new Date(planExpiresAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</>
+            )}
           </p>
         </div>
         <span className={cn(
@@ -165,23 +173,26 @@ function UsageBar({
   icon: Icon, label, used, limit, period, displayMultiplier,
 }: {
   icon: React.ComponentType<{ className?: string }>;
-  label: string; used: number; limit: number;
+  label: string;
+  used: number;
+  /** When undefined, the bar renders as a counter (no "of Y", no
+   *  percentage, no progress fill) — per-feature limits were
+   *  removed; only `profiles` still has a numeric cap. */
+  limit?: number;
   period?: 'day' | 'month' | 'total';
-  /** Multiplies used/limit at display time only — used to render
-   *  credit-based features as transactions (50 credits → 5,000 txns).
-   *  Percentage is based on the raw used/limit so the bar is honest. */
   displayMultiplier?: number;
 }) {
-  const pct = limit > 0 ? Math.min(100, (used / limit) * 100) : 0;
+  const m = displayMultiplier && displayMultiplier > 0 ? displayMultiplier : 1;
+  const usedDisplay = used * m;
+  const hasLimit = typeof limit === 'number' && limit > 0;
+  const limitDisplay = hasLimit ? limit! * m : 0;
+  const pct = hasLimit ? Math.min(100, (used / limit!) * 100) : 0;
   const barColor =
     pct >= 90 ? 'bg-red-500' :
     pct >= 75 ? 'bg-amber-500' :
     pct >= 50 ? 'bg-yellow-500' :
     'bg-[#0D9668] dark:bg-[#2DD4A0]';
   const periodLabel = period === 'day' ? '/day' : '';
-  const m = displayMultiplier && displayMultiplier > 0 ? displayMultiplier : 1;
-  const usedDisplay = used * m;
-  const limitDisplay = limit * m;
 
   return (
     <div className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-4">
@@ -192,20 +203,25 @@ function UsageBar({
         <div className="flex-1 min-w-0">
           <p className="text-xs font-medium text-gray-600 dark:text-gray-400 truncate">{label}</p>
           <p className="text-sm font-bold text-gray-800 dark:text-white">
-            {usedDisplay.toLocaleString('en-IN')} / {limitDisplay.toLocaleString('en-IN')}
+            {usedDisplay.toLocaleString('en-IN')}
+            {hasLimit && <> / {limitDisplay.toLocaleString('en-IN')}</>}
             <span className="text-xs font-normal text-gray-400 ml-1">{periodLabel}</span>
           </p>
         </div>
-        <span className={cn(
-          'text-xs font-bold shrink-0',
-          pct >= 90 ? 'text-red-600 dark:text-red-400' :
-          pct >= 75 ? 'text-amber-600 dark:text-amber-400' :
-          'text-gray-500 dark:text-gray-400'
-        )}>{pct.toFixed(0)}%</span>
+        {hasLimit && (
+          <span className={cn(
+            'text-xs font-bold shrink-0',
+            pct >= 90 ? 'text-red-600 dark:text-red-400' :
+            pct >= 75 ? 'text-amber-600 dark:text-amber-400' :
+            'text-gray-500 dark:text-gray-400'
+          )}>{pct.toFixed(0)}%</span>
+        )}
       </div>
-      <div className="h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-        <div className={cn('h-full rounded-full transition-all duration-500', barColor)} style={{ width: `${pct}%` }} />
-      </div>
+      {hasLimit && (
+        <div className="h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+          <div className={cn('h-full rounded-full transition-all duration-500', barColor)} style={{ width: `${pct}%` }} />
+        </div>
+      )}
     </div>
   );
 }
@@ -498,7 +514,7 @@ function BillingTab({ userName, userEmail }: { userName: string; userEmail: stri
           </div>
           {/* Token budget — the only hard quota gate. Spans full
               width so users see one number to track. */}
-          <TokenBudgetBar tokens={usage.tokens} plan={usage.plan} />
+          <TokenBudgetBar tokens={usage.tokens} plan={usage.plan} trialDaysLeft={usage.trialDaysLeft} planExpiresAt={usage.planExpiresAt} />
           {/* Per-feature counts kept as soft display below — useful
               for "you've drafted 22 notices this month" but no longer
               gates anything. Compact 3-up grid; smaller font. */}

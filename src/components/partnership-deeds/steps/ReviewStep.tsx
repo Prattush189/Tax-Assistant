@@ -19,7 +19,7 @@ interface Props {
   isGenerating: boolean;
   error: string | null;
   errorKind: 'quota' | 'generic' | null;
-  usage: { used: number; limit: number };
+  usage: { used: number };
   onGenerate: () => void;
   onUpgrade: () => void;
 }
@@ -39,8 +39,6 @@ export function ReviewStep({
   const validation = validateDraft(draft);
   const meta = templateById(draft.templateId);
   const used = usage.used;
-  const limit = usage.limit;
-  const remaining = Math.max(0, limit - used);
 
   const handleDownload = async () => {
     if (!generatedContent) return;
@@ -66,16 +64,16 @@ export function ReviewStep({
             </p>
             <p className="text-[11px] text-gray-500 dark:text-gray-500">{meta.governingAct}</p>
             <p className="text-[11px] text-gray-500 dark:text-gray-500 mt-1">
-              {used} of {limit} deeds used this month — {remaining} remaining.
+              {used} deed{used === 1 ? '' : 's'} drafted this period.
             </p>
           </div>
           <button
             type="button"
             onClick={onGenerate}
-            disabled={!validation.ok || isGenerating || remaining <= 0}
+            disabled={!validation.ok || isGenerating}
             className={cn(
               'flex items-center gap-2 px-5 py-2.5 text-sm font-medium rounded-xl transition-all',
-              validation.ok && !isGenerating && remaining > 0
+              validation.ok && !isGenerating
                 ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-600/20'
                 : 'bg-gray-100 dark:bg-gray-800 text-gray-400 cursor-not-allowed',
             )}

@@ -48,11 +48,11 @@ router.get('/', (req: AuthRequest, res: Response) => {
   // counters below are scoped to this same window.
   const periodStart = getUsagePeriodStart(billingUser);
 
-  // Messages — uses period.messages still (day vs month) for the
-  // intra-period breakdown the UI surfaces ("messages today").
+  // Messages counter — kept for the "messages this month" analytics
+  // display even though the per-feature limit was removed.
   let messagesUsed = 0;
   try {
-    messagesUsed = usageRepo.countByBillingUser(billingUser.id, periodStartIST(limits.messages.period));
+    messagesUsed = usageRepo.countByBillingUser(billingUser.id, periodStartIST('month'));
   } catch (err) {
     console.error('[usage] messages count failed', err);
   }
@@ -155,59 +155,27 @@ router.get('/', (req: AuthRequest, res: Response) => {
       budget: tokenStats.budget,
       remaining: tokenStats.remaining,
     },
+    // Per-feature limits were removed — only the cross-feature token
+    // budget gates now. The per-feature USAGE counters below are kept
+    // for analytics display ("you've drafted 22 notices this period")
+    // but no longer carry a `limit` field. UI should hide the "of Y"
+    // portion. The only field on UserLimits is `profiles` (multi-
+    // tenant structure cap, not an AI cost gate).
     usage: {
-      messages: {
-        used: messagesUsed,
-        limit: limits.messages.limit,
-        period: limits.messages.period,
-        label: limits.messages.period === 'day' ? 'Messages Today' : 'Messages',
-      },
-      attachments: {
-        used: attachmentsUsed,
-        limit: limits.attachments,
-        period: 'month',
-        label: 'Attachments',
-      },
-      suggestions: {
-        used: suggestionsUsed,
-        limit: limits.suggestions,
-        period: 'month',
-        label: 'AI Suggestions',
-      },
-      notices: {
-        used: noticesUsed,
-        limit: limits.notices,
-        period: 'month',
-        label: 'Notice Drafts',
-      },
-      boardResolutions: {
-        used: boardResolutionsUsed,
-        limit: limits.boardResolutions,
-        period: 'month',
-        label: 'Board Resolutions',
-      },
-      partnershipDeeds: {
-        used: partnershipDeedsUsed,
-        limit: limits.partnershipDeeds,
-        period: 'month',
-        label: 'Partnership Deeds',
-      },
+      messages: { used: messagesUsed, period: 'month', label: 'Messages' },
+      attachments: { used: attachmentsUsed, period: 'month', label: 'Attachments' },
+      suggestions: { used: suggestionsUsed, period: 'month', label: 'AI Suggestions' },
+      notices: { used: noticesUsed, period: 'month', label: 'Notice Drafts' },
+      boardResolutions: { used: boardResolutionsUsed, period: 'month', label: 'Board Resolutions' },
+      partnershipDeeds: { used: partnershipDeedsUsed, period: 'month', label: 'Partnership Deeds' },
       bankStatements: {
         used: bankStatementsUsed,
-        limit: limits.bankStatements,
         period: 'month',
         label: 'Bank Statement Transactions',
-        // Display unit conversion: credits → transactions. UI multiplies
-        // both used and limit by this so users see "2,200 / 5,000
-        // transactions" instead of "22 / 50 credits". The internal
-        // accounting stays in credits because vision/TSV fallbacks
-        // bill by pages, not rows — but ~all wizard uploads are
-        // row-priced, so the row-equivalent is the meaningful headline.
         rowsPerCredit: CSV_ROWS_PER_CREDIT.bank_statement ?? 100,
       },
       ledgerScrutiny: {
         used: ledgerScrutinyUsed,
-        limit: limits.ledgerScrutiny,
         period: 'month',
         label: 'Ledger Transactions',
         rowsPerCredit: CSV_ROWS_PER_CREDIT.ledger_scrutiny ?? 100,
