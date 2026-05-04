@@ -629,10 +629,7 @@ function verifyClosingBalance(
   const drift = sum - expected;
 
   // Walk the chain to find the FIRST row where opening + cumsum
-  // diverges from the printed running balance — that's the misread.
-  // Without this we only know "totals are off by ₹X" and have no way
-  // to point at the specific cell. With it the server log says
-  // exactly which row to look at.
+  // diverges from the printed running balance.
   let cum = openingBalance;
   let firstBreak: { index: number; date: string | null; narration: string | null; expectedBalance: number; actualBalance: number; rowDelta: number } | null = null;
   for (let i = 0; i < txs.length; i++) {
@@ -652,22 +649,44 @@ function verifyClosingBalance(
       break;
     }
   }
+
+  // Same-date cluster context. When the divergence row shares its
+  // date with neighbouring rows, the most likely cause is row
+  // alignment / a missing row in a same-date cluster — not a
+  // misread balance digit. The statement we hit this on (BoB 17pp)
+  // had THREE rows on 2025-09-07 and the AI dropped the middle
+  // one, shifting subsequent narrations up by one slot. Spot-checking
+  // the date neighbourhood lets the diagnostic distinguish the two
+  // hypotheses instead of always claiming "misread balance digit".
+  let sameDateNeighbours = 0;
+  if (firstBreak && firstBreak.date) {
+    for (let j = Math.max(0, firstBreak.index - 3); j <= Math.min(txs.length - 1, firstBreak.index + 3); j++) {
+      if (j !== firstBreak.index && txs[j].date === firstBreak.date) sameDateNeighbours++;
+    }
+  }
+  const looksLikeMissingRow = !!firstBreak && sameDateNeighbours >= 1;
+
   if (firstBreak) {
     const narrationPreview = (firstBreak.narration ?? '').slice(0, 80);
-    console.warn(`[bank-statements] balance chain first diverges at row ${firstBreak.index + 1} (date ${firstBreak.date ?? 'unknown'}, narration "${narrationPreview}"): expected balance ${firstBreak.expectedBalance.toFixed(2)}, printed balance ${firstBreak.actualBalance.toFixed(2)}, delta ${firstBreak.rowDelta.toFixed(2)}. Total drift across statement: ${drift.toFixed(2)}.`);
+    const hypothesis = looksLikeMissingRow
+      ? 'likely a MISSING ROW in the same-date cluster (the row is gone, the chain is internally consistent without it). The narration printed below is from the row that took the missing row\'s slot, NOT the misread one.'
+      : 'likely a misread balance digit on this row.';
+    console.warn(`[bank-statements] balance chain first diverges at row ${firstBreak.index + 1} (date ${firstBreak.date ?? 'unknown'}, narration "${narrationPreview}"): expected balance ${firstBreak.expectedBalance.toFixed(2)}, printed balance ${firstBreak.actualBalance.toFixed(2)}, delta ${firstBreak.rowDelta.toFixed(2)}. Same-date neighbours: ${sameDateNeighbours}. Total drift across statement: ${drift.toFixed(2)}. Hypothesis: ${hypothesis}`);
   } else {
     console.warn(`[bank-statements] closing-balance mismatch (drift ${drift.toFixed(2)}) but every row's printed balance ties to cumsum within tolerance — likely an opening- or closing-balance OCR error rather than a per-row issue.`);
   }
 
   const breakSuffix = firstBreak
-    ? ` First divergence at row ${firstBreak.index + 1} on ${firstBreak.date ?? 'unknown date'} — printed balance differs from running total by ${Math.abs(firstBreak.rowDelta).toLocaleString('en-IN', { minimumFractionDigits: 2 })}.`
+    ? looksLikeMissingRow
+      ? ` Looks like a missing transaction near row ${firstBreak.index + 1} on ${firstBreak.date ?? 'unknown date'} — there are ${sameDateNeighbours} other transaction(s) on this date and the gap of ${Math.abs(firstBreak.rowDelta).toLocaleString('en-IN', { minimumFractionDigits: 2 })} matches one missing row. Please verify against the original PDF.`
+      : ` First divergence at row ${firstBreak.index + 1} on ${firstBreak.date ?? 'unknown date'} — printed balance differs from running total by ${Math.abs(firstBreak.rowDelta).toLocaleString('en-IN', { minimumFractionDigits: 2 })}, possibly a misread balance digit.`
     : '';
-  return `Opening + sum(transactions) = ${(openingBalance + sum).toLocaleString('en-IN', { minimumFractionDigits: 2 })} but the bank prints a closing balance of ${closingBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })} — a difference of ${Math.abs(drift).toLocaleString('en-IN', { minimumFractionDigits: 2 })}.${breakSuffix} One or more rows likely had a misread balance digit; please review.`;
+  return `Opening + sum(transactions) = ${(openingBalance + sum).toLocaleString('en-IN', { minimumFractionDigits: 2 })} but the bank prints a closing balance of ${closingBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })} — a difference of ${Math.abs(drift).toLocaleString('en-IN', { minimumFractionDigits: 2 })}.${breakSuffix}`;
 }
 
 /**
- * Drop phantom rows where the AI mistook an inline date inside the
- * previous row's narration for a new transaction anchor.
+ * Drop phantom rows where the AI mistook an inline date inside an
+ * adjacent row's narration for a new transaction anchor.
  *
  * Production examples on a BoB statement:
  *   - "Int.Pd:01-02-2025 to 30-04-2025" — emits 2 phantom rows dated
@@ -675,42 +694,38 @@ function verifyClosingBalance(
  *   - "CMSLI/DMIFINPL/09-08-2025/_LIEN_REV" — emits 1 phantom row
  *     dated 09-08-2025
  *
- * Signature of these phantoms after deriveAmountsFromBalance:
- *   - balance == null (AI didn't see a balance for the imaginary row)
- *   - amount near 0 (AI didn't have a real amount to read)
- *   - cur.date appears as a DD-MM-YYYY or DD/MM/YYYY substring inside
- *     the previous row's narration
+ * Signature: balance == null (AI didn't see a real balance for the
+ * imaginary row), and the row's date appears as a DD-MM-YYYY or
+ * DD/MM/YYYY substring inside an ADJACENT row's narration. We check
+ * both prev AND next narration because the model sometimes emits
+ * phantoms BEFORE the real row that contains the inline date.
  *
- * The triple check is conservative: a real transaction that genuinely
- * happens to share its date with an inline date in the previous row's
- * narration would only be dropped if it ALSO has null balance AND
- * trivial amount, which is vanishingly rare for a real row.
- *
- * Returns the number dropped so the reconciliation banner can disclose
- * it. Mutates txs in place.
+ * Runs BEFORE deriveAmountsFromBalance so the balance-chain logic
+ * doesn't try to recover amounts for these fake rows.
  */
-function dropInlineDatePhantoms(txs: BankTransactionInput[]): number {
-  if (txs.length < 2) return 0;
+function dropInlineDatePhantoms(txs: BankTransactionInput[]): { dropped: number; droppedRows: Array<{ index: number; date: string | null; matchedSide: 'prev' | 'next' }> } {
+  if (txs.length < 2) return { dropped: 0, droppedRows: [] };
   let dropped = 0;
-  const kept: BankTransactionInput[] = [txs[0]];
-  for (let i = 1; i < txs.length; i++) {
+  const droppedRows: Array<{ index: number; date: string | null; matchedSide: 'prev' | 'next' }> = [];
+  const kept: BankTransactionInput[] = [];
+  for (let i = 0; i < txs.length; i++) {
     const cur = txs[i];
-    const prev = txs[i - 1];
-    if (
-      cur.date &&
-      cur.balance == null &&
-      Math.abs(cur.amount) < 0.005 &&
-      prev.narration &&
-      isInlineDateInNarration(cur.date, prev.narration)
-    ) {
-      dropped++;
-      continue;
+    const prev = i > 0 ? txs[i - 1] : null;
+    const next = i < txs.length - 1 ? txs[i + 1] : null;
+    if (cur.date && cur.balance == null) {
+      const inPrev = prev?.narration && isInlineDateInNarration(cur.date, prev.narration);
+      const inNext = next?.narration && isInlineDateInNarration(cur.date, next.narration);
+      if (inPrev || inNext) {
+        dropped++;
+        droppedRows.push({ index: i, date: cur.date, matchedSide: inPrev ? 'prev' : 'next' });
+        continue;
+      }
     }
     kept.push(cur);
   }
   txs.length = 0;
   txs.push(...kept);
-  return dropped;
+  return { dropped, droppedRows };
 }
 
 /** True when YYYY-MM-DD `date` appears as a DD-MM-YYYY or DD/MM/YYYY
@@ -863,25 +878,31 @@ function persistStatement(
   const rules = bankStatementRuleRepo.listByUser(userId);
   const txs = applyUserRules(rawTxs, rules);
 
+  // Phase 0: drop inline-date phantoms BEFORE balance derivation.
+  // Phantoms are rows the AI hallucinated from inline date strings
+  // ("Int.Pd:01-02-2025 to 30-04-2025" emits two fake rows;
+  // "/09-08-2025/_LIEN_REV" emits one). Removing them before Phase 1
+  // matters because the chain check downstream uses adjacency — if a
+  // phantom sits between two real rows, the apparent gap distorts
+  // diagnostics. Detector matches the row's date against
+  // DD-MM-YYYY occurrences in EITHER neighbouring row's narration
+  // (the AI sometimes emits phantoms before the source row, not
+  // after). Gated on null-balance only — no longer requires zero
+  // amount, since the AI assigns hallucinated amounts to phantoms
+  // about half the time.
+  const phantomResult = dropInlineDatePhantoms(txs);
+  if (phantomResult.dropped > 0) {
+    console.log(`[bank-statements] dropInlineDatePhantoms: dropped ${phantomResult.dropped} row(s) — ${phantomResult.droppedRows.map(r => `${r.date} (matched ${r.matchedSide} narration)`).join(', ')}`);
+  }
+  const inlineDatePhantomsDropped = phantomResult.dropped;
+
   // Phase 1: derive each amount from the printed running balance
   // delta. The AI's amount field is treated as a fallback (used only
-  // for rows where balance is null on either side). Phantom rows from
-  // wrapped narrations fall out here automatically because their
-  // balance delta is zero.
+  // for rows where balance is null on either side). Zero-delta rows
+  // (a balance unchanged from prev row) drop out here as a second
+  // layer of phantom defence.
   const opening = typeof data.openingBalance === 'number' ? data.openingBalance : null;
   const { amountOverridden, phantomDropped } = deriveAmountsFromBalance(txs, opening);
-
-  // Phase 1b: drop inline-date phantoms that survive Phase 1. These
-  // are rows the AI hallucinated from dates appearing inside the
-  // previous row's narration ("Int.Pd:01-02-2025 to 30-04-2025"
-  // emits two fake rows; "/09-08-2025/_LIEN_REV" emits one). They
-  // pass through Phase 1 because their balance is null (so no zero-
-  // delta drop fires). The detector matches the row's date against
-  // DD-MM-YYYY occurrences in the previous narration, gated on
-  // null-balance + zero-amount so a real same-day transaction
-  // following a narration that happens to mention the same date
-  // isn't dropped.
-  const inlineDatePhantomsDropped = dropInlineDatePhantoms(txs);
   const totalPhantomDropped = phantomDropped + inlineDatePhantomsDropped;
 
   // Phase 2: legacy sign-flip / column-swap reconciliation. After
