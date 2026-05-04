@@ -32,6 +32,30 @@ const TOKENS_PER_CHAR = 1 / 4;
 const T2_W_IN = 1.0;
 const T2_W_OUT = 4.0;
 
+// Sonnet 4.5 weights — used by estimateClaudeVision() for the
+// scanned-PDF path. ~30× per input token vs T2, ~37× per output.
+const SONNET_W_IN = 30.0;
+const SONNET_W_OUT = 150.0;
+const SONNET_PDF_PAGE_LIMIT = 100;
+const SONNET_TOKENS_PER_PAGE_INPUT = 1500;   // PDF document blocks bill ~1.5K in tokens per page
+const SONNET_TOKENS_PER_PAGE_OUTPUT = 800;   // typical structured-extract output
+
+/**
+ * Weighted-token estimate for a Sonnet 4.5 vision call. Used by
+ * the scanned-PDF / image vision paths after the Sonnet swap.
+ * Capped at 100 pages because Anthropic refuses larger PDFs anyway
+ * (see ClaudePageLimitError).
+ */
+export function estimateClaudeVision(fileSizeBytes: number, opts: { pageCount?: number } = {}): number {
+  if (fileSizeBytes <= 0) return 0;
+  const KB_PER_PAGE = 200;
+  const pages = opts.pageCount ?? Math.max(1, Math.ceil(fileSizeBytes / 1024 / KB_PER_PAGE));
+  const cappedPages = Math.min(SONNET_PDF_PAGE_LIMIT, pages);
+  const inputTokens = cappedPages * SONNET_TOKENS_PER_PAGE_INPUT + 500; // + prompt overhead
+  const outputTokens = cappedPages * SONNET_TOKENS_PER_PAGE_OUTPUT;
+  return Math.ceil((inputTokens * SONNET_W_IN + outputTokens * SONNET_W_OUT) * SAFETY_MARGIN);
+}
+
 /** Weighted tokens for a chunk of plain text input (prompt + payload).
  *  Treated as input-only (no output produced from the input alone),
  *  so the weight collapses to T2 input × 1.0. */

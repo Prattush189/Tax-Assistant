@@ -7,6 +7,8 @@ import type { LedgerScrutinyProgress } from '../../services/api';
 import { cn } from '../../lib/utils';
 import { ColumnMappingWizard } from '../shared/ColumnMappingWizard';
 import { PasswordPromptDialog } from '../shared/PasswordPromptDialog';
+import { ScannedPdfConfirmDialog, PdfTooLargeDialog } from '../shared/ScannedPdfConfirmDialog';
+import { countPdfPagesClient } from '../../lib/pdfText';
 import {
   applyMapping,
   extractPdfGrid,
@@ -105,6 +107,8 @@ export function LedgerUploader({ manager }: Props) {
   // the column-mapping wizard opens. Bridges the silent 1-3s gap so
   // the dropzone doesn't look idle after the user clicks.
   const [isReadingPdf, setIsReadingPdf] = useState(false);
+  const [pendingScannedPdf, setPendingScannedPdf] = useState<File | null>(null);
+  const [pdfTooLarge, setPdfTooLarge] = useState<{ file: File; pageCount: number } | null>(null);
 
   const handleFiles = async (files: FileList | null) => {
     const file = files?.[0];
@@ -146,16 +150,11 @@ export function LedgerUploader({ manager }: Props) {
       return;
     }
 
-    // Digital PDF → extract grid + run column-mapping wizard. Skips
-    // Gemini extraction entirely (server runs only the audit pass) and
-    // makes credit/debit signs deterministic from the user's mapping.
-    //
-    // Scanned PDFs are BLOCKED here. Ledger audits depend on
-    // deterministic credit/debit signs from the user's column mapping,
-    // and a vision-extracted ledger can't reliably produce that — the
-    // §40A(3) / §269ST checks would silently mis-fire on any
-    // sign-flipped row. Better to refuse and ask for a digital export
-    // than to ship audit findings the user can't trust.
+    // Digital PDF → extract grid + run column-mapping wizard.
+    // Scanned PDFs route to AI vision (Sonnet 4.5) with a cost
+    // warning; the audit pipeline can still produce useful signal
+    // on a vision-extracted ledger, just less crisp than from a
+    // wizard-mapped grid. PDFs over 100 pages block (Anthropic limit).
     setIsReadingPdf(true);
     try {
       const grid = await extractPdfGrid(file);
@@ -164,8 +163,13 @@ export function LedgerUploader({ manager }: Props) {
         setPendingGrid({ grid, filename: file.name });
         return;
       }
+      const pageCount = await countPdfPagesClient(file) ?? 0;
       setIsReadingPdf(false);
-      toast.error('This PDF appears to be scanned or image-only. Ledger audits need a digital PDF or CSV export — please upload one of those.');
+      if (pageCount > 100) {
+        setPdfTooLarge({ file, pageCount });
+        return;
+      }
+      setPendingScannedPdf(file);
       return;
     } catch (err) {
       if (err instanceof PdfPasswordError) {
@@ -339,6 +343,31 @@ export function LedgerUploader({ manager }: Props) {
               toast.error(err instanceof Error ? err.message : 'Failed to read PDF');
             }
           }}
+        />
+      )}
+      {pendingScannedPdf && (
+        <ScannedPdfConfirmDialog
+          filename={pendingScannedPdf.name}
+          documentLabel="ledger"
+          onCancel={() => setPendingScannedPdf(null)}
+          onConfirm={async () => {
+            const file = pendingScannedPdf;
+            setPendingScannedPdf(null);
+            try {
+              const result = await manager.upload(file);
+              toast.success(`Audit complete: ${result.observations.length} observation${result.observations.length === 1 ? '' : 's'} across ${result.accounts.length} accounts`);
+            } catch (e) {
+              toast.error(e instanceof Error ? e.message : 'Upload failed');
+            }
+          }}
+        />
+      )}
+      {pdfTooLarge && (
+        <PdfTooLargeDialog
+          filename={pdfTooLarge.file.name}
+          pageCount={pdfTooLarge.pageCount}
+          documentLabel="ledger"
+          onClose={() => setPdfTooLarge(null)}
         />
       )}
     </div>

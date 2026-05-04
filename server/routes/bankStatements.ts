@@ -3,15 +3,13 @@ import crypto from 'crypto';
 import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
 import Papa from 'papaparse';
-import { extractWithRetry } from '../lib/documentExtract.js';
-import { extractVisionPdf } from '../lib/geminiVisionPdf.js';
-import { splitPdfIntoBatches, runBatchesWithConcurrency } from '../lib/pdfPageChunks.js';
+import { extractClaudeVision, ClaudePageLimitError } from '../lib/claudeVision.js';
 import { callGeminiJson, type GeminiJsonResult } from '../lib/geminiJson.js';
 import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_TSV_PROMPT, BANK_STATEMENT_CATEGORIES, buildConditionsBlock, countWords, MAX_CONDITION_WORDS } from '../lib/bankStatementPrompt.js';
 import { gemini, GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, costForModel } from '../lib/gemini.js';
 import { creditsForPages, creditsForCsvRows, PAGES_PER_CREDIT, CSV_ROWS_PER_CREDIT } from '../lib/creditPolicy.js';
 import { enforceTokenQuota } from '../lib/tokenQuota.js';
-import { estimateBankStatementText, estimateBankStatementVision, estimateFromChars } from '../lib/tokenEstimate.js';
+import { estimateBankStatementText, estimateClaudeVision, estimateFromChars } from '../lib/tokenEstimate.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { bankStatementRepo } from '../db/repositories/bankStatementRepo.js';
 import { bankTransactionRepo, BankTransactionInput } from '../db/repositories/bankTransactionRepo.js';
@@ -1108,7 +1106,7 @@ router.post(
     // so two parallel uploads can't both pass on a thin remaining
     // budget and collectively bust the cap.
     const preflightEstimate = (() => {
-      if (req.file) return estimateBankStatementVision(req.file.size);
+      if (req.file) return estimateClaudeVision(req.file.size);
       if (typeof req.body?.pdfText === 'string') return estimateBankStatementText(req.body.pdfText.length);
       if (typeof req.body?.csvText === 'string') return estimateFromChars(req.body.csvText.length + 800);
       return 0;
@@ -1263,112 +1261,18 @@ router.post(
       if (req.file) {
         filename = req.file.originalname;
         mimeType = req.file.mimetype;
-        // Multi-page PDFs need the native generateContent endpoint —
-        // the OpenAI-compatible shim keeps only page 1 of an
-        // application/pdf data URL ("AI vision only analyzed page 1
-        // of 17"). For images (jpeg/png/webp) the OpenAI shim works
-        // fine since they're inherently single-page.
-        const isPdfFile = mimeType === 'application/pdf' || /\.pdf$/i.test(filename);
-        // Vision path — used for scanned / image-only PDFs and direct
-        // image uploads. Digital PDFs get pre-extracted client-side
-        // and hit the faster `pdfText` branch below.
-        //
-        // Two-tier cascade: T2 primary → T1 fallback. retryParseFailures
-        // covers the dense-OCR case where the model emits a JSON tail
-        // that won't parse — same model + same prompt sometimes
-        // re-samples cleanly. The native generateContent endpoint
-        // disables thinking on both models so the full output budget
-        // is available for the JSON.
-        const visionOpts = {
-          maxTokens: 16_384,
-          primaryModel: GEMINI_CHAT_MODEL_T2,
-          fallbackModels: [GEMINI_CHAT_MODEL_T1],
-          retryParseFailures: true,
-        };
+        // Vision path — Sonnet 4.5. PDFs >100 pages reject before
+        // the API call (Anthropic limit). Single call replaces the
+        // earlier 6-batch Gemini chunking + merge logic. Image
+        // uploads (jpeg/png/webp) flow through the same Sonnet
+        // helper since they're inherently single-page.
         const fullPrompt = `${conditionsBlock}${BANK_STATEMENT_PROMPT}`;
-
-        if (isPdfFile) {
-          // Multi-page PDFs go through page-range chunking. A single
-          // vision call on a 17-page dense statement was losing ~13/149
-          // rows in production — the model ran out of attention on the
-          // long tail and silently emitted a truncated transactions
-          // array. Splitting the PDF into 3-page batches keeps each
-          // call's output well under the truncation ceiling and lets
-          // the model be exhaustive on a small visual region. Per-batch
-          // openingBalance / closingBalance let the server validate
-          // each chunk's chain integrity before merging.
-          //
-          // Each batch is a real PDF (pdf-lib subset) so Gemini's
-          // native generateContent endpoint handles it the same way
-          // it handles the full file — no per-page rendering needed.
-          const batches = await splitPdfIntoBatches(req.file.buffer, { pagesPerBatch: 3 });
-          const usages: Array<{ inputTokens: number; outputTokens: number; modelUsed: string }> = [];
-
-          // Bounded concurrency: 2 batches in flight. Each call hits
-          // Gemini's per-key rate limit; unbounded parallelism on a
-          // 6-batch statement was tripping 429s and burning fallback
-          // retries. 2 finishes a 17-page statement in ~half the
-          // sequential wall time without compounding 429s.
-          const batchResults = await runBatchesWithConcurrency(batches, 2, async (batch) => {
-            const result = await extractVisionPdf<ExtractedStatement>(
-              batch.buffer,
-              mimeType,
-              fullPrompt,
-              visionOpts,
-            );
-            usages.push({
-              inputTokens: result.inputTokens,
-              outputTokens: result.outputTokens,
-              modelUsed: result.modelUsed,
-            });
-            return { batch, data: result.data };
-          });
-
-          // Merge batches back into a single ExtractedStatement.
-          // Metadata (bankName, account, period) takes the first
-          // non-null value across batches — usually batch 0 has the
-          // header. Opening balance comes from batch 0's reported
-          // openingBalance (the bank's "B/F" line on page 1). Closing
-          // balance comes from the LAST batch (the last page's
-          // running-balance row).
-          const firstWith = <K extends keyof ExtractedStatement>(key: K): ExtractedStatement[K] | null => {
-            for (const r of batchResults) {
-              const v = r.data[key];
-              if (v !== undefined && v !== null && v !== '') return v as ExtractedStatement[K];
-            }
-            return null;
-          };
-          const allTransactions: unknown[] = [];
-          for (const r of batchResults) {
-            if (Array.isArray(r.data.transactions)) allTransactions.push(...r.data.transactions);
-          }
-          const opening = (() => {
-            const v = batchResults[0]?.data.openingBalance;
-            return typeof v === 'number' ? v : null;
-          })();
-          const closing = (() => {
-            const v = batchResults[batchResults.length - 1]?.data.closingBalance;
-            return typeof v === 'number' ? v : null;
-          })();
-          extracted = {
-            bankName: firstWith('bankName') as string | null,
-            accountNumberMasked: firstWith('accountNumberMasked') as string | null,
-            periodFrom: firstWith('periodFrom') as string | null,
-            periodTo: firstWith('periodTo') as string | null,
-            currency: firstWith('currency') as string | null,
-            openingBalance: opening,
-            closingBalance: closing,
-            transactions: allTransactions,
-          };
-          console.log(`[bank-statements] vision chunked: ${batches.length} batch(es), ${allTransactions.length} total transactions`);
-          (res.locals as Record<string, unknown>).geminiUsages = usages;
-        } else {
-          // Image uploads (jpeg/png/webp) — single-page by definition,
-          // OpenAI compat path is fine.
-          const visionResult = await extractWithRetry<ExtractedStatement>(
-            `data:${mimeType};base64,${req.file.buffer.toString('base64')}`,
+        try {
+          const visionResult = await extractClaudeVision<ExtractedStatement>(
+            req.file.buffer,
+            mimeType,
             fullPrompt,
-            { ...visionOpts, maxTokens: 16_384 },
+            { maxTokens: 16_384 },
           );
           extracted = visionResult.data;
           (res.locals as Record<string, unknown>).geminiUsages = [{
@@ -1376,6 +1280,12 @@ router.post(
             outputTokens: visionResult.outputTokens,
             modelUsed: visionResult.modelUsed,
           }];
+        } catch (err) {
+          if (err instanceof ClaudePageLimitError) {
+            res.status(400).json({ error: err.message });
+            return;
+          }
+          throw err;
         }
       } else if (isPdfText) {
         // Fast path: the frontend extracted the PDF text layer via pdfjs-dist

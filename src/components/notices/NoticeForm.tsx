@@ -6,6 +6,9 @@ import { LetterheadConfig } from '../../hooks/useNoticeDrafter';
 import { LoadFromProfile } from '../profile/shared/LoadFromProfile';
 import { profileToNoticeForm } from '../profile/lib/prefillAdapters';
 import { cn } from '../../lib/utils';
+import { extractPdfGrid, PdfPasswordError } from '../../lib/pdfGrid';
+import { countPdfPagesClient } from '../../lib/pdfText';
+import { ScannedPdfConfirmDialog, PdfTooLargeDialog } from '../shared/ScannedPdfConfirmDialog';
 
 const NOTICE_TYPES = [
   { value: 'income-tax', label: 'Income Tax' },
@@ -81,6 +84,8 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
   const [assessmentYear, setAssessmentYear] = useState('');
   const [keyPoints, setKeyPoints] = useState('');
   const [noticeFile, setNoticeFile] = useState<File | null>(null);
+  const [pendingScannedNotice, setPendingScannedNotice] = useState<File | null>(null);
+  const [pdfTooLarge, setPdfTooLarge] = useState<{ file: File; pageCount: number } | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const headerImgRef = useRef<HTMLInputElement>(null);
   const watermarkImgRef = useRef<HTMLInputElement>(null);
@@ -159,9 +164,34 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
       setNoticeFile(null);
       return;
     }
-    // PDF page count is no longer capped — the 10 MB file-size limit
-    // and token budget are the only gates.
     setFileError(null);
+
+    // For PDFs: probe the text layer + page count. Block over 100
+    // pages, warn the user before routing scanned PDFs to the AI
+    // vision path (Sonnet 4.5 — ~30× cost vs digital PDFs). Image
+    // uploads have no alternative path so they go through silently.
+    if (file.type === 'application/pdf') {
+      try {
+        const grid = await extractPdfGrid(file);
+        if (grid && grid.rows.length >= 3) {
+          setNoticeFile(file);
+          return;
+        }
+      } catch (err) {
+        if (err instanceof PdfPasswordError) {
+          setFileError('This PDF is password-protected. Remove the password and re-upload.');
+          return;
+        }
+      }
+      const pageCount = await countPdfPagesClient(file) ?? 0;
+      if (pageCount > 100) {
+        setPdfTooLarge({ file, pageCount });
+        return;
+      }
+      setPendingScannedNotice(file);
+      return;
+    }
+
     setNoticeFile(file);
   };
 
@@ -218,6 +248,7 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
   const labelClass = "block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1";
 
   return (
+    <>
     <form onSubmit={handleSubmit} className="space-y-4 overflow-y-auto flex-1 pr-1">
       {/* fieldset[disabled] cascades to every input/select/button it
           contains — one-line guarantee that the form can't be edited
@@ -597,5 +628,25 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
         )}
       </button>
     </form>
+    {pendingScannedNotice && (
+      <ScannedPdfConfirmDialog
+        filename={pendingScannedNotice.name}
+        documentLabel="notice"
+        onCancel={() => setPendingScannedNotice(null)}
+        onConfirm={() => {
+          setNoticeFile(pendingScannedNotice);
+          setPendingScannedNotice(null);
+        }}
+      />
+    )}
+    {pdfTooLarge && (
+      <PdfTooLargeDialog
+        filename={pdfTooLarge.file.name}
+        pageCount={pdfTooLarge.pageCount}
+        documentLabel="notice"
+        onClose={() => setPdfTooLarge(null)}
+      />
+    )}
+    </>
   );
 }

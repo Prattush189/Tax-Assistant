@@ -17,15 +17,14 @@
 import crypto from 'crypto';
 import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
-import { extractWithRetry } from '../lib/documentExtract.js';
-import { extractVisionPdf } from '../lib/geminiVisionPdf.js';
+import { extractClaudeVision, ClaudePageLimitError } from '../lib/claudeVision.js';
 import { safeParseJson } from '../lib/geminiJson.js';
 import { pickChatProvider } from '../lib/chatProvider.js';
 import { SseWriter } from '../lib/sseStream.js';
 import { gemini, GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, costForModel } from '../lib/gemini.js';
 import { creditsForPages, creditsForCsvRows, PAGES_PER_CREDIT, CSV_ROWS_PER_CREDIT } from '../lib/creditPolicy.js';
 import { enforceTokenQuota } from '../lib/tokenQuota.js';
-import { estimateLedgerText, estimateLedgerVision, estimateFromChars } from '../lib/tokenEstimate.js';
+import { estimateLedgerText, estimateClaudeVision, estimateFromChars } from '../lib/tokenEstimate.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import {
   LEDGER_EXTRACT_PROMPT,
@@ -1250,7 +1249,7 @@ router.post(
     // Suresh Sethi free account, which logged a 351K ledger_scrutiny
     // call on a 250K budget).
     const ledgerPreflightEstimate = (() => {
-      if (req.file) return estimateLedgerVision(req.file.size);
+      if (req.file) return estimateClaudeVision(req.file.size);
       if (typeof req.body?.pdfText === 'string') return estimateLedgerText(req.body.pdfText.length);
       if (isPreExtracted && typeof req.body?.preExtracted === 'string') {
         // Pre-extracted skips the extract pass; estimate scrutiny only.
@@ -1542,13 +1541,21 @@ router.post(
         // on long ledgers — the frontend should prefer the pdfText path.
         console.log(`[ledger-scrutiny] vision path: scanned PDF, no text layer`);
         ledgerScrutinyRepo.setStatus(job.id, req.user.id, 'extracting');
-        // Native generateContent — required for multi-page PDFs (the
-        // OpenAI compat shim only sees page 1). 32K output budget for
-        // the same reason as bank-statements: dense multi-page ledgers
-        // emit JSON that overflows 16K and gets silently truncated.
-        const result = await extractVisionPdf<ExtractedLedger>(req.file!.buffer, mimeType, LEDGER_EXTRACT_PROMPT, {
-          maxTokens: 32_768,
-        });
+        // Sonnet 4.5 vision. Anthropic's PDF document blocks handle
+        // up to 100 pages natively; >100 raises ClaudePageLimitError
+        // which the route surfaces as 400 with a CSV-export hint.
+        let result;
+        try {
+          result = await extractClaudeVision<ExtractedLedger>(req.file!.buffer, mimeType, LEDGER_EXTRACT_PROMPT, {
+            maxTokens: 16_384,
+          });
+        } catch (err) {
+          if (err instanceof ClaudePageLimitError) {
+            res.status(400).json({ error: err.message });
+            return;
+          }
+          throw err;
+        }
         extracted = normalizeExtraction(result.data);
         rawJson = JSON.stringify(extracted);
 
