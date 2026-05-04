@@ -162,26 +162,19 @@ router.post('/usage/reset-self', (req: AuthRequest, res: Response) => {
   });
 });
 
-// POST /api/admin/users/:id/plan — change user's plan
-router.post('/users/:id/plan', (req: AuthRequest, res: Response) => {
-  const { id } = req.params;
-  const { plan } = req.body;
-  if (!['free', 'pro', 'enterprise'].includes(plan)) {
-    res.status(400).json({ error: 'Invalid plan. Must be free, pro, or enterprise.' });
-    return;
-  }
-  const user = userRepo.findById(id);
-  if (!user) { res.status(404).json({ error: 'User not found' }); return; }
-  const wasEnterprise = user.plan === 'enterprise';
-  userRepo.updatePlan(id, plan);
-  // If an enterprise account is being downgraded, detach any team members so
-  // their future usage routes to themselves rather than an ex-inviter pool.
-  // Historical usage rows keep their old billing_user_id for audit.
-  if (wasEnterprise && plan !== 'enterprise') {
-    userRepo.detachAllInvitees(id);
-  }
-  res.json({ success: true });
+// POST /api/admin/users/:id/plan — DISABLED.
+//
+// Plan changes now go exclusively through license-key issuance
+// (POST /api/admin/licenses, landing in Stage 3 of the licensing
+// rollout). Direct plan flips would silently bypass the audit
+// trail, the renewal-tied expiry, and the invoice / receipt
+// generation that ride the issuance flow.
+router.post('/users/:id/plan', (_req: AuthRequest, res: Response) => {
+  res.status(410).json({
+    error: 'Direct plan changes are disabled. Use Generate License (in the admin Licenses tab) to change a user\'s plan — it issues a key, sets the expiry, and writes the audit row in one step.',
+  });
 });
+
 
 // POST /api/admin/users/:id/suspend
 router.post('/users/:id/suspend', (req: AuthRequest, res: Response) => {

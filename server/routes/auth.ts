@@ -8,6 +8,7 @@ import { verificationRepo } from '../db/repositories/verificationRepo.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { AuthRequest } from '../types.js';
 import { sanitizePluginLimits, getEffectivePlan, getTrialEndsAt } from '../lib/planLimits.js';
+import { issueSignupLicense } from '../lib/issueLicense.js';
 import { mailerConfigured, sendOtpEmail, sendPasswordResetEmail } from '../lib/mailer.js';
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ?? process.env.VITE_GOOGLE_CLIENT_ID ?? '';
@@ -151,6 +152,7 @@ router.post('/signup', async (req: Request, res: Response) => {
   // Hash & create
   const hashedPassword = await bcrypt.hash(password, 12);
   const user = userRepo.create(normalizedEmail, hashedPassword, name.trim());
+  issueSignupLicense(user.id, user.created_at);
 
   // Generate + store + send the 6-digit OTP
   const code = generateOtpCode();
@@ -507,6 +509,7 @@ router.post('/google', async (req: Request, res: Response) => {
     if (!user) {
       // 3. Create new user (no password)
       user = userRepo.createFromGoogle(email, displayName, googleId!);
+      issueSignupLicense(user.id, user.created_at);
     }
 
     const tokens = loginAndIssueTokens(user);
@@ -834,6 +837,7 @@ router.post('/plugin-sso', (req: Request, res: Response) => {
       user = userRepo.createFromPhone(phone as string, '', name.trim());
       userRepo.linkExternalId(user.id, userId);
     }
+    issueSignupLicense(user.id, user.created_at);
   }
 
   // 3b. Pre-accept as an invitee of inviterUserId when supplied (plugin parity

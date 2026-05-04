@@ -18,6 +18,7 @@ import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { paymentRepo } from '../db/repositories/paymentRepo.js';
+import { issuePaymentLicense } from '../lib/issueLicense.js';
 import { PLAN_AMOUNTS, planKey } from '../lib/razorpayPlans.js';
 import type { PaidPlan } from '../lib/razorpayPlans.js';
 import {
@@ -73,14 +74,26 @@ function handleEvent(eventType: string, event: Record<string, unknown>): void {
       const amountPaise = (payEntity.amount as number | undefined)
         ?? PLAN_AMOUNTS[planKey(plan, 'yearly')];
 
+      let paymentRowId: string | null = null;
       try {
         const existing = paymentRepo.findByOrderId(orderId);
         if (!existing) {
           paymentRepo.create(userId, orderId, plan, 'yearly', amountPaise);
         }
         paymentRepo.markPaid(orderId, paymentId, expiresAt);
+        paymentRowId = paymentRepo.findByOrderId(orderId)?.id ?? null;
       } catch (err) {
         console.error('[webhook] Failed to log payment record:', err);
+      }
+
+      // Issue the license. Webhook may fire before /verify (or at all
+      // if the user closed the tab on Razorpay's success page), so
+      // this is the canonical issuance path. /verify also issues
+      // licenses but is short-circuited above when the row already
+      // shows status='paid' — the unique-key + supersede semantics
+      // in licenseKeyRepo.issue prevent double-issue if both fire.
+      if (paymentRowId) {
+        issuePaymentLicense({ userId, plan, paymentId: paymentRowId, expiresAt });
       }
 
       const user = userRepo.findById(userId);

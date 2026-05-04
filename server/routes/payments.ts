@@ -23,6 +23,7 @@ import { PLAN_AMOUNTS, planKey } from '../lib/razorpayPlans.js';
 import { rateLimit } from 'express-rate-limit';
 import type { BillingCycle, PaidPlan } from '../lib/razorpayPlans.js';
 import { sendPlanWelcomeEmail, sendInvoiceEmail } from '../lib/mailer.js';
+import { issuePaymentLicense } from '../lib/issueLicense.js';
 
 const router = Router();
 
@@ -171,13 +172,30 @@ router.post('/verify', verifyLimiter, (req: AuthRequest, res: Response) => {
 
   // 5. Log payment record
   const amount = PLAN_AMOUNTS[planKey(plan as PaidPlan, billing)];
+  let paymentRowId: string | null = null;
   try {
     const existing = paymentRepo.findByOrderId(razorpay_order_id);
     if (!existing) {
       paymentRepo.create(req.user.id, razorpay_order_id, plan, billing, amount);
     }
     paymentRepo.markPaid(razorpay_order_id, razorpay_payment_id, expiresAt);
+    paymentRowId = paymentRepo.findByOrderId(razorpay_order_id)?.id ?? null;
   } catch { /* non-critical — plan already activated above */ }
+
+  // 6. Issue the license key for this payment. Supersedes any
+  //    existing active license for the user (handled inside
+  //    licenseKeyRepo.issue's transaction). Fails silently if the
+  //    payment row didn't materialise — user is already activated
+  //    via userRepo.updateSubscription above; backfill or admin
+  //    intervention can issue a key later.
+  if (paymentRowId) {
+    issuePaymentLicense({
+      userId: req.user.id,
+      plan: plan as 'pro' | 'enterprise',
+      paymentId: paymentRowId,
+      expiresAt,
+    });
+  }
 
   console.log(`[payments/verify] Plan activated: user=${req.user.id} plan=${plan}/${billing}`);
   const fresh = userRepo.findById(req.user.id);

@@ -46,8 +46,27 @@ const stmts = {
   findByKey: db.prepare('SELECT * FROM license_keys WHERE key = ?'),
   listByUser: db.prepare('SELECT * FROM license_keys WHERE user_id = ? ORDER BY created_at DESC'),
   setUserActive: db.prepare('UPDATE users SET license_key_id = ? WHERE id = ?'),
+  setUserPlan: db.prepare('UPDATE users SET plan = ?, updated_at = datetime(\'now\', \'+5 hours\', \'+30 minutes\') WHERE id = ?'),
   markSuperseded: db.prepare('UPDATE license_keys SET status = \'superseded\', superseded_by_id = ? WHERE id = ?'),
   markRevoked: db.prepare('UPDATE license_keys SET status = \'revoked\', revoked_at = datetime(\'now\', \'+5 hours\', \'+30 minutes\'), revoke_reason = ? WHERE id = ?'),
+  loadActiveByUser: db.prepare(`
+    SELECT lk.* FROM license_keys lk
+    JOIN users u ON u.license_key_id = lk.id
+    WHERE u.id = ?
+      AND lk.status = 'active'
+      AND (lk.expires_at IS NULL OR lk.expires_at > datetime('now', '+5 hours', '+30 minutes'))
+  `),
+  /** Free-fall users — those whose license just lapsed and need
+   *  users.plan reset to 'free' so the gate sees them as free-tier
+   *  immediately. Returns the user_ids to update. */
+  expiredLicenseUsers: db.prepare(`
+    SELECT u.id FROM users u
+    JOIN license_keys lk ON lk.id = u.license_key_id
+    WHERE lk.status = 'expired'
+      AND lk.plan != 'free'
+      AND lk.plan != 'admin'
+      AND u.plan != 'free'
+  `),
   expireBefore: db.prepare(`
     UPDATE license_keys
     SET status = 'expired'
@@ -131,9 +150,24 @@ export const licenseKeyRepo = {
         stmts.markSuperseded.run(id, current.id);
       }
       stmts.setUserActive.run(id, input.userId);
+      // Sync the denormalised users.plan cache with the license plan
+      // so getEffectivePlan / getUserLimits keep working as pure
+      // functions of the user row. Skip on ADMIN- keys: admin role
+      // is independent of billing plan, and we don't want issuing
+      // an admin license to overwrite an admin-user's underlying
+      // 'enterprise' plan.
+      if (input.plan !== 'admin') {
+        stmts.setUserPlan.run(input.plan, input.userId);
+      }
       return stmts.findById.get(id) as LicenseKeyRow;
     });
     return tx();
+  },
+
+  /** Returns the user's currently-active license (status='active' AND
+   *  not yet past expires_at), or null if they have none. */
+  loadActive(userId: string): LicenseKeyRow | null {
+    return (stmts.loadActiveByUser.get(userId) as LicenseKeyRow | undefined) ?? null;
   },
 
   findById(id: string): LicenseKeyRow | null {
@@ -153,10 +187,21 @@ export const licenseKeyRepo = {
   },
 
   /** Sweep all licenses whose expires_at is in the past and flip
-   *  their status to 'expired'. Idempotent. Called on server boot
-   *  and periodically by the renewal-reminder job. */
+   *  their status to 'expired'. Also resets users.plan to 'free'
+   *  for any user whose paid license just lapsed — keeps the
+   *  denormalised plan column honest with the license source of
+   *  truth, so the gate correctly demotes them on next request.
+   *  Idempotent. Called on server boot and periodically by the
+   *  renewal-reminder job. */
   expirePastDue(): void {
     stmts.expireBefore.run();
+    const stranded = stmts.expiredLicenseUsers.all() as Array<{ id: string }>;
+    for (const row of stranded) {
+      stmts.setUserPlan.run('free', row.id);
+    }
+    if (stranded.length > 0) {
+      console.log(`[license-keys] demoted ${stranded.length} user(s) to plan='free' after license expiry`);
+    }
   },
 
   /** Active licenses by plan — for the admin Overview tile. */
