@@ -354,7 +354,7 @@ export function ScrutinyReport({ manager }: Props) {
       <ConfirmDialog
         open={cancelOpen}
         title="Pause this scrutiny?"
-        description="The audit will stop now. Observations already produced by chunks that finished are kept and visible — only the remaining chunks are abandoned. Tokens already consumed still count toward your monthly budget."
+        description="The audit will stop now. Observations already produced by chunks that finished are kept and visible — only the remaining chunks are abandoned. Tokens already consumed still count toward your token budget."
         confirmLabel="Pause &amp; save progress"
         cancelLabel="Keep running"
         pending={cancelPending}

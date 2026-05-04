@@ -218,7 +218,7 @@ export function UserCard({
           )}
           {details && !loadingDetails && (
             <div className="space-y-4">
-              {/* Monthly token-budget bar */}
+              {/* Token-budget bar (yearly for paid, lifetime for free trial) */}
               <div className="bg-white dark:bg-gray-900/60 border border-gray-200 dark:border-gray-800 rounded-lg p-3">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2 text-xs font-medium text-gray-600 dark:text-gray-400">

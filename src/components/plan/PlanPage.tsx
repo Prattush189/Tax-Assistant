@@ -56,7 +56,7 @@ function totalWithGst(basePrice: number): number {
 // rendered as a divider, not a bullet, so users see at a glance that
 // higher tiers stack on top of lower tiers.
 // Feature lists are now capability-only — no per-month counts. The
-// single token budget (250K / 2M / 6M) is what gates total usage,
+// single token budget (250K / 20M / 60M) is what gates total usage,
 // shown in Settings → Your Usage and on each feature's landing page.
 // Plan tiers differ in (a) which features are unlocked and (b) the
 // size of the shared token pool.

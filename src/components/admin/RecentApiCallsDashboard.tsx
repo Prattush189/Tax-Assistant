@@ -34,21 +34,23 @@ const CATEGORY_LABELS: Record<string, string> = {
   form16: 'Form 16',
 };
 
+// Active models get distinct colours; retired models keep grey so
+// historic api_usage rows are visually deprioritised in the breakdown.
 const MODEL_COLORS: Record<string, string> = {
-  'claude-haiku-4-5': 'bg-orange-500',
-  'gemini-3-flash-preview': 'bg-purple-500',
-  'gemini-3.1-flash-lite-preview': 'bg-violet-400',
-  'gemini-2.5-flash-lite': 'bg-blue-500',
-  'gemini-2.5-flash': 'bg-sky-400',
-  'unknown': 'bg-gray-400',
+  'gemini-2.5-flash-lite':         'bg-blue-500',     // T2 active primary
+  'gemini-3.1-flash-lite-preview': 'bg-violet-400',   // T1 active fallback
+  'gemini-3-flash-preview':        'bg-gray-400',     // retired
+  'gemini-2.5-flash':              'bg-gray-400',     // retired
+  'claude-haiku-4-5':              'bg-gray-400',     // retired
+  'unknown':                       'bg-gray-400',
 };
 
 const MODEL_LABELS: Record<string, string> = {
-  'claude-haiku-4-5': 'Claude Haiku 4.5',
-  'gemini-3-flash-preview': 'Gemini 3 Flash',
+  'gemini-2.5-flash-lite':         'Gemini 2.5 Flash-Lite',
   'gemini-3.1-flash-lite-preview': 'Gemini 3.1 Flash-Lite',
-  'gemini-2.5-flash-lite': 'Gemini 2.5 Flash-Lite',
-  'gemini-2.5-flash': 'Gemini 2.5 Flash',
+  'gemini-3-flash-preview':        'Gemini 3 Flash (retired)',
+  'gemini-2.5-flash':              'Gemini 2.5 Flash (retired)',
+  'claude-haiku-4-5':              'Claude Haiku 4.5 (retired)',
 };
 
 function fmtTokens(n: number): string {

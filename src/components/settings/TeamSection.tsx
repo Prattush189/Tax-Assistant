@@ -135,7 +135,7 @@ export function TeamSection() {
         <div className="flex-1 min-w-0">
           <h3 className="text-base font-semibold text-gray-900 dark:text-white">Team</h3>
           <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-            Invite teammates to share your Enterprise plan's combined monthly pool. Max 10 members total (you + 9 invitees).
+            Invite teammates to share your Enterprise plan's combined yearly token budget. Max 10 members total (you + 9 invitees).
           </p>
         </div>
         {data && (
