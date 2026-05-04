@@ -123,7 +123,7 @@ export async function* streamGeminiChat(
       response = await postBody(false);
     } else {
       // Non-cache error — throw with the text we already consumed.
-      throw new Error(`Gemini ${model} error ${response.status}: ${errText.slice(0, 300)}`);
+      throw new Error(`AI service error ${response.status}: ${errText.slice(0, 300)}`);
     }
   }
 

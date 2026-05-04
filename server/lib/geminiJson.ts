@@ -107,12 +107,12 @@ async function callOnce<T>(
   const raw = response.choices[0]?.message?.content ?? '{}';
   const inputTokens = response.usage?.prompt_tokens ?? 0;
   const outputTokens = response.usage?.completion_tokens ?? 0;
-  // Capture usage before parse so a `Failed to parse Gemini JSON response`
+  // Capture usage before parse so a `Failed to parse AI response`
   // throw still reports the wasted Gemini spend through recordAttempt.
   let succeeded = false;
   try {
     const parsed = safeParseJson<T>(raw);
-    if (parsed === null) throw new Error('Failed to parse Gemini JSON response');
+    if (parsed === null) throw new Error('Failed to parse AI response');
     succeeded = true;
     return {
       data: parsed,
@@ -127,7 +127,7 @@ async function callOnce<T>(
 
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 const isParseFailure = (err: unknown) =>
-  err instanceof Error && /Failed to parse Gemini JSON response/i.test(err.message);
+  err instanceof Error && /Failed to parse AI response/i.test(err.message);
 const MAX_PRIMARY_ATTEMPTS = 3;
 // Fallback also gets multiple attempts now. Production logs showed
 // brief Gemini regional outages (503 bursts lasting 30-90s) where the

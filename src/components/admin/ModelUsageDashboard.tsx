@@ -95,7 +95,7 @@ export function ModelUsageDashboard() {
       if (next.t1Limit !== t1 || next.t2Limit !== t2) {
         toast.success(`Limits clamped to free tier (${next.t1Limit} / ${next.t2Limit})`);
       } else {
-        toast.success('Gemini limits updated');
+        toast.success('AI search limits updated');
       }
     } catch {
       toast.error('Failed to update limits');
