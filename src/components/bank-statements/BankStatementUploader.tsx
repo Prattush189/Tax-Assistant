@@ -6,6 +6,8 @@ import { BankStatementManager } from '../../hooks/useBankStatementManager';
 import type { BankStatementAnalyzeProgress } from '../../services/api';
 import { cn } from '../../lib/utils';
 import { ColumnMappingWizard } from '../shared/ColumnMappingWizard';
+import { ScannedPdfConfirmDialog, PdfTooLargeDialog } from '../shared/ScannedPdfConfirmDialog';
+import { countPdfPagesClient } from '../../lib/pdfText';
 import {
   applyMapping,
   extractPdfGrid,
@@ -93,6 +95,12 @@ export function BankStatementUploader({ manager }: Props) {
   // reads as "did my click register?". Cleared when the wizard opens
   // OR when we route to the analyze pipeline.
   const [isReadingPdf, setIsReadingPdf] = useState(false);
+  // Scanned-PDF warning + over-100-page block dialogs. Shown when the
+  // PDF has no text layer and we'd route to Sonnet vision — at which
+  // point the cost difference vs digital PDFs is large enough to
+  // warrant a confirmation step.
+  const [pendingScannedPdf, setPendingScannedPdf] = useState<File | null>(null);
+  const [pdfTooLarge, setPdfTooLarge] = useState<{ file: File; pageCount: number } | null>(null);
 
   // Pull batch progress off the in-flight statement (the placeholder
   // row's analyze_chunks_* fields, polled every 5s by the manager).
@@ -168,10 +176,17 @@ export function BankStatementUploader({ manager }: Props) {
           setPendingGrid({ grid, filename: file.name });
           return;
         }
-        // No text layer — fall through to the AI vision path silently.
-        // The token-cost difference vs digital PDFs is real but not
-        // material enough to interrupt the user with a confirmation
-        // dialog every time.
+        // No text layer — route through Sonnet vision. Block at 100
+        // pages (Anthropic's hard limit) and warn at any size since
+        // vision is 30× more tokens per page than the text path.
+        const pageCount = await countPdfPagesClient(file) ?? 0;
+        setIsReadingPdf(false);
+        if (pageCount > 100) {
+          setPdfTooLarge({ file, pageCount });
+          return;
+        }
+        setPendingScannedPdf(file);
+        return;
       } catch (err) {
         if (err instanceof PdfPasswordError) {
           // Encrypted bank PDFs are common — pop the unlock prompt
@@ -361,6 +376,26 @@ export function BankStatementUploader({ manager }: Props) {
               toast.error(err instanceof Error ? err.message : 'Failed to read PDF');
             }
           }}
+        />
+      )}
+      {pendingScannedPdf && (
+        <ScannedPdfConfirmDialog
+          filename={pendingScannedPdf.name}
+          documentLabel="statement"
+          onCancel={() => setPendingScannedPdf(null)}
+          onConfirm={() => {
+            const file = pendingScannedPdf;
+            setPendingScannedPdf(null);
+            void analyzeRawFile(file);
+          }}
+        />
+      )}
+      {pdfTooLarge && (
+        <PdfTooLargeDialog
+          filename={pdfTooLarge.file.name}
+          pageCount={pdfTooLarge.pageCount}
+          documentLabel="statement"
+          onClose={() => setPdfTooLarge(null)}
         />
       )}
     </div>

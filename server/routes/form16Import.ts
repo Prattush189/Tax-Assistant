@@ -1,8 +1,7 @@
 // server/routes/form16Import.ts
 import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
-import { extractWithRetry } from '../lib/documentExtract.js';
-import { extractVisionPdf } from '../lib/geminiVisionPdf.js';
+import { extractClaudeVision, ClaudePageLimitError } from '../lib/claudeVision.js';
 import { GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST } from '../lib/gemini.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
@@ -90,13 +89,20 @@ router.post(
     try {
       // Multi-page PDFs need the native generateContent endpoint —
       // the OpenAI compat shim silently truncates a PDF data URL to
-      // its first page. Form 16s issued by some employers are 3-5
-      // pages with the actual deduction breakdown on later pages, so
-      // single-page truncation was producing under-extracted imports.
-      const isPdfFile = mimetype === 'application/pdf' || /\.pdf$/i.test(originalname);
-      const result = isPdfFile
-        ? await extractVisionPdf(req.file.buffer, mimetype, FORM16_EXTRACTION_PROMPT)
-        : await extractWithRetry(`data:${mimetype};base64,${req.file.buffer.toString('base64')}`, FORM16_EXTRACTION_PROMPT);
+      // Form 16 always goes through vision (no client-side text path).
+      // Sonnet 4.5 handles both PDF and image attachments natively.
+      // PDFs >100 pages are blocked at the helper level; Form 16s are
+      // typically 3-5 pages so this is rarely relevant.
+      let result;
+      try {
+        result = await extractClaudeVision(req.file.buffer, mimetype, FORM16_EXTRACTION_PROMPT);
+      } catch (err) {
+        if (err instanceof ClaudePageLimitError) {
+          res.status(400).json({ error: err.message });
+          return;
+        }
+        throw err;
+      }
 
       // Log AI cost so Form 16 imports show up in the admin API-cost
       // dashboard alongside chat / notice / document extractions.
