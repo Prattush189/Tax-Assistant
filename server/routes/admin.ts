@@ -685,6 +685,22 @@ router.post('/licenses/:id/renew', (req: AuthRequest, res: Response) => {
   res.json({ license });
 });
 
+// POST /api/admin/licenses/reconcile
+//   Re-issue licenses for any user whose users.plan column doesn't
+//   match their active license's plan. Used to clean up users whose
+//   plan was edited directly (DB or the legacy /plan endpoint before
+//   it was 410'd) without going through license issuance.
+//
+//   Each new license starts NOW and runs 1 year. The audit row
+//   records the old key and the source of the mismatch. Admin can
+//   manually adjust the new license's expires_at via Generate License
+//   if the user's actual paid period started earlier than today.
+router.post('/licenses/reconcile', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const result = licenseKeyRepo.reconcilePlanMismatches();
+  res.json(result);
+});
+
 // POST /api/admin/licenses/:id/revoke — body: { reason? }
 router.post('/licenses/:id/revoke', (req: AuthRequest, res: Response) => {
   if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }

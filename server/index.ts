@@ -195,6 +195,15 @@ app.listen(PORT, () => {
     console.error('[boot] license-key backfill failed:', (e as Error).message);
   }
 
+  // Reconcile plan/license mismatches — covers users whose plan
+  // column was edited directly (DB or pre-410'd /plan endpoint)
+  // without going through license issuance. Idempotent.
+  try {
+    licenseKeyRepo.reconcilePlanMismatches();
+  } catch (e) {
+    console.error('[boot] license reconcile failed:', (e as Error).message);
+  }
+
   // Weighted-tokens backfill — populates the new column on every
   // historic api_usage row so the gate sums consistently across
   // the migration. Idempotent on subsequent boots.
