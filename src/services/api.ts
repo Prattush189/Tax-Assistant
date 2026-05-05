@@ -1474,6 +1474,33 @@ export async function adminReconcileLicenses(): Promise<{ reconciled: number }> 
   return authFetch('/api/admin/licenses/reconcile', { method: 'POST' });
 }
 
+// ── External API keys (for assist.smartbizin.com etc.) ─────────────────
+
+export interface AdminExternalKey {
+  id: string;
+  label: string;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  webhook_url: string | null;
+}
+
+export async function adminFetchExternalKeys(): Promise<{ keys: AdminExternalKey[] }> {
+  return authFetch('/api/admin/external-keys');
+}
+
+export async function adminCreateExternalKey(input: { label: string; webhookUrl?: string }): Promise<{ id: string; plaintextKey: string }> {
+  return authFetch('/api/admin/external-keys', { method: 'POST', body: JSON.stringify(input) });
+}
+
+export async function adminRevokeExternalKey(id: string): Promise<{ success: boolean }> {
+  return authFetch(`/api/admin/external-keys/${id}/revoke`, { method: 'POST' });
+}
+
+export async function adminUpdateExternalKeyWebhook(id: string, webhookUrl: string | null): Promise<{ success: boolean; webhookUrl: string | null }> {
+  return authFetch(`/api/admin/external-keys/${id}/webhook`, { method: 'PATCH', body: JSON.stringify({ webhookUrl }) });
+}
+
 export async function adminRenewLicense(licenseId: string, durationMonths: number): Promise<{ license: AdminLicenseRow }> {
   return authFetch(`/api/admin/licenses/${licenseId}/renew`, { method: 'POST', body: JSON.stringify({ durationMonths }) });
 }

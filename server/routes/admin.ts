@@ -7,6 +7,7 @@ import { getBillingUser } from '../lib/billing.js';
 import { getEffectivePlan, getUsagePeriodStart } from '../lib/planLimits.js';
 import { licenseKeyRepo } from '../db/repositories/licenseKeyRepo.js';
 import { paymentRepo } from '../db/repositories/paymentRepo.js';
+import { issueExternalApiKey, listExternalApiKeys, revokeExternalApiKey, setExternalWebhookUrl } from '../lib/externalApiKey.js';
 
 const router = Router();
 
@@ -490,6 +491,54 @@ router.post('/active-key', (req: AuthRequest, res: Response) => {
     return;
   }
   res.json(getGeminiConfig());
+});
+
+// ── External API keys (for assist.smartbizin.com etc.) ──────────────────
+
+// GET /api/admin/external-keys — list all (without plaintext, which
+// is only ever returned on creation).
+router.get('/external-keys', (_req: AuthRequest, res: Response) => {
+  res.json({ keys: listExternalApiKeys() });
+});
+
+// POST /api/admin/external-keys — body: { label, webhookUrl? }
+//   Mints a new key, returns plaintext ONCE. Caller is responsible for
+//   capturing it; there's no recovery.
+router.post('/external-keys', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const { label, webhookUrl } = req.body ?? {};
+  if (typeof label !== 'string' || !label.trim()) {
+    res.status(400).json({ error: 'label is required (e.g. "assist.smartbizin.com — production")' });
+    return;
+  }
+  if (webhookUrl !== undefined && webhookUrl !== null && typeof webhookUrl !== 'string') {
+    res.status(400).json({ error: 'webhookUrl must be a string or omitted' });
+    return;
+  }
+  const result = issueExternalApiKey({
+    label: label.trim(),
+    createdByAdminId: req.user.id,
+    webhookUrl: typeof webhookUrl === 'string' && webhookUrl.trim() ? webhookUrl.trim() : null,
+  });
+  res.json(result);
+});
+
+// POST /api/admin/external-keys/:id/revoke
+router.post('/external-keys/:id/revoke', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const ok = revokeExternalApiKey(req.params.id, req.user.id);
+  if (!ok) { res.status(404).json({ error: 'Key not found' }); return; }
+  res.json({ success: true });
+});
+
+// PATCH /api/admin/external-keys/:id/webhook — body: { webhookUrl: string | null }
+router.patch('/external-keys/:id/webhook', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const { webhookUrl } = req.body ?? {};
+  const url = typeof webhookUrl === 'string' && webhookUrl.trim() ? webhookUrl.trim() : null;
+  const ok = setExternalWebhookUrl(req.params.id, url);
+  if (!ok) { res.status(404).json({ error: 'Key not found' }); return; }
+  res.json({ success: true, webhookUrl: url });
 });
 
 // ── Licensing endpoints ─────────────────────────────────────────────────

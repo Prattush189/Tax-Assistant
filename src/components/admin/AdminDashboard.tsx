@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Users, Activity, DollarSign, Shield, RefreshCw, ShieldOff, BarChart3, Cpu, Clock, RotateCcw, Search, Filter, Key, Wallet } from 'lucide-react';
+import { Users, Activity, DollarSign, Shield, RefreshCw, ShieldOff, BarChart3, Cpu, Clock, RotateCcw, Search, Filter, Key, Wallet, Plug } from 'lucide-react';
 import { LicensesDashboard } from './LicensesDashboard';
 import { PaymentsDashboard } from './PaymentsDashboard';
+import { ExternalKeysDashboard } from './ExternalKeysDashboard';
 import { ApiCostDashboard } from './ApiCostDashboard';
 import { ModelUsageDashboard } from './ModelUsageDashboard';
 import { RecentApiCallsDashboard } from './RecentApiCallsDashboard';
@@ -13,7 +14,7 @@ import toast from 'react-hot-toast';
 import { cn } from '../../lib/utils';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 
-type AdminTab = 'overview' | 'users' | 'licenses' | 'payments' | 'api-costs' | 'recent-calls' | 'model-usage';
+type AdminTab = 'overview' | 'users' | 'licenses' | 'payments' | 'external-keys' | 'api-costs' | 'recent-calls' | 'model-usage';
 
 interface Stats {
   total_requests: number;
@@ -200,6 +201,7 @@ export function AdminDashboard() {
     { id: 'users', label: 'Users', icon: Users },
     { id: 'licenses', label: 'Licenses', icon: Key },
     { id: 'payments', label: 'Payments', icon: Wallet },
+    { id: 'external-keys', label: 'External Keys', icon: Plug },
     { id: 'api-costs', label: 'API Costs', icon: DollarSign, ai: true },
     { id: 'recent-calls', label: 'Recent Calls', icon: Clock, ai: true },
     { id: 'model-usage', label: 'Model Usage', icon: Cpu, ai: true },
@@ -290,8 +292,11 @@ export function AdminDashboard() {
         {/* Payments tab — Razorpay + offline payment history with billing/invoice/receipt */}
         {adminTab === 'payments' && <PaymentsDashboard />}
 
+        {/* External Keys tab — for assist.smartbizin.com / future M2M consumers */}
+        {adminTab === 'external-keys' && <ExternalKeysDashboard />}
+
         {/* Overview + Users tabs use existing content below */}
-        {adminTab !== 'api-costs' && adminTab !== 'recent-calls' && adminTab !== 'model-usage' && adminTab !== 'licenses' && adminTab !== 'payments' && (
+        {adminTab !== 'api-costs' && adminTab !== 'recent-calls' && adminTab !== 'model-usage' && adminTab !== 'licenses' && adminTab !== 'payments' && adminTab !== 'external-keys' && (
         <>
 
         {/* Stats Cards — overview tab only (Users tab is search-focused) */}
