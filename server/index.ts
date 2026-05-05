@@ -87,7 +87,10 @@ const pluginAllowedOrigins = (process.env.PLUGIN_ALLOWED_ORIGINS ?? 'https://ai.
 
 const allowedOrigins = Array.from(new Set([
   ...(process.env.NODE_ENV === 'production'
-    ? ['https://ai.smartbizin.com', 'https://smartbizin.com']
+    // assist.smartbizin.com is the dealer-facing console that calls
+    // /api/external/* with a Bearer EXTKEY-…; included here so its
+    // browser-side fetches don't fail CORS preflight.
+    ? ['https://ai.smartbizin.com', 'https://smartbizin.com', 'https://assist.smartbizin.com']
     : ['http://localhost:3000', 'http://localhost:5173']),
   ...pluginAllowedOrigins,
 ]));

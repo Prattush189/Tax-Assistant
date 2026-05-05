@@ -583,6 +583,44 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_license_keys_user_id ON license_keys(use
 db.exec("CREATE INDEX IF NOT EXISTS idx_license_keys_status ON license_keys(status)");
 db.exec("CREATE INDEX IF NOT EXISTS idx_license_keys_expires_at ON license_keys(expires_at)");
 
+// external_api_keys — for external apps (assist.smartbizin.com,
+// future integrations) that hit /api/external/* on Tax-Assistant.
+// Distinct auth path from user JWTs: machine-to-machine, no session,
+// no user record. The plaintext key is shown ONCE at creation; only
+// the SHA-256 hash is persisted. Admin UI exposes label / created
+// at / last used / revoke; no plaintext recovery.
+db.exec(`CREATE TABLE IF NOT EXISTS external_api_keys (
+  id TEXT PRIMARY KEY,
+  key_hash TEXT NOT NULL UNIQUE,
+  label TEXT NOT NULL,
+  created_by_admin_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
+  last_used_at TEXT,
+  revoked_at TEXT,
+  revoked_by_admin_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  webhook_url TEXT
+)`);
+db.exec("CREATE INDEX IF NOT EXISTS idx_external_api_keys_hash ON external_api_keys(key_hash)");
+
+// Dealer attribution on license + payment rows. assist.smartbizin.com
+// authenticates dealers in its own UI and passes the dealer's
+// identity through on each issue/renew/revoke call. Tax-Assistant
+// records it verbatim — we don't store dealer accounts because
+// they live on the assist side. Stored as JSON for forward
+// compatibility (assist may add fields like region, agreement id,
+// etc. without a Tax-Assistant migration).
+{
+  const lkCols = (db.prepare("PRAGMA table_info(license_keys)").all() as { name: string }[]).map(c => c.name);
+  if (!lkCols.includes('issued_by_dealer')) {
+    db.exec("ALTER TABLE license_keys ADD COLUMN issued_by_dealer TEXT");
+    // JSON: { id, name, email, location? } — null for direct admin issuance / Razorpay / signup.
+  }
+  const pCols = (db.prepare("PRAGMA table_info(payments)").all() as { name: string }[]).map(c => c.name);
+  if (!pCols.includes('issued_by_dealer')) {
+    db.exec("ALTER TABLE payments ADD COLUMN issued_by_dealer TEXT");
+  }
+}
+
 // Backfill of license keys for existing users runs from server/index.ts
 // on boot via licenseKeyRepo.backfillExistingUsers(). It needs both this
 // module and licenseKeyRepo to be fully loaded, which can't be done
