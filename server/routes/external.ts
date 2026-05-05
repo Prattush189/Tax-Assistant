@@ -257,7 +257,9 @@ router.get('/payments', (req: ExternalApiRequest, res: Response) => {
   const page = Math.max(1, parseInt(String(req.query.page ?? '1'), 10) || 1);
   const limit = 50;
   const offset = (page - 1) * limit;
-  const { rows, total } = paymentRepo.findAllForAdmin({ search, limit, offset });
+  // Dealers only see successfully-paid rows. Abandoned/failed Razorpay
+  // attempts (status='created' / 'failed') stay out of the dealer view.
+  const { rows, total } = paymentRepo.findAllForAdmin({ search, limit, offset, paidOnly: true });
   res.json({ rows, total, page, limit });
 });
 
