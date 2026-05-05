@@ -26,6 +26,7 @@ export interface LicenseKeyRow {
   payment_id: string | null;
   issued_by_admin_id: string | null;
   issued_notes: string | null;
+  issued_by_dealer: string | null; // JSON-encoded { id?, name?, email?, location? }
   superseded_by_id: string | null;
   revoked_at: string | null;
   revoke_reason: string | null;
@@ -36,10 +37,10 @@ const stmts = {
   insert: db.prepare(`
     INSERT INTO license_keys (
       id, key, user_id, plan, starts_at, expires_at, status,
-      generated_via, payment_id, issued_by_admin_id, issued_notes
+      generated_via, payment_id, issued_by_admin_id, issued_notes, issued_by_dealer
     ) VALUES (
       @id, @key, @user_id, @plan, @starts_at, @expires_at, @status,
-      @generated_via, @payment_id, @issued_by_admin_id, @issued_notes
+      @generated_via, @payment_id, @issued_by_admin_id, @issued_notes, @issued_by_dealer
     )
   `),
   findById: db.prepare('SELECT * FROM license_keys WHERE id = ?'),
@@ -95,6 +96,11 @@ interface IssueInput {
    *  reuse a string the caller already minted). Defaults to a fresh
    *  random key. */
   key?: string;
+  /** Dealer attribution from /api/external/* paths. JSON-encoded
+   *  into the issued_by_dealer column so dealer fields can evolve
+   *  without a Tax-Assistant migration. Null for direct admin /
+   *  Razorpay / signup issuance. */
+  issuedByDealer?: { id?: string; name?: string; email?: string; location?: string } | null;
 }
 
 export const licenseKeyRepo = {
@@ -138,6 +144,7 @@ export const licenseKeyRepo = {
             payment_id: input.paymentId ?? null,
             issued_by_admin_id: input.issuedByAdminId ?? null,
             issued_notes: input.issuedNotes ?? null,
+            issued_by_dealer: input.issuedByDealer ? JSON.stringify(input.issuedByDealer) : null,
           });
           break;
         } catch (e) {

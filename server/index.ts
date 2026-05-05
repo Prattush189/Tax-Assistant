@@ -8,6 +8,7 @@ import uploadRouter from './routes/upload.js';
 import chatsRouter from './routes/chats.js';
 import authRouter from './routes/auth.js';
 import adminRouter from './routes/admin.js';
+import externalRouter from './routes/external.js';
 import noticesRouter from './routes/notices.js';
 import suggestionsRouter from './routes/suggestions.js';
 import profilesRouter from './routes/profiles.js';
@@ -152,6 +153,12 @@ app.use('/api/billing-details', billingDetailsRouter);
 
 // Admin — requires auth + admin role
 app.use('/api/admin', authMiddleware, adminMiddleware, adminRouter);
+
+// External API namespace — for sister apps (assist.smartbizin.com,
+// future integrations). Auth via Bearer EXTKEY-... validated by the
+// requireExternalApiKey middleware mounted inside the router. No
+// user JWT, no session.
+app.use('/api/external', externalRouter);
 
 // 5. Production static serving
 if (process.env.NODE_ENV === 'production') {

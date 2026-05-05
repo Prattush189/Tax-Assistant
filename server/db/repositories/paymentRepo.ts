@@ -101,6 +101,14 @@ export const paymentRepo = {
     return this.findByOrderId(razorpayOrderId)!;
   },
 
+  /** Stamp dealer attribution onto a payment row. Called by the
+   *  /api/external/* endpoints after creation since paymentRepo.create
+   *  doesn't know about dealers. JSON-encoded so dealer fields can
+   *  evolve without a migration. */
+  setDealerAttribution(paymentId: string, dealer: { id?: string; name?: string; email?: string; location?: string }): void {
+    db.prepare('UPDATE payments SET issued_by_dealer = ? WHERE id = ?').run(JSON.stringify(dealer), paymentId);
+  },
+
   /** Most-recent offline payment for a user — used to pre-fill the
    *  Generate License dialog on subsequent issuances so admins don't
    *  re-type the method/reference for the same dealer / user every
