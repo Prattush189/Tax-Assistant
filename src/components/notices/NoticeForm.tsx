@@ -25,6 +25,8 @@ const SUB_TYPES: Record<string, { value: string; label: string }[]> = {
     { value: '156', label: 'Demand Notice u/s 156' },
     { value: '143(2)', label: 'Scrutiny u/s 143(2)' },
     { value: '245', label: 'Set-off Notice u/s 245' },
+    { value: 'penalty-proceedings', label: 'Penalty Proceedings (270A / 271 / 272A)' },
+    { value: 'stay-of-demand', label: 'Stay of Demand u/s 220(6)' },
     { value: 'other', label: 'Other' },
   ],
   'gst': [
