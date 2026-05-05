@@ -1434,16 +1434,38 @@ export async function adminFetchLicenses(opts: { search?: string; plan?: string;
   return authFetch(`/api/admin/licenses${tail}`);
 }
 
+export type AdminPaymentMethod = 'cash' | 'cheque' | 'neft' | 'imps' | 'upi' | 'rtgs' | 'card' | 'other';
+
+export interface AdminBillingDetails {
+  name: string;
+  addressLine1: string;
+  addressLine2?: string;
+  city: string;
+  state: string;
+  pincode: string;
+  gstin?: string;
+}
+
 export async function adminGenerateLicense(input: {
   userId: string;
-  plan: 'free' | 'pro' | 'enterprise';
-  durationMonths: number;
-  generateInvoice?: boolean;
-  generateReceipt?: boolean;
-  amount?: number; // paise
+  plan: 'pro' | 'enterprise';
+  paymentMethod: AdminPaymentMethod;
+  paymentReference?: string;
+  amount: number; // paise — required (yearly grant)
+  billingDetails: AdminBillingDetails;
   notes?: string;
 }): Promise<{ license: AdminLicenseRow; paymentId: string | null; invoiceUrl: string | null; receiptUrl: string | null }> {
   return authFetch('/api/admin/licenses', { method: 'POST', body: JSON.stringify(input) });
+}
+
+export interface AdminBillingPrefill {
+  billingDetails: AdminBillingDetails | null;
+  lastPaymentMethod: AdminPaymentMethod | null;
+  lastPaymentReference: string | null;
+}
+
+export async function adminFetchBillingPrefill(userId: string): Promise<AdminBillingPrefill> {
+  return authFetch(`/api/admin/users/${userId}/billing-prefill`);
 }
 
 export async function adminRenewLicense(licenseId: string, durationMonths: number): Promise<{ license: AdminLicenseRow }> {
