@@ -108,7 +108,7 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
             </div>
             <div className="space-y-3">
               <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white">
-                Namaste! I'm Smartbiz AI.
+                Welcome to Smartbiz AI
               </h2>
               <p className="text-gray-500 dark:text-gray-400 text-base sm:text-lg max-w-lg mx-auto">
                 Ask me anything about Income Tax, GST, Deductions, or Financial Planning in India.
