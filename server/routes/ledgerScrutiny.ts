@@ -38,6 +38,9 @@ import {
   LedgerAccountCreateInput,
   LedgerObservationSeverity,
 } from '../db/repositories/ledgerScrutinyRepo.js';
+import { ledgerComparisonRepo } from '../db/repositories/ledgerComparisonRepo.js';
+import { LEDGER_COMPARE_SYSTEM_PROMPT } from '../lib/ledgerComparePrompt.js';
+import { callGeminiJson } from '../lib/geminiJson.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
@@ -1151,6 +1154,152 @@ router.get('/', (req: AuthRequest, res: Response) => {
       csvRowsPerCredit: CSV_ROWS_PER_CREDIT.ledger_scrutiny ?? 0,
     },
   });
+});
+
+// ── Ledger comparison (Entity A vs Entity B) ─────────────────────────────
+//
+// Registered ABOVE the /:id routes so the literal "compare" path doesn't
+// get captured as an :id parameter by Express's first-match routing.
+//
+// One-shot reconciliation: client pre-extracts both ledgers via the same
+// wizard the single flow uses, then POSTs both ExtractedLedger payloads.
+// We feed both into Gemini with the comparison rubric and persist the
+// report. No SSE — comparisons are usually one-account ledgers and the
+// LLM call returns within a few seconds.
+
+interface CompareRequestBody {
+  labelA?: unknown;
+  labelB?: unknown;
+  filenameA?: unknown;
+  filenameB?: unknown;
+  preExtractedA?: unknown;
+  preExtractedB?: unknown;
+}
+
+router.get('/compare', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Authentication required' }); return; }
+  const rows = ledgerComparisonRepo.listByUser(req.user.id);
+  res.json({ comparisons: rows });
+});
+
+router.get('/compare/:id', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Authentication required' }); return; }
+  const row = ledgerComparisonRepo.findById(req.params.id);
+  if (!row || row.user_id !== req.user.id) { res.status(404).json({ error: 'Comparison not found' }); return; }
+  res.json({
+    id: row.id,
+    labelA: row.label_a,
+    labelB: row.label_b,
+    filenameA: row.filename_a,
+    filenameB: row.filename_b,
+    extractedA: safeParseJson(row.extracted_a),
+    extractedB: safeParseJson(row.extracted_b),
+    report: row.report ? safeParseJson(row.report) : null,
+    status: row.status,
+    errorMessage: row.error_message,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  });
+});
+
+router.delete('/compare/:id', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Authentication required' }); return; }
+  const ok = ledgerComparisonRepo.delete(req.params.id, req.user.id);
+  if (!ok) { res.status(404).json({ error: 'Comparison not found' }); return; }
+  res.json({ success: true });
+});
+
+router.post('/compare', async (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Authentication required' }); return; }
+  const body = (req.body ?? {}) as CompareRequestBody;
+
+  const labelA = typeof body.labelA === 'string' && body.labelA.trim() ? body.labelA.trim().slice(0, 80) : 'Entity A';
+  const labelB = typeof body.labelB === 'string' && body.labelB.trim() ? body.labelB.trim().slice(0, 80) : 'Entity B';
+  const filenameA = typeof body.filenameA === 'string' ? body.filenameA.slice(0, 200) : null;
+  const filenameB = typeof body.filenameB === 'string' ? body.filenameB.slice(0, 200) : null;
+
+  if (!body.preExtractedA || typeof body.preExtractedA !== 'object' ||
+      !body.preExtractedB || typeof body.preExtractedB !== 'object') {
+    res.status(400).json({ error: 'preExtractedA and preExtractedB (ExtractedLedger objects) are required' });
+    return;
+  }
+
+  const extractedA = normalizeExtraction(body.preExtractedA);
+  const extractedB = normalizeExtraction(body.preExtractedB);
+  const txA = extractedA.accounts.reduce((s, a) => s + a.transactions.length, 0);
+  const txB = extractedB.accounts.reduce((s, a) => s + a.transactions.length, 0);
+  if (txA === 0 || txB === 0) {
+    res.status(400).json({ error: `One of the ledgers has no transactions (A=${txA}, B=${txB})` });
+    return;
+  }
+
+  const actor = userRepo.findById(req.user.id);
+  if (!actor) { res.status(401).json({ error: 'User not found' }); return; }
+  const billingUser = getBillingUser(actor);
+  const aJson = JSON.stringify(extractedA);
+  const bJson = JSON.stringify(extractedB);
+  const estimatedTokens = estimateFromChars(aJson.length + bJson.length + LEDGER_COMPARE_SYSTEM_PROMPT.length);
+  const tokenQuota = enforceTokenQuota(req, res, estimatedTokens);
+  if (!tokenQuota.ok) return;
+  res.once('close', () => tokenQuota.release());
+
+  const row = ledgerComparisonRepo.create({
+    userId: req.user.id,
+    billingUserId: billingUser.id,
+    labelA, labelB,
+    filenameA, filenameB,
+    extractedAJson: aJson,
+    extractedBJson: bJson,
+  });
+
+  try {
+    const userPrompt = `Reconcile these two ledgers.
+
+Entity A (${labelA}) — own books:
+${aJson}
+
+Entity B (${labelB}) — own books:
+${bJson}
+
+Return the JSON object per the schema. Date-sort every array ascending.`;
+
+    const messages: ChatCompletionMessageParam[] = [
+      { role: 'system', content: LEDGER_COMPARE_SYSTEM_PROMPT },
+      { role: 'user', content: userPrompt },
+    ];
+
+    const result = await callGeminiJson(messages, {
+      maxTokens: 8192,
+      responseFormat: { type: 'json_object' },
+      retryParseFailures: true,
+    });
+
+    const reportJson = JSON.stringify(result.data ?? {});
+    ledgerComparisonRepo.markCompleted(row.id, reportJson);
+
+    try {
+      const cost = costForModel(result.modelUsed, result.inputTokens, result.outputTokens);
+      const clientIp = (req.headers['x-forwarded-for'] as string ?? req.ip ?? '').toString().split(',')[0].trim();
+      usageRepo.logWithBilling(
+        clientIp, req.user.id, billingUser.id,
+        result.inputTokens, result.outputTokens, cost,
+        false, result.modelUsed, false, 'ledger_compare', 0, 'success', tokenQuota.estimatedTokens,
+      );
+    } catch (e) {
+      console.error('[ledger-compare] cost log failed', e);
+    }
+
+    res.json({
+      id: row.id,
+      status: 'completed',
+      report: safeParseJson(reportJson),
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[ledger-compare] failed:', msg);
+    ledgerComparisonRepo.markFailed(row.id, msg);
+    res.status(502).json({ id: row.id, error: 'Comparison failed. Try again or contact support.', detail: msg.slice(0, 200) });
+  }
 });
 
 // GET /api/ledger-scrutiny/:id — full detail (job + accounts + observations)

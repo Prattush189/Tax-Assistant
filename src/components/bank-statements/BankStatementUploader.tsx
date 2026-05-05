@@ -8,6 +8,7 @@ import { cn } from '../../lib/utils';
 import { ColumnMappingWizard } from '../shared/ColumnMappingWizard';
 import { ScannedPdfConfirmDialog, PdfTooLargeDialog } from '../shared/ScannedPdfConfirmDialog';
 import { countPdfPagesClient } from '../../lib/pdfText';
+import { excelToRows } from '../../lib/excelToRows';
 import {
   applyMapping,
   extractPdfGrid,
@@ -74,7 +75,7 @@ interface Props {
   manager: BankStatementManager;
 }
 
-const ACCEPT = '.pdf,.csv,application/pdf,text/csv';
+const ACCEPT = '.pdf,.csv,.xlsx,.xls,application/pdf,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel';
 
 export function BankStatementUploader({ manager }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -124,10 +125,12 @@ export function BankStatementUploader({ manager }: Props) {
     // deterministically and the practical accuracy on cellphone-scan
     // images was poor anyway. Scanned PDFs that have no text layer
     // still fall through to the multipart vision path below.
-    const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
-    const isCsv = file.type === 'text/csv' || file.name.toLowerCase().endsWith('.csv');
-    if (!isPdf && !isCsv) {
-      toast.error('Only PDF and CSV statements are accepted.');
+    const lname = file.name.toLowerCase();
+    const isPdf = file.type === 'application/pdf' || lname.endsWith('.pdf');
+    const isCsv = file.type === 'text/csv' || lname.endsWith('.csv');
+    const isExcel = lname.endsWith('.xlsx') || lname.endsWith('.xls');
+    if (!isPdf && !isCsv && !isExcel) {
+      toast.error('Only PDF, CSV, and Excel (.xlsx / .xls) statements are accepted.');
       return;
     }
 
@@ -136,6 +139,26 @@ export function BankStatementUploader({ manager }: Props) {
     // letting the request go through and bounce.
     if (manager.hasInProgressJob) {
       toast.error('A bank statement analysis is already running. Wait for it to finish.');
+      return;
+    }
+
+    if (isExcel) {
+      // Excel routes through the same wizard as CSV. SheetJS handles
+      // Tally / Busy / bank-portal exports without us caring which
+      // sheet has the data — every sheet is concatenated and the
+      // wizard / applyMapping skips noise rows.
+      try {
+        const rows = await excelToRows(file);
+        const grid = rows ? rowsToFakeGrid(rows) : null;
+        if (!grid) {
+          toast.error('Excel appears empty or has no data rows.');
+          return;
+        }
+        setPendingGrid({ grid, filename: file.name });
+      } catch (err) {
+        console.error('[BankStatementUploader] excel parse failed:', err);
+        toast.error('Could not read this Excel file. Re-export as .xlsx and try again.');
+      }
       return;
     }
 
@@ -291,7 +314,7 @@ export function BankStatementUploader({ manager }: Props) {
           />
         ) : (
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-            PDF up to 10 MB — or a CSV export from your bank
+            PDF up to 10 MB — or a CSV / Excel export from your bank
           </p>
         )}
       </div>

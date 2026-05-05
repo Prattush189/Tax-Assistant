@@ -1,14 +1,19 @@
+import { useState } from 'react';
 import { BookOpenCheck, Loader2 } from 'lucide-react';
 import { motion } from 'motion/react';
 import type { LedgerScrutinyManager } from '../../hooks/useLedgerScrutinyManager';
 import { LedgerUploader } from './LedgerUploader';
 import { ScrutinyReport } from './ScrutinyReport';
+import { LedgerCompareView } from './LedgerCompareView';
+import { cn } from '../../lib/utils';
 
 interface Props {
   manager: LedgerScrutinyManager;
 }
 
 export function LedgerScrutinyView({ manager }: Props) {
+  const [mode, setMode] = useState<'single' | 'compare'>('single');
+
   if (manager.isLoading && !manager.current) {
     return (
       <div className="flex-1 flex items-center justify-center text-gray-400">
@@ -38,14 +43,41 @@ export function LedgerScrutinyView({ manager }: Props) {
             </div>
           </div>
 
-          <LedgerUploader manager={manager} />
+          <div className="inline-flex p-1 rounded-xl bg-gray-100 dark:bg-gray-800/60">
+            <button
+              type="button"
+              onClick={() => setMode('single')}
+              className={cn(
+                'px-4 py-1.5 text-sm font-medium rounded-lg transition-colors',
+                mode === 'single'
+                  ? 'bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 shadow-sm'
+                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200',
+              )}
+            >
+              Single ledger scrutiny
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode('compare')}
+              className={cn(
+                'px-4 py-1.5 text-sm font-medium rounded-lg transition-colors',
+                mode === 'compare'
+                  ? 'bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 shadow-sm'
+                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200',
+              )}
+            >
+              Compare two ledgers
+            </button>
+          </div>
+
+          {mode === 'compare' ? <LedgerCompareView /> : <LedgerUploader manager={manager} />}
 
           {/* In-progress banner mirroring the bank-statement landing
               page — even though Recent Scrutinies below shows the
               running job too, this puts the live progress at the top
               of the page so a freshly-uploaded ledger surfaces
               immediately above the (now-disabled) uploader. */}
-          {(() => {
+          {mode === 'single' && (() => {
             const inFlight = manager.jobs.find(j => j.status === 'extracting' || j.status === 'scrutinizing' || j.status === 'pending');
             if (!inFlight) return null;
             const phase = inFlight.status === 'scrutinizing' ? 'Auditing'
@@ -79,7 +111,7 @@ export function LedgerScrutinyView({ manager }: Props) {
           {/* Per-feature usage widget removed — Settings → Your Usage
               has the single token-budget bar that covers all features. */}
 
-          {(() => {
+          {mode === 'single' && (() => {
             // "Recent scrutinies" is a quick-access tile. We show:
             //   - all in-progress jobs at the top (so a tab close + reload
             //     mid-audit always re-surfaces the running job and the

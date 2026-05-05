@@ -712,6 +712,32 @@ if (!existing) {
   console.log(`[ADMIN] ⚠️  Save this password — it won't be shown again.`);
 }
 
+// ledger_comparisons — pairs two extracted ledgers (Entity A's copy
+// vs Entity B's copy of the same account) and stores the LLM-emitted
+// reconciliation report. Both extracted snapshots are persisted as
+// JSON so the report stays renderable even if the source files are
+// gone. extracted_a / extracted_b are ExtractedLedger payloads;
+// report is a ComparisonReport JSON. Status follows the same
+// pending/completed/failed lifecycle as ledger jobs.
+db.exec(`CREATE TABLE IF NOT EXISTS ledger_comparisons (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  billing_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  label_a TEXT NOT NULL,
+  label_b TEXT NOT NULL,
+  filename_a TEXT,
+  filename_b TEXT,
+  extracted_a TEXT NOT NULL,
+  extracted_b TEXT NOT NULL,
+  report TEXT,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'comparing', 'completed', 'failed', 'cancelled')),
+  error_message TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+)`);
+db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_comparisons_user ON ledger_comparisons(user_id)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_comparisons_updated ON ledger_comparisons(updated_at DESC)");
+
 // Ensure admin has enterprise plan
 db.prepare("UPDATE users SET plan = 'enterprise' WHERE email = ? AND role = 'admin'").run(ADMIN_EMAIL);
 

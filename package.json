@@ -17,8 +17,8 @@
     "chat:eval": "tsx server/scripts/chat-eval.ts"
   },
   "dependencies": {
-    "@react-oauth/google": "^0.13.5",
     "@anthropic-ai/sdk": "^0.39.0",
+    "@react-oauth/google": "^0.13.5",
     "@tailwindcss/typography": "^0.5.19",
     "@tailwindcss/vite": "^4.1.14",
     "@types/papaparse": "^5.5.2",
@@ -55,7 +55,8 @@
     "recharts": "^3.8.1",
     "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.5.0",
-    "vite": "^6.2.0"
+    "vite": "^6.2.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

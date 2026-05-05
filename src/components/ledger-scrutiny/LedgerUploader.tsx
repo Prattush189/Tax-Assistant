@@ -9,6 +9,7 @@ import { ColumnMappingWizard } from '../shared/ColumnMappingWizard';
 import { PasswordPromptDialog } from '../shared/PasswordPromptDialog';
 import { ScannedPdfConfirmDialog, PdfTooLargeDialog } from '../shared/ScannedPdfConfirmDialog';
 import { countPdfPagesClient } from '../../lib/pdfText';
+import { excelToRows } from '../../lib/excelToRows';
 import {
   applyMapping,
   extractPdfGrid,
@@ -89,7 +90,7 @@ function ScrutinyProgressBar({
   );
 }
 
-const ACCEPT = '.pdf,.csv,application/pdf,text/csv';
+const ACCEPT = '.pdf,.csv,.xlsx,.xls,application/pdf,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel';
 const MAX_BYTES = 10 * 1024 * 1024;
 
 export function LedgerUploader({ manager }: Props) {
@@ -114,10 +115,12 @@ export function LedgerUploader({ manager }: Props) {
     const file = files?.[0];
     if (!file) return;
 
-    const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
-    const isCsv = file.type === 'text/csv' || file.name.toLowerCase().endsWith('.csv');
-    if (!isPdf && !isCsv) {
-      toast.error('Only PDF and CSV ledger exports are accepted.');
+    const lname = file.name.toLowerCase();
+    const isPdf = file.type === 'application/pdf' || lname.endsWith('.pdf');
+    const isCsv = file.type === 'text/csv' || lname.endsWith('.csv');
+    const isExcel = lname.endsWith('.xlsx') || lname.endsWith('.xls');
+    if (!isPdf && !isCsv && !isExcel) {
+      toast.error('Only PDF, CSV, and Excel (.xlsx / .xls) ledger exports are accepted.');
       return;
     }
     if (file.size > MAX_BYTES) {
@@ -138,6 +141,22 @@ export function LedgerUploader({ manager }: Props) {
     // run through the same wizard → preExtracted → audit pipeline as
     // PDFs. Tally / Busy CSV exports have varying column orders so
     // the mapping wizard isn't optional even here.
+    if (isExcel) {
+      try {
+        const rows = await excelToRows(file);
+        const grid = rows ? rowsToFakeGrid(rows) : null;
+        if (!grid) {
+          toast.error('Excel appears empty or has no data rows.');
+          return;
+        }
+        setPendingGrid({ grid, filename: file.name });
+      } catch (err) {
+        console.error('[LedgerUploader] excel parse failed:', err);
+        toast.error('Could not read this Excel file. Re-export as .xlsx and try again.');
+      }
+      return;
+    }
+
     if (isCsv) {
       const text = await file.text();
       const parsed = Papa.parse<string[]>(text, { skipEmptyLines: true });
@@ -282,7 +301,7 @@ export function LedgerUploader({ manager }: Props) {
         ) : (
           <>
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-              Tally / Busy / Marg PDF or CSV export · max 10 MB
+              Tally / Busy / Marg PDF, CSV, or Excel export · max 10 MB
             </p>
             <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
               Extract + audit run as one step — no buttons to click after upload.

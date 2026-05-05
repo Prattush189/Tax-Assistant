@@ -2451,3 +2451,81 @@ export async function updateLedgerObservationStatus(
     body: JSON.stringify({ status }),
   });
 }
+
+// ── Ledger comparison (Entity A vs Entity B reconciliation) ─────────────
+
+export interface LedgerComparisonRow {
+  id: string;
+  label_a: string;
+  label_b: string;
+  filename_a: string | null;
+  filename_b: string | null;
+  status: 'pending' | 'comparing' | 'completed' | 'failed' | 'cancelled';
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LedgerComparisonReport {
+  summary: {
+    matchedCount: number;
+    amountMismatchCount: number;
+    dateMismatchCount: number;
+    onlyInACount: number;
+    onlyInBCount: number;
+    openingGap: number;
+    closingGap: number;
+    headline: string;
+  };
+  matched: Array<{ date: string; amount: number; narrationA: string; narrationB: string; voucherA: string | null; voucherB: string | null }>;
+  amountMismatches: Array<{ date: string; amountA: number; amountB: number; diff: number; narrationA: string; narrationB: string }>;
+  dateMismatches: Array<{ amount: number; dateA: string; dateB: string; daysDiff: number; narrationA: string; narrationB: string }>;
+  onlyInA: Array<{ date: string; amount: number; narration: string; voucher: string | null }>;
+  onlyInB: Array<{ date: string; amount: number; narration: string; voucher: string | null }>;
+  balanceCheck: {
+    openingA: number; openingB: number; openingGap: number;
+    closingA: number; closingB: number; closingGap: number;
+    note: string;
+  };
+}
+
+export interface LedgerComparisonDetail {
+  id: string;
+  labelA: string;
+  labelB: string;
+  filenameA: string | null;
+  filenameB: string | null;
+  extractedA: unknown;
+  extractedB: unknown;
+  report: LedgerComparisonReport | null;
+  status: LedgerComparisonRow['status'];
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function fetchLedgerComparisons(): Promise<{ comparisons: LedgerComparisonRow[] }> {
+  return authFetch('/api/ledger-scrutiny/compare');
+}
+
+export async function fetchLedgerComparison(id: string): Promise<LedgerComparisonDetail> {
+  return authFetch(`/api/ledger-scrutiny/compare/${id}`);
+}
+
+export async function createLedgerComparison(input: {
+  labelA: string;
+  labelB: string;
+  filenameA: string | null;
+  filenameB: string | null;
+  preExtractedA: unknown;
+  preExtractedB: unknown;
+}): Promise<{ id: string; status: string; report: LedgerComparisonReport }> {
+  return authFetch('/api/ledger-scrutiny/compare', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function deleteLedgerComparison(id: string): Promise<void> {
+  await authFetch(`/api/ledger-scrutiny/compare/${id}`, { method: 'DELETE' });
+}
