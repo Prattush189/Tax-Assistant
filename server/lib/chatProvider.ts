@@ -11,7 +11,10 @@
 
 import {
   GEMINI_API_KEYS,
+  GEMINI_CHAT_MODEL_T1,
   GEMINI_CHAT_MODEL_T2,
+  GEMINI_T1_INPUT_COST,
+  GEMINI_T1_OUTPUT_COST,
   GEMINI_T2_INPUT_COST,
   GEMINI_T2_OUTPUT_COST,
 } from './gemini.js';
@@ -22,6 +25,12 @@ export interface ChatRequest {
   systemPrompt: string;
   userMessage: string;
   maxTokens: number;
+  /** Called once the FIRST time the provider drops from the primary
+   *  model to a fallback tier (i.e. the primary failed before yielding
+   *  any text). Lets the route surface a "Server busy, retrying…"
+   *  notice. Mid-stream failures don't fire this — they're surfaced as
+   *  a truncation instead. */
+  onFallback?: (input: { from: string; to: string }) => void;
 }
 
 export interface ChatUsage {
@@ -47,38 +56,64 @@ export interface ChatProvider {
 export const geminiChatProvider: ChatProvider = {
   name: 'gemini',
   async streamChat(req, onText) {
-    const selection = selectTier(true);
-    const apiKey = GEMINI_API_KEYS[selection.keyIndex] ?? '';
-    let inputTokens = 0;
-    let outputTokens = 0;
+    const tryModel = async (model: string): Promise<{ inputTokens: number; outputTokens: number; emittedAny: boolean }> => {
+      const selection = selectTier(true);
+      const apiKey = GEMINI_API_KEYS[selection.keyIndex] ?? '';
+      let inputTokens = 0;
+      let outputTokens = 0;
+      let emittedAny = false;
 
-    const stream = streamGeminiChat(
-      GEMINI_CHAT_MODEL_T2,
-      req.systemPrompt,
-      [],
-      req.userMessage,
-      apiKey,
-      req.maxTokens,
-      true,
-      false, // no context cache — notice prompts vary per-call
-    );
+      const stream = streamGeminiChat(
+        model,
+        req.systemPrompt,
+        [],
+        req.userMessage,
+        apiKey,
+        req.maxTokens,
+        true,
+        false, // no context cache — notice prompts vary per-call
+      );
 
-    for await (const chunk of stream) {
-      if (chunk.text) onText(chunk.text);
-      if (chunk.done) {
-        inputTokens = chunk.inputTokens ?? 0;
-        outputTokens = chunk.outputTokens ?? 0;
-        confirmUsed('gemini-2.5', selection.keyIndex, true);
+      for await (const chunk of stream) {
+        if (chunk.text) { emittedAny = true; onText(chunk.text); }
+        if (chunk.done) {
+          inputTokens = chunk.inputTokens ?? 0;
+          outputTokens = chunk.outputTokens ?? 0;
+          const tag = model === GEMINI_CHAT_MODEL_T2 ? 'gemini-2.5' : 'gemini-3';
+          confirmUsed(tag, selection.keyIndex, true);
+        }
       }
+      return { inputTokens, outputTokens, emittedAny };
+    };
+
+    // Primary: T2. If it throws BEFORE any text was emitted, drop to
+    // T1 and tell the caller. If it throws mid-stream, the caller's
+    // already seen partial output — surface it as a truncation rather
+    // than re-running and concatenating two replies.
+    let modelUsed = GEMINI_CHAT_MODEL_T2;
+    let result: { inputTokens: number; outputTokens: number; emittedAny: boolean };
+    try {
+      result = await tryModel(GEMINI_CHAT_MODEL_T2);
+    } catch (err) {
+      console.warn(`[chatProvider] ${GEMINI_CHAT_MODEL_T2} failed, falling back to ${GEMINI_CHAT_MODEL_T1}:`, (err as Error).message?.slice(0, 120));
+      try {
+        req.onFallback?.({ from: GEMINI_CHAT_MODEL_T2, to: GEMINI_CHAT_MODEL_T1 });
+      } catch (e) { console.warn('[chatProvider] onFallback hook threw:', (e as Error).message); }
+      modelUsed = GEMINI_CHAT_MODEL_T1;
+      result = await tryModel(GEMINI_CHAT_MODEL_T1);
     }
 
+    const isT1 = modelUsed === GEMINI_CHAT_MODEL_T1;
+    const inCost = isT1 ? GEMINI_T1_INPUT_COST : GEMINI_T2_INPUT_COST;
+    const outCost = isT1 ? GEMINI_T1_OUTPUT_COST : GEMINI_T2_OUTPUT_COST;
+
     return {
-      inputTokens,
-      outputTokens,
+      inputTokens: result.inputTokens,
+      outputTokens: result.outputTokens,
       cacheReadTokens: 0,
       cacheCreationTokens: 0,
-      costUsd: inputTokens * GEMINI_T2_INPUT_COST + outputTokens * GEMINI_T2_OUTPUT_COST,
-      modelUsed: GEMINI_CHAT_MODEL_T2,
+      costUsd: result.inputTokens * inCost + result.outputTokens * outCost,
+      modelUsed,
       withSearch: true,
     };
   },

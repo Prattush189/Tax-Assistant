@@ -219,6 +219,13 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_bank_rules_user_id ON bank_statement_rul
   if (!names.includes('analyze_chunks_done')) {
     db.exec("ALTER TABLE bank_statements ADD COLUMN analyze_chunks_done INTEGER NOT NULL DEFAULT 0");
   }
+  // Provider-fallback indicator — same as on ledger_scrutiny_jobs.
+  // Flips to 1 when the LLM falls from primary to a backup model on
+  // this run; the UI surfaces "Server busy — switched to backup
+  // model" in the progress card.
+  if (!names.includes('provider_fallback')) {
+    db.exec("ALTER TABLE bank_statements ADD COLUMN provider_fallback INTEGER NOT NULL DEFAULT 0");
+  }
 }
 
 // Credit accounting for ledger_scrutiny_jobs (10 pages = 1 credit).
@@ -253,6 +260,14 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_bank_rules_user_id ON bank_statement_rul
   }
   if (!names.includes('extract_chunks_done')) {
     db.exec("ALTER TABLE ledger_scrutiny_jobs ADD COLUMN extract_chunks_done INTEGER NOT NULL DEFAULT 0");
+  }
+  // provider_fallback flips to 1 the first time the LLM call falls
+  // from primary to a backup model on this job. The UI reads it to
+  // render a transient "Server busy — switched to backup model" line
+  // in the progress card so the user understands why the run is
+  // taking longer than usual.
+  if (!names.includes('provider_fallback')) {
+    db.exec("ALTER TABLE ledger_scrutiny_jobs ADD COLUMN provider_fallback INTEGER NOT NULL DEFAULT 0");
   }
 }
 

@@ -232,6 +232,7 @@ function serializeJob(row: ReturnType<typeof ledgerScrutinyRepo.findByIdForUser>
     // Set once at chunk-loop start; bumped per chunk completion.
     extractChunksTotal: typeof r.extract_chunks_total === 'number' ? r.extract_chunks_total : 0,
     extractChunksDone: typeof r.extract_chunks_done === 'number' ? r.extract_chunks_done : 0,
+    providerFallback: r.provider_fallback === 1,
   };
 }
 
@@ -546,10 +547,16 @@ async function extractLedgerTsvOnce(
  * immediately — retrying the same params on the same model can't fix a
  * truncated response, but the fallback's doubled output ceiling can.
  */
-async function extractLedgerTsv(chunkText: string, maxTokens: number, recordAttempt: RecordAttempt = NOOP_RECORD): Promise<LedgerTsvChunkResult> {
+async function extractLedgerTsv(chunkText: string, maxTokens: number, recordAttempt: RecordAttempt = NOOP_RECORD, onFallback?: () => void): Promise<LedgerTsvChunkResult> {
   const MAX_PRIMARY_ATTEMPTS = 4;
   const MAX_FALLBACK_ATTEMPTS = 3;
   let lastErr: unknown;
+  let fallbackFired = false;
+  const fireFallback = () => {
+    if (fallbackFired) return;
+    fallbackFired = true;
+    try { onFallback?.(); } catch (e) { console.warn('[ledger-scrutiny] onFallback hook threw:', (e as Error).message); }
+  };
 
   const jitter = () => 300 + Math.floor(Math.random() * 600);
   const isRetryableStatus = (s: number) =>
@@ -582,6 +589,8 @@ async function extractLedgerTsv(chunkText: string, maxTokens: number, recordAtte
       }
     }
   }
+
+  fireFallback();
 
   for (let attempt = 0; attempt < MAX_FALLBACK_ATTEMPTS; attempt++) {
     try {
@@ -626,9 +635,10 @@ async function extractLedgerTsvWithBisect(
   maxDepth: number,
   label: string,
   recordAttempt: RecordAttempt = NOOP_RECORD,
+  onFallback?: () => void,
 ): Promise<LedgerTsvChunkResult[]> {
   try {
-    const r = await extractLedgerTsv(chunkText, maxTokens, recordAttempt);
+    const r = await extractLedgerTsv(chunkText, maxTokens, recordAttempt, onFallback);
     return [r];
   } catch (err) {
     const msg = (err as Error).message ?? String(err);
@@ -658,8 +668,8 @@ async function extractLedgerTsvWithBisect(
     if (!left || !right) throw err;
 
     const [leftRes, rightRes] = await Promise.all([
-      extractLedgerTsvWithBisect(left, maxTokens, depth + 1, maxDepth, `${label}.L`, recordAttempt),
-      extractLedgerTsvWithBisect(right, maxTokens, depth + 1, maxDepth, `${label}.R`, recordAttempt),
+      extractLedgerTsvWithBisect(left, maxTokens, depth + 1, maxDepth, `${label}.L`, recordAttempt, onFallback),
+      extractLedgerTsvWithBisect(right, maxTokens, depth + 1, maxDepth, `${label}.R`, recordAttempt, onFallback),
     ]);
     return [...leftRes, ...rightRes];
   }
@@ -1272,6 +1282,7 @@ Return the JSON object per the schema. Date-sort every array ascending.`;
       maxTokens: 8192,
       responseFormat: { type: 'json_object' },
       retryParseFailures: true,
+      onFallback: () => res.setHeader('X-Provider-Fallback', '1'),
     });
 
     const reportJson = JSON.stringify(result.data ?? {});
@@ -1617,7 +1628,9 @@ router.post(
             const label = `chunk ${idx + 1}/${chunks.length}`;
             try {
               // depth 0 → can recursively split up to depth 2 (4 sub-chunks).
-              const results = await extractLedgerTsvWithBisect(chunk, MAX_OUTPUT_TOKENS, 0, 2, label, recordLedgerAttempt);
+              const results = await extractLedgerTsvWithBisect(chunk, MAX_OUTPUT_TOKENS, 0, 2, label, recordLedgerAttempt, () => {
+                try { ledgerScrutinyRepo.markProviderFallback(job.id); } catch (e) { console.warn('[ledger-scrutiny] markProviderFallback failed:', (e as Error).message); }
+              });
               const totalTx = results.reduce((s, r) => s + r.actualCount, 0);
               const totalAcct = results.reduce((s, r) => s + r.accounts.length, 0);
               const note = results.length > 1 ? ` (bisected into ${results.length})` : '';

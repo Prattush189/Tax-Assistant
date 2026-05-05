@@ -25,6 +25,7 @@ function AnalyzeProgressBar({
   chunksDone,
   chunksTotal,
   startedAt,
+  providerFallback,
 }: {
   progress: BankStatementAnalyzeProgress;
   /** From the polled statement row — surfaces the wizard CSV path's
@@ -32,6 +33,7 @@ function AnalyzeProgressBar({
   chunksDone?: number;
   chunksTotal?: number;
   startedAt?: number;
+  providerFallback?: boolean;
 }) {
   // Prefer DB-polled chunk progress (wizard CSV path). Fall back to
   // SSE-streamed progress (TSV chunked path).
@@ -67,6 +69,11 @@ function AnalyzeProgressBar({
         {label}{total > 0 ? ` · ${pct}%` : ''}
         {eta ? ` · ${eta}` : ''}
       </p>
+      {providerFallback && (
+        <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+          Server busy — switched to backup model. Hang tight.
+        </p>
+      )}
     </div>
   );
 }
@@ -311,6 +318,7 @@ export function BankStatementUploader({ manager }: Props) {
             chunksDone={chunksDone}
             chunksTotal={chunksTotal}
             startedAt={analyzeStartedAt.current ?? undefined}
+            providerFallback={inFlight?.providerFallback}
           />
         ) : (
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">

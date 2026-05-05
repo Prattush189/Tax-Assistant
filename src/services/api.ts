@@ -141,6 +141,10 @@ export async function sendChatMessage(
           const parsed = JSON.parse(payload);
           // Server heartbeat — just resets idle watchdog, no user-visible effect.
           if (parsed.heartbeat) continue;
+          // Primary model went down mid-request and we're switching to
+          // backup. Surface a one-shot toast so the user knows why the
+          // first few hundred ms felt slower than usual.
+          if (parsed.providerFallback) { notifyProviderFallback(); continue; }
           if (parsed.done) {
             onDone?.(parsed.stop_reason ?? null);
             terminated = true;
@@ -257,7 +261,33 @@ async function authFetch(url: string, options: RequestInit = {}) {
     const data = await res.json().catch(() => ({}));
     throw new Error(data.error || `Request failed (${res.status})`);
   }
+  // Surface provider-fallback so the UI can toast "Server busy, retrying…".
+  // Set by routes whose LLM call fell from the primary to a backup model
+  // mid-request. Best-effort: a missing header just means no fallback fired.
+  if (res.headers.get('X-Provider-Fallback') === '1') {
+    notifyProviderFallback();
+  }
   return res.json();
+}
+
+// Emits a one-shot "Server busy, retrying…" toast when an API response
+// signals that the primary LLM model fell over to a fallback. Throttled
+// per-page so a burst of API calls during the same outage doesn't spam.
+let lastFallbackToastAt = 0;
+const FALLBACK_TOAST_THROTTLE_MS = 8_000;
+function notifyProviderFallback(): void {
+  const now = Date.now();
+  if (now - lastFallbackToastAt < FALLBACK_TOAST_THROTTLE_MS) return;
+  lastFallbackToastAt = now;
+  // Lazy import to avoid pulling react-hot-toast into the auth bundle
+  // and to keep this module dependency-light for the few callers that
+  // import api.ts in non-toast contexts.
+  void import('react-hot-toast').then(({ default: toast }) => {
+    toast('Server busy — switched to backup model. Retrying…', {
+      duration: 4000,
+      id: 'provider-fallback',
+    });
+  }).catch(() => { /* ignore */ });
 }
 
 export async function fetchChats(): Promise<ChatItem[]> {
@@ -1741,6 +1771,7 @@ export interface BankStatementSummary {
    *  Both 0 on direct CSV uploads / vision path / completed runs. */
   analyzeChunksTotal: number;
   analyzeChunksDone: number;
+  providerFallback?: boolean;
 }
 
 export interface BankTransaction {
@@ -2152,6 +2183,10 @@ export interface LedgerScrutinyJob {
    *  extract phase, before scrutiny starts. */
   extractChunksTotal: number;
   extractChunksDone: number;
+  /** True once the run dropped from the primary LLM model to a backup
+   *  tier. UI shows a "Server busy — switched to backup model" line on
+   *  the progress card so the user understands the slower pace. */
+  providerFallback?: boolean;
 }
 
 export interface LedgerScrutinyAccount {
@@ -2349,6 +2384,9 @@ export interface LedgerScrutinyProgress {
   completed: number;
   total: number;
   accountsTotal?: number;
+  /** Surfaced from the polled job row; renders the "Server busy" line
+   *  inside the progress card. */
+  providerFallback?: boolean;
 }
 
 export async function scrutinizeLedger(

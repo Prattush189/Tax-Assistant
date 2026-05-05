@@ -70,7 +70,12 @@ Suggest 5 personalized tax-saving strategies.`;
         { role: 'system', content: SUGGESTION_PROMPT },
         { role: 'user', content: userPrompt },
       ],
-      { maxTokens: 1024 },
+      {
+        maxTokens: 1024,
+        // Tell the client when we fall back to the backup model so the
+        // global "Server busy, retrying…" toast fires.
+        onFallback: () => res.setHeader('X-Provider-Fallback', '1'),
+      },
     );
     const suggestions = Array.isArray(result.data)
       ? result.data

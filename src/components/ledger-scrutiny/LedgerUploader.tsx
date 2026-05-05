@@ -32,6 +32,7 @@ function ScrutinyProgressBar({
   extractDone,
   extractTotal,
   startedAt,
+  providerFallback,
 }: {
   phase: 'extracting' | 'scrutinizing';
   progress: LedgerScrutinyProgress | null;
@@ -42,6 +43,7 @@ function ScrutinyProgressBar({
   /** Wall-clock when the current phase started. Used with done/total
    *  to estimate remaining time. */
   startedAt?: number;
+  providerFallback?: boolean;
 }) {
   // Prefer the phase-appropriate chunk progress when available.
   // Extract phase has its own counter (pages_total / pages_processed
@@ -86,6 +88,11 @@ function ScrutinyProgressBar({
         {label}{!indeterminate ? ` · ${pct}%` : ''}
         {eta ? ` · ${eta}` : ''}
       </p>
+      {providerFallback && (
+        <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+          Server busy — switched to backup model. Hang tight.
+        </p>
+      )}
     </div>
   );
 }
@@ -297,6 +304,7 @@ export function LedgerUploader({ manager }: Props) {
             extractDone={extractDone}
             extractTotal={extractTotal}
             startedAt={phaseStartedAt.current ?? undefined}
+            providerFallback={manager.current?.job.providerFallback}
           />
         ) : (
           <>

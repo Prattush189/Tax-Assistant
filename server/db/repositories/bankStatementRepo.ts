@@ -209,6 +209,12 @@ export const bankStatementRepo = {
     stmts.bumpAnalyzeChunksDone.run(id, userId);
   },
 
+  /** Flip provider_fallback to 1 when an LLM call on this run dropped
+   *  from the primary to a backup model. */
+  markProviderFallback(id: string): void {
+    db.prepare(`UPDATE bank_statements SET provider_fallback = 1 WHERE id = ?`).run(id);
+  },
+
   /** Fill in extracted metadata + flip status to 'done'. Used after the
    *  Gemini analysis completes for a placeholder created upfront. */
   updateAfterAnalyze(id: string, userId: string, input: BankStatementCreateInput): boolean {

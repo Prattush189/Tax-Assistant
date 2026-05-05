@@ -330,7 +330,12 @@ router.post('/drafts/:id/generate', async (req: AuthRequest, res: Response) => {
   try {
     const provider = pickChatProvider();
     const usage = await provider.streamChat(
-      { systemPrompt: PARTNERSHIP_DEED_SYSTEM_PROMPT, userMessage: userPrompt, maxTokens: MAX_TOKENS },
+      {
+        systemPrompt: PARTNERSHIP_DEED_SYSTEM_PROMPT,
+        userMessage: userPrompt,
+        maxTokens: MAX_TOKENS,
+        onFallback: () => { sse.writeEvent({ providerFallback: true }); },
+      },
       (text) => { fullResponse += text; sse.writeText(text); },
     );
 

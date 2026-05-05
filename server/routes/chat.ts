@@ -280,6 +280,10 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
             } else {
               console.warn('[chat] Fast: Gemini 2.5 Flash-Lite failed, falling back to 3.1 Flash-Lite:', (err as Error).message?.slice(0, 120));
               usedModel = '';
+              // Tell the client we're switching to backup so it can show a
+              // transient "Server busy, retrying…" notice. Doesn't disturb
+              // the streaming text — the next chunks just keep arriving.
+              sse.writeEvent({ providerFallback: true });
             }
           }
         }

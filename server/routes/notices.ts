@@ -385,7 +385,12 @@ router.post(
   try {
     const provider = pickChatProvider();
     const usage = await provider.streamChat(
-      { systemPrompt: NOTICE_SYSTEM_PROMPT, userMessage: userPrompt, maxTokens: MAX_TOKENS },
+      {
+        systemPrompt: NOTICE_SYSTEM_PROMPT,
+        userMessage: userPrompt,
+        maxTokens: MAX_TOKENS,
+        onFallback: () => { sse.writeEvent({ providerFallback: true }); },
+      },
       (text) => { fullResponse += text; sse.writeText(text); },
     );
 

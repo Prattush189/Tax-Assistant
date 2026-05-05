@@ -34,6 +34,14 @@ export interface GeminiJsonOptions {
    * aggregate under the productive category or ignore.
    */
   recordAttempt?: (input: { failed: boolean; inputTokens: number; outputTokens: number; model: string }) => void;
+  /**
+   * Fires the FIRST time the call advances from the primary model to a
+   * fallback tier (i.e. the primary's retry budget was exhausted).
+   * Use it to surface a "Server busy, retrying…" toast / progress
+   * notice to the user. Only fires once per request even if multiple
+   * fallback tiers are tried.
+   */
+  onFallback?: (input: { from: string; to: string }) => void;
   /** Retry when the model returns malformed/truncated JSON. */
   retryParseFailures?: boolean;
 }
@@ -163,7 +171,9 @@ export async function callGeminiJson<T = unknown>(
     : [opts.fallbackModel ?? GEMINI_FALLBACK_MODEL];
   const responseFormat = opts.responseFormat;
   const recordAttempt = opts.recordAttempt;
+  const onFallback = opts.onFallback;
   const retryParseFailures = opts.retryParseFailures === true;
+  let fallbackFired = false;
 
   // Circuit-breaker wraps the WHOLE retry-and-fallback ladder for this provider.
   // If Gemini is genuinely down, the breaker opens after a handful of failures
@@ -180,6 +190,11 @@ export async function callGeminiJson<T = unknown>(
       const { model, maxAttempts, backoffMs } = tiers[tierIdx];
       if (tierIdx > 0) {
         console.warn(`[geminiJson] ${tiers[tierIdx - 1].model} exhausted, falling back to ${model}`);
+        if (!fallbackFired) {
+          fallbackFired = true;
+          try { onFallback?.({ from: tiers[tierIdx - 1].model, to: model }); }
+          catch (e) { console.warn('[geminiJson] onFallback hook threw:', (e as Error).message); }
+        }
       }
 
       // Parse failures don't benefit from many retries on the same model

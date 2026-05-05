@@ -327,6 +327,13 @@ export const ledgerScrutinyRepo = {
     stmts.bumpExtractChunksDone.run(id, userId);
   },
 
+  /** Flip provider_fallback to 1 when an LLM call on this job dropped
+   *  from the primary to a backup model. Idempotent — set is fine to
+   *  call multiple times if multiple chunks fall back. */
+  markProviderFallback(id: string): void {
+    db.prepare(`UPDATE ledger_scrutiny_jobs SET provider_fallback = 1 WHERE id = ?`).run(id);
+  },
+
   getScrutinyChunkProgress(id: string, userId: string): { scrutiny_chunks_total: number; scrutiny_chunks_done: number } | null {
     const row = stmts.getScrutinyChunkProgress.get(id, userId) as { scrutiny_chunks_total: number; scrutiny_chunks_done: number } | undefined;
     return row ?? null;

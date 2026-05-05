@@ -945,6 +945,7 @@ function serializeStatement(row: ReturnType<typeof bankStatementRepo.findByIdFor
     updatedAt: row.updated_at,
     analyzeChunksTotal: typeof r.analyze_chunks_total === 'number' ? r.analyze_chunks_total : 0,
     analyzeChunksDone: typeof r.analyze_chunks_done === 'number' ? r.analyze_chunks_done : 0,
+    providerFallback: r.provider_fallback === 1,
   };
 }
 
@@ -1635,7 +1636,10 @@ ${JSON.stringify(batch)}`;
         if (normalized.length <= CSV_BATCH_SIZE) {
           const csvResult = await callGeminiJson<EnrichmentResponse>(
             [{ role: 'user', content: buildEnrichmentPrompt(normalized, true) }],
-            { maxTokens: CSV_MAX_OUTPUT_TOKENS },
+            {
+              maxTokens: CSV_MAX_OUTPUT_TOKENS,
+              onFallback: () => { try { bankStatementRepo.markProviderFallback(placeholder.id); } catch (e) { console.warn('[bank-statements] markProviderFallback failed:', (e as Error).message); } },
+            },
           );
           extracted = {
             bankName: csvResult.data.bankName ?? null,
@@ -1681,7 +1685,10 @@ ${JSON.stringify(batch)}`;
             try {
               result = await callGeminiJson<EnrichmentResponse>(
                 [{ role: 'user', content: buildEnrichmentPrompt(batch, label.endsWith('/0')) }],
-                { maxTokens: CSV_MAX_OUTPUT_TOKENS },
+                {
+                  maxTokens: CSV_MAX_OUTPUT_TOKENS,
+                  onFallback: () => { try { bankStatementRepo.markProviderFallback(placeholder.id); } catch (e) { console.warn('[bank-statements] markProviderFallback failed:', (e as Error).message); } },
+                },
               );
               const enrichments = result.data.enrichments ?? [];
               if (enrichments.length < batch.length * 0.95) {
