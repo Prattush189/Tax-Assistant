@@ -25,6 +25,8 @@ import {
   sendPaymentConfirmationEmail,
   sendInvoiceEmail,
 } from '../lib/mailer.js';
+import { licenseKeyRepo } from '../db/repositories/licenseKeyRepo.js';
+import { fanoutEvent } from '../lib/externalWebhook.js';
 
 const router = Router();
 
@@ -94,6 +96,19 @@ function handleEvent(eventType: string, event: Record<string, unknown>): void {
       // in licenseKeyRepo.issue prevent double-issue if both fire.
       if (paymentRowId) {
         issuePaymentLicense({ userId, plan, paymentId: paymentRowId, expiresAt });
+        try {
+          const license = licenseKeyRepo.loadActive(userId);
+          const payment = paymentRepo.findById(paymentRowId);
+          const userRow = userRepo.findById(userId);
+          if (license) {
+            fanoutEvent({
+              event: 'license.issued',
+              license: license as unknown as Record<string, unknown>,
+              payment: (payment as unknown as Record<string, unknown>) ?? null,
+              user: userRow ? { id: userRow.id, name: userRow.name, email: userRow.email, plan: userRow.plan } : null,
+            });
+          }
+        } catch (e) { console.warn('[webhook] external fanout failed:', (e as Error).message); }
       }
 
       const user = userRepo.findById(userId);

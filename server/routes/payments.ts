@@ -24,6 +24,8 @@ import { rateLimit } from 'express-rate-limit';
 import type { BillingCycle, PaidPlan } from '../lib/razorpayPlans.js';
 import { sendPlanWelcomeEmail, sendInvoiceEmail } from '../lib/mailer.js';
 import { issuePaymentLicense } from '../lib/issueLicense.js';
+import { fanoutEvent } from '../lib/externalWebhook.js';
+import { licenseKeyRepo } from '../db/repositories/licenseKeyRepo.js';
 
 const router = Router();
 
@@ -195,6 +197,24 @@ router.post('/verify', verifyLimiter, (req: AuthRequest, res: Response) => {
       paymentId: paymentRowId,
       expiresAt,
     });
+    // Fan out a webhook to assist.smartbizin.com (or any other
+    // configured external API key) so dealer consoles can show
+    // the new license without polling.
+    void (async () => {
+      try {
+        const license = licenseKeyRepo.loadActive(req.user!.id);
+        const payment = paymentRepo.findById(paymentRowId!);
+        const userRow = userRepo.findById(req.user!.id);
+        if (license) {
+          fanoutEvent({
+            event: 'license.issued',
+            license: license as unknown as Record<string, unknown>,
+            payment: (payment as unknown as Record<string, unknown>) ?? null,
+            user: userRow ? { id: userRow.id, name: userRow.name, email: userRow.email, plan: userRow.plan } : null,
+          });
+        }
+      } catch (e) { console.warn('[payments/verify] webhook fanout failed:', (e as Error).message); }
+    })();
   }
 
   console.log(`[payments/verify] Plan activated: user=${req.user.id} plan=${plan}/${billing}`);
