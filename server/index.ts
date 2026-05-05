@@ -46,6 +46,7 @@ import { startRenewalReminderJob } from './jobs/renewalReminder.js';
 import { startStuckJobSweeper } from './lib/sweepStuckJobs.js';
 import { licenseKeyRepo } from './db/repositories/licenseKeyRepo.js';
 import { usageRepo } from './db/repositories/usageRepo.js';
+import { paymentRepo } from './db/repositories/paymentRepo.js';
 import helmet from 'helmet';
 import cors from 'cors';
 import path from 'path';
@@ -222,6 +223,15 @@ app.listen(PORT, () => {
     usageRepo.backfillWeightedTokens();
   } catch (e) {
     console.error('[boot] weighted-tokens backfill failed:', (e as Error).message);
+  }
+
+  // Stamp payment_method='razorpay' on historic Razorpay-paid rows
+  // so the offline-prefill filter and admin reports are consistent.
+  // Idempotent.
+  try {
+    paymentRepo.backfillRazorpayMethod();
+  } catch (e) {
+    console.error('[boot] razorpay payment_method backfill failed:', (e as Error).message);
   }
 
   // Start 48-hour renewal reminder email job (runs hourly)

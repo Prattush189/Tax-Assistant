@@ -109,6 +109,23 @@ export const paymentRepo = {
     db.prepare('UPDATE payments SET issued_by_dealer = ? WHERE id = ?').run(JSON.stringify(dealer), paymentId);
   },
 
+  /** Stamp payment_method='razorpay' on historic Razorpay rows that
+   *  predate the explicit-method change. Idempotent: only touches
+   *  rows where payment_method IS NULL and razorpay_order_id starts
+   *  with 'order_' (the Razorpay format) — offline rows use
+   *  'offline_…' so they're skipped. */
+  backfillRazorpayMethod(): void {
+    const result = db.prepare(`
+      UPDATE payments
+      SET payment_method = 'razorpay'
+      WHERE payment_method IS NULL
+        AND razorpay_order_id LIKE 'order_%'
+    `).run();
+    if (result.changes > 0) {
+      console.log(`[paymentRepo] backfilled payment_method='razorpay' on ${result.changes} historic rows`);
+    }
+  },
+
   /** Most-recent offline payment for a user — used to pre-fill the
    *  Generate License dialog on subsequent issuances so admins don't
    *  re-type the method/reference for the same dealer / user every

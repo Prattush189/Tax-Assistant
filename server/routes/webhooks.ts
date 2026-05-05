@@ -80,7 +80,7 @@ function handleEvent(eventType: string, event: Record<string, unknown>): void {
       try {
         const existing = paymentRepo.findByOrderId(orderId);
         if (!existing) {
-          paymentRepo.create(userId, orderId, plan, 'yearly', amountPaise);
+          paymentRepo.create(userId, orderId, plan, 'yearly', amountPaise, 'razorpay');
         }
         paymentRepo.markPaid(orderId, paymentId, expiresAt);
         paymentRowId = paymentRepo.findByOrderId(orderId)?.id ?? null;

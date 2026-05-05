@@ -178,7 +178,7 @@ router.post('/verify', verifyLimiter, (req: AuthRequest, res: Response) => {
   try {
     const existing = paymentRepo.findByOrderId(razorpay_order_id);
     if (!existing) {
-      paymentRepo.create(req.user.id, razorpay_order_id, plan, billing, amount);
+      paymentRepo.create(req.user.id, razorpay_order_id, plan, billing, amount, 'razorpay');
     }
     paymentRepo.markPaid(razorpay_order_id, razorpay_payment_id, expiresAt);
     paymentRowId = paymentRepo.findByOrderId(razorpay_order_id)?.id ?? null;
