@@ -341,4 +341,93 @@ export const licenseKeyRepo = {
     console.log(`[license-backfill] issued ${issued} key(s), skipped ${skipped}`);
     return { issued, skipped };
   },
+
+  /**
+   * Reconcile plan / license mismatches for users whose users.plan
+   * was changed directly (admin DB edit, legacy plan-flip endpoint
+   * before it was 410'd). Finds users where their active license's
+   * plan doesn't match users.plan, then issues a new license matching
+   * the current users.plan. The previous license is superseded inside
+   * licenseKeyRepo.issue's transaction.
+   *
+   * Skips:
+   *   - Admin users (their license is independent of plan).
+   *   - Users without an active license (handled by backfillExistingUsers).
+   *   - Users where users.plan == license.plan (already consistent).
+   *
+   * For mismatch cases, the new license starts NOW and expires 1 year
+   * from now — matches the yearly Razorpay cadence, gives the user a
+   * full paid period from the time the mismatch is fixed. Notes record
+   * the original license key for the audit trail.
+   *
+   * Idempotent. Safe to run on every boot.
+   */
+  reconcilePlanMismatches(): { reconciled: number } {
+    const mismatches = db.prepare(`
+      SELECT u.id AS user_id, u.plan AS user_plan, u.role AS user_role,
+             lk.id AS license_id, lk.key AS old_key, lk.plan AS license_plan
+      FROM users u
+      JOIN license_keys lk ON lk.id = u.license_key_id
+      WHERE u.role != 'admin'
+        AND lk.plan != 'admin'
+        AND u.plan != lk.plan
+    `).all() as Array<{
+      user_id: string; user_plan: string; user_role: string | null;
+      license_id: string; old_key: string; license_plan: string;
+    }>;
+
+    if (mismatches.length === 0) return { reconciled: 0 };
+
+    let reconciled = 0;
+    const startsAt = new Date();
+    const expiresAt = new Date(startsAt);
+    expiresAt.setFullYear(expiresAt.getFullYear() + 1);
+    const startStr = startsAt.toISOString().replace('Z', '');
+    const expStr = expiresAt.toISOString().replace('Z', '');
+
+    for (const m of mismatches) {
+      // Only reconcile to active billed plans. Anything else (e.g.
+      // someone manually set plan='free' after a paid period) we
+      // re-issue as a fresh FREE key with the standard 30-day window.
+      const validPlans = new Set(['free', 'pro', 'enterprise']);
+      if (!validPlans.has(m.user_plan)) {
+        console.warn(`[license-reconcile] skipping user ${m.user_id} — unknown plan '${m.user_plan}'`);
+        continue;
+      }
+      try {
+        if (m.user_plan === 'free') {
+          // Free reconciliation: 30-day window from now (treat as a
+          // fresh free trial since the prior paid license is being
+          // demoted intentionally).
+          const freeExp = new Date(startsAt);
+          freeExp.setDate(freeExp.getDate() + 30);
+          this.issue({
+            userId: m.user_id,
+            plan: 'free',
+            startsAt: startStr,
+            expiresAt: freeExp.toISOString().replace('Z', ''),
+            generatedVia: 'seed',
+            issuedNotes: `Reconciled from ${m.old_key} (was ${m.license_plan}, users.plan='free')`,
+          });
+        } else {
+          this.issue({
+            userId: m.user_id,
+            plan: m.user_plan as 'pro' | 'enterprise',
+            startsAt: startStr,
+            expiresAt: expStr,
+            generatedVia: 'seed',
+            issuedNotes: `Reconciled from ${m.old_key} (was ${m.license_plan}, users.plan='${m.user_plan}'). 1-year window from reconciliation date — adjust manually if the user's actual paid period differs.`,
+          });
+        }
+        reconciled++;
+      } catch (e) {
+        console.error(`[license-reconcile] failed for user ${m.user_id}:`, (e as Error).message);
+      }
+    }
+
+    if (reconciled > 0) {
+      console.log(`[license-reconcile] re-issued licenses for ${reconciled} user(s) whose plan didn't match their license`);
+    }
+    return { reconciled };
+  },
 };

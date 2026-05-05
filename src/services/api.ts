@@ -1468,6 +1468,12 @@ export async function adminFetchBillingPrefill(userId: string): Promise<AdminBil
   return authFetch(`/api/admin/users/${userId}/billing-prefill`);
 }
 
+/** Re-issue licenses for users whose plan column doesn't match their
+ *  active license's plan. Returns count of users affected. */
+export async function adminReconcileLicenses(): Promise<{ reconciled: number }> {
+  return authFetch('/api/admin/licenses/reconcile', { method: 'POST' });
+}
+
 export async function adminRenewLicense(licenseId: string, durationMonths: number): Promise<{ license: AdminLicenseRow }> {
   return authFetch(`/api/admin/licenses/${licenseId}/renew`, { method: 'POST', body: JSON.stringify({ durationMonths }) });
 }

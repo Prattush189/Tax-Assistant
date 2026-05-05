@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Key, RefreshCw, Ban, Search, Plus } from 'lucide-react';
+import { Key, RefreshCw, Ban, Search, Plus, Wrench } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { cn } from '../../lib/utils';
 import {
-  adminFetchLicenses, adminRenewLicense, adminRevokeLicense,
+  adminFetchLicenses, adminRenewLicense, adminRevokeLicense, adminReconcileLicenses,
   type AdminLicenseRow,
 } from '../../services/api';
 import { GenerateLicenseDialog } from './GenerateLicenseDialog';
@@ -45,6 +45,22 @@ export function LicensesDashboard() {
   const [plan, setPlan] = useState('');
   const [status, setStatus] = useState('');
   const [generateOpen, setGenerateOpen] = useState(false);
+  const [reconciling, setReconciling] = useState(false);
+
+  const handleReconcile = async () => {
+    if (reconciling) return;
+    if (!confirm('Re-issue licenses for every user whose plan column doesn\'t match their active license?\n\nUseful when plans were changed directly (DB edit or before the licensing system) and the license needs to catch up. Each affected user gets a new key starting today, running for 1 year. Their old key is marked superseded.')) return;
+    setReconciling(true);
+    try {
+      const r = await adminReconcileLicenses();
+      toast.success(`Reconciled ${r.reconciled} user(s)`);
+      load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Reconcile failed');
+    } finally {
+      setReconciling(false);
+    }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -93,12 +109,22 @@ export function LicensesDashboard() {
         <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
           <Key className="w-5 h-5 text-amber-500" /> Licenses
         </h2>
-        <button
-          onClick={() => setGenerateOpen(true)}
-          className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white"
-        >
-          <Plus className="w-4 h-4" /> Generate License
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleReconcile}
+            disabled={reconciling}
+            title="Re-issue licenses for users whose plan column doesn't match their active license — fixes manually-edited plans that bypassed the licensing system."
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg bg-amber-50 hover:bg-amber-100 dark:bg-amber-900/20 dark:hover:bg-amber-900/40 text-amber-700 dark:text-amber-300 disabled:opacity-50"
+          >
+            <Wrench className="w-4 h-4" /> {reconciling ? 'Reconciling…' : 'Reconcile mismatches'}
+          </button>
+          <button
+            onClick={() => setGenerateOpen(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white"
+          >
+            <Plus className="w-4 h-4" /> Generate License
+          </button>
+        </div>
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
