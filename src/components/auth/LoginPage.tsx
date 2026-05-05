@@ -62,7 +62,9 @@ export function LoginPage({ onSwitchToSignup, onNeedsVerification, onForgotPassw
             transition={{ duration: 0.6 }}
           >
             <div className="flex items-center gap-3 mb-8">
-              <LoadingAnimation className="w-12 h-12" />
+              <div className="bg-white rounded-full p-2 shadow-md">
+                <LoadingAnimation className="w-10 h-10" />
+              </div>
               <span className="text-2xl font-bold text-white tracking-tight">Smartbiz AI</span>
             </div>
 
