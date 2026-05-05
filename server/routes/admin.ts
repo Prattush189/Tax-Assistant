@@ -510,72 +510,129 @@ router.get('/licenses', (req: AuthRequest, res: Response) => {
   res.json({ ...result, page, limit });
 });
 
-// POST /api/admin/licenses — issue a license offline. Used for cash /
-// dealer-collected payments where Razorpay isn't involved. Optionally
-// generates an invoice + receipt PDF the admin can email or print.
+// GET /api/admin/users/:id/billing-prefill
+//   Returns the saved billing details + most-recent offline payment
+//   method/reference for a user, so the Generate License dialog can
+//   pre-fill those fields when the admin issues another license to
+//   the same person. Cuts the form down to "confirm and submit" on
+//   repeat issuances.
+router.get('/users/:id/billing-prefill', (req: AuthRequest, res: Response) => {
+  const { id } = req.params;
+  const user = userRepo.findById(id);
+  if (!user) { res.status(404).json({ error: 'User not found' }); return; }
+  const billingDetails = userRepo.getBillingDetails(id);
+  const lastOffline = paymentRepo.findLatestOfflineByUser(id);
+  res.json({
+    billingDetails: billingDetails ?? null,
+    lastPaymentMethod: lastOffline?.payment_method ?? null,
+    // Reference is intentionally NOT prefilled — cheque/UTR numbers
+    // are per-payment, never reuse across renewals. We just surface
+    // the last one as a hint in the UI.
+    lastPaymentReference: lastOffline?.payment_reference ?? null,
+  });
+});
+
+// POST /api/admin/licenses — issue an offline license (cash / cheque /
+// NEFT / etc.). Always 12-month, plan ∈ {pro, enterprise}. Generates
+// invoice + receipt PDFs and persists the user's billing details for
+// reuse on the next renewal.
 //   Body: {
 //     userId: string,
-//     plan: 'free' | 'pro' | 'enterprise',
-//     durationMonths: number,             // 1 .. 60
-//     generateInvoice?: boolean,
-//     generateReceipt?: boolean,
-//     amount?: number,                    // paise — required if generating invoice/receipt
+//     plan: 'pro' | 'enterprise',
+//     paymentMethod: 'cash' | 'cheque' | 'neft' | 'imps' | 'upi' | 'rtgs' | 'card' | 'other',
+//     paymentReference?: string,         // cheque no, UTR, etc.
+//     amount: number,                    // paise — always required, this is a paid grant
+//     billingDetails: { name, addressLine1, ..., gstin? },
 //     notes?: string,
 //   }
+const VALID_OFFLINE_PLANS = new Set(['pro', 'enterprise']);
+const VALID_PAYMENT_METHODS = new Set(['cash', 'cheque', 'neft', 'imps', 'upi', 'rtgs', 'card', 'other']);
+const PAYMENT_METHODS_NEEDING_REFERENCE = new Set(['cheque', 'neft', 'imps', 'upi', 'rtgs']);
+
 router.post('/licenses', async (req: AuthRequest, res: Response) => {
   if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
-  const { userId, plan, durationMonths, generateInvoice, generateReceipt, amount, notes } = req.body ?? {};
+  const { userId, plan, paymentMethod, paymentReference, amount, billingDetails, notes } = req.body ?? {};
+
   if (typeof userId !== 'string' || !userId) {
     res.status(400).json({ error: 'userId is required' });
     return;
   }
-  if (!['free', 'pro', 'enterprise'].includes(plan)) {
-    res.status(400).json({ error: 'plan must be free, pro, or enterprise' });
+  if (!VALID_OFFLINE_PLANS.has(plan)) {
+    res.status(400).json({ error: 'plan must be "pro" or "enterprise" — free trials auto-issue at signup' });
     return;
   }
-  const months = parseInt(String(durationMonths), 10);
-  if (!Number.isFinite(months) || months < 1 || months > 60) {
-    res.status(400).json({ error: 'durationMonths must be 1..60' });
+  if (!VALID_PAYMENT_METHODS.has(paymentMethod)) {
+    res.status(400).json({ error: 'paymentMethod required (cash | cheque | neft | imps | upi | rtgs | card | other)' });
     return;
   }
+  if (PAYMENT_METHODS_NEEDING_REFERENCE.has(paymentMethod) && (!paymentReference || !String(paymentReference).trim())) {
+    res.status(400).json({ error: `paymentReference required for ${paymentMethod} (cheque/UTR/transaction id)` });
+    return;
+  }
+  if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) {
+    res.status(400).json({ error: 'amount (in paise) is required and must be positive' });
+    return;
+  }
+  if (!billingDetails || typeof billingDetails !== 'object') {
+    res.status(400).json({ error: 'billingDetails is required' });
+    return;
+  }
+  const bd = billingDetails as Record<string, unknown>;
+  for (const field of ['name', 'addressLine1', 'city', 'state', 'pincode']) {
+    if (typeof bd[field] !== 'string' || !(bd[field] as string).trim()) {
+      res.status(400).json({ error: `billingDetails.${field} is required` });
+      return;
+    }
+  }
+
   const targetUser = userRepo.findById(userId);
   if (!targetUser) { res.status(404).json({ error: 'User not found' }); return; }
 
-  // Build start/end timestamps in IST format the rest of the codebase
-  // uses ('YYYY-MM-DD HH:MM:SS' with no Z).
+  // Fixed 12-month window for offline issuance — matches the yearly
+  // Razorpay cadence so admin and self-serve flows produce comparable
+  // license periods. Renewal endpoint still accepts custom durations
+  // for edge cases.
   const startsAt = new Date();
   const expiresAt = new Date(startsAt);
-  expiresAt.setMonth(expiresAt.getMonth() + months);
+  expiresAt.setFullYear(expiresAt.getFullYear() + 1);
   const startStr = startsAt.toISOString().replace('Z', '');
   const expStr = expiresAt.toISOString().replace('Z', '');
 
-  // Optional invoice/receipt: caller must have supplied an amount
-  // for these to be meaningful. We log a payment row tagged with
-  // the offline-license origin so the Payments tab surfaces this
-  // grant alongside Razorpay-driven ones — gives admins one place
-  // to look for "what's been issued".
+  // Persist billing for reuse next time. Sanitised: trim every
+  // string field; gstin is optional.
+  const cleanBilling = {
+    name: String(bd.name).trim(),
+    addressLine1: String(bd.addressLine1).trim(),
+    addressLine2: typeof bd.addressLine2 === 'string' ? bd.addressLine2.trim() : undefined,
+    city: String(bd.city).trim(),
+    state: String(bd.state).trim(),
+    pincode: String(bd.pincode).trim(),
+    gstin: typeof bd.gstin === 'string' && bd.gstin.trim() ? bd.gstin.trim() : undefined,
+  };
+  try { userRepo.setBillingDetails(userId, cleanBilling); }
+  catch (err) { console.warn('[admin/licenses] failed to persist billing details:', err); }
+
+  // Always create a payment row for offline issuances. Carries the
+  // method + reference so the Payments tab can show how each
+  // license was paid for. Tagged status='paid' immediately since
+  // the admin only issues after collecting funds.
   let paymentRowId: string | null = null;
-  if (generateInvoice || generateReceipt) {
-    if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) {
-      res.status(400).json({ error: 'amount (in paise) is required when generating invoice or receipt' });
-      return;
-    }
-    try {
-      // Synthetic order id so the unique constraint doesn't collide
-      // and so Razorpay-side reports can ignore these.
-      const offlineOrderId = `offline_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      paymentRepo.create(userId, offlineOrderId, plan, 'yearly', amount);
-      paymentRepo.markPaid(offlineOrderId, `offline_pay_${Date.now()}`, expStr);
-      paymentRowId = paymentRepo.findByOrderId(offlineOrderId)?.id ?? null;
-    } catch (err) {
-      console.error('[admin/licenses] payment row create failed:', err);
-      // Continue — license issuance is the primary action.
-    }
+  try {
+    const offlineOrderId = `offline_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    paymentRepo.create(
+      userId, offlineOrderId, plan, 'yearly', amount,
+      paymentMethod as 'cash' | 'cheque' | 'neft' | 'imps' | 'upi' | 'rtgs' | 'card' | 'other',
+      typeof paymentReference === 'string' && paymentReference.trim() ? paymentReference.trim() : null,
+    );
+    paymentRepo.markPaid(offlineOrderId, `offline_pay_${Date.now()}`, expStr);
+    paymentRowId = paymentRepo.findByOrderId(offlineOrderId)?.id ?? null;
+  } catch (err) {
+    console.error('[admin/licenses] payment row create failed:', err);
   }
 
   const license = licenseKeyRepo.issue({
     userId,
-    plan: plan as 'free' | 'pro' | 'enterprise',
+    plan: plan as 'pro' | 'enterprise',
     startsAt: startStr,
     expiresAt: expStr,
     generatedVia: 'offline',
@@ -587,8 +644,11 @@ router.post('/licenses', async (req: AuthRequest, res: Response) => {
   res.json({
     license,
     paymentId: paymentRowId,
-    invoiceUrl: paymentRowId && generateInvoice ? `/api/admin/payments/${paymentRowId}/invoice.pdf` : null,
-    receiptUrl: paymentRowId && generateReceipt ? `/api/admin/payments/${paymentRowId}/receipt.pdf` : null,
+    // Always-on now — every offline grant gets both PDFs since we
+    // captured the billing address upfront. Admin can choose not to
+    // download either, but the URLs are always there.
+    invoiceUrl: paymentRowId ? `/api/admin/payments/${paymentRowId}/invoice.pdf` : null,
+    receiptUrl: paymentRowId ? `/api/admin/payments/${paymentRowId}/receipt.pdf` : null,
   });
 });
 

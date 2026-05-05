@@ -4,6 +4,11 @@ import db from '../index.js';
 export type PaymentStatus = 'created' | 'paid' | 'failed';
 export type PlanType = 'pro' | 'enterprise';
 export type BillingCycle = 'monthly' | 'yearly';
+/** How the user paid. 'razorpay' is implied for online flows
+ *  (Razorpay's own ids identify the channel). The admin's offline
+ *  license issuance flow asks for one of the alternative methods
+ *  + a free-text reference (cheque number, NEFT UTR, etc.). */
+export type PaymentMethod = 'razorpay' | 'cash' | 'cheque' | 'neft' | 'imps' | 'upi' | 'rtgs' | 'card' | 'other';
 
 export interface PaymentRow {
   id: string;
@@ -18,12 +23,14 @@ export interface PaymentRow {
   created_at: string;
   paid_at: string | null;
   expires_at: string | null;
+  payment_method: PaymentMethod | null;
+  payment_reference: string | null;
 }
 
 const stmts = {
   create: db.prepare(`
-    INSERT INTO payments (id, user_id, razorpay_order_id, plan, billing, amount, currency, status)
-    VALUES (?, ?, ?, ?, ?, ?, 'INR', 'created')
+    INSERT INTO payments (id, user_id, razorpay_order_id, plan, billing, amount, currency, status, payment_method, payment_reference)
+    VALUES (?, ?, ?, ?, ?, ?, 'INR', 'created', ?, ?)
   `),
   findByOrderId: db.prepare(
     'SELECT * FROM payments WHERE razorpay_order_id = ?'
@@ -86,10 +93,28 @@ export const paymentRepo = {
     plan: PlanType,
     billing: BillingCycle,
     amountPaise: number,
+    paymentMethod: PaymentMethod | null = null,
+    paymentReference: string | null = null,
   ): PaymentRow {
     const id = crypto.randomBytes(16).toString('hex');
-    stmts.create.run(id, userId, razorpayOrderId, plan, billing, amountPaise);
+    stmts.create.run(id, userId, razorpayOrderId, plan, billing, amountPaise, paymentMethod, paymentReference);
     return this.findByOrderId(razorpayOrderId)!;
+  },
+
+  /** Most-recent offline payment for a user — used to pre-fill the
+   *  Generate License dialog on subsequent issuances so admins don't
+   *  re-type the method/reference for the same dealer / user every
+   *  renewal. Razorpay rows are filtered out because the method is
+   *  always 'razorpay' there and irrelevant to the offline form. */
+  findLatestOfflineByUser(userId: string): PaymentRow | undefined {
+    return db.prepare(`
+      SELECT * FROM payments
+      WHERE user_id = ?
+        AND payment_method IS NOT NULL
+        AND payment_method != 'razorpay'
+      ORDER BY created_at DESC
+      LIMIT 1
+    `).get(userId) as PaymentRow | undefined;
   },
 
   findByOrderId(orderId: string): PaymentRow | undefined {

@@ -615,6 +615,22 @@ db.exec(`CREATE TABLE IF NOT EXISTS payments (
 db.exec("CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments(user_id)");
 db.exec("CREATE INDEX IF NOT EXISTS idx_payments_order_id ON payments(razorpay_order_id)");
 
+// Offline payments captured by admin license-issuance need to record
+// HOW the user paid (cash, cheque, NEFT, etc.) and a reference (cheque
+// number, transaction id). Razorpay rows leave both NULL — the order +
+// payment ids in the existing columns already carry that information.
+{
+  const paymentCols = (db.prepare("PRAGMA table_info(payments)").all() as { name: string }[]).map(c => c.name);
+  if (!paymentCols.includes('payment_method')) {
+    // 'cash' | 'cheque' | 'neft' | 'imps' | 'upi' | 'rtgs' | 'card' | 'razorpay' | 'other' | NULL
+    db.exec("ALTER TABLE payments ADD COLUMN payment_method TEXT");
+  }
+  if (!paymentCols.includes('payment_reference')) {
+    // Free-text reference. Cheque number, NEFT UTR, UPI ref id, etc.
+    db.exec("ALTER TABLE payments ADD COLUMN payment_reference TEXT");
+  }
+}
+
 // Gemini search-grounding quota — persisted per API key so counters survive
 // server restarts. Reset keys stored as:
 //   t1_reset_ym   = year*12 + month (e.g. 2026*12+3 for Apr 2026) — monthly rollover
