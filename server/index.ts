@@ -124,6 +124,13 @@ app.use('/api/auth', authLimiter, authRouter);
 // it without being logged in. Mount BEFORE the global authMiddleware gate.
 app.use('/api/invitations', publicInvitationRouter);
 
+// External API namespace — for sister apps (assist.smartbizin.com,
+// future integrations). Auth via Bearer EXTKEY-... validated by the
+// requireExternalApiKey middleware mounted inside the router. No
+// user JWT, no session — must be mounted BEFORE the global
+// authMiddleware below or the user-JWT gate rejects external calls.
+app.use('/api/external', externalRouter);
+
 // All remaining API routes require auth
 app.use('/api', authMiddleware);
 // Trial gate — free-plan users blocked after 30 days (exempt: auth, usage, payments)
@@ -153,12 +160,6 @@ app.use('/api/billing-details', billingDetailsRouter);
 
 // Admin — requires auth + admin role
 app.use('/api/admin', authMiddleware, adminMiddleware, adminRouter);
-
-// External API namespace — for sister apps (assist.smartbizin.com,
-// future integrations). Auth via Bearer EXTKEY-... validated by the
-// requireExternalApiKey middleware mounted inside the router. No
-// user JWT, no session.
-app.use('/api/external', externalRouter);
 
 // 5. Production static serving
 if (process.env.NODE_ENV === 'production') {
