@@ -92,6 +92,11 @@ export interface PdfPaymentData {
   amount: number;       // paise (GST-inclusive)
   paidAt: string | null;
   expiresAt: string | null;
+  /** Sequential per-tenant invoice number, assigned at markPaid. When
+   *  set, rendered as "AI-001"; falls back to the legacy AI-<id-prefix>
+   *  for the few cases the field is absent (e.g. a hypothetical row
+   *  that pre-dates the migration but skipped the backfill). */
+  invoiceNumber?: number | null;
 }
 
 export interface PdfBuyer {
@@ -106,7 +111,16 @@ function fmt(n: number): string {
   return 'Rs. ' + n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function docNo(id: string): string { return 'AI-' + id.slice(0, 10).toUpperCase(); }
+/** Render the invoice / receipt number. Sequential per-tenant ("AI-001",
+ *  "AI-002"…) when invoice_number is set; falls back to the legacy
+ *  AI-<id-prefix> form for rows missing the field (defensive — every
+ *  paid row should have one after the boot-time backfill). */
+function docNo(id: string, invoiceNumber?: number | null): string {
+  if (typeof invoiceNumber === 'number' && Number.isFinite(invoiceNumber) && invoiceNumber > 0) {
+    return 'AI-' + String(invoiceNumber).padStart(3, '0');
+  }
+  return 'AI-' + id.slice(0, 10).toUpperCase();
+}
 
 function planLabel(plan: string, billing: string): string {
   return `${COMPANY_BRAND} ${plan === 'pro' ? 'Pro' : 'Enterprise'} Plan - ${billing === 'monthly' ? 'Monthly' : 'Yearly'}`;
@@ -191,7 +205,7 @@ export function buildReceiptBuffer(payment: PdfPaymentData, buyer: PdfBuyer): Bu
   // Meta row
   doc.setFontSize(10); doc.setFont('helvetica', 'bold');
   doc.text('Receipt No:', L, y); doc.setFont('helvetica', 'normal');
-  doc.text(docNo(payment.id), L + 29, y);
+  doc.text(docNo(payment.id, payment.invoiceNumber), L + 29, y);
   doc.setFont('helvetica', 'bold');
   doc.text('Date:', R - 52, y); doc.setFont('helvetica', 'normal');
   doc.text(fmtDate(payment.paidAt), R - 41, y);
@@ -278,7 +292,7 @@ export function buildInvoiceBuffer(payment: PdfPaymentData, buyer: PdfBuyer): Bu
   // Meta
   doc.setFontSize(10); doc.setFont('helvetica', 'bold');
   doc.text('Invoice No:', L, y); doc.setFont('helvetica', 'normal');
-  doc.text(docNo(payment.id), L + 28, y);
+  doc.text(docNo(payment.id, payment.invoiceNumber), L + 28, y);
   doc.setFont('helvetica', 'bold');
   doc.text('Date:', R - 52, y); doc.setFont('helvetica', 'normal');
   doc.text(fmtDate(payment.paidAt), R - 41, y); y += 7;

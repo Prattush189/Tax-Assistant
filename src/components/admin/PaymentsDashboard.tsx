@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Wallet, Search, Download, FileText } from 'lucide-react';
+import { Wallet, Search, Download, FileText, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { cn } from '../../lib/utils';
-import { adminFetchPayments, type AdminPaymentRow } from '../../services/api';
+import { adminFetchPayments, adminDeletePayment, type AdminPaymentRow } from '../../services/api';
 
 function fmtINR(paise: number): string {
   return '₹' + (paise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -38,6 +38,7 @@ export function PaymentsDashboard() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -55,6 +56,29 @@ export function PaymentsDashboard() {
     const t = setTimeout(() => { load(); }, 250);
     return () => clearTimeout(t);
   }, [load]);
+
+  const handleDelete = async (row: AdminPaymentRow) => {
+    const label = row.invoice_number != null
+      ? `invoice AI-${String(row.invoice_number).padStart(3, '0')}`
+      : `payment ${row.id.slice(0, 8)}`;
+    const ok = window.confirm(
+      `Delete ${label} for ${row.user_email}?\n\n` +
+      `Amount: ${fmtINR(row.amount)} · Status: ${row.status}\n\n` +
+      `The license issued from this payment (if any) will lose its payment reference but stay valid. ` +
+      `This cannot be undone.`,
+    );
+    if (!ok) return;
+    setDeletingId(row.id);
+    try {
+      await adminDeletePayment(row.id);
+      setRows(prev => prev.filter(r => r.id !== row.id));
+      toast.success('Payment deleted');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Delete failed');
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -77,6 +101,7 @@ export function PaymentsDashboard() {
           <table className="w-full text-xs">
             <thead className="bg-gray-50 dark:bg-gray-800/50">
               <tr className="text-left text-gray-500">
+                <th className="px-3 py-2 font-medium">Inv #</th>
                 <th className="px-3 py-2 font-medium">When</th>
                 <th className="px-3 py-2 font-medium">User</th>
                 <th className="px-3 py-2 font-medium">Plan</th>
@@ -88,14 +113,17 @@ export function PaymentsDashboard() {
               </tr>
             </thead>
             <tbody>
-              {loading && <tr><td colSpan={8} className="px-3 py-8 text-center text-gray-400">Loading…</td></tr>}
-              {!loading && rows.length === 0 && <tr><td colSpan={8} className="px-3 py-8 text-center text-gray-400">No payments match.</td></tr>}
+              {loading && <tr><td colSpan={9} className="px-3 py-8 text-center text-gray-400">Loading…</td></tr>}
+              {!loading && rows.length === 0 && <tr><td colSpan={9} className="px-3 py-8 text-center text-gray-400">No payments match.</td></tr>}
               {rows.map(r => {
                 const isExpanded = expanded === r.id;
                 const billing = parseBilling(r.billing_details);
                 return (
                   <>
                     <tr key={r.id} className="border-t border-gray-100 dark:border-gray-800">
+                      <td className="px-3 py-2 font-mono text-gray-500 whitespace-nowrap">
+                        {r.invoice_number != null ? `AI-${String(r.invoice_number).padStart(3, '0')}` : '—'}
+                      </td>
                       <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{fmtDate(r.paid_at ?? r.created_at)}</td>
                       <td className="px-3 py-2">
                         <div className="font-medium text-gray-900 dark:text-gray-100">{r.user_name || '—'}</div>
@@ -117,33 +145,44 @@ export function PaymentsDashboard() {
                         {r.license ? r.license.key : '—'}
                       </td>
                       <td className="px-3 py-2">
-                        {r.status === 'paid' ? (
-                          <div className="flex gap-1">
-                            <a
-                              href={`/api/admin/payments/${r.id}/invoice.pdf`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              title="Download invoice"
-                              className="p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 dark:text-gray-400"
-                            >
-                              <FileText className="w-3.5 h-3.5" />
-                            </a>
-                            <a
-                              href={`/api/admin/payments/${r.id}/receipt.pdf`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              title="Download receipt"
-                              className="p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 dark:text-gray-400"
-                            >
-                              <Download className="w-3.5 h-3.5" />
-                            </a>
-                          </div>
-                        ) : '—'}
+                        <div className="flex gap-1 items-center">
+                          {r.status === 'paid' && (
+                            <>
+                              <a
+                                href={`/api/admin/payments/${r.id}/invoice.pdf`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                title="Download invoice"
+                                className="p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 dark:text-gray-400"
+                              >
+                                <FileText className="w-3.5 h-3.5" />
+                              </a>
+                              <a
+                                href={`/api/admin/payments/${r.id}/receipt.pdf`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                title="Download receipt"
+                                className="p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 dark:text-gray-400"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                              </a>
+                            </>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(r)}
+                            disabled={deletingId === r.id}
+                            title="Delete payment"
+                            className="p-1.5 rounded hover:bg-rose-50 dark:hover:bg-rose-900/20 text-gray-400 hover:text-rose-600 dark:hover:text-rose-400 disabled:opacity-40"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                     {isExpanded && billing && (
                       <tr className="border-t border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/30">
-                        <td colSpan={8} className="px-3 py-3">
+                        <td colSpan={9} className="px-3 py-3">
                           <div className="text-[11px] text-gray-600 dark:text-gray-400 space-y-0.5">
                             <div><span className="font-semibold">{billing.name ?? '—'}</span></div>
                             <div>{billing.addressLine1 ?? '—'}</div>

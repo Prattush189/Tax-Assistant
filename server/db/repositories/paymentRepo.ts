@@ -25,6 +25,7 @@ export interface PaymentRow {
   expires_at: string | null;
   payment_method: PaymentMethod | null;
   payment_reference: string | null;
+  invoice_number: number | null;
 }
 
 const stmts = {
@@ -43,7 +44,8 @@ const stmts = {
     SET status = 'paid',
         razorpay_payment_id = ?,
         paid_at = datetime('now', '+5 hours', '+30 minutes'),
-        expires_at = ?
+        expires_at = ?,
+        invoice_number = COALESCE(invoice_number, (SELECT COALESCE(MAX(invoice_number), 0) + 1 FROM payments))
     WHERE razorpay_order_id = ?
   `),
   markFailed: db.prepare(`
@@ -107,6 +109,19 @@ export const paymentRepo = {
    *  evolve without a migration. */
   setDealerAttribution(paymentId: string, dealer: { id?: string; name?: string; email?: string; location?: string }): void {
     db.prepare('UPDATE payments SET issued_by_dealer = ? WHERE id = ?').run(JSON.stringify(dealer), paymentId);
+  },
+
+  /** Hard-delete a payment row. Used by the admin "Delete payment"
+   *  action to clean up test rows. The license_keys.payment_id FK is
+   *  ON DELETE SET NULL so any license issued from this payment loses
+   *  the payment reference but stays valid; the admin can then revoke
+   *  the license separately if appropriate. invoice_number is freed
+   *  back into the pool — subsequent payments do NOT get assigned the
+   *  freed number (they always take MAX+1) so existing invoice PDFs
+   *  retain stable numbers. */
+  deleteById(id: string): boolean {
+    const result = db.prepare('DELETE FROM payments WHERE id = ?').run(id);
+    return result.changes > 0;
   },
 
   /** Stamp payment_method='razorpay' on historic Razorpay rows that

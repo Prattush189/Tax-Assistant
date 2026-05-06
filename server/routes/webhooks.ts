@@ -127,6 +127,7 @@ function handleEvent(eventType: string, event: Record<string, unknown>): void {
               const pdfData = {
                 id: payRec.id, plan: payRec.plan, billing: payRec.billing,
                 amount: payRec.amount, paidAt: payRec.paid_at, expiresAt: payRec.expires_at,
+                invoiceNumber: payRec.invoice_number,
               };
               const { buildReceiptBuffer, buildInvoiceBuffer } = await import('../lib/serverPdf.js');
               const rcpt = buildReceiptBuffer(pdfData, buyer);

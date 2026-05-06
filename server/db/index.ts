@@ -682,6 +682,23 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_payments_order_id ON payments(razorpay_o
     // Free-text reference. Cheque number, NEFT UTR, UPI ref id, etc.
     db.exec("ALTER TABLE payments ADD COLUMN payment_reference TEXT");
   }
+  // Sequential per-tenant invoice number, assigned at markPaid. NULL on
+  // 'created' / 'failed' rows since those never produce an invoice.
+  // Backfill assigns 1, 2, 3… to existing 'paid' rows in paid_at order
+  // so the legacy AI-<hash> invoices keep a stable sequence even if a
+  // user re-downloads.
+  if (!paymentCols.includes('invoice_number')) {
+    db.exec("ALTER TABLE payments ADD COLUMN invoice_number INTEGER");
+    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_invoice_number ON payments(invoice_number) WHERE invoice_number IS NOT NULL");
+    const paidRows = db.prepare("SELECT id FROM payments WHERE status = 'paid' AND invoice_number IS NULL ORDER BY paid_at ASC, created_at ASC").all() as { id: string }[];
+    const upd = db.prepare("UPDATE payments SET invoice_number = ? WHERE id = ?");
+    db.transaction(() => {
+      paidRows.forEach((r, i) => upd.run(i + 1, r.id));
+    })();
+    if (paidRows.length > 0) {
+      console.log(`[DB] Backfilled invoice_number on ${paidRows.length} paid payment rows`);
+    }
+  }
 }
 
 // Gemini search-grounding quota — persisted per API key so counters survive

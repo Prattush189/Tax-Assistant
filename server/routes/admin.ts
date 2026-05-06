@@ -799,10 +799,24 @@ router.get('/payments/:id/:kind(invoice|receipt).pdf', async (req: AuthRequest, 
   const buffer = buildFn({
     id: pay.id, plan: pay.plan, billing: pay.billing,
     amount: pay.amount, paidAt: pay.paid_at, expiresAt: pay.expires_at,
+    invoiceNumber: pay.invoice_number,
   }, { name: buyer.name ?? '', email: buyer.email ?? '', billingDetails });
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="${kind}-${pay.id}.pdf"`);
   res.send(buffer);
+});
+
+// DELETE /api/admin/payments/:id — admin-only hard delete. Used to clean
+// up test rows. The license_keys.payment_id FK is ON DELETE SET NULL so
+// any license issued from this payment loses the payment reference but
+// stays valid; the admin can revoke the license separately if needed.
+router.delete('/payments/:id', (req: AuthRequest, res: Response) => {
+  const pay = paymentRepo.findById(req.params.id);
+  if (!pay) { res.status(404).json({ error: 'Payment not found' }); return; }
+  const ok = paymentRepo.deleteById(req.params.id);
+  if (!ok) { res.status(500).json({ error: 'Delete failed' }); return; }
+  console.log(`[admin] Deleted payment ${req.params.id} (invoice ${pay.invoice_number ?? 'n/a'}) by admin ${req.user?.id}`);
+  res.json({ success: true });
 });
 
 export default router;

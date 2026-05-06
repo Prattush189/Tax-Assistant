@@ -230,6 +230,7 @@ router.post('/verify', verifyLimiter, (req: AuthRequest, res: Response) => {
         const pdfData = {
           id: payRec.id, plan: payRec.plan, billing: payRec.billing,
           amount: payRec.amount, paidAt: payRec.paid_at, expiresAt: payRec.expires_at,
+          invoiceNumber: payRec.invoice_number,
         };
         const { buildReceiptBuffer, buildInvoiceBuffer } = await import('../lib/serverPdf.js');
         const [rcpt, inv] = [buildReceiptBuffer(pdfData, buyer), buildInvoiceBuffer(pdfData, buyer)];

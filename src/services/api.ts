@@ -1452,6 +1452,7 @@ export interface AdminPaymentRow {
   expires_at: string | null;
   billing_details: string | null;
   license: { id: string; key: string; plan: string; status: string; expires_at: string | null } | null;
+  invoice_number: number | null;
 }
 
 export async function adminFetchLicenses(opts: { search?: string; plan?: string; status?: string; page?: number } = {}): Promise<{ rows: AdminLicenseRow[]; total: number; page: number; limit: number }> {
@@ -1545,6 +1546,10 @@ export async function adminFetchPayments(opts: { search?: string; page?: number 
   if (opts.page) qs.set('page', String(opts.page));
   const tail = qs.toString() ? `?${qs}` : '';
   return authFetch(`/api/admin/payments${tail}`);
+}
+
+export async function adminDeletePayment(id: string): Promise<void> {
+  await authFetch(`/api/admin/payments/${id}`, { method: 'DELETE' });
 }
 
 // ── Income Tax portal import ────────────────────────────────────────────
