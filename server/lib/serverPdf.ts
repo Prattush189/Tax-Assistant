@@ -309,7 +309,16 @@ export function buildInvoiceBuffer(payment: PdfPaymentData, buyer: PdfBuyer): Bu
 
   // Item table — all numeric columns right-aligned at staggered x-positions
   const intra = isIntraState(buyer.billingDetails);
-  const colDesc = L + 2, colQty = L + 92, colRate = L + 122, colTax = L + 152, colTot = R - 2;
+  // Numeric columns are right-aligned at these x-coordinates. Spacing
+  // tuned so the widest expected value ("Rs. 10,620.00", ~22mm wide)
+  // never overlaps the next column. With L=20 / R=190 on A4-portrait
+  // the layout is:
+  //   colDesc  L+2   → ~L+78  (description, narration)
+  //   colQty   L+82  (just "1" — fits in <4mm)
+  //   colRate  L+112 (Rate — Rs. 6,000.00 / Rs. 9,000.00)
+  //   colTax   L+144 (GST 18% — up to Rs. 1,762.71)
+  //   colTot   R-2   (Total — up to Rs. 10,620.00)
+  const colDesc = L + 2, colQty = L + 82, colRate = L + 112, colTax = L + 144, colTot = R - 2;
   doc.setFillColor(245, 247, 250); doc.rect(L, y, R - L, 8, 'F');
   doc.setFontSize(8); doc.setFont('helvetica', 'bold'); doc.setTextColor(60, 60, 60);
   doc.text('Description', colDesc, y + 5.5);
