@@ -3,7 +3,12 @@
  * Mirrors the frontend paymentPdf.ts but outputs a Buffer for email attachments.
  */
 
-import jsPDF from 'jspdf';
+// jsPDF ships both a default export and a named { jsPDF } export.
+// Under Node's ESM loader the default import resolves to the module
+// namespace object instead of the constructor, throwing
+// "TypeError: jsPDF is not a constructor" at runtime. Named import
+// works under both ESM and CJS.
+import { jsPDF } from 'jspdf';
 import type { BillingDetails } from '../db/repositories/userRepo.js';
 import { PLAN_AMOUNTS, planKey } from './razorpayPlans.js';
 import type { PaidPlan } from './razorpayPlans.js';
