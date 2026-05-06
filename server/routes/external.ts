@@ -279,20 +279,29 @@ router.get('/payments', (req: ExternalApiRequest, res: Response) => {
 
 router.get('/payments/:id/:kind(invoice|receipt).pdf', async (req: ExternalApiRequest, res: Response) => {
   const { id, kind } = req.params as { id: string; kind: 'invoice' | 'receipt' };
-  const pay = paymentRepo.findById(id);
-  if (!pay) { res.status(404).json({ error: 'Payment not found' }); return; }
-  const buyer = userRepo.findById(pay.user_id);
-  if (!buyer) { res.status(404).json({ error: 'Payment user not found' }); return; }
-  const billingDetails = userRepo.getBillingDetails(buyer.id);
-  const { buildInvoiceBuffer, buildReceiptBuffer } = await import('../lib/serverPdf.js');
-  const buildFn = kind === 'invoice' ? buildInvoiceBuffer : buildReceiptBuffer;
-  const buffer = buildFn({
-    id: pay.id, plan: pay.plan, billing: pay.billing,
-    amount: pay.amount, paidAt: pay.paid_at, expiresAt: pay.expires_at,
-  }, { name: buyer.name ?? '', email: buyer.email ?? '', billingDetails });
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `inline; filename="${kind}-${pay.id}.pdf"`);
-  res.send(buffer);
+  try {
+    const pay = paymentRepo.findById(id);
+    if (!pay) { res.status(404).json({ error: 'Payment not found' }); return; }
+    const buyer = userRepo.findById(pay.user_id);
+    if (!buyer) { res.status(404).json({ error: 'Payment user not found' }); return; }
+    const billingDetails = userRepo.getBillingDetails(buyer.id);
+    const { buildInvoiceBuffer, buildReceiptBuffer } = await import('../lib/serverPdf.js');
+    const buildFn = kind === 'invoice' ? buildInvoiceBuffer : buildReceiptBuffer;
+    const buffer = buildFn({
+      id: pay.id, plan: pay.plan, billing: pay.billing,
+      amount: pay.amount, paidAt: pay.paid_at, expiresAt: pay.expires_at,
+    }, { name: buyer.name ?? '', email: buyer.email ?? '', billingDetails });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${kind}-${pay.id}.pdf"`);
+    res.send(buffer);
+    return;
+  } catch (err) {
+    console.error(`[external/payments/${kind}.pdf] failed for ${id}:`, err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: `Failed to generate ${kind} PDF`, detail: (err as Error).message?.slice(0, 200) });
+    }
+    return;
+  }
 });
 
 // Tiny health check so assist can ping the API key on startup.
