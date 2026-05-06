@@ -402,7 +402,7 @@ export interface MappedRow {
 
 const NUMBER_RE = /-?\d[\d,]*(?:\.\d+)?/;
 const DR_CR_RE = /\b(dr|cr|debit|credit)\b/i;
-const DATE_LIKE_RE = /\b(\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}|\d{4}-\d{2}-\d{2}|\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\.?\s+\d{2,4})\b/i;
+const DATE_LIKE_RE = /\b(\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}|\d{4}-\d{2}-\d{2}|\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\.?(?:\s+\d{2,4})?|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\.?\s+\d{1,2}\b)/i;
 
 function parseNumber(raw: string): number | null {
   if (!raw) return null;
@@ -415,7 +415,7 @@ function parseNumber(raw: string): number | null {
 /** Normalize various Indian date formats to YYYY-MM-DD. Returns null
  *  when the cell isn't a parseable date — caller treats those rows
  *  as headers / footers / continuation lines and skips them. */
-export function parseDate(raw: string): string | null {
+export function parseDate(raw: string, defaultYear?: number): string | null {
   if (!raw) return null;
   const cleaned = raw.trim();
   if (!cleaned) return null;
@@ -445,7 +445,82 @@ export function parseDate(raw: string): string | null {
     if (yyyy.length === 2) yyyy = (Number(yyyy) > 50 ? '19' : '20') + yyyy;
     return `${yyyy}-${mm}-${dd}`;
   }
+  // "Apr 1" / "Apr 30" / "Apr-1" — month first, day, no year. Tally/Busy
+  // emit this when "Compact format" is enabled. Caller must supply a
+  // defaultYear (extracted from the period header elsewhere in the doc).
+  // The Indian FY runs Apr→Mar, so months Jan/Feb/Mar fall in the FY+1
+  // calendar year — auto-bump when the inferred year is the FY-start.
+  const monthDay = cleaned.match(/^([A-Za-z]{3})[A-Za-z]*\.?[\s\-]+(\d{1,2})\b/);
+  if (monthDay && defaultYear !== undefined) {
+    const mm = months[monthDay[1].toLowerCase()];
+    if (!mm) return null;
+    const dd = monthDay[2].padStart(2, '0');
+    const monthNum = Number(mm);
+    // FY runs Apr (04) → Mar (03 of next year). If the period start year
+    // is e.g. 2025 (FY 25-26), then Apr–Dec → 2025, Jan–Mar → 2026.
+    const yyyy = monthNum >= 4 ? defaultYear : defaultYear + 1;
+    return `${yyyy}-${mm}-${dd}`;
+  }
+  // "1 Apr" — day first, no year (rare but seen in some exports).
+  const dayMonth = cleaned.match(/^(\d{1,2})[\s\-]+([A-Za-z]{3})[A-Za-z]*\.?\s*$/);
+  if (dayMonth && defaultYear !== undefined) {
+    const dd = dayMonth[1].padStart(2, '0');
+    const mm = months[dayMonth[2].toLowerCase()];
+    if (!mm) return null;
+    const monthNum = Number(mm);
+    const yyyy = monthNum >= 4 ? defaultYear : defaultYear + 1;
+    return `${yyyy}-${mm}-${dd}`;
+  }
   return null;
+}
+
+/**
+ * Scan a grid for a date-bearing string (period header, opening-balance
+ * row, etc.) and return the FY-start year (e.g. 2025 for "FY 2025-26").
+ * Used to fill in the year on yearless "Apr 1" / "Mar 31" cells. Returns
+ * null if no year-bearing date is found anywhere.
+ *
+ * Heuristics, in order:
+ *   1. Look for "DD-MMM-YYYY" / "DD/MM/YYYY" anywhere in any cell.
+ *   2. Take the MIN year seen — period headers always cite the FY-start.
+ *   3. If only one year is found and the earliest visible month is
+ *      Jan/Feb/Mar, treat that year as the FY-end and return year-1.
+ */
+export function inferFiscalYearStart(rows: string[][]): number | null {
+  const yearsSeen: number[] = [];
+  let earliestMonth: number | null = null;
+  for (const row of rows) {
+    for (const cell of row) {
+      if (!cell) continue;
+      // DD-MMM-YYYY or DD/MM/YYYY
+      const m1 = cell.match(/\b(\d{1,2})[\s\-\/.](?:\d{1,2}|[A-Za-z]{3,9})[\s\-\/.](\d{4})\b/);
+      if (m1) yearsSeen.push(Number(m1[2]));
+      // ISO YYYY-MM-DD
+      const m2 = cell.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+      if (m2) {
+        yearsSeen.push(Number(m2[1]));
+        const mo = Number(m2[2]);
+        if (earliestMonth === null || mo < earliestMonth) earliestMonth = mo;
+      }
+      const monthDay = cell.match(/^([A-Za-z]{3})[A-Za-z]*\.?[\s\-]+(\d{1,2})/);
+      if (monthDay) {
+        const months: Record<string, number> = {
+          jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+          jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+        };
+        const mo = months[monthDay[1].toLowerCase()];
+        if (mo && (earliestMonth === null || mo < earliestMonth)) earliestMonth = mo;
+      }
+    }
+  }
+  if (yearsSeen.length === 0) return null;
+  const minYear = Math.min(...yearsSeen);
+  // If the only years seen are FY-end (e.g. 2026 in "31-Mar-2026") and
+  // earliest data month is Jan-Mar, the FY-start is minYear-1.
+  if (earliestMonth !== null && earliestMonth >= 1 && earliestMonth <= 3 && yearsSeen.every(y => y === minYear)) {
+    return minYear - 1;
+  }
+  return minYear;
 }
 
 /**
@@ -477,6 +552,7 @@ export function parseDate(raw: string): string | null {
 function detectAccountHeader(
   row: string[],
   colByRole: Map<ColumnRole, number>,
+  defaultYear?: number,
 ): string | null {
   const cell = (role: ColumnRole): string => {
     const i = colByRole.get(role);
@@ -484,7 +560,7 @@ function detectAccountHeader(
   };
 
   // Reject anything carrying transaction data.
-  if (parseDate(cell('date'))) return null;
+  if (parseDate(cell('date'), defaultYear)) return null;
   if (parseNumber(cell('debit')) || parseNumber(cell('credit'))) return null;
   if (parseNumber(cell('amount')) || parseNumber(cell('balance'))) return null;
 
@@ -611,6 +687,12 @@ export function applyMapping(
   mapping.roles.forEach((r, i) => {
     if (r !== 'skip' && !colByRole.has(r)) colByRole.set(r, i);
   });
+
+  // Some Tally / Busy exports drop the year on the date column ("Apr 1",
+  // "May 9", "Mar 31"). Scan the whole grid once for any year-bearing
+  // date string (period header, opening balance, footer date, etc.) and
+  // use it as the FY-start year for downstream parseDate calls.
+  const inferredYear = inferFiscalYearStart(grid.rows);
 
   // Block-based parser: one logical transaction can span multiple
   // grid rows (pdfjs splits visual lines whenever the y-coord shifts,
@@ -794,7 +876,7 @@ export function applyMapping(
     if (accountCell) lastAccount = accountCell;
 
     if (kind === 'ledger') {
-      const headerName = detectAccountHeader(row, colByRole);
+      const headerName = detectAccountHeader(row, colByRole, inferredYear ?? undefined);
       if (headerName) {
         flushPending();
         lastAccount = headerName;
@@ -804,7 +886,7 @@ export function applyMapping(
     }
 
     const dateRaw = cell('date');
-    const date = parseDate(dateRaw);
+    const date = parseDate(dateRaw, inferredYear ?? undefined);
     const narr = cell('narration');
     const debit = parseNumber(cell('debit'));
     const credit = parseNumber(cell('credit'));
