@@ -238,16 +238,32 @@ export async function extractPdfGrid(file: File, password?: string): Promise<Pdf
           // the second token's text to the existing header so we
           // capture "Withdrawal Amt." as one label, not just
           // "Withdrawal".
-          const lastLeft = columnAnchors.length === 0
-            ? -Infinity
-            : columnAnchors[columnAnchors.length - 1].leftX;
-          if (it.x - lastLeft > 12) {
+          // Continuation suffixes — when the word right after a numeric
+          // anchor is one of these AND sits within 18 units, treat as
+          // a continuation of the same header (e.g. "Withdrawal" +
+          // "Amt.", "Closing" + "Balance", "Debit" + "Amount").
+          // Anything else — even a tightly-spaced distinct header like
+          // "Type" right next to "Debit Amount" — gets its own anchor.
+          // The previous threshold of 12 units of pure proximity was
+          // collapsing adjacent column LABELS in tightly-packed Tally
+          // ledgers (e.g. Type + Debit merging into one column).
+          const CONTINUATION = /^(amt\.?|amount|balance|bal\.?|paid|received|recd\.?)$/i;
+          const lastAnchor = columnAnchors.length === 0 ? null : columnAnchors[columnAnchors.length - 1];
+          const isContinuation = !!lastAnchor && CONTINUATION.test(trimmed) && (it.x - lastAnchor.leftX) <= 18;
+          if (!isContinuation) {
             columnAnchors.push(anchor);
-          } else if (columnAnchors.length > 0) {
-            const prev = columnAnchors[columnAnchors.length - 1];
-            if (prev.headerText) prev.headerText = `${prev.headerText} ${trimmed}`;
+          } else if (lastAnchor) {
+            if (lastAnchor.headerText) lastAnchor.headerText = `${lastAnchor.headerText} ${trimmed}`;
             // Numeric anchor's right-edge tracks the rightmost token.
-            if (prev.align === 'right') prev.x = Math.max(prev.x, it.x + it.width);
+            if (lastAnchor.align === 'right') lastAnchor.x = Math.max(lastAnchor.x, it.x + it.width);
+            // If the continuation token is itself numeric-flavoured
+            // ("Amount", "Balance"), upgrade the anchor to right-aligned
+            // so cells (numbers) match by right edge regardless of
+            // whether the original header word was the numeric one.
+            if (NUMERIC_HEADER.test(trimmed)) {
+              lastAnchor.align = 'right';
+              lastAnchor.x = it.x + it.width;
+            }
           }
         }
         break;
