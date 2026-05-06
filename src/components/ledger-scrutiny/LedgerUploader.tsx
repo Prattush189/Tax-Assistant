@@ -215,7 +215,12 @@ export function LedgerUploader({ manager }: Props) {
     setPendingGrid(null);
     const { rows: mapped, stats } = applyMapping(grid, mapping, 'ledger');
     if (mapped.length === 0) {
-      toast.error('No transaction rows found after applying the mapping. Re-check the Date column.');
+      const reason = stats.skippedNoAmount > 0
+        ? `Found ${stats.skippedNoAmount.toLocaleString('en-IN')} dated row${stats.skippedNoAmount === 1 ? '' : 's'} but none had a usable Debit / Credit / Amount value. Re-check the amount column mapping.`
+        : stats.totalGridRows === 0
+          ? 'Grid is empty — re-upload the file.'
+          : `Scanned ${stats.totalGridRows.toLocaleString('en-IN')} grid rows but none had a parseable date in the column mapped to "Date". Re-open the wizard and pick the column that actually contains dates (e.g. 09/04/2025).`;
+      toast.error(`No transactions extracted. ${reason}`, { duration: 8000 });
       return;
     }
     const filteredCount = stats.totalGridRows - stats.transactions;

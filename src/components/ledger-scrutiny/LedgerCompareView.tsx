@@ -225,8 +225,16 @@ export function LedgerCompareView() {
     if (!pendingGrid) return;
     const { side, grid, filename } = pendingGrid;
     setPendingGrid(null);
-    const { rows: mapped } = applyMapping(grid, mapping, 'ledger');
-    if (mapped.length === 0) { toast.error('No transaction rows after mapping.'); return; }
+    const { rows: mapped, stats } = applyMapping(grid, mapping, 'ledger');
+    if (mapped.length === 0) {
+      const reason = stats.skippedNoAmount > 0
+        ? `Found ${stats.skippedNoAmount.toLocaleString('en-IN')} candidate row${stats.skippedNoAmount === 1 ? '' : 's'} with parseable dates, but none had a usable Debit / Credit / Amount value. Re-check the amount column mapping.`
+        : stats.totalGridRows === 0
+          ? 'Grid is empty — re-upload the file.'
+          : `Scanned ${stats.totalGridRows.toLocaleString('en-IN')} grid rows but none had a parseable date in the column you mapped to "Date". Open the wizard again and pick the column that actually contains dates.`;
+      toast.error(`No transactions extracted. ${reason}`, { duration: 8000 });
+      return;
+    }
     const extracted = mappedRowsToExtractedLedger(mapped);
     if (side === 'A') {
       setSideA(prev => ({ ...prev, filename, extracted }));
