@@ -24,12 +24,12 @@ function withGst(basePaise: number): number {
 /**
  * Amount in paise for each plan key — inclusive of 18% GST.
  * Yearly base prices are 12 × the previous monthly base (no annual discount):
- *   Pro        ₹500/mo × 12 = ₹6,000/yr  → ₹7,080 incl. GST
- *   Enterprise ₹750/mo × 12 = ₹9,000/yr  → ₹10,620 incl. GST
+ *   Pro        ₹500/mo × 12 = ₹6,000/yr   → ₹7,080  incl. GST
+ *   Enterprise                ₹10,000/yr  → ₹11,800 incl. GST
  */
 export const PLAN_AMOUNTS: Record<PlanKey, number> = {
-  pro_yearly_v3:          withGst(6_00_000),  // ₹6,000 + 18% GST = ₹7,080
-  enterprise_yearly_v3:   withGst(9_00_000),  // ₹9,000 + 18% GST = ₹10,620
+  pro_yearly_v3:          withGst(6_00_000),  // ₹6,000  + 18% GST = ₹7,080
+  enterprise_yearly_v3:   withGst(10_00_000), // ₹10,000 + 18% GST = ₹11,800
 };
 
 export function planKey(plan: PaidPlan, _billing: BillingCycle = 'yearly'): PlanKey {

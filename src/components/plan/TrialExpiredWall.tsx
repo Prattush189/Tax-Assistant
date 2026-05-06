@@ -32,7 +32,7 @@ const PLANS = [
     id: 'enterprise' as const,
     name: 'Enterprise',
     icon: Building2,
-    yearly: 9000,
+    yearly: 10000,
     gradient: 'from-indigo-500 to-purple-600',
     shadow: 'shadow-indigo-500/30',
     features: ['3,000 chats/month', '50 board resolutions/month', '10-seat team', 'Priority SLA'],

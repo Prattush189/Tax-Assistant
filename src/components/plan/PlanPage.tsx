@@ -30,12 +30,12 @@ import { generatePaymentReceipt, generatePaymentInvoice, type PaymentData } from
 
 // ── Pricing ──────────────────────────────────────────────────────────────────
 //
-// Yearly billing only. Pro = ₹6,000/yr, Enterprise = ₹9,000/yr (12× the old
-// monthly base price — no annual discount). Monthly plans were retired.
+// Yearly billing only. Pro = ₹6,000/yr, Enterprise = ₹10,000/yr.
+// Monthly plans were retired.
 
 const PRICES = {
   pro:        { yearly: 6000 },
-  enterprise: { yearly: 9000 },
+  enterprise: { yearly: 10000 },
 } as const;
 
 const GST_PCT = 18;

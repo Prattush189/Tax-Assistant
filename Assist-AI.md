@@ -80,8 +80,8 @@ Response: `{ license, paymentId, invoiceUrl, receiptUrl }`. The license object i
 
 ### Pricing
 
-Pro yearly: ₹5,000 (`amount: 500000` paise).
-Enterprise yearly: ₹20,000 (`amount: 2000000` paise).
+Pro yearly: ₹7,080 incl. GST (`amount: 708000` paise — base ₹6,000 + 18% GST).
+Enterprise yearly: ₹11,800 incl. GST (`amount: 1180000` paise — base ₹10,000 + 18% GST).
 (Hard-code these in the assist UI — Tax-Assistant accepts whatever integer paise value you send for offline issuance, but match the Razorpay prices.)
 
 ## Inbound webhook (Tax-Assistant → assist)
