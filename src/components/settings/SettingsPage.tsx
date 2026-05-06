@@ -232,14 +232,6 @@ function LicensePanel({ plan, planExpiresAt }: { plan: string; planExpiresAt: st
         >
           {copied ? 'Copied' : 'Copy'}
         </button>
-        {isPaid && (
-          <a
-            href="/plan"
-            className="px-3 py-2 text-xs font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg"
-          >
-            Renew
-          </a>
-        )}
       </div>
       {!info.isActive && lic.status === 'expired' && (
         <p className="mt-3 text-xs text-amber-700 dark:text-amber-400">
