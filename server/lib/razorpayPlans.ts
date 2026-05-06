@@ -35,3 +35,11 @@ export const PLAN_AMOUNTS: Record<PlanKey, number> = {
 export function planKey(plan: PaidPlan, _billing: BillingCycle = 'yearly'): PlanKey {
   return `${plan}_yearly_v3` as PlanKey;
 }
+
+/**
+ * Maximum dealer-level discount allowed on the pre-GST base price, in paise.
+ * Set to ₹1,000. Discounts apply to the taxable value; GST is then charged
+ * on the discounted base, so the inclusive discount cap is ₹1,180.
+ */
+export const MAX_DEALER_DISCOUNT_BASE_PAISE = 1_000_00;
+export const MAX_DEALER_DISCOUNT_INCL_PAISE = Math.round(MAX_DEALER_DISCOUNT_BASE_PAISE * (1 + GST_RATE));

@@ -5,8 +5,49 @@
 
 import jsPDF from 'jspdf';
 import type { BillingDetails } from '../db/repositories/userRepo.js';
+import { PLAN_AMOUNTS, planKey } from './razorpayPlans.js';
+import type { PaidPlan } from './razorpayPlans.js';
 
 const GST_RATE = 0.18;
+
+/**
+ * Look up the GST-inclusive MRP for a plan, in paise. Returns null if
+ * the plan string isn't recognised (e.g. legacy data) so the PDFs fall
+ * back to "no discount" rendering rather than throwing.
+ */
+function mrpInclPaiseFor(plan: string): number | null {
+  if (plan !== 'pro' && plan !== 'enterprise') return null;
+  return PLAN_AMOUNTS[planKey(plan as PaidPlan)] ?? null;
+}
+
+/**
+ * Decompose a payment into base / discount / tax components for invoice
+ * rendering. Discount is computed as MRP - paid (both incl. GST), then
+ * reverse-calculated to its pre-GST value since dealers apply discount
+ * on the taxable amount and GST is charged on the discounted base.
+ *
+ * Returns rupees (not paise) for direct PDF rendering.
+ */
+function decomposeAmount(paidPaise: number, plan: string): {
+  mrpBaseExcl: number;          // MRP, excl. GST (e.g. ₹6,000)
+  discountExcl: number;         // 0 when paid >= MRP
+  discountedBaseExcl: number;   // = mrpBaseExcl - discountExcl
+  gst: number;                  // 18% of discountedBaseExcl
+  total: number;                // = paidPaise / 100
+} {
+  const mrpInclPaise = mrpInclPaiseFor(plan);
+  const total = paidPaise / 100;
+  if (mrpInclPaise === null || paidPaise >= mrpInclPaise) {
+    const base = Math.round((total / (1 + GST_RATE)) * 100) / 100;
+    const gst = Math.round((total - base) * 100) / 100;
+    return { mrpBaseExcl: base, discountExcl: 0, discountedBaseExcl: base, gst, total };
+  }
+  const mrpBaseExcl = Math.round((mrpInclPaise / 100 / (1 + GST_RATE)) * 100) / 100;
+  const discountedBaseExcl = Math.round((total / (1 + GST_RATE)) * 100) / 100;
+  const discountExcl = Math.round((mrpBaseExcl - discountedBaseExcl) * 100) / 100;
+  const gst = Math.round((total - discountedBaseExcl) * 100) / 100;
+  return { mrpBaseExcl, discountExcl, discountedBaseExcl, gst, total };
+}
 
 const COMPANY_NAME    = 'Smartbiz Technologies Private Limited';
 const COMPANY_BRAND   = 'Smartbiz AI';
@@ -170,17 +211,21 @@ export function buildReceiptBuffer(payment: PdfPaymentData, buyer: PdfBuyer): Bu
   doc.setFontSize(8); doc.setFont('helvetica', 'bold'); doc.setTextColor(60, 60, 60);
   doc.text('Description', L + 2, y + 5.5); doc.text('Amount', R - 2, y + 5.5, { align: 'right' }); y += 10;
 
-  const base = getBase(payment.amount), gst = getGst(payment.amount), total = payment.amount / 100;
+  const { mrpBaseExcl, discountExcl, discountedBaseExcl, gst, total } = decomposeAmount(payment.amount, payment.plan);
 
   doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(30, 30, 30);
   doc.text(planLabel(payment.plan, payment.billing), L + 2, y + 5);
-  doc.text(fmt(base), R - 2, y + 5, { align: 'right' }); y += 10;
+  doc.text(fmt(mrpBaseExcl), R - 2, y + 5, { align: 'right' }); y += 10;
 
   doc.setDrawColor(220, 220, 220); doc.line(L, y, R, y); y += 6;
 
   const col = R - 65;
   doc.setFontSize(9); doc.setTextColor(80, 80, 80);
-  doc.text('Sub-total (excl. GST)', col, y); doc.text(fmt(base), R - 2, y, { align: 'right' }); y += 6;
+  doc.text('Sub-total (excl. GST)', col, y); doc.text(fmt(mrpBaseExcl), R - 2, y, { align: 'right' }); y += 6;
+  if (discountExcl > 0) {
+    doc.text('Discount', col, y); doc.text('-' + fmt(discountExcl), R - 2, y, { align: 'right' }); y += 6;
+    doc.text('Discounted taxable amount', col, y); doc.text(fmt(discountedBaseExcl), R - 2, y, { align: 'right' }); y += 6;
+  }
   if (isIntraState(buyer.billingDetails)) {
     const half = Math.round((gst / 2) * 100) / 100;
     doc.text('CGST @ 9%', col, y); doc.text(fmt(half), R - 2, y, { align: 'right' }); y += 6;
@@ -261,12 +306,12 @@ export function buildInvoiceBuffer(payment: PdfPaymentData, buyer: PdfBuyer): Bu
   doc.text(intra ? 'GST 18%' : 'IGST 18%', colTax, y + 5.5, { align: 'right' });
   doc.text('Total', colTot, y + 5.5, { align: 'right' }); y += 10;
 
-  const base = getBase(payment.amount), gst = getGst(payment.amount), total = payment.amount / 100;
+  const { mrpBaseExcl, discountExcl, discountedBaseExcl, gst, total } = decomposeAmount(payment.amount, payment.plan);
 
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(30, 30, 30);
   doc.text(planLabel(payment.plan, payment.billing), colDesc, y + 5);
   doc.text('1', colQty, y + 5, { align: 'right' });
-  doc.text(fmt(base), colRate, y + 5, { align: 'right' });
+  doc.text(fmt(mrpBaseExcl), colRate, y + 5, { align: 'right' });
   doc.text(fmt(gst), colTax, y + 5, { align: 'right' });
   doc.text(fmt(total), colTot, y + 5, { align: 'right' }); y += 10;
 
@@ -274,7 +319,11 @@ export function buildInvoiceBuffer(payment: PdfPaymentData, buyer: PdfBuyer): Bu
 
   const tCol = R - 65;
   doc.setFontSize(9); doc.setTextColor(80, 80, 80);
-  doc.text('Taxable Amount (excl. GST):', tCol, y); doc.text(fmt(base), R - 2, y, { align: 'right' }); y += 6;
+  doc.text('Taxable Amount (excl. GST):', tCol, y); doc.text(fmt(mrpBaseExcl), R - 2, y, { align: 'right' }); y += 6;
+  if (discountExcl > 0) {
+    doc.text('Discount:', tCol, y); doc.text('-' + fmt(discountExcl), R - 2, y, { align: 'right' }); y += 6;
+    doc.text('Discounted Taxable Amount:', tCol, y); doc.text(fmt(discountedBaseExcl), R - 2, y, { align: 'right' }); y += 6;
+  }
   if (intra) {
     const half = Math.round((gst / 2) * 100) / 100;
     doc.text('CGST @ 9%:', tCol, y); doc.text(fmt(half), R - 2, y, { align: 'right' }); y += 6;

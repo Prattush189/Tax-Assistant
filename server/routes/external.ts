@@ -20,6 +20,8 @@ import { requireExternalApiKey, type ExternalApiRequest } from '../middleware/ex
 import { userRepo, type BillingDetails } from '../db/repositories/userRepo.js';
 import { licenseKeyRepo } from '../db/repositories/licenseKeyRepo.js';
 import { paymentRepo, type PaymentMethod } from '../db/repositories/paymentRepo.js';
+import { PLAN_AMOUNTS, planKey, MAX_DEALER_DISCOUNT_INCL_PAISE } from '../lib/razorpayPlans.js';
+import type { PaidPlan } from '../lib/razorpayPlans.js';
 
 const router = Router();
 router.use(requireExternalApiKey);
@@ -123,8 +125,20 @@ router.post('/licenses', (req: ExternalApiRequest, res: Response) => {
   if (PAYMENT_METHODS_NEEDING_REFERENCE.has(paymentMethod) && (!paymentReference || !String(paymentReference).trim())) {
     res.status(400).json({ error: `paymentReference required for ${paymentMethod}` }); return;
   }
-  if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) {
-    res.status(400).json({ error: 'amount (in paise) is required and must be positive' }); return;
+  if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0 || !Number.isInteger(amount)) {
+    res.status(400).json({ error: 'amount (in paise) is required and must be a positive integer' }); return;
+  }
+  // Bound the paid amount: must be ≤ MRP (no overcharge) and ≥ MRP minus
+  // the dealer discount cap (₹1,000 base = ₹1,180 incl. GST). Any value
+  // below the floor is treated as a data-entry mistake; assist's UI also
+  // enforces the same cap, this is the server-side guard.
+  const mrpInclPaise = PLAN_AMOUNTS[planKey(plan as PaidPlan)];
+  const minInclPaise = mrpInclPaise - MAX_DEALER_DISCOUNT_INCL_PAISE;
+  if (amount > mrpInclPaise) {
+    res.status(400).json({ error: `amount (${amount} paise) exceeds plan MRP (${mrpInclPaise} paise incl. GST)` }); return;
+  }
+  if (amount < minInclPaise) {
+    res.status(400).json({ error: `amount (${amount} paise) is below the minimum allowed for this plan (${minInclPaise} paise; max dealer discount is ₹1,000 + GST)` }); return;
   }
   if (!billingDetails || typeof billingDetails !== 'object') {
     res.status(400).json({ error: 'billingDetails is required' }); return;
