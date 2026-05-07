@@ -104,6 +104,7 @@ router.post(
       // Sonnet 4.5 handles PDF and image attachments natively. PDFs
       // >100 pages reject before the API call (Anthropic limit).
       let result;
+      const callStartMs = Date.now();
       try {
         result = await extractClaudeVision(req.file.buffer, mimetype, EXTRACTION_PROMPT);
       } catch (err) {
@@ -128,7 +129,7 @@ router.post(
       try {
         const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
         const cost = result.inputTokens * GEMINI_T2_INPUT_COST + result.outputTokens * GEMINI_T2_OUTPUT_COST;
-        usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, result.inputTokens, result.outputTokens, cost, false, result.modelUsed, false, 'document');
+        usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, result.inputTokens, result.outputTokens, cost, false, result.modelUsed, false, 'document', 0, 'success', 0, Date.now() - callStartMs);
       } catch (logErr) {
         console.error('[upload] Failed to log AI cost:', logErr);
       }

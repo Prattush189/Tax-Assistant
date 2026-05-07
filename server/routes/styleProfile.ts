@@ -49,6 +49,7 @@ async function extractStyleFromText(
   text: string,
   ctx: { userId: string; billingUserId: string; clientIp: string },
 ): Promise<Record<string, unknown>> {
+  const callStartMs = Date.now();
   const result = await callGeminiJson<Record<string, unknown>>(
     [{
       role: 'user' as const,
@@ -58,7 +59,7 @@ async function extractStyleFromText(
   );
   try {
     const cost = result.inputTokens * GEMINI_T2_INPUT_COST + result.outputTokens * GEMINI_T2_OUTPUT_COST;
-    usageRepo.logWithBilling(ctx.clientIp, ctx.userId, ctx.billingUserId, result.inputTokens, result.outputTokens, cost, false, result.modelUsed, false, 'style_profile');
+    usageRepo.logWithBilling(ctx.clientIp, ctx.userId, ctx.billingUserId, result.inputTokens, result.outputTokens, cost, false, result.modelUsed, false, 'style_profile', 0, 'success', 0, Date.now() - callStartMs);
   } catch (err) {
     console.error('[style-profile] Failed to log cost:', err);
   }

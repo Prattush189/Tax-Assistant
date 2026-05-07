@@ -1246,6 +1246,7 @@ router.post(
       ?? (typeof req.body?.filename === 'string' ? req.body.filename : null)
       ?? (isCsv ? 'statement.csv' : 'statement.pdf');
     const placeholderMime = req.file?.mimetype ?? (isCsv ? 'text/csv' : 'application/pdf');
+    const analyzeStartMs = Date.now();
     const placeholder = bankStatementRepo.createPlaceholder(req.user.id, quota.billingUserId, {
       name: placeholderFilename.replace(/\.(pdf|csv|jpe?g|png|webp)$/i, '') || 'Bank Statement',
       sourceFilename: placeholderFilename,
@@ -1838,7 +1839,7 @@ ${JSON.stringify(batch)}`;
           // Attach the gate's pre-flight estimate to the summary row so
           // the admin dashboard can show estimate-vs-actual on this
           // request. Per-chunk / failure / cancel rows stay at 0.
-          usageRepo.logWithBilling(clientIp, req.user.id, quota.billingUserId, inputTok, outputTok, cost, false, usages[0].modelUsed, false, 'bank_statement', txCount, 'success', tokenQuota.estimatedTokens);
+          usageRepo.logWithBilling(clientIp, req.user.id, quota.billingUserId, inputTok, outputTok, cost, false, usages[0].modelUsed, false, 'bank_statement', txCount, 'success', tokenQuota.estimatedTokens, Date.now() - analyzeStartMs);
         }
       } catch (err) {
         console.error('[bank-statements] Failed to log cost:', err);

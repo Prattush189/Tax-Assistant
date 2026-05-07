@@ -233,6 +233,7 @@ router.post(
       // Sonnet 4.5 vision — handles both PDF and image notices
       // natively. PDFs >100 pages throw and surface as 400.
       let extraction;
+      const extractStartMs = Date.now();
       try {
         extraction = await extractClaudeVision<{
           summary: string;
@@ -268,7 +269,7 @@ router.post(
       // one label hides which is the bigger spend.
       try {
         const cost = extraction.inputTokens * GEMINI_T2_INPUT_COST + extraction.outputTokens * GEMINI_T2_OUTPUT_COST;
-        usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, extraction.inputTokens, extraction.outputTokens, cost, false, extraction.modelUsed, false, 'notice_extract');
+        usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, extraction.inputTokens, extraction.outputTokens, cost, false, extraction.modelUsed, false, 'notice_extract', 0, 'success', 0, Date.now() - extractStartMs);
       } catch (logErr) {
         console.error('[notices] Failed to log extraction cost:', logErr);
       }
@@ -382,6 +383,7 @@ router.post(
 
   const noticeId = noticeRepo.createPlaceholder(req.user.id, noticeType, subType ?? null, title, inputData, fileHash, billingUserId);
 
+  const draftStartMs = Date.now();
   try {
     const provider = pickChatProvider();
     const usage = await provider.streamChat(
@@ -412,7 +414,7 @@ router.post(
     // the admin dashboard reflects true model context size, not just the
     // billed-fresh subset Anthropic returns in `input_tokens`.
     const totalInput = usage.inputTokens + usage.cacheReadTokens + usage.cacheCreationTokens;
-    usageRepo.logWithBilling(clientIp, req.user!.id, billingUserId, totalInput, usage.outputTokens, usage.costUsd, false, usage.modelUsed, usage.withSearch, 'notice');
+    usageRepo.logWithBilling(clientIp, req.user!.id, billingUserId, totalInput, usage.outputTokens, usage.costUsd, false, usage.modelUsed, usage.withSearch, 'notice', 0, 'success', 0, Date.now() - draftStartMs);
 
     // Log to the immutable feature_usage table so the monthly quota is
     // unaffected by notice deletions (same pattern as board resolutions,

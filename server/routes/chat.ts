@@ -253,6 +253,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
         let usedModel = '';
         const historyPlain = history.map(m => ({ role: m.role as string, content: m.content as string }));
         let primaryFailedMidStream = false;
+        const callStartMs = Date.now();
 
         // ── FAST: Gemini 2.5 Flash-Lite primary ──
         const activeIdx = getActiveKeyIndex();
@@ -336,7 +337,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
           };
           const [inputCost, outputCost] = costMap[usedModel] ?? [GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST];
           const cost = (inputTok * inputCost) + (outputTok * outputCost);
-          usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, inputTok, outputTok, cost, false, usedModel || undefined, searchEnabled, 'chat');
+          usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, inputTok, outputTok, cost, false, usedModel || undefined, searchEnabled, 'chat', 0, 'success', 0, Date.now() - callStartMs);
         } else {
           console.warn('[chat] skipping usage log — no tokens reported (likely partial/truncated stream)');
         }

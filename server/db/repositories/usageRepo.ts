@@ -38,7 +38,7 @@ const stmts = {
     'INSERT INTO api_usage (ip, user_id, input_tokens, output_tokens, cost, is_plugin) VALUES (?, ?, ?, ?, ?, ?)'
   ),
   logWithBilling: db.prepare(
-    'INSERT INTO api_usage (ip, user_id, billing_user_id, input_tokens, output_tokens, cost, is_plugin, model, search_used, category, input_units, status, estimated_tokens, weighted_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO api_usage (ip, user_id, billing_user_id, input_tokens, output_tokens, cost, is_plugin, model, search_used, category, input_units, status, estimated_tokens, weighted_tokens, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ),
   // Token quota query: sum input + output tokens for the current month
   // for THIS billing user, EXCLUDING failed calls. Cancelled calls
@@ -167,7 +167,7 @@ const analyticsStmts = {
     SELECT
       a.id, a.user_id, a.input_tokens, a.output_tokens, a.estimated_tokens,
       a.weighted_tokens, a.cost, a.created_at, a.model, a.search_used,
-      a.is_plugin, a.category, a.input_units, a.status,
+      a.is_plugin, a.category, a.input_units, a.status, a.duration_ms,
       COALESCE(u.name, 'Guest') AS user_name,
       COALESCE(u.email, '') AS user_email,
       COALESCE(u.plan, 'free') AS user_plan
@@ -253,9 +253,12 @@ export const usageRepo = {
      *  per-chunk failure / retry rows stay at 0 to keep audit sums
      *  from double-counting a single logical request. */
     estimatedTokens?: number,
+    /** Wall-clock duration of the AI call in milliseconds. Captured
+     *  by the route handler from a Date.now() before/after pair. */
+    durationMs?: number,
   ): void {
     const weighted = computeWeightedTokens(model, inputTokens, outputTokens);
-    stmts.logWithBilling.run(ip, userId, billingUserId, inputTokens, outputTokens, cost, isPlugin ? 1 : 0, model ?? null, searchUsed ? 1 : 0, category ?? null, inputUnits ?? 0, status ?? 'success', estimatedTokens ?? 0, weighted);
+    stmts.logWithBilling.run(ip, userId, billingUserId, inputTokens, outputTokens, cost, isPlugin ? 1 : 0, model ?? null, searchUsed ? 1 : 0, category ?? null, inputUnits ?? 0, status ?? 'success', estimatedTokens ?? 0, weighted, durationMs ?? 0);
   },
 
   /** Sum tokens (input+output) used since `since` by this billing user,

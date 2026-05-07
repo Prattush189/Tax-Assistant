@@ -539,6 +539,13 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_obs_account_id ON ledger_observat
     // be loadable, which can't be done from this synchronous module
     // init block. The schema add is here; the data-fill is deferred.
   }
+  // duration_ms: wall-clock milliseconds the AI call took, captured at
+  // logWithBilling time. Lets the admin dashboard render a 'Duration'
+  // column so slow runs surface visually. Legacy rows default to 0 —
+  // dashboard renders those as '—'.
+  if (!usageCols.includes('duration_ms')) {
+    db.exec("ALTER TABLE api_usage ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0");
+  }
 }
 
 // Add filing_status + notes to profiles (merge clients into profiles)

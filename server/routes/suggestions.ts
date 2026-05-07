@@ -65,6 +65,7 @@ Suggest 5 personalized tax-saving strategies.`;
     // Suggestions JSON is wrapped in an object so JSON mode is happy: the
     // schema asks for `{ "suggestions": [...] }` and we unwrap on the client.
     // (Gemini's OpenAI-compat layer rejects bare JSON arrays from json_object.)
+    const callStartMs = Date.now();
     const result = await callGeminiJson<{ suggestions?: unknown[] } | unknown[]>(
       [
         { role: 'system', content: SUGGESTION_PROMPT },
@@ -86,7 +87,7 @@ Suggest 5 personalized tax-saving strategies.`;
 
     // Log to api_usage for admin dashboard visibility
     const cost = result.inputTokens * GEMINI_T2_INPUT_COST + result.outputTokens * GEMINI_T2_OUTPUT_COST;
-    usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, result.inputTokens, result.outputTokens, cost, false, result.modelUsed, false, 'suggestion');
+    usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, result.inputTokens, result.outputTokens, cost, false, result.modelUsed, false, 'suggestion', 0, 'success', 0, Date.now() - callStartMs);
 
     res.json({
       suggestions,

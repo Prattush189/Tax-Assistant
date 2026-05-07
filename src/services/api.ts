@@ -1371,6 +1371,9 @@ export interface RecentApiCall {
    *  toward budget). Failed means a parse / network / content-
    *  filter error (tokens NOT counted toward budget). */
   status: 'success' | 'cancelled' | 'failed' | string;
+  /** Wall-clock duration in ms — only set on summary rows; 0 on
+   *  legacy rows or per-chunk failures. */
+  duration_ms: number;
   created_at: string;
 }
 

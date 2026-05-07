@@ -1278,6 +1278,7 @@ Return the JSON object per the schema. Date-sort every array ascending.`;
       { role: 'user', content: userPrompt },
     ];
 
+    const compareStartMs = Date.now();
     const result = await callGeminiJson(messages, {
       maxTokens: 8192,
       responseFormat: { type: 'json_object' },
@@ -1295,6 +1296,7 @@ Return the JSON object per the schema. Date-sort every array ascending.`;
         clientIp, req.user.id, billingUser.id,
         result.inputTokens, result.outputTokens, cost,
         false, result.modelUsed, false, 'ledger_compare', 0, 'success', tokenQuota.estimatedTokens,
+        Date.now() - compareStartMs,
       );
     } catch (e) {
       console.error('[ledger-compare] cost log failed', e);
@@ -1917,6 +1919,7 @@ router.post(
           // dashboard audit estimate-vs-actual without summing an
           // estimate across multiple rows of one logical request.
           tokenQuota.estimatedTokens,
+          Date.now() - scrutinyStartMs,
         );
       } catch (err) {
         console.error('[ledger-scrutiny] scrutiny cost log failed', err);
@@ -1958,6 +1961,7 @@ router.post(
 // POST /api/ledger-scrutiny/:id/scrutinize — SSE-streamed audit pass
 router.post('/:id/scrutinize', async (req: AuthRequest, res: Response) => {
   if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const scrutinyStartMs = Date.now();
   const job = ledgerScrutinyRepo.findByIdForUser(req.params.id, req.user.id);
   if (!job) { res.status(404).json({ error: 'Job not found' }); return; }
   if (!job.raw_extracted) {
@@ -2194,6 +2198,7 @@ router.post('/:id/cancel', (req: AuthRequest, res: Response) => {
 // for the simplicity gain; admin/auditor can delete duplicates.
 router.post('/:id/resume', async (req: AuthRequest, res: Response) => {
   if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const resumeStartMs = Date.now();
   const job = ledgerScrutinyRepo.findByIdForUser(req.params.id, req.user.id);
   if (!job) { res.status(404).json({ error: 'Job not found' }); return; }
   if (job.status !== 'cancelled') {
@@ -2303,7 +2308,7 @@ router.post('/:id/resume', async (req: AuthRequest, res: Response) => {
       try {
         const cost = result.outputTokens > 0 ? costForModel(result.modelUsed, result.inputTokens, result.outputTokens) : 0;
         if (result.inputTokens + result.outputTokens > 0) {
-          usageRepo.logWithBilling(clientIp, req.user!.id, billingUserId, result.inputTokens, result.outputTokens, cost, false, result.modelUsed, false, 'ledger_scrutiny', persistedObs.length, 'success', tokenQuota.estimatedTokens);
+          usageRepo.logWithBilling(clientIp, req.user!.id, billingUserId, result.inputTokens, result.outputTokens, cost, false, result.modelUsed, false, 'ledger_scrutiny', persistedObs.length, 'success', tokenQuota.estimatedTokens, Date.now() - resumeStartMs);
         }
       } catch (e) {
         console.error('[ledger-scrutiny] resume cost log failed', e);

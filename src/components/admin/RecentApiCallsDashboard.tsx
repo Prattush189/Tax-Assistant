@@ -86,6 +86,16 @@ function fmtInr(n: number): string {
   return 'Rs. ' + (Math.round(n * 10000) / 10000).toFixed(4);
 }
 
+function fmtDuration(ms: number): string {
+  if (!ms || ms <= 0) return '—';
+  if (ms < 1_000) return `${ms}ms`;
+  if (ms < 60_000) return `${(ms / 1_000).toFixed(1)}s`;
+  const totalSec = Math.round(ms / 1_000);
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  return `${min}m ${sec}s`;
+}
+
 /** Relative time from IST-stored timestamp. */
 function relativeTime(ts: string | null): string {
   if (!ts) return '—';
@@ -183,6 +193,7 @@ export function RecentApiCallsDashboard() {
                 <th className="text-right px-3 py-2 text-gray-500 font-medium" title="Pre-flight WEIGHTED token estimate from the quota gate. Only set on the summary row of a request; — when not estimated.">Est.</th>
                 <th className="text-right px-3 py-2 text-gray-500 font-medium" title="Estimate drift on weighted tokens: (weighted − estimate) / estimate. Amber = under-estimated by 20-50%, rose = under-estimated by >50% (the dangerous direction). Over-estimates are neutral grey.">Δ %</th>
                 <th className="text-right px-3 py-2 text-gray-500 font-medium" title="User-input size — txns for bank/ledger, pages for notice/document, msgs for chat">User input</th>
+                <th className="text-right px-3 py-2 text-gray-500 font-medium" title="Wall-clock duration of the AI call. Only recorded on summary rows; legacy and per-chunk rows show — .">Duration</th>
                 <th className="text-right px-3 py-2 text-gray-500 font-medium">Cost</th>
                 <th className="text-right px-3 py-2 text-gray-500 font-medium" title="Cost per user-input unit (cost ÷ input units)">₹ / unit</th>
               </tr>
@@ -266,6 +277,9 @@ export function RecentApiCallsDashboard() {
                     <td className="px-3 py-2 text-right text-gray-700 dark:text-gray-300 whitespace-nowrap">
                       {inputUnitLabel(c.category, c.input_units ?? 0)}
                     </td>
+                    <td className="px-3 py-2 text-right font-mono text-gray-500 dark:text-gray-400 whitespace-nowrap">
+                      {fmtDuration(c.duration_ms ?? 0)}
+                    </td>
                     <td className="px-3 py-2 text-right font-medium text-gray-900 dark:text-gray-100 whitespace-nowrap">{fmtInr(c.cost_inr)}</td>
                     <td className="px-3 py-2 text-right text-gray-500 whitespace-nowrap">
                       {c.input_units > 0 ? fmtInr(c.cost_inr / c.input_units) : '—'}
@@ -275,7 +289,7 @@ export function RecentApiCallsDashboard() {
               })}
               {calls.length === 0 && !loading && (
                 <tr>
-                  <td colSpan={15} className="px-3 py-8 text-center text-gray-400">No API calls recorded</td>
+                  <td colSpan={16} className="px-3 py-8 text-center text-gray-400">No API calls recorded</td>
                 </tr>
               )}
             </tbody>

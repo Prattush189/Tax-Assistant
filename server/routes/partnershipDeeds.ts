@@ -327,6 +327,7 @@ router.post('/drafts/:id/generate', async (req: AuthRequest, res: Response) => {
   }
   partnershipDeedRepo.markGenerating(draft.id, req.user.id, fileHash);
 
+  const callStartMs = Date.now();
   try {
     const provider = pickChatProvider();
     const usage = await provider.streamChat(
@@ -362,6 +363,10 @@ router.post('/drafts/:id/generate', async (req: AuthRequest, res: Response) => {
       usage.modelUsed,
       usage.withSearch,
       'partnership_deed',
+      0,
+      'success',
+      0,
+      Date.now() - callStartMs,
     );
 
     // Bill the monthly quota only on success.

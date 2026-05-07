@@ -94,6 +94,7 @@ router.post(
       // PDFs >100 pages are blocked at the helper level; Form 16s are
       // typically 3-5 pages so this is rarely relevant.
       let result;
+      const callStartMs = Date.now();
       try {
         result = await extractClaudeVision(req.file.buffer, mimetype, FORM16_EXTRACTION_PROMPT);
       } catch (err) {
@@ -112,7 +113,7 @@ router.post(
         const billingUserId = billingUser?.id ?? req.user.id;
         const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
         const cost = result.inputTokens * GEMINI_T2_INPUT_COST + result.outputTokens * GEMINI_T2_OUTPUT_COST;
-        usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, result.inputTokens, result.outputTokens, cost, false, result.modelUsed, false, 'form16');
+        usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, result.inputTokens, result.outputTokens, cost, false, result.modelUsed, false, 'form16', 0, 'success', 0, Date.now() - callStartMs);
       } catch (logErr) {
         console.error('[form16] Failed to log AI cost:', logErr);
       }
