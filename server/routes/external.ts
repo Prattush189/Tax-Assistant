@@ -58,6 +58,7 @@ router.get('/users', (_req: ExternalApiRequest, res: Response) => {
   const rows = userRepo.findAll();
   const enriched = rows.map(u => {
     const lic = licenseKeyRepo.loadActive(u.id);
+    const ur = u as unknown as Record<string, unknown>;
     return {
       id: u.id,
       name: u.name,
@@ -65,6 +66,13 @@ router.get('/users', (_req: ExternalApiRequest, res: Response) => {
       plan: u.plan,
       role: u.role,
       created_at: u.created_at,
+      // Dealer attribution lifted from the user's last successful
+      // GetDealerInfo lookup (see lib/assistNotify.ts). Both nullable
+      // — null until the user logs in for the first time after the
+      // notification feature was deployed, or for admin users (we
+      // skip the lookup for admins).
+      dealer: (ur.dealer as string | null) ?? null,
+      subDealer: (ur.sub_dealer as string | null) ?? null,
       activeLicense: lic ? {
         key: lic.key,
         plan: lic.plan,
