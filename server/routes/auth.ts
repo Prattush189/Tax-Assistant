@@ -6,6 +6,7 @@ import { OAuth2Client } from 'google-auth-library';
 import { userRepo, normalizePhone } from '../db/repositories/userRepo.js';
 import { verificationRepo } from '../db/repositories/verificationRepo.js';
 import { authMiddleware } from '../middleware/auth.js';
+import { notifyAssistOfLogin } from '../lib/assistNotify.js';
 import { AuthRequest } from '../types.js';
 import { sanitizePluginLimits, getEffectivePlan, getTrialEndsAt } from '../lib/planLimits.js';
 import { issueSignupLicense } from '../lib/issueLicense.js';
@@ -421,6 +422,11 @@ router.post('/login', async (req: Request, res: Response) => {
   }
 
   const tokens = loginAndIssueTokens(user);
+  notifyAssistOfLogin({
+    email: user.email,
+    ipAddress: ((req.headers['x-forwarded-for'] as string) ?? req.ip ?? '').toString().split(',')[0].trim() || null,
+    role: user.role,
+  });
   res.json({
     ...tokens,
     user: toUserResponse(user),
@@ -513,6 +519,11 @@ router.post('/google', async (req: Request, res: Response) => {
     }
 
     const tokens = loginAndIssueTokens(user);
+    notifyAssistOfLogin({
+      email: user.email,
+      ipAddress: ((req.headers['x-forwarded-for'] as string) ?? req.ip ?? '').toString().split(',')[0].trim() || null,
+      role: user.role,
+    });
     res.json({
       ...tokens,
       user: toUserResponse(user),
