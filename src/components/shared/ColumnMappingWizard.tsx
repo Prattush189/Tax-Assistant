@@ -10,6 +10,11 @@ interface Props {
   filename: string;
   onConfirm: (mapping: ColumnMapping) => void;
   onCancel: () => void;
+  /** Optional escape hatch — when provided, a "Use AI Vision instead"
+   *  button appears in the footer. Closes the wizard and routes the
+   *  same file through the Sonnet 4.5 vision pipeline (~30× tokens
+   *  but works on any layout). */
+  onUseVision?: () => void;
 }
 
 // Role-label per kind. Bank statements speak "Withdrawal / Deposit"
@@ -39,7 +44,7 @@ const BASE_ROLES: Array<{
 
 const PREVIEW_ROWS = 12;
 
-export function ColumnMappingWizard({ kind, grid, filename, onConfirm, onCancel }: Props) {
+export function ColumnMappingWizard({ kind, grid, filename, onConfirm, onCancel, onUseVision }: Props) {
   const [mapping, setMapping] = useState<ColumnMapping>(() => suggestMapping(grid));
 
   // Re-seed mapping if the grid prop changes (e.g. user cancels and
@@ -169,7 +174,7 @@ export function ColumnMappingWizard({ kind, grid, filename, onConfirm, onCancel 
             {headerHintRow ? ' Highlighted row shows the column labels detected in the PDF.' : ''}
           </p>
 
-          {!validation.ok && (
+          {validation.ok === false && (
             <div className="mt-4 flex items-start gap-2 text-sm text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3">
               <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
               <span>{validation.reason}</span>
@@ -182,23 +187,44 @@ export function ColumnMappingWizard({ kind, grid, filename, onConfirm, onCancel 
           </div>
         </div>
 
-        <div className="flex items-center justify-end gap-3 p-5 border-t border-gray-200 dark:border-gray-800">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            disabled={!validation.ok}
-            onClick={() => onConfirm(mapping)}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium"
-          >
-            <CheckCircle2 className="w-4 h-4" />
-            Continue with these columns
-          </button>
+        <div className="flex items-center justify-between gap-3 p-5 border-t border-gray-200 dark:border-gray-800">
+          <div>
+            {onUseVision && (
+              <button
+                type="button"
+                onClick={() => {
+                  const ok = window.confirm(
+                    'Switch to AI Vision (Sonnet 4.5)?\n\n' +
+                    'Vision reads the PDF directly and handles unusual layouts the deterministic parser misses. ' +
+                    'Trade-off: roughly 30× more tokens than the column-mapping path. ' +
+                    'Use this if the columns above don\'t match your file or the wizard rejects the mapping.',
+                  );
+                  if (ok) onUseVision();
+                }}
+                className="text-sm font-medium text-amber-700 dark:text-amber-400 hover:underline"
+              >
+                Use AI Vision instead →
+              </button>
+            )}
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={!validation.ok}
+              onClick={() => onConfirm(mapping)}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium"
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              Continue with these columns
+            </button>
+          </div>
         </div>
       </div>
     </div>

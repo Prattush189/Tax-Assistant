@@ -103,7 +103,7 @@ const MAX_BYTES = 10 * 1024 * 1024;
 export function LedgerUploader({ manager }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
-  const [pendingGrid, setPendingGrid] = useState<{ grid: PdfGrid; filename: string } | null>(null);
+  const [pendingGrid, setPendingGrid] = useState<{ grid: PdfGrid; filename: string; file: File | null } | null>(null);
   // Password-protected PDFs go here; the dialog re-runs extractPdfGrid
   // with the supplied password. wrongPassword flips on a retry so the
   // user gets the inline "try again" hint.
@@ -156,7 +156,7 @@ export function LedgerUploader({ manager }: Props) {
           toast.error('Excel appears empty or has no data rows.');
           return;
         }
-        setPendingGrid({ grid, filename: file.name });
+        setPendingGrid({ grid, filename: file.name, file });
       } catch (err) {
         console.error('[LedgerUploader] excel parse failed:', err);
         toast.error('Could not read this Excel file. Re-export as .xlsx and try again.');
@@ -172,7 +172,7 @@ export function LedgerUploader({ manager }: Props) {
         toast.error('CSV appears empty or has no data rows.');
         return;
       }
-      setPendingGrid({ grid, filename: file.name });
+      setPendingGrid({ grid, filename: file.name, file });
       return;
     }
 
@@ -186,7 +186,7 @@ export function LedgerUploader({ manager }: Props) {
       const grid = await extractPdfGrid(file);
       if (grid && grid.rows.length >= 3) {
         setIsReadingPdf(false);
-        setPendingGrid({ grid, filename: file.name });
+        setPendingGrid({ grid, filename: file.name, file });
         return;
       }
       const pageCount = await countPdfPagesClient(file) ?? 0;
@@ -348,6 +348,15 @@ export function LedgerUploader({ manager }: Props) {
           filename={pendingGrid.filename}
           onConfirm={handleMappingConfirm}
           onCancel={() => setPendingGrid(null)}
+          onUseVision={pendingGrid.file && pendingGrid.file.type === 'application/pdf' ? () => {
+            const file = pendingGrid.file!;
+            setPendingGrid(null);
+            void manager.upload(file).then(result => {
+              toast.success(`Audit complete: ${result.observations.length} observation${result.observations.length === 1 ? '' : 's'} across ${result.accounts.length} accounts`);
+            }).catch(e => {
+              toast.error(e instanceof Error ? e.message : 'Vision upload failed');
+            });
+          } : undefined}
         />
       )}
       {pendingPassword && (
@@ -361,7 +370,7 @@ export function LedgerUploader({ manager }: Props) {
               const grid = await extractPdfGrid(file, password);
               if (grid && grid.rows.length >= 3) {
                 setPendingPassword(null);
-                setPendingGrid({ grid, filename: file.name });
+                setPendingGrid({ grid, filename: file.name, file });
                 return;
               }
               setPendingPassword(null);

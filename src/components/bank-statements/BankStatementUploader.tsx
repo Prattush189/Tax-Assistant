@@ -89,7 +89,11 @@ export function BankStatementUploader({ manager }: Props) {
   const [isDragging, setIsDragging] = useState(false);
   // Wizard state. When set, the user is mid-mapping for a digital PDF;
   // we hold onto the grid + filename until they confirm or cancel.
-  const [pendingGrid, setPendingGrid] = useState<{ grid: PdfGrid; filename: string } | null>(null);
+  // The original File is kept too so the "Use AI Vision instead"
+  // escape hatch in the wizard can route the same upload through the
+  // vision pipeline without re-prompting.
+  const [pendingGrid, setPendingGrid] = useState<{ grid: PdfGrid; filename: string; file: File | null }
+    | null>(null);
   // Password-protected PDFs go here. The dialog calls onSubmit with
   // the entered password; we re-run extractPdfGrid with it. If it
   // still fails, wrongPassword flips and the user can try again.
@@ -161,7 +165,7 @@ export function BankStatementUploader({ manager }: Props) {
           toast.error('Excel appears empty or has no data rows.');
           return;
         }
-        setPendingGrid({ grid, filename: file.name });
+        setPendingGrid({ grid, filename: file.name, file });
       } catch (err) {
         console.error('[BankStatementUploader] excel parse failed:', err);
         toast.error('Could not read this Excel file. Re-export as .xlsx and try again.');
@@ -188,7 +192,7 @@ export function BankStatementUploader({ manager }: Props) {
         toast.error('CSV appears empty or has no data rows.');
         return;
       }
-      setPendingGrid({ grid, filename: file.name });
+      setPendingGrid({ grid, filename: file.name, file });
       return;
     }
 
@@ -203,7 +207,7 @@ export function BankStatementUploader({ manager }: Props) {
         const grid = await extractPdfGrid(file);
         if (grid && grid.rows.length >= 3) {
           setIsReadingPdf(false);
-          setPendingGrid({ grid, filename: file.name });
+          setPendingGrid({ grid, filename: file.name, file });
           return;
         }
         // No text layer — route through Sonnet vision. Block at 100
@@ -380,6 +384,11 @@ export function BankStatementUploader({ manager }: Props) {
           filename={pendingGrid.filename}
           onConfirm={handleMappingConfirm}
           onCancel={() => setPendingGrid(null)}
+          onUseVision={pendingGrid.file && pendingGrid.file.type === 'application/pdf' ? () => {
+            const file = pendingGrid.file!;
+            setPendingGrid(null);
+            void analyzeRawFile(file);
+          } : undefined}
         />
       )}
       {pendingPassword && (
@@ -393,7 +402,7 @@ export function BankStatementUploader({ manager }: Props) {
               const grid = await extractPdfGrid(file, password);
               if (grid && grid.rows.length >= 3) {
                 setPendingPassword(null);
-                setPendingGrid({ grid, filename: file.name });
+                setPendingGrid({ grid, filename: file.name, file });
                 return;
               }
               // Decrypted but no usable text layer: fall through to
