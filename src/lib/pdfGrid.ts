@@ -216,6 +216,10 @@ export async function extractPdfGrid(file: File, password?: string): Promise<Pdf
       // public PdfGrid so suggestMapping can auto-assign roles
       // without re-finding the header row downstream.
       headerText: string | null;
+      // Right edge of the most recently appended header token in this
+      // column. Used to measure the whitespace GAP to the next token
+      // when deciding whether to merge it as a continuation suffix.
+      _lastTokenRight?: number;
     }
     let columnAnchors: ColumnAnchor[] = [];
     for (const bucket of rowBuckets) {
@@ -238,19 +242,27 @@ export async function extractPdfGrid(file: File, password?: string): Promise<Pdf
           // the second token's text to the existing header so we
           // capture "Withdrawal Amt." as one label, not just
           // "Withdrawal".
-          // Continuation suffixes — when the word right after a numeric
-          // anchor is one of these AND sits within 18 units, treat as
-          // a continuation of the same header (e.g. "Withdrawal" +
-          // "Amt.", "Closing" + "Balance", "Debit" + "Amount").
-          // Anything else — even a tightly-spaced distinct header like
-          // "Type" right next to "Debit Amount" — gets its own anchor.
-          // The previous threshold of 12 units of pure proximity was
-          // collapsing adjacent column LABELS in tightly-packed Tally
-          // ledgers (e.g. Type + Debit merging into one column).
+          // Continuation tokens — words that sometimes follow another
+          // header word as part of the SAME column label ("Withdrawal"
+          // + "Amt.", "Closing" + "Balance", "Debit" + "Amount").
+          // Distinct columns even when tightly packed (e.g. Type next
+          // to Debit) keep their own anchor — we measure the WHITESPACE
+          // GAP between the previous token's right edge and this
+          // token's left edge, not left-to-left distance. A real
+          // within-label space is ~3-6 PDF units; a column boundary is
+          // 15+ units even in dense Tally exports.
           const CONTINUATION = /^(amt\.?|amount|balance|bal\.?|paid|received|recd\.?)$/i;
+          const MAX_INTRA_LABEL_GAP = 8;
           const lastAnchor = columnAnchors.length === 0 ? null : columnAnchors[columnAnchors.length - 1];
-          const isContinuation = !!lastAnchor && CONTINUATION.test(trimmed) && (it.x - lastAnchor.leftX) <= 18;
+          // lastAnchor.x is the right edge for numeric anchors and the
+          // left edge for text anchors — but we always need the right
+          // edge of the most-recent token to measure the gap. Track it
+          // separately on the anchor.
+          const lastRight = lastAnchor?._lastTokenRight ?? lastAnchor?.leftX ?? -Infinity;
+          const gap = it.x - lastRight;
+          const isContinuation = !!lastAnchor && CONTINUATION.test(trimmed) && gap >= 0 && gap <= MAX_INTRA_LABEL_GAP;
           if (!isContinuation) {
+            (anchor as ColumnAnchor & { _lastTokenRight: number })._lastTokenRight = it.x + it.width;
             columnAnchors.push(anchor);
           } else if (lastAnchor) {
             if (lastAnchor.headerText) lastAnchor.headerText = `${lastAnchor.headerText} ${trimmed}`;
@@ -264,6 +276,7 @@ export async function extractPdfGrid(file: File, password?: string): Promise<Pdf
               lastAnchor.align = 'right';
               lastAnchor.x = it.x + it.width;
             }
+            (lastAnchor as ColumnAnchor & { _lastTokenRight: number })._lastTokenRight = it.x + it.width;
           }
         }
         break;
