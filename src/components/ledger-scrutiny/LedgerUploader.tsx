@@ -149,29 +149,36 @@ export function LedgerUploader({ manager }: Props) {
     // PDFs. Tally / Busy CSV exports have varying column orders so
     // the mapping wizard isn't optional even here.
     if (isExcel) {
+      setIsReadingPdf(true);
       try {
         const rows = await excelToRows(file);
         const grid = rows ? rowsToFakeGrid(rows) : null;
         if (!grid) {
           toast.error('Excel appears empty or has no data rows.');
+          setIsReadingPdf(false);
           return;
         }
+        setIsReadingPdf(false);
         setPendingGrid({ grid, filename: file.name, file });
       } catch (err) {
         console.error('[LedgerUploader] excel parse failed:', err);
         toast.error('Could not read this Excel file. Re-export as .xlsx and try again.');
+        setIsReadingPdf(false);
       }
       return;
     }
 
     if (isCsv) {
+      setIsReadingPdf(true);
       const text = await file.text();
       const parsed = Papa.parse<string[]>(text, { skipEmptyLines: true });
       const grid = rowsToFakeGrid(parsed.data as string[][]);
       if (!grid) {
         toast.error('CSV appears empty or has no data rows.');
+        setIsReadingPdf(false);
         return;
       }
+      setIsReadingPdf(false);
       setPendingGrid({ grid, filename: file.name, file });
       return;
     }

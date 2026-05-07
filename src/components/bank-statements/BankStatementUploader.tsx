@@ -154,21 +154,21 @@ export function BankStatementUploader({ manager }: Props) {
     }
 
     if (isExcel) {
-      // Excel routes through the same wizard as CSV. SheetJS handles
-      // Tally / Busy / bank-portal exports without us caring which
-      // sheet has the data — every sheet is concatenated and the
-      // wizard / applyMapping skips noise rows.
+      setIsReadingPdf(true);
       try {
         const rows = await excelToRows(file);
         const grid = rows ? rowsToFakeGrid(rows) : null;
         if (!grid) {
           toast.error('Excel appears empty or has no data rows.');
+          setIsReadingPdf(false);
           return;
         }
+        setIsReadingPdf(false);
         setPendingGrid({ grid, filename: file.name, file });
       } catch (err) {
         console.error('[BankStatementUploader] excel parse failed:', err);
         toast.error('Could not read this Excel file. Re-export as .xlsx and try again.');
+        setIsReadingPdf(false);
       }
       return;
     }
@@ -185,13 +185,16 @@ export function BankStatementUploader({ manager }: Props) {
       // header set the server expects, so the deterministic
       // categorisation pass produces totals that match the PDF path
       // exactly.
+      setIsReadingPdf(true);
       const text = await file.text();
       const parsed = Papa.parse<string[]>(text, { skipEmptyLines: true });
       const grid = rowsToFakeGrid(parsed.data as string[][]);
       if (!grid) {
         toast.error('CSV appears empty or has no data rows.');
+        setIsReadingPdf(false);
         return;
       }
+      setIsReadingPdf(false);
       setPendingGrid({ grid, filename: file.name, file });
       return;
     }

@@ -414,9 +414,6 @@ export async function extractPdfGrid(file: File, password?: string): Promise<Pdf
     // assignment loop downstream pick that up.
     {
       const provisional: number[][] = columnAnchors.map(() => []);
-      // Use only data rows (skip the header row(s)) — the header word's
-      // own x-coord would otherwise pin the anchor right back where it
-      // started.
       const dataStart = columnAnchors.some(a => a.headerText !== null) ? Math.min(rowBuckets.length, 4) : 0;
       for (let bi = dataStart; bi < rowBuckets.length; bi++) {
         for (const it of rowBuckets[bi]) {
@@ -432,22 +429,63 @@ export async function extractPdfGrid(file: File, password?: string): Promise<Pdf
           provisional[bestCol].push(it.x);
         }
       }
+
+      // Pass A — shift left-aligned anchors that ended up RIGHT of the
+      // data they own. Centered headers are the typical offender
+      // ("Particulars" word centered while narration left-aligns
+      // far to the left).
       for (let c = 0; c < columnAnchors.length; c++) {
         const anchor = columnAnchors[c];
         if (anchor.align !== 'left') continue;
         const xs = provisional[c];
         if (xs.length < 5) continue;
         const minLeft = Math.min(...xs);
-        // Only shift LEFT — never push an anchor right based on data,
-        // since the rightmost numeric column's text could pull it past
-        // its real boundary if assignments are wrong on the first pass.
         if (minLeft < anchor.leftX - 4) {
           anchor.leftX = minLeft;
           anchor.x = minLeft;
         }
       }
-      // Re-sort after possible shifts so cell-assignment iterates in
-      // visual order.
+
+      // Pass B — when a left-aligned column ended up with zero or
+      // near-zero items, the previous column most likely swallowed
+      // them. Detect bimodal distributions on the previous column
+      // and split: snap THIS column's anchor to the upper cluster's
+      // start, so the next assignment loop pulls those items here.
+      // Triggers when the previous column has >= 30 items spanning
+      // a gap of 20+ PDF units — anything smaller is single-cluster
+      // jitter.
+      for (let c = 1; c < columnAnchors.length; c++) {
+        const cur = columnAnchors[c];
+        if (cur.align !== 'left') continue;
+        if (provisional[c].length >= 3) continue; // already populated
+        const prev = columnAnchors[c - 1];
+        if (prev.align !== 'left') continue;
+        const prevXs = provisional[c - 1];
+        if (prevXs.length < 30) continue;
+        const sorted = [...prevXs].sort((a, b) => a - b);
+        // Walk for the largest internal gap. A real bimodal split
+        // produces a single clear gap of 20+ units between the date
+        // cluster (e.g. x=20) and the narration cluster (x=100).
+        let bestGap = 0;
+        let bestSplitAt = -1;
+        for (let i = 1; i < sorted.length; i++) {
+          const gap = sorted[i] - sorted[i - 1];
+          if (gap > bestGap) { bestGap = gap; bestSplitAt = i; }
+        }
+        if (bestGap >= 20 && bestSplitAt > 0) {
+          const upperStart = sorted[bestSplitAt];
+          // Only commit the split if it leaves at least 5 items on
+          // each side — protects against the edge case where the
+          // previous column genuinely has one stray outlier.
+          const upperCount = sorted.length - bestSplitAt;
+          const lowerCount = bestSplitAt;
+          if (upperCount >= 5 && lowerCount >= 5 && upperStart > prev.leftX + 10) {
+            cur.leftX = upperStart;
+            cur.x = upperStart;
+          }
+        }
+      }
+
       columnAnchors.sort((a, b) => (a.align === 'right' ? a.x : a.leftX) - (b.align === 'right' ? b.x : b.leftX));
     }
 
