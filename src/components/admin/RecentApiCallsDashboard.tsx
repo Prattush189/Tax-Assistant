@@ -136,10 +136,19 @@ export function RecentApiCallsDashboard() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-          <Clock className="w-5 h-5 text-emerald-500" />
-          Recent API Calls
-        </h2>
+        <div className="flex flex-col gap-1">
+          <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+            <Clock className="w-5 h-5 text-emerald-500" />
+            Recent API Calls
+          </h2>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500 dark:text-gray-400">
+            <span><span className="font-semibold text-gray-700 dark:text-gray-300">Gemini 2.5 Flash-Lite:</span> $0.10 in / $0.40 out per 1M (weight 1× / 4×)</span>
+            <span className="text-gray-300 dark:text-gray-700">·</span>
+            <span><span className="font-semibold text-gray-700 dark:text-gray-300">Gemini 3.1 Flash-Lite:</span> $0.25 in / $1.50 out per 1M (weight 2.5× / 15×)</span>
+            <span className="text-gray-300 dark:text-gray-700">·</span>
+            <span><span className="font-semibold text-gray-700 dark:text-gray-300">Claude Sonnet 4.5:</span> $3.00 in / $15.00 out per 1M (weight 30× / 150×)</span>
+          </div>
+        </div>
         <div className="flex items-center gap-2">
           <span className="text-xs text-gray-500 dark:text-gray-400">
             {total === 0 ? 'No calls' : `${from}–${to} of ${total.toLocaleString()}`}
@@ -168,10 +177,11 @@ export function RecentApiCallsDashboard() {
                 <th className="text-left px-3 py-2 text-gray-500 font-medium">Model</th>
                 <th className="text-center px-3 py-2 text-gray-500 font-medium">Search</th>
                 <th className="text-center px-3 py-2 text-gray-500 font-medium">Plugin</th>
-                <th className="text-right px-3 py-2 text-gray-500 font-medium">In tok</th>
-                <th className="text-right px-3 py-2 text-gray-500 font-medium">Out tok</th>
-                <th className="text-right px-3 py-2 text-gray-500 font-medium" title="Pre-flight token estimate from the quota gate. Only set on the summary row of a request; — when not estimated.">Est.</th>
-                <th className="text-right px-3 py-2 text-gray-500 font-medium" title="Estimate drift: (actual − estimate) / estimate. Amber = under-estimated by 20-50%, rose = under-estimated by >50% (the dangerous direction). Over-estimates are neutral grey.">Δ %</th>
+                <th className="text-right px-3 py-2 text-gray-500 font-medium" title="Raw input tokens billed by the model — multiply by the model's input weight to get the contribution to the weighted total.">In tok</th>
+                <th className="text-right px-3 py-2 text-gray-500 font-medium" title="Raw output tokens billed by the model — multiply by the model's output weight to get the contribution to the weighted total.">Out tok</th>
+                <th className="text-right px-3 py-2 text-gray-500 font-medium" title="Weighted total = In × wIn + Out × wOut. This is what the cross-feature monthly quota gate sums against the user's budget.">Weighted</th>
+                <th className="text-right px-3 py-2 text-gray-500 font-medium" title="Pre-flight WEIGHTED token estimate from the quota gate. Only set on the summary row of a request; — when not estimated.">Est.</th>
+                <th className="text-right px-3 py-2 text-gray-500 font-medium" title="Estimate drift on weighted tokens: (weighted − estimate) / estimate. Amber = under-estimated by 20-50%, rose = under-estimated by >50% (the dangerous direction). Over-estimates are neutral grey.">Δ %</th>
                 <th className="text-right px-3 py-2 text-gray-500 font-medium" title="User-input size — txns for bank/ledger, pages for notice/document, msgs for chat">User input</th>
                 <th className="text-right px-3 py-2 text-gray-500 font-medium">Cost</th>
                 <th className="text-right px-3 py-2 text-gray-500 font-medium" title="Cost per user-input unit (cost ÷ input units)">₹ / unit</th>
@@ -226,26 +236,31 @@ export function RecentApiCallsDashboard() {
                     </td>
                     <td className="px-3 py-2 text-right text-gray-500">{fmtTokens(c.input_tokens)}</td>
                     <td className="px-3 py-2 text-right text-gray-500">{fmtTokens(c.output_tokens)}</td>
+                    <td
+                      className="px-3 py-2 text-right font-mono text-gray-700 dark:text-gray-300 whitespace-nowrap"
+                      title={c.weighted_tokens > 0 ? `${c.input_tokens.toLocaleString()} × wIn + ${c.output_tokens.toLocaleString()} × wOut = ${c.weighted_tokens.toLocaleString()} weighted (model: ${c.model ?? 'n/a'})` : 'Not weighted'}
+                    >
+                      {c.weighted_tokens > 0 ? fmtTokens(c.weighted_tokens) : '—'}
+                    </td>
                     <td className="px-3 py-2 text-right font-mono text-gray-500 dark:text-gray-400">
                       {c.estimated_tokens > 0 ? fmtTokens(c.estimated_tokens) : '—'}
                     </td>
                     <td className={cn(
                       'px-3 py-2 text-right font-mono whitespace-nowrap',
-                      // Same drift-colouring rule as UserCard. Under-estimate
-                      // (actual > estimate) is the dangerous direction —
-                      // amber at >20%, rose at >50%. Over-estimate stays
-                      // neutral grey.
+                      // Drift on WEIGHTED tokens vs the WEIGHTED estimate.
+                      // Under-estimate (weighted > estimate) is the dangerous
+                      // direction — amber at >20%, rose at >50%. Over-estimate
+                      // stays neutral grey.
                       (() => {
-                        if (c.estimated_tokens <= 0) return 'text-gray-400';
-                        const actual = c.input_tokens + c.output_tokens;
-                        const drift = (actual - c.estimated_tokens) / c.estimated_tokens;
+                        if (c.estimated_tokens <= 0 || c.weighted_tokens <= 0) return 'text-gray-400';
+                        const drift = (c.weighted_tokens - c.estimated_tokens) / c.estimated_tokens;
                         if (drift > 0.5) return 'text-rose-500 dark:text-rose-400';
                         if (drift > 0.2) return 'text-amber-500 dark:text-amber-400';
                         return 'text-gray-500 dark:text-gray-400';
                       })(),
                     )}>
-                      {c.estimated_tokens > 0
-                        ? `${(((c.input_tokens + c.output_tokens) - c.estimated_tokens) / c.estimated_tokens * 100).toFixed(0)}%`
+                      {c.estimated_tokens > 0 && c.weighted_tokens > 0
+                        ? `${((c.weighted_tokens - c.estimated_tokens) / c.estimated_tokens * 100).toFixed(0)}%`
                         : '—'}
                     </td>
                     <td className="px-3 py-2 text-right text-gray-700 dark:text-gray-300 whitespace-nowrap">
@@ -260,7 +275,7 @@ export function RecentApiCallsDashboard() {
               })}
               {calls.length === 0 && !loading && (
                 <tr>
-                  <td colSpan={14} className="px-3 py-8 text-center text-gray-400">No API calls recorded</td>
+                  <td colSpan={15} className="px-3 py-8 text-center text-gray-400">No API calls recorded</td>
                 </tr>
               )}
             </tbody>
