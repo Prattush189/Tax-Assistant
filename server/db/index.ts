@@ -69,6 +69,17 @@ if (!colNames.includes('itr_enabled')) {
   db.exec("ALTER TABLE users ADD COLUMN itr_enabled INTEGER NOT NULL DEFAULT 0");
 }
 
+// Dealer attribution from assist's GetDealerInfo lookup. Refreshed on
+// every successful login (notifyAssistOfLogin in lib/assistNotify.ts).
+// Both nullable — leftover when the API call failed, the user is brand
+// new, or the user is admin (we skip the lookup for admins).
+if (!colNames.includes('dealer')) {
+  db.exec("ALTER TABLE users ADD COLUMN dealer TEXT");
+}
+if (!colNames.includes('sub_dealer')) {
+  db.exec("ALTER TABLE users ADD COLUMN sub_dealer TEXT");
+}
+
 // Phone login + email verification + team invitations (v2 team features).
 // NOTE: `phone` is nullable and unique via partial index (below) — it is only
 // set for plugin clients who log in via phone. Existing email-only users

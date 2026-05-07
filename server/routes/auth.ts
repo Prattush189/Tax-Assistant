@@ -423,6 +423,7 @@ router.post('/login', async (req: Request, res: Response) => {
 
   const tokens = loginAndIssueTokens(user);
   notifyAssistOfLogin({
+    userId: user.id,
     email: user.email,
     ipAddress: ((req.headers['x-forwarded-for'] as string) ?? req.ip ?? '').toString().split(',')[0].trim() || null,
     role: user.role,
@@ -520,6 +521,7 @@ router.post('/google', async (req: Request, res: Response) => {
 
     const tokens = loginAndIssueTokens(user);
     notifyAssistOfLogin({
+      userId: user.id,
       email: user.email,
       ipAddress: ((req.headers['x-forwarded-for'] as string) ?? req.ip ?? '').toString().split(',')[0].trim() || null,
       role: user.role,
