@@ -24,6 +24,14 @@
  */
 
 const SAFETY_MARGIN = 1.10;
+// Heavier multiplier for routes that routinely retry/bisect/fallback.
+// Empirically the bank-statement and ledger paths run 3-8× the ideal-
+// case estimate because of T1 fallback (2.5× weighted), bisection of
+// dense batches (full prompt re-run on each sub-chunk), and parse-
+// failure retries. Set conservatively at 3.5× — still occasionally
+// undershoots on the densest 1500+ row statements but avoids the
+// 700-800% overrun bands we were seeing in the dashboard.
+const RETRY_HEAVY_MARGIN = 3.5;
 const TOKENS_PER_CHAR = 1 / 4;
 
 // T2 (gemini-2.5-flash-lite) weights — the cheapest active model
@@ -84,7 +92,7 @@ export function estimateBankStatementText(rawTextChars: number): number {
   const inputTokens = (rawTextChars + chunks * PROMPT_CHARS_PER_CHUNK) * TOKENS_PER_CHAR;
   // Output ≈ ~half the input chars on a typical TSV extraction.
   const outputTokens = rawTextChars * 0.5 * TOKENS_PER_CHAR;
-  return Math.ceil((inputTokens * T2_W_IN + outputTokens * T2_W_OUT) * SAFETY_MARGIN);
+  return Math.ceil((inputTokens * T2_W_IN + outputTokens * T2_W_OUT) * RETRY_HEAVY_MARGIN);
 }
 
 /**
@@ -111,7 +119,7 @@ export function estimateBankStatementVision(fileSizeBytes: number): number {
   // switch to estimateClaudeVision() (30×/150× weights vs T2's 1×/4×).
   // For now the estimator stays anchored at T2 weights, which mirrors
   // the actual model running today.
-  return Math.ceil((inputTokens * T2_W_IN + outputTokens * T2_W_OUT) * SAFETY_MARGIN);
+  return Math.ceil((inputTokens * T2_W_IN + outputTokens * T2_W_OUT) * RETRY_HEAVY_MARGIN);
 }
 
 /**
@@ -126,7 +134,7 @@ export function estimateLedgerText(rawTextChars: number): number {
   const SCRUTINY_OUTPUT_FACTOR = 0.35;
   const scrutinyInputTokens = (rawTextChars + SCRUTINY_PROMPT_CHARS) * TOKENS_PER_CHAR;
   const scrutinyOutputTokens = rawTextChars * SCRUTINY_OUTPUT_FACTOR * TOKENS_PER_CHAR;
-  const scrutinyWeighted = Math.ceil((scrutinyInputTokens * T2_W_IN + scrutinyOutputTokens * T2_W_OUT) * SAFETY_MARGIN);
+  const scrutinyWeighted = Math.ceil((scrutinyInputTokens * T2_W_IN + scrutinyOutputTokens * T2_W_OUT) * RETRY_HEAVY_MARGIN);
   return extractEstimate + scrutinyWeighted;
 }
 
@@ -141,6 +149,6 @@ export function estimateLedgerVision(fileSizeBytes: number): number {
   // Half input / half output as a rough split.
   const scrutinyInputTokens = pages * SCRUTINY_TOKENS_PER_PAGE * 0.5;
   const scrutinyOutputTokens = pages * SCRUTINY_TOKENS_PER_PAGE * 0.5;
-  const scrutinyWeighted = Math.ceil((scrutinyInputTokens * T2_W_IN + scrutinyOutputTokens * T2_W_OUT) * SAFETY_MARGIN);
+  const scrutinyWeighted = Math.ceil((scrutinyInputTokens * T2_W_IN + scrutinyOutputTokens * T2_W_OUT) * RETRY_HEAVY_MARGIN);
   return visionEstimate + scrutinyWeighted;
 }
