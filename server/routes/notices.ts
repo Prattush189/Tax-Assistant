@@ -12,7 +12,7 @@ import { usageRepo } from '../db/repositories/usageRepo.js';
 import { enforceTokenQuota } from '../lib/tokenQuota.js';
 import { getBillingUser } from '../lib/billing.js';
 import { getUsagePeriodStart } from '../lib/planLimits.js';
-import { extractClaudeVision, ClaudePageLimitError } from '../lib/claudeVision.js';
+import { extractVisionWithFallback, ClaudePageLimitError } from '../lib/visionFallback.js';
 import { GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST } from '../lib/gemini.js';
 import { AuthRequest } from '../types.js';
 
@@ -234,7 +234,7 @@ router.post(
       // natively. PDFs >100 pages throw and surface as 400.
       let extraction;
       try {
-        extraction = await extractClaudeVision<{
+        extraction = await extractVisionWithFallback<{
           summary: string;
           noticeNumber: string | null;
           noticeDate: string | null;
