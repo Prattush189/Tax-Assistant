@@ -430,6 +430,21 @@ export async function extractPdfGrid(file: File, password?: string): Promise<Pdf
         }
       }
 
+      // Diagnostic — emits once per file so you can see exactly what the
+      // detector saw without instrumenting locally. Toggle off by
+      // unsetting localStorage.pdfGridDebug = '1' in the browser.
+      const debug = typeof localStorage !== 'undefined' && localStorage.getItem('pdfGridDebug') === '1';
+      if (debug) {
+        console.group('[pdfGrid] anchors before re-anchor passes');
+        columnAnchors.forEach((a, i) => {
+          const xs = provisional[i];
+          const minX = xs.length > 0 ? Math.min(...xs) : null;
+          const maxX = xs.length > 0 ? Math.max(...xs) : null;
+          console.log(`col ${i}: ${a.align}, leftX=${a.leftX.toFixed(1)}, x=${a.x.toFixed(1)}, header="${a.headerText ?? '(none)'}", items=${xs.length}, x-range=[${minX?.toFixed(1) ?? '-'}, ${maxX?.toFixed(1) ?? '-'}]`);
+        });
+        console.groupEnd();
+      }
+
       // Pass A — shift left-aligned anchors that ended up RIGHT of the
       // data they own. Centered headers are the typical offender
       // ("Particulars" word centered while narration left-aligns
@@ -447,46 +462,60 @@ export async function extractPdfGrid(file: File, password?: string): Promise<Pdf
       }
 
       // Pass B — when a left-aligned column ended up with zero or
-      // near-zero items, the previous column most likely swallowed
-      // them. Detect bimodal distributions on the previous column
-      // and split: snap THIS column's anchor to the upper cluster's
-      // start, so the next assignment loop pulls those items here.
-      // Triggers when the previous column has >= 30 items spanning
-      // a gap of 20+ PDF units — anything smaller is single-cluster
-      // jitter.
+      // near-zero items, look LEFT for the most-recent left-aligned
+      // sibling that has plenty (we may need to skip over a numeric
+      // anchor that landed between them after data-augmentation).
+      // Detect bimodal x-distribution there and split.
       for (let c = 1; c < columnAnchors.length; c++) {
         const cur = columnAnchors[c];
         if (cur.align !== 'left') continue;
         if (provisional[c].length >= 3) continue; // already populated
-        const prev = columnAnchors[c - 1];
-        if (prev.align !== 'left') continue;
-        const prevXs = provisional[c - 1];
-        if (prevXs.length < 30) continue;
+        // Walk left to the nearest left-aligned, populated sibling.
+        let donorIdx = -1;
+        for (let p = c - 1; p >= 0; p--) {
+          const cand = columnAnchors[p];
+          if (cand.align === 'left' && provisional[p].length >= 30) { donorIdx = p; break; }
+        }
+        if (donorIdx === -1) continue;
+        const prev = columnAnchors[donorIdx];
+        const prevXs = provisional[donorIdx];
         const sorted = [...prevXs].sort((a, b) => a - b);
-        // Walk for the largest internal gap. A real bimodal split
-        // produces a single clear gap of 20+ units between the date
-        // cluster (e.g. x=20) and the narration cluster (x=100).
         let bestGap = 0;
         let bestSplitAt = -1;
         for (let i = 1; i < sorted.length; i++) {
           const gap = sorted[i] - sorted[i - 1];
           if (gap > bestGap) { bestGap = gap; bestSplitAt = i; }
         }
-        if (bestGap >= 20 && bestSplitAt > 0) {
+        // Lowered thresholds — gap of 12+ is a clear column boundary
+        // in dense Tally exports. Minimum cluster size of 3 catches
+        // small ledgers without false-firing on jitter.
+        if (bestGap >= 12 && bestSplitAt > 0) {
           const upperStart = sorted[bestSplitAt];
-          // Only commit the split if it leaves at least 5 items on
-          // each side — protects against the edge case where the
-          // previous column genuinely has one stray outlier.
           const upperCount = sorted.length - bestSplitAt;
           const lowerCount = bestSplitAt;
-          if (upperCount >= 5 && lowerCount >= 5 && upperStart > prev.leftX + 10) {
+          if (upperCount >= 3 && lowerCount >= 3 && upperStart > prev.leftX + 6) {
+            if (debug) {
+              console.log(`[pdfGrid] Pass B split: col ${donorIdx} (header="${prev.headerText}") had bimodal x-distribution; gap=${bestGap.toFixed(1)} at upperStart=${upperStart.toFixed(1)} (lowerCount=${lowerCount}, upperCount=${upperCount}). Snapping col ${c} (header="${cur.headerText}") leftX from ${cur.leftX.toFixed(1)} to ${upperStart.toFixed(1)}.`);
+            }
             cur.leftX = upperStart;
             cur.x = upperStart;
+          } else if (debug) {
+            console.log(`[pdfGrid] Pass B did not commit split for col ${c}: upperCount=${upperCount}, lowerCount=${lowerCount}, upperStart=${upperStart.toFixed(1)}, prev.leftX+6=${(prev.leftX + 6).toFixed(1)}`);
           }
+        } else if (debug) {
+          console.log(`[pdfGrid] Pass B no-op for col ${c}: bestGap=${bestGap.toFixed(1)} (need >= 12), bestSplitAt=${bestSplitAt}`);
         }
       }
 
       columnAnchors.sort((a, b) => (a.align === 'right' ? a.x : a.leftX) - (b.align === 'right' ? b.x : b.leftX));
+
+      if (debug) {
+        console.group('[pdfGrid] anchors AFTER re-anchor passes');
+        columnAnchors.forEach((a, i) => {
+          console.log(`col ${i}: ${a.align}, leftX=${a.leftX.toFixed(1)}, x=${a.x.toFixed(1)}, header="${a.headerText ?? '(none)'}"`);
+        });
+        console.groupEnd();
+      }
     }
 
     // Public columnXs is the LEFT edge of each column header — used by
