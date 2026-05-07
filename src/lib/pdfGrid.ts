@@ -283,6 +283,90 @@ export async function extractPdfGrid(file: File, password?: string): Promise<Pdf
       }
     }
 
+    // ── Numeric-column augmentation pass ──────────────────────────────
+    // Header geometry alone fails on dense Tally exports (OSPL Future
+    // Energy etc.) where Type / Debit / Amount / Credit / Balance are
+    // packed within 4-6 PDF units of each other in the header row, but
+    // the ACTUAL data values below them are still right-aligned at
+    // distinct, well-separated x-coordinates. Cluster the right-edges
+    // of all numeric tokens across every data row; any cluster that
+    // doesn't already correspond to one of the header anchors becomes
+    // an additional right-aligned numeric column.
+    {
+      const numericRights: number[] = [];
+      // Skip header rows when sampling — headers contain words, not
+      // numbers, so they wouldn't pollute, but starting from the row
+      // AFTER the header makes intent clearer.
+      const headerWasFound = columnAnchors.some(a => a.headerText !== null);
+      const sampleStart = headerWasFound ? Math.min(rowBuckets.length, 4) : 0;
+      for (let bi = sampleStart; bi < rowBuckets.length; bi++) {
+        for (const it of rowBuckets[bi]) {
+          // Conservative: only consider tokens that look like a
+          // formatted Indian-style number (>= 4 digits with grouping
+          // commas, or any number with decimals). Excludes voucher
+          // numbers like "000021" and short codes like "U-02".
+          const t = it.text.trim();
+          if (!/^-?\d{1,3}(?:,\d{2,3})+(?:\.\d+)?(?:\s*[CD]r\.?)?$|^-?\d+\.\d{2}(?:\s*[CD]r\.?)?$/.test(t)) continue;
+          numericRights.push(it.x + it.width);
+        }
+      }
+      if (numericRights.length >= 30) {
+        // Cluster right-edges with a 6-unit tolerance — numeric values
+        // in a single column right-align to within 1-2 units; 6 covers
+        // jitter from variable-width digits without bridging adjacent
+        // columns (which sit 30+ units apart).
+        const sorted = [...numericRights].sort((a, b) => a - b);
+        const clusters: { right: number; count: number }[] = [];
+        let csum = sorted[0], ccount = 1, cprev = sorted[0];
+        for (let i = 1; i < sorted.length; i++) {
+          if (sorted[i] - cprev <= 6) {
+            csum += sorted[i]; ccount++;
+          } else {
+            clusters.push({ right: csum / ccount, count: ccount });
+            csum = sorted[i]; ccount = 1;
+          }
+          cprev = sorted[i];
+        }
+        clusters.push({ right: csum / ccount, count: ccount });
+        // Drop weak clusters — a real column has at least 5% of the
+        // numeric-token sample landing in it. Filters out one-off
+        // page totals or headers misclassified as numbers.
+        const minDensity = Math.max(5, Math.floor(numericRights.length * 0.05));
+        const dataNumericColumns = clusters
+          .filter(c => c.count >= minDensity)
+          .map(c => c.right);
+
+        // Fold each data-derived numeric column into the header-derived
+        // anchors. Match by right-edge proximity; if no header anchor
+        // is within 8 units of a data cluster, insert a fresh anchor.
+        for (const dataRight of dataNumericColumns) {
+          const matchIdx = columnAnchors.findIndex(a =>
+            a.align === 'right' && Math.abs(a.x - dataRight) <= 8,
+          );
+          if (matchIdx === -1) {
+            // New numeric column the header missed. Mark it with no
+            // header text — suggestMapping will leave it as 'skip'
+            // so the user picks Debit / Credit / Balance manually.
+            columnAnchors.push({
+              x: dataRight,
+              align: 'right',
+              leftX: dataRight,
+              headerText: null,
+            });
+          } else {
+            // Anchor matched — refine its right edge with the more
+            // precise data-cell average so cell-to-anchor matching
+            // stays tight.
+            columnAnchors[matchIdx].x = dataRight;
+          }
+        }
+        // Re-sort anchors left-to-right so downstream cell assignment
+        // sees them in visual order. Use leftX for text columns and x
+        // (right edge) for numeric columns; both work as sort keys.
+        columnAnchors.sort((a, b) => (a.align === 'right' ? a.x : a.leftX) - (b.align === 'right' ? b.x : b.leftX));
+      }
+    }
+
     if (columnAnchors.length < 2) {
       // Fallback: gap-based clustering of all items' left-edges.
       // Without a header row we can't tell numeric from text columns,
