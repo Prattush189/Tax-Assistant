@@ -402,6 +402,55 @@ export async function extractPdfGrid(file: File, password?: string): Promise<Pdf
 
     if (columnAnchors.length < 2) return null; // not enough column structure
 
+    // Re-anchor text columns to the minimum left-edge of the data they
+    // actually contain. Header words are often CENTERED in the visual
+    // column ("Particulars" centered above narration that left-aligns
+    // 80+ units to the left of the header's leftX), so using the
+    // header word's leftX as the column boundary glues left-aligned
+    // narration cells onto whichever neighbour anchor sits further
+    // left. Fix: do a quick first-pass assignment, then for each
+    // left-aligned column take the min left-edge of items that landed
+    // in it, snap the anchor's leftX there, and let the real cell
+    // assignment loop downstream pick that up.
+    {
+      const provisional: number[][] = columnAnchors.map(() => []);
+      // Use only data rows (skip the header row(s)) — the header word's
+      // own x-coord would otherwise pin the anchor right back where it
+      // started.
+      const dataStart = columnAnchors.some(a => a.headerText !== null) ? Math.min(rowBuckets.length, 4) : 0;
+      for (let bi = dataStart; bi < rowBuckets.length; bi++) {
+        for (const it of rowBuckets[bi]) {
+          let bestCol = 0;
+          let bestDist = Math.abs(
+            (columnAnchors[0].align === 'right' ? it.x + it.width : it.x) - columnAnchors[0].x,
+          );
+          for (let c = 1; c < columnAnchors.length; c++) {
+            const ref = columnAnchors[c].align === 'right' ? it.x + it.width : it.x;
+            const d = Math.abs(ref - columnAnchors[c].x);
+            if (d < bestDist) { bestDist = d; bestCol = c; }
+          }
+          provisional[bestCol].push(it.x);
+        }
+      }
+      for (let c = 0; c < columnAnchors.length; c++) {
+        const anchor = columnAnchors[c];
+        if (anchor.align !== 'left') continue;
+        const xs = provisional[c];
+        if (xs.length < 5) continue;
+        const minLeft = Math.min(...xs);
+        // Only shift LEFT — never push an anchor right based on data,
+        // since the rightmost numeric column's text could pull it past
+        // its real boundary if assignments are wrong on the first pass.
+        if (minLeft < anchor.leftX - 4) {
+          anchor.leftX = minLeft;
+          anchor.x = minLeft;
+        }
+      }
+      // Re-sort after possible shifts so cell-assignment iterates in
+      // visual order.
+      columnAnchors.sort((a, b) => (a.align === 'right' ? a.x : a.leftX) - (b.align === 'right' ? b.x : b.leftX));
+    }
+
     // Public columnXs is the LEFT edge of each column header — used by
     // the wizard preview as a visual sort key. Internally we still
     // match items against `anchor.x` (right edge for numeric columns).
