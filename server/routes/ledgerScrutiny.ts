@@ -17,7 +17,7 @@
 import crypto from 'crypto';
 import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
-import { extractVisionWithFallback, ClaudePageLimitError } from '../lib/visionFallback.js';
+import { extractClaudeVision, ClaudePageLimitError } from '../lib/claudeVision.js';
 import { safeParseJson } from '../lib/geminiJson.js';
 import { pickChatProvider } from '../lib/chatProvider.js';
 import { SseWriter } from '../lib/sseStream.js';
@@ -1708,7 +1708,7 @@ router.post(
         // which the route surfaces as 400 with a CSV-export hint.
         let result;
         try {
-          result = await extractVisionWithFallback<ExtractedLedger>(req.file!.buffer, mimeType, LEDGER_EXTRACT_PROMPT, {
+          result = await extractClaudeVision<ExtractedLedger>(req.file!.buffer, mimeType, LEDGER_EXTRACT_PROMPT, {
             maxTokens: 16_384,
           });
         } catch (err) {

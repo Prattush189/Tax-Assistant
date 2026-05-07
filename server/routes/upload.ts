@@ -1,7 +1,7 @@
 // server/routes/upload.ts
 import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
-import { extractVisionWithFallback, ClaudePageLimitError } from '../lib/visionFallback.js';
+import { extractClaudeVision, ClaudePageLimitError } from '../lib/claudeVision.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
@@ -105,7 +105,7 @@ router.post(
       // >100 pages reject before the API call (Anthropic limit).
       let result;
       try {
-        result = await extractVisionWithFallback(req.file.buffer, mimetype, EXTRACTION_PROMPT);
+        result = await extractClaudeVision(req.file.buffer, mimetype, EXTRACTION_PROMPT);
       } catch (err) {
         if (err instanceof ClaudePageLimitError) {
           res.status(400).json({ error: err.message });

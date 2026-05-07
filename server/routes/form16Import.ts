@@ -1,7 +1,7 @@
 // server/routes/form16Import.ts
 import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
-import { extractVisionWithFallback, ClaudePageLimitError } from '../lib/visionFallback.js';
+import { extractClaudeVision, ClaudePageLimitError } from '../lib/claudeVision.js';
 import { GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST } from '../lib/gemini.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
@@ -95,7 +95,7 @@ router.post(
       // typically 3-5 pages so this is rarely relevant.
       let result;
       try {
-        result = await extractVisionWithFallback(req.file.buffer, mimetype, FORM16_EXTRACTION_PROMPT);
+        result = await extractClaudeVision(req.file.buffer, mimetype, FORM16_EXTRACTION_PROMPT);
       } catch (err) {
         if (err instanceof ClaudePageLimitError) {
           res.status(400).json({ error: err.message });

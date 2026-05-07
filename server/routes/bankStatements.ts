@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
 import Papa from 'papaparse';
-import { extractVisionWithFallback, ClaudePageLimitError } from '../lib/visionFallback.js';
+import { extractClaudeVision, ClaudePageLimitError } from '../lib/claudeVision.js';
 import { callGeminiJson, type GeminiJsonResult } from '../lib/geminiJson.js';
 import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_TSV_PROMPT, BANK_STATEMENT_CATEGORIES, buildConditionsBlock, countWords, MAX_CONDITION_WORDS } from '../lib/bankStatementPrompt.js';
 import { gemini, GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, costForModel } from '../lib/gemini.js';
@@ -1269,7 +1269,7 @@ router.post(
         // helper since they're inherently single-page.
         const fullPrompt = `${conditionsBlock}${BANK_STATEMENT_PROMPT}`;
         try {
-          const visionResult = await extractVisionWithFallback<ExtractedStatement>(
+          const visionResult = await extractClaudeVision<ExtractedStatement>(
             req.file.buffer,
             mimeType,
             fullPrompt,
