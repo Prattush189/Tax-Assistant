@@ -97,6 +97,15 @@ export interface PdfPaymentData {
    *  for the few cases the field is absent (e.g. a hypothetical row
    *  that pre-dates the migration but skipped the backfill). */
   invoiceNumber?: number | null;
+  /** How the payment was made — used to render the "Payment Mode" line
+   *  on the invoice. 'razorpay' (default), 'cash' / 'cheque' / 'neft' /
+   *  'imps' / 'upi' / 'rtgs' / 'card' / 'other'. Falls back to
+   *  'Online (Razorpay)' when null/undefined for back-compat with old
+   *  rows that pre-date the offline-payment column. */
+  paymentMethod?: string | null;
+  /** Free-text reference (cheque number, NEFT UTR, UPI ref) appended
+   *  after the method label when present. */
+  paymentReference?: string | null;
 }
 
 export interface PdfBuyer {
@@ -124,6 +133,26 @@ function docNo(id: string, invoiceNumber?: number | null): string {
 
 function planLabel(plan: string, billing: string): string {
   return `${COMPANY_BRAND} ${plan === 'pro' ? 'Pro' : 'Enterprise'} Plan - ${billing === 'monthly' ? 'Monthly' : 'Yearly'}`;
+}
+
+/** Human-readable Payment Mode string for the invoice footer. */
+function paymentModeLabel(method?: string | null, reference?: string | null): string {
+  const m = (method ?? '').toLowerCase().trim();
+  let base: string;
+  switch (m) {
+    case 'cash':     base = 'Cash'; break;
+    case 'cheque':   base = 'Cheque'; break;
+    case 'neft':     base = 'NEFT'; break;
+    case 'imps':     base = 'IMPS'; break;
+    case 'upi':      base = 'UPI'; break;
+    case 'rtgs':     base = 'RTGS'; break;
+    case 'card':     base = 'Card'; break;
+    case 'other':    base = 'Other'; break;
+    case 'razorpay': base = 'Online (Razorpay)'; break;
+    default:         base = 'Online (Razorpay)';
+  }
+  const ref = (reference ?? '').trim();
+  return ref ? `${base} (Ref: ${ref})` : base;
 }
 
 function fmtDate(iso: string | null): string {
@@ -372,7 +401,7 @@ export function buildInvoiceBuffer(payment: PdfPaymentData, buyer: PdfBuyer): Bu
   doc.text('Total (INR):', tCol, y); doc.text(fmt(total), R - 2, y, { align: 'right' }); y += 14;
 
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(80, 80, 80);
-  doc.text('Payment Mode: Online (Razorpay)', L, y); y += 5;
+  doc.text('Payment Mode: ' + paymentModeLabel(payment.paymentMethod, payment.paymentReference), L, y); y += 5;
   doc.text('Payment Date: ' + fmtDate(payment.paidAt), L, y); y += 5;
   if (payment.expiresAt) { doc.text('Plan Valid Until: ' + fmtDate(payment.expiresAt), L, y); y += 5; }
   y += 4;

@@ -800,6 +800,8 @@ router.get('/payments/:id/:kind(invoice|receipt).pdf', async (req: AuthRequest, 
     id: pay.id, plan: pay.plan, billing: pay.billing,
     amount: pay.amount, paidAt: pay.paid_at, expiresAt: pay.expires_at,
     invoiceNumber: pay.invoice_number,
+      paymentMethod: pay.payment_method,
+      paymentReference: pay.payment_reference,
   }, { name: buyer.name ?? '', email: buyer.email ?? '', billingDetails });
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="${kind}-${pay.id}.pdf"`);
