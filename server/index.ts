@@ -133,6 +133,16 @@ app.use('/api/invitations', publicInvitationRouter);
 // authMiddleware below or the user-JWT gate rejects external calls.
 app.use('/api/external', externalRouter);
 
+// Public document download — gated by a self-signed JWT in the URL,
+// not user auth. Browsers can't safely attach the server-side
+// EXTKEY to a fetch, so the dealer console at assist.smartbizin.com
+// hands the documentUrl returned by /api/external/licenses to a
+// browser as-is and the route below verifies the URL token. Must
+// be mounted BEFORE the global authMiddleware gate or the JWT
+// check below rejects the request with "Invalid or expired token".
+// See lib/documentDownloadToken.ts for the signing scheme.
+app.use('/api/documents', documentDownloadRouter);
+
 // All remaining API routes require auth
 app.use('/api', authMiddleware);
 // Trial gate — free-plan users blocked after 30 days (exempt: auth, usage, payments)
@@ -159,13 +169,6 @@ app.use('/api/ledger-scrutiny', ledgerScrutinyLimiter, ledgerScrutinyRouter);
 app.use('/api/invitations', invitationsRouter);
 app.use('/api/payments', paymentsRouter);
 app.use('/api/billing-details', billingDetailsRouter);
-
-// Public document download — gated by a self-signed JWT in the URL,
-// not user auth. Mounted BEFORE the admin/external routers so a
-// dealer console can hand the documentUrl to a browser without
-// needing to ferry server-side credentials. See
-// lib/documentDownloadToken.ts for the signing scheme.
-app.use('/api/documents', documentDownloadRouter);
 
 // Admin — requires auth + admin role
 app.use('/api/admin', authMiddleware, adminMiddleware, adminRouter);

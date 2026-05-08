@@ -2585,7 +2585,14 @@ export async function deleteLedgerComparison(id: string): Promise<void> {
  *  ExtractedLedger without running the scrutiny audit. Compare mode
  *  uses this when one side is a Finsys / scanned PDF the
  *  deterministic grid extractor can't handle — feeds the result
- *  back into createLedgerComparison as preExtractedA/B. */
+ *  back into createLedgerComparison as preExtractedA/B.
+ *
+ *  Uses raw fetch (NOT authFetch) because authFetch hard-codes
+ *  Content-Type: application/json which collides with the
+ *  multipart/form-data the browser auto-generates for FormData
+ *  bodies. The server's body-parser ends up trying to JSON.parse
+ *  the multipart boundary ("Unexpected token '-', '------WebK'..."
+ *  in production logs). Same pattern as uploadLedgerScrutinyPdf. */
 export async function extractLedgerViaVision(file: File): Promise<{
   id: string;
   status: string;
@@ -2612,10 +2619,31 @@ export async function extractLedgerViaVision(file: File): Promise<{
     }>;
   };
 }> {
-  const form = new FormData();
-  form.append('file', file);
-  return authFetch('/api/ledger-scrutiny/upload?extractOnly=1', {
+  const formData = new FormData();
+  formData.append('file', file);
+  // 10-minute cap — vision-extract on a 30-50 page Finsys ledger
+  // typically lands in 2-5 min; the cap is just to stop a stalled
+  // request from hanging the dialog forever.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 600_000);
+  const doFetch = () => fetch('/api/ledger-scrutiny/upload?extractOnly=1', {
     method: 'POST',
-    body: form,
+    headers: { ...getAuthHeaders() },
+    body: formData,
+    signal: controller.signal,
   });
+  try {
+    let res = await doFetch();
+    if (res.status === 401) {
+      const refreshed = await tryRefreshToken();
+      if (refreshed) res = await doFetch();
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error ?? `Vision extract failed (${res.status})`);
+    }
+    return data;
+  } finally {
+    clearTimeout(timer);
+  }
 }

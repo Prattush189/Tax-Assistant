@@ -973,10 +973,38 @@ export function inferFiscalYearStart(rows: string[][]): number | null {
  *  separator. ALL Busy / Tally / Marg column headers are covered. */
 const COLUMN_HEADER_KEYWORD = /\b(date|narration|particulars|description|debit|credit|balance|chq|cheque|voucher|vch\.?\s*no|amount|reference|ref|utr|type|^b$)\b/i;
 
+/** Build a Set of recurring page-banner texts. Texts that appear ≥3
+ *  times across the first 200 grid rows are treated as banners
+ *  (company name, address, "Ledger" title, period header, column
+ *  headers) — they're rejected as account-name candidates by
+ *  detectAccountHeader regardless of whether they pass other
+ *  filters. Catches the failure mode where the assessee's own
+ *  business name + address recur on every page-break and bucket
+ *  thousands of transactions under "<COMPANY> — <ADDRESS>" as a
+ *  phantom account (e.g. "H A OVERSEAS — 8A/125, KAROL BAGH, DELHI"
+ *  with 7,137 transactions on a real Busy ledger). 200-row scan is
+ *  enough to cover ~3 page-breaks on a typical export. */
+function buildBannerTextSet(rows: string[][]): Set<string> {
+  const counts = new Map<string, number>();
+  const SCAN_LIMIT = Math.min(200, rows.length);
+  for (let i = 0; i < SCAN_LIMIT; i++) {
+    for (const cell of rows[i]) {
+      const t = (cell ?? '').trim().toLowerCase();
+      if (t.length >= 3) counts.set(t, (counts.get(t) ?? 0) + 1);
+    }
+  }
+  const banner = new Set<string>();
+  for (const [text, count] of counts) {
+    if (count >= 3) banner.add(text);
+  }
+  return banner;
+}
+
 function detectAccountHeader(
   row: string[],
   colByRole: Map<ColumnRole, number>,
   defaultYear?: number,
+  bannerTexts?: Set<string>,
 ): string | null {
   const cell = (role: ColumnRole): string => {
     const i = colByRole.get(role);
@@ -1037,11 +1065,21 @@ function detectAccountHeader(
   if (/^[A-Z]{2,5}\/[\dA-Z\-/]+$/i.test(candidate)) return null;
 
   // Reject page-banner rows that recur on every page of a multi-page
-  // export. Without this guard the recurring "GSTIN: A/F" / "Ledger"
-  // / "Period : ..." lines on each page break each became their own
-  // pseudo-account in the audit.
+  // export. Two checks:
+  //   1. LEDGER_BANNER: catches keyword-anchored banner text like
+  //      "GSTIN: ...", "Period : ...", bare "Ledger", "Page No.",
+  //      "Statement of Account".
+  //   2. bannerTexts (built per-document by buildBannerTextSet):
+  //      catches FREE-FORM banner text — the assessee's company name
+  //      and address — that appears on every page-break and would
+  //      otherwise be picked up as an account name. The first time
+  //      these appear becomes the initial lastAccount, swallowing
+  //      every transaction before the first real account header
+  //      ("A R ENTERPRISES" etc.). Catches the H A OVERSEAS / 8A/125
+  //      KAROL BAGH DELHI phantom account that logged 7,137 txns.
   const LEDGER_BANNER = /^(?:gstin\s*[:.]|period\s*[:.]|ledger(?:\s+account)?$|page\s+no\.?|statement\s+of\s+account|generated\s+by|printed\s+on)/i;
   if (LEDGER_BANNER.test(candidate)) return null;
+  if (bannerTexts && bannerTexts.has(candidate.toLowerCase())) return null;
 
   // Strip Tally's leading dash and trim.
   let name = candidate.replace(/^[\s\-•]+/, '').trim();
@@ -1214,6 +1252,13 @@ export function applyMapping(
   // accounts (KPT, DELHI, ZIRA, PATTI, BIHAR, ...) the audit kept
   // surfacing on multi-page exports.
   let inContinuationBlock = false;
+  // Per-document set of recurring banner-row texts (assessee's
+  // company name + address + recurring page-header content).
+  // Computed once before the main loop; consulted inside
+  // detectAccountHeader to reject those texts as account-name
+  // candidates. Bank-side doesn't use account headers so this scan
+  // is ledger-only.
+  const bannerTexts = kind === 'ledger' ? buildBannerTextSet(grid.rows) : undefined;
   // Last successfully-emitted balance — used as the fallback source
   // for an amount when the row's debit/credit cells lost the value
   // to pdfjs column-clustering (small charges like ₹0.03 / ₹5 / ₹7
@@ -1434,7 +1479,7 @@ export function applyMapping(
       // account, ballooning the audit's account count from ~30 real
       // accounts to "677 accounts" of which most were bill numbers.
       if (pending === null) {
-        const headerName = detectAccountHeader(row, colByRole, inferredYear ?? undefined);
+        const headerName = detectAccountHeader(row, colByRole, inferredYear ?? undefined, bannerTexts);
         if (headerName) {
           // If the previous row was also an account header, this is
           // the second line of a multi-line Busy header (city /
