@@ -31,6 +31,7 @@ const BASE_ROLES: Array<{
 }> = [
   { value: 'skip',       bankLabel: 'Skip / Ignore',                 ledgerLabel: 'Skip / Ignore' },
   { value: 'date',       bankLabel: 'Date',                          ledgerLabel: 'Date' },
+  { value: 'valueDate',  bankLabel: 'Value Date / Posting Date',     ledgerLabel: 'Value Date / Posting Date' },
   { value: 'narration',  bankLabel: 'Narration / Description',       ledgerLabel: 'Narration / Particulars' },
   { value: 'debit',      bankLabel: 'Debit (Withdrawal)',            ledgerLabel: 'Debit (Dr)' },
   { value: 'credit',     bankLabel: 'Credit (Deposit)',              ledgerLabel: 'Credit (Cr)' },

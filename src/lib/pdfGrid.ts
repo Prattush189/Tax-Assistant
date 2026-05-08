@@ -486,12 +486,22 @@ export async function extractPdfGrid(file: File, password?: string): Promise<Pdf
           .map(c => c.right);
 
         // Fold each data-derived numeric column into the header-derived
-        // anchors. Match by right-edge proximity; if no header anchor
-        // is within 8 units of a data cluster, insert a fresh anchor.
+        // anchors. Pick the NEAREST right-aligned anchor within 16
+        // units — bumped from 8 because a right-aligned header word
+        // can sit up to ~12 units left of where the data column visually
+        // ends (HDFC's "Deposit Amt." header right-edge is at 535.9 but
+        // deposits right-align at 548.2). 8 was tight enough to leave
+        // those clusters orphaned, producing a phantom null-header
+        // column wedged between Deposit and Balance.
         for (const dataRight of dataNumericColumns) {
-          const matchIdx = columnAnchors.findIndex(a =>
-            a.align === 'right' && Math.abs(a.x - dataRight) <= 8,
-          );
+          let matchIdx = -1;
+          let matchDist = 16;
+          for (let i = 0; i < columnAnchors.length; i++) {
+            const a = columnAnchors[i];
+            if (a.align !== 'right') continue;
+            const d = Math.abs(a.x - dataRight);
+            if (d < matchDist) { matchDist = d; matchIdx = i; }
+          }
           if (matchIdx === -1) {
             // New numeric column the header missed. Mark it with no
             // header text — suggestMapping will leave it as 'skip'
@@ -610,15 +620,26 @@ export async function extractPdfGrid(file: File, password?: string): Promise<Pdf
         }
       }
 
-      // Pass B — when a left-aligned column ended up with zero or
-      // near-zero items, look LEFT for the most-recent left-aligned
-      // sibling that has plenty (we may need to skip over a numeric
-      // anchor that landed between them after data-augmentation).
-      // Detect bimodal x-distribution there and split.
+      // Pass B — split a donor column that captures BOTH its own data
+      // AND data that visually belongs to the next column. The HDFC
+      // case: Date anchor at x=39.9 owns "01/04/25" tokens (x≈33) AND
+      // narration starts at x≈68 because Narration's anchor sits 76
+      // units further right at x=144 — so x=68 lands in Date by
+      // nearest-anchor proximity. Date's provisional set is bimodal
+      // (33,68) with a clean 34-unit gap; snap Narration's leftX from
+      // 144 to 68 and the next round of cell assignment redistributes
+      // correctly.
+      //
+      // Earlier this only ran when cur had near-zero items, but in
+      // long statements a few stray narration items DO land in cur
+      // (e.g. centered narration aligned near the original header x),
+      // so cur.length crosses the >=3 threshold and Pass B was
+      // skipped. Now we always run when the donor is bimodal AND
+      // moving cur leftward to the upper cluster would actually take
+      // items off the donor (upperStart < cur.leftX - 4).
       for (let c = 1; c < columnAnchors.length; c++) {
         const cur = columnAnchors[c];
         if (cur.align !== 'left') continue;
-        if (provisional[c].length >= 3) continue; // already populated
         // Walk left to the nearest left-aligned, populated sibling.
         let donorIdx = -1;
         for (let p = c - 1; p >= 0; p--) {
@@ -642,7 +663,29 @@ export async function extractPdfGrid(file: File, password?: string): Promise<Pdf
           const upperStart = sorted[bestSplitAt];
           const upperCount = sorted.length - bestSplitAt;
           const lowerCount = bestSplitAt;
-          if (upperCount >= 3 && lowerCount >= 3 && upperStart > prev.leftX + 6) {
+          // Two guards beyond the geometric ones:
+          // (a) upper cluster sits meaningfully LEFT of cur (no rightward
+          //     snap; no shrink when cur is already at the cluster).
+          // (b) the upper cluster is large RELATIVE to what cur already
+          //     captured. Without this, a long statement where cur
+          //     legitimately has its own data triggers a false snap on
+          //     a small bimodal blip in the donor (HDFC: Chq./Ref.No.
+          //     has 700+ ref-number items, but a 3-item tail in
+          //     Narration's data can otherwise drag Chq./Ref.No.
+          //     leftward and steal its items). For a populated cur we
+          //     require upper cluster ≥ 2× cur's current count; for a
+          //     near-empty cur we require upper cluster to be in cur's
+          //     half of the donor-cur span (a simple midpoint test) —
+          //     otherwise the upper cluster more likely belongs to a
+          //     MISSING column adjacent to the donor (Axis: S.No.
+          //     items got bucketed into Date because no S.No. anchor
+          //     exists; the upper cluster there are dates, not Cheque
+          //     data).
+          const curCount = provisional[c].length;
+          const ratioOk = curCount >= 5
+            ? upperCount >= 2 * curCount
+            : upperStart > (prev.leftX + cur.leftX) / 2;
+          if (upperCount >= 3 && lowerCount >= 3 && upperStart > prev.leftX + 6 && upperStart < cur.leftX - 4 && ratioOk) {
             if (debug) {
               console.log(`[pdfGrid] Pass B split: col ${donorIdx} (header="${prev.headerText}") had bimodal x-distribution; gap=${bestGap.toFixed(1)} at upperStart=${upperStart.toFixed(1)} (lowerCount=${lowerCount}, upperCount=${upperCount}). Snapping col ${c} (header="${cur.headerText}") leftX from ${cur.leftX.toFixed(1)} to ${upperStart.toFixed(1)}.`);
             }
@@ -736,6 +779,10 @@ export async function extractPdfGrid(file: File, password?: string): Promise<Pdf
 export type ColumnRole =
   | 'skip'
   | 'date'
+  | 'valueDate'     // bank-internal posting date — kept distinct from
+                    // the transaction date so users can see it
+                    // labelled correctly in the wizard. Treated as
+                    // skip by applyMapping (no signed amount derived).
   | 'narration'
   | 'voucher'
   | 'reference'
@@ -1568,7 +1615,7 @@ function roleFromHeader(header: string): ColumnRole | null {
   // "Value Date" / "Value Dt" / "Val Dt" — bank-internal posting date,
   // not the transaction date the user wants to report on. Skip so the
   // real Date column wins.
-  if (/\bvalue\s*(?:date|dt)\b|\bval\.?\s*dt\b|\bposting\s*date\b/.test(h)) return 'skip';
+  if (/\bvalue\s*(?:date|dt)\b|\bval\.?\s*dt\b|\bposting\s*date\b/.test(h)) return 'valueDate';
   // "Closing Balance" / "Running Balance" / "Balance"
   if (/\b(closing|running)\s*bal\w*\b|^bal\w*$|^balance\b/.test(h)) return 'balance';
   // Withdrawal / Debit / Dr Amount
