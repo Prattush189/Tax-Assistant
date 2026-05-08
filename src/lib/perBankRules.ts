@@ -16,7 +16,7 @@
  * yet.
  */
 
-import type { ColumnMapping, ColumnRole, PdfGrid } from './pdfGrid';
+import { parseDate, type ColumnMapping, type ColumnRole, type PdfGrid } from './pdfGrid';
 
 interface BankRule {
   /** Display name surfaced in console + future UI hints. */
@@ -144,6 +144,32 @@ export function detectAndMapBank(grid: PdfGrid | null): DetectedBankMapping | nu
         `[perBankRules] ${rule.name} fingerprint matched but required role "${r}" missing. Headers: ${headers.map(h => `"${h ?? ''}"`).join(', ')}. Falling back to wizard / vision.`,
       );
       return null;
+    }
+  }
+
+  // Trust-but-verify: the rule maps columns by header text, but the
+  // grid extractor sometimes merges adjacent narrow columns (S.No. +
+  // Transaction Date in ICICI's compact layout collapses into one
+  // column whose cells look like "1 30.04.2026" — parseDate then
+  // fails because the leading sequence number isn't a date prefix).
+  // Sample only rows where the date column has text (headers/footers
+  // legitimately have empty date columns and shouldn't drag the
+  // parse-rate down). Bail if more than half the populated date
+  // cells fail to parse — the headers lied about column boundaries.
+  const dateCol = roles.indexOf('date');
+  if (dateCol >= 0) {
+    const samples = grid.rows
+      .slice(1)
+      .filter(r => (r[dateCol] ?? '').trim() !== '')
+      .slice(0, 10);
+    if (samples.length > 0) {
+      const hits = samples.filter(r => parseDate((r[dateCol] ?? '').trim())).length;
+      if (hits < Math.max(2, Math.ceil(samples.length / 2))) {
+        console.warn(
+          `[perBankRules] ${rule.name} fingerprint + headers matched but column ${dateCol} ("${headers[dateCol] ?? ''}") only had ${hits}/${samples.length} parseable date rows — likely a merged S.No.+Date column. Falling back to wizard.`,
+        );
+        return null;
+      }
     }
   }
 

@@ -19,6 +19,7 @@ import {
   type ColumnMapping,
   type PdfGrid,
 } from '../../lib/pdfGrid';
+import { detectAndMapLedgerErp } from '../../lib/perLedgerErpRules';
 import {
   createLedgerComparison,
   type LedgerComparisonReport,
@@ -211,6 +212,17 @@ export function LedgerCompareView() {
     try {
       const grid = await extractPdfGrid(file);
       if (grid && grid.rows.length >= 3) {
+        // Per-ERP deterministic auto-mapping. If the grid matches a
+        // known Tally / Busy / Marg / Finsys layout, skip the wizard
+        // and apply the mapping directly. Same shortcut the single-
+        // ledger uploader uses; on a miss we fall through to the
+        // wizard below.
+        const detected = detectAndMapLedgerErp(grid);
+        if (detected) {
+          console.log(`[LedgerCompareView] side ${side} auto-mapped as ${detected.erp}`);
+          applyAndStore(side, grid, detected.mapping, file.name, detected.erp);
+          return;
+        }
         setPendingGrid({ side, grid, filename: file.name });
         return;
       }
@@ -221,10 +233,18 @@ export function LedgerCompareView() {
     }
   };
 
-  const handleMappingConfirm = (mapping: ColumnMapping) => {
-    if (!pendingGrid) return;
-    const { side, grid, filename } = pendingGrid;
-    setPendingGrid(null);
+  /** Shared finish path. Used by both the per-ERP auto-mapping
+   *  shortcut (no wizard) and the user-confirmed wizard mapping.
+   *  Pulls the extracted ledger into the relevant side's state and
+   *  surfaces the transaction count + ERP name (when auto-detected)
+   *  so the user can see which side mapped automatically. */
+  const applyAndStore = (
+    side: Side,
+    grid: PdfGrid,
+    mapping: ColumnMapping,
+    filename: string,
+    autoErp?: string,
+  ) => {
     const { rows: mapped, stats } = applyMapping(grid, mapping, 'ledger');
     if (mapped.length === 0) {
       const reason = stats.skippedNoAmount > 0
@@ -241,7 +261,15 @@ export function LedgerCompareView() {
     } else {
       setSideB(prev => ({ ...prev, filename, extracted }));
     }
-    toast.success(`Side ${side}: ${mapped.length.toLocaleString('en-IN')} transactions ready.`);
+    const prefix = autoErp ? `${autoErp} — ` : '';
+    toast.success(`Side ${side}: ${prefix}${mapped.length.toLocaleString('en-IN')} transactions ready.`);
+  };
+
+  const handleMappingConfirm = (mapping: ColumnMapping) => {
+    if (!pendingGrid) return;
+    const { side, grid, filename } = pendingGrid;
+    setPendingGrid(null);
+    applyAndStore(side, grid, mapping, filename);
   };
 
   const canCompare = !!sideA.extracted && !!sideB.extracted && !comparing;

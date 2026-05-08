@@ -41,7 +41,7 @@
  *                 voucher types.
  */
 
-import type { ColumnMapping, ColumnRole, PdfGrid } from './pdfGrid';
+import { inferFiscalYearStart, parseDate, type ColumnMapping, type ColumnRole, type PdfGrid } from './pdfGrid';
 
 interface ErpRule {
   /** Display name surfaced in the success toast and console logs. */
@@ -199,6 +199,37 @@ export function detectAndMapLedgerErp(grid: PdfGrid | null): DetectedErpMapping 
         `[perLedgerErpRules] ${rule.name} fingerprint matched but required role "${r}" missing. Headers: ${headers.map(h => `"${h ?? ''}"`).join(', ')}. Falling back to wizard.`,
       );
       return null;
+    }
+  }
+
+  // Trust-but-verify: confirm the column the rule assigned to 'date'
+  // actually contains parseable dates. If the extractor merged a
+  // narrow neighbour into the date column (e.g. an S.No. column
+  // bleeds in and cells become "1 09/04/2025"), parseDate would fail
+  // for every row and applyMapping would drop all transactions.
+  //
+  // Sample only rows where the date column has text — ledger PDFs
+  // are full of header / continuation / totals rows with an empty
+  // date column that would otherwise drag the parse-rate below
+  // threshold for entirely benign reasons. The failure mode we're
+  // catching is a NON-EMPTY date column whose contents don't parse.
+  // Tally compact dates ("Apr 1") need a defaultYear — pull it from
+  // the period header via inferFiscalYearStart.
+  const dateCol = roles.indexOf('date');
+  if (dateCol >= 0) {
+    const defaultYear = inferFiscalYearStart(grid.rows) ?? undefined;
+    const samples = grid.rows
+      .slice(1)
+      .filter(r => (r[dateCol] ?? '').trim() !== '')
+      .slice(0, 10);
+    if (samples.length > 0) {
+      const hits = samples.filter(r => parseDate((r[dateCol] ?? '').trim(), defaultYear)).length;
+      if (hits < Math.max(2, Math.ceil(samples.length / 2))) {
+        console.warn(
+          `[perLedgerErpRules] ${rule.name} fingerprint + headers matched but column ${dateCol} ("${headers[dateCol] ?? ''}") only had ${hits}/${samples.length} parseable date rows — likely a merged column. Falling back to wizard.`,
+        );
+        return null;
+      }
     }
   }
 

@@ -1127,6 +1127,15 @@ export function applyMapping(
   }
   let pending: PendingBlock | null = null;
   let lastAccount: string | null = null;
+  // Tracks whether the immediately-previous row was an account-header
+  // row. Busy ledgers print account headers across two consecutive
+  // rows — company name on one ("A R ENTERPRISES") and city/branch
+  // on the next ("KAPURTHALA"). Without this flag the second row
+  // overwrites lastAccount and every transaction gets labelled with
+  // the city instead of the company. When the flag is set, the next
+  // header row appends to the previous name with " — " instead of
+  // replacing it.
+  let prevRowWasAccountHeader = false;
   // Last successfully-emitted balance — used as the fallback source
   // for an amount when the row's debit/credit cells lost the value
   // to pdfjs column-clustering (small charges like ₹0.03 / ₹5 / ₹7
@@ -1288,10 +1297,17 @@ export function applyMapping(
       const headerName = detectAccountHeader(row, colByRole, inferredYear ?? undefined);
       if (headerName) {
         flushPending();
-        lastAccount = headerName;
+        // If the previous row was also an account header, this is the
+        // second line of a multi-line Busy header (city / branch under
+        // the company name) — concatenate so we keep both.
+        lastAccount = prevRowWasAccountHeader && lastAccount
+          ? `${lastAccount} — ${headerName}`
+          : headerName;
+        prevRowWasAccountHeader = true;
         stats.accountHeaders += 1;
         continue;
       }
+      prevRowWasAccountHeader = false;
     }
 
     const dateRaw = cell('date');
