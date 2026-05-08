@@ -138,20 +138,39 @@ export const paymentRepo = {
     return result.changes > 0;
   },
 
-  /** Stamp payment_method='razorpay' on historic Razorpay rows that
-   *  predate the explicit-method change. Idempotent: only touches
-   *  rows where payment_method IS NULL and razorpay_order_id starts
-   *  with 'order_' (the Razorpay format) — offline rows use
-   *  'offline_…' so they're skipped. */
+  /** Stamp payment_method on historic rows that predate the explicit-
+   *  method capture, in two passes so admin reports + assist's METHOD
+   *  column stop showing dashes for paid rows.
+   *
+   *  Pass 1 — Razorpay rows (razorpay_order_id LIKE 'order_%'): set
+   *  to 'razorpay'. Idempotent.
+   *
+   *  Pass 2 — offline rows (razorpay_order_id LIKE 'offline_%'): set
+   *  to 'other'. We don't know the actual method (cash / cheque /
+   *  UPI / etc.) from the row alone, but 'other' is honest — the
+   *  admin didn't record the method when issuing the license, and
+   *  'other' carries that fact through to the dealer console
+   *  instead of a blank cell that reads as broken plumbing. Newer
+   *  offline rows record the method explicitly via the Generate
+   *  License dialog so this only touches the historic gap. */
   backfillRazorpayMethod(): void {
-    const result = db.prepare(`
+    const razorpayResult = db.prepare(`
       UPDATE payments
       SET payment_method = 'razorpay'
       WHERE payment_method IS NULL
         AND razorpay_order_id LIKE 'order_%'
     `).run();
-    if (result.changes > 0) {
-      console.log(`[paymentRepo] backfilled payment_method='razorpay' on ${result.changes} historic rows`);
+    if (razorpayResult.changes > 0) {
+      console.log(`[paymentRepo] backfilled payment_method='razorpay' on ${razorpayResult.changes} historic rows`);
+    }
+    const offlineResult = db.prepare(`
+      UPDATE payments
+      SET payment_method = 'other'
+      WHERE payment_method IS NULL
+        AND razorpay_order_id LIKE 'offline_%'
+    `).run();
+    if (offlineResult.changes > 0) {
+      console.log(`[paymentRepo] backfilled payment_method='other' on ${offlineResult.changes} historic offline rows`);
     }
   },
 

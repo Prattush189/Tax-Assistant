@@ -326,7 +326,29 @@ router.get('/payments', (req: ExternalApiRequest, res: Response) => {
   // Dealers only see successfully-paid rows. Abandoned/failed Razorpay
   // attempts (status='created' / 'failed') stay out of the dealer view.
   const { rows, total } = paymentRepo.findAllForAdmin({ search, limit, offset, paidOnly: true });
-  res.json({ rows, total, page, limit });
+  // Read-time payment-method inference. Defence in depth — even if a
+  // row somehow slipped past the boot backfill, never hand assist a
+  // null payment_method on a paid row. Razorpay order IDs start with
+  // 'order_'; offline order IDs start with 'offline_'. Offline rows
+  // whose actual method (cash / cheque / UPI / etc) wasn't captured
+  // get 'other'. Both snake_case and camelCase emitted to match the
+  // dealer console's fallback chain (method / paymentMethod /
+  // payment_method) regardless of which name they pick.
+  const inferMethod = (r: { payment_method: string | null; razorpay_order_id: string | null }): string => {
+    if (r.payment_method) return r.payment_method;
+    if ((r.razorpay_order_id ?? '').startsWith('order_')) return 'razorpay';
+    if ((r.razorpay_order_id ?? '').startsWith('offline_')) return 'other';
+    return 'other';
+  };
+  const enriched = rows.map(r => {
+    const method = inferMethod(r);
+    return {
+      ...r,
+      payment_method: method,
+      paymentMethod: method,
+    };
+  });
+  res.json({ rows: enriched, total, page, limit });
 });
 
 router.get('/payments/:id/:kind(invoice|receipt|proforma).pdf', async (req: ExternalApiRequest, res: Response) => {
