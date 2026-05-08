@@ -208,6 +208,42 @@ export function BankStatementUploader({ manager }: Props) {
       setIsReadingPdf(true);
       try {
         const grid = await extractPdfGrid(file);
+        // Bank fingerprint shortcut: a few Indian banks ship layouts
+        // where the deterministic wizard mis-extracts even when it
+        // surfaces "enough" columns — Canara stacks UPI narrations
+        // onto 4-6 visual lines that look like phantom rows; ICICI
+        // uses a multi-row header that bleeds into data; BoB packs
+        // all transaction text into one column. For these, skip the
+        // wizard and route straight to AI vision (Gemini 3.1) which
+        // handles arbitrary layouts. HDFC and Axis come through
+        // cleanly so they keep using the wizard.
+        const KNOWN_VISION_ONLY_BANKS = [
+          'canara bank', 'canara',
+          'bank of baroda', 'bob',
+          'icici bank',
+          'union bank',
+          'pnb', 'punjab national bank',
+          'central bank of india',
+          'bank of india',
+          'indian bank',
+          'idbi',
+        ];
+        const fingerprint = grid
+          ? grid.rows.slice(0, 30).flat().join(' ').toLowerCase()
+          : '';
+        const matchedBank = KNOWN_VISION_ONLY_BANKS.find(b => fingerprint.includes(b));
+        if (matchedBank) {
+          console.log(`[BankStatementUploader] detected ${matchedBank} — routing to vision (known-difficult layout)`);
+          const pageCount = await countPdfPagesClient(file) ?? 0;
+          setIsReadingPdf(false);
+          if (pageCount > 100) {
+            setPdfTooLarge({ file, pageCount });
+            return;
+          }
+          setPendingScannedPdf(file);
+          return;
+        }
+
         // Heuristic: if the grid extractor finds <5 columns, the
         // wizard is going to merge important columns (Date+Narration,
         // Withdrawal+Deposit collapsed, etc.). Auto-route to AI
