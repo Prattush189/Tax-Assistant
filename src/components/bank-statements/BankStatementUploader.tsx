@@ -18,6 +18,7 @@ import {
   type ColumnMapping,
   type PdfGrid,
 } from '../../lib/pdfGrid';
+import { detectAndMapBank } from '../../lib/perBankRules';
 import { PasswordPromptDialog } from '../shared/PasswordPromptDialog';
 
 function AnalyzeProgressBar({
@@ -208,19 +209,28 @@ export function BankStatementUploader({ manager }: Props) {
       setIsReadingPdf(true);
       try {
         const grid = await extractPdfGrid(file);
-        // Bank fingerprint shortcut: a few Indian banks ship layouts
-        // where the deterministic wizard mis-extracts even when it
-        // surfaces "enough" columns — Canara stacks UPI narrations
-        // onto 4-6 visual lines that look like phantom rows; ICICI
-        // uses a multi-row header that bleeds into data; BoB packs
-        // all transaction text into one column. For these, skip the
-        // wizard and route straight to AI vision (Gemini 3.1) which
-        // handles arbitrary layouts. HDFC and Axis come through
-        // cleanly so they keep using the wizard.
+
+        // Per-bank deterministic column rule. HDFC / ICICI / Canara
+        // have stable header layouts; if the grid extracted cleanly
+        // we can map columns from the bank-specific header→role
+        // table and skip both the wizard and AI vision. Vision is
+        // reserved for genuinely unreadable PDFs.
+        const detected = detectAndMapBank(grid);
+        if (detected && grid) {
+          console.log(`[BankStatementUploader] auto-mapped as ${detected.bank} via per-bank rule`);
+          setIsReadingPdf(false);
+          await submitMapping(grid, detected.mapping, file.name, `Auto-mapped ${detected.bank} layout`);
+          return;
+        }
+
+        // Bank fingerprint shortcut for layouts we don't yet have a
+        // per-bank rule for: BoB packs all transaction text into one
+        // column, Union/PNB/CBI/BoI/Indian Bank/IDBI ship multi-row
+        // headers that bleed into data. Route those straight to AI
+        // vision. HDFC / ICICI / Canara are NOT in this list — they
+        // hit the per-bank rule above.
         const KNOWN_VISION_ONLY_BANKS = [
-          'canara bank', 'canara',
           'bank of baroda', 'bob',
-          'icici bank',
           'union bank',
           'pnb', 'punjab national bank',
           'central bank of india',
@@ -298,10 +308,17 @@ export function BankStatementUploader({ manager }: Props) {
     }
   };
 
-  const handleMappingConfirm = async (mapping: ColumnMapping) => {
-    if (!pendingGrid) return;
-    const { grid, filename } = pendingGrid;
-    setPendingGrid(null);
+  /** Shared finish path for both the auto-mapping bank-rule shortcut
+   *  and the user-confirmed wizard mapping. Applies the mapping, surfaces
+   *  filter stats, builds the CSV, and submits to the analyze endpoint.
+   *  Set successPrefix to label the toast (e.g. "Auto-mapped HDFC Bank
+   *  layout — analyzed N transactions"). */
+  const submitMapping = async (
+    grid: PdfGrid,
+    mapping: ColumnMapping,
+    filename: string,
+    successPrefix?: string,
+  ) => {
     const { rows: mapped, stats } = applyMapping(grid, mapping, 'bank');
     if (mapped.length === 0) {
       const reason = stats.skippedNoAmount > 0
@@ -312,11 +329,6 @@ export function BankStatementUploader({ manager }: Props) {
       toast.error(`No transactions extracted. ${reason}`, { duration: 8000 });
       return;
     }
-    // Surface what was filtered so the user can see why the
-    // transaction count might be lower than the visual row count
-    // in the source PDF. Common case: opening / closing balance
-    // markers and wrapped narrations (no date) get correctly merged
-    // into the previous transaction.
     const filteredCount = stats.totalGridRows - stats.transactions;
     if (filteredCount > 0) {
       const parts: string[] = [];
@@ -333,12 +345,20 @@ export function BankStatementUploader({ manager }: Props) {
     const csv = mappedRowsToBankCsv(mapped);
     try {
       const result = await manager.analyzeCsv(csv, filename);
+      const prefix = successPrefix ? `${successPrefix} — ` : '';
       toast.success(result.alreadyAnalyzed
         ? `This statement was already analyzed earlier — opened the existing one (${result.transactions.length} transactions).`
-        : `Analyzed ${result.transactions.length} transactions deterministically (no AI sign assignment).`);
+        : `${prefix}analyzed ${result.transactions.length} transactions deterministically (no AI sign assignment).`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Analysis failed');
     }
+  };
+
+  const handleMappingConfirm = async (mapping: ColumnMapping) => {
+    if (!pendingGrid) return;
+    const { grid, filename } = pendingGrid;
+    setPendingGrid(null);
+    await submitMapping(grid, mapping, filename);
   };
 
   return (

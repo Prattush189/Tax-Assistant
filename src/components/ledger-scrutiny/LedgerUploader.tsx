@@ -19,6 +19,7 @@ import {
   type ColumnMapping,
   type PdfGrid,
 } from '../../lib/pdfGrid';
+import { detectAndMapLedgerErp } from '../../lib/perLedgerErpRules';
 
 interface Props {
   manager: LedgerScrutinyManager;
@@ -191,6 +192,20 @@ export function LedgerUploader({ manager }: Props) {
     setIsReadingPdf(true);
     try {
       const grid = await extractPdfGrid(file);
+
+      // Per-ERP deterministic column rule. Tally / Busy / Marg /
+      // Finsys exports have stable banner + header layouts; if grid
+      // extraction was clean we can map columns directly from the
+      // ERP-specific header→role table and skip the wizard. Mirrors
+      // the bank-statement auto-mapping shortcut.
+      const detected = detectAndMapLedgerErp(grid);
+      if (detected && grid) {
+        console.log(`[LedgerUploader] auto-mapped as ${detected.erp} via per-ERP rule`);
+        setIsReadingPdf(false);
+        await submitMapping(grid, detected.mapping, file.name, `Auto-mapped ${detected.erp} layout`);
+        return;
+      }
+
       // Auto-route to vision when the grid extractor surfaces <5
       // columns. Indian ledger PDFs (Tally / Busy / Marg) have 6-7
       // columns minimum (Date · Vch.No. · Particulars · Type · Debit
@@ -225,10 +240,17 @@ export function LedgerUploader({ manager }: Props) {
     }
   };
 
-  const handleMappingConfirm = async (mapping: ColumnMapping) => {
-    if (!pendingGrid) return;
-    const { grid, filename } = pendingGrid;
-    setPendingGrid(null);
+  /** Shared finish path for both the auto-mapping per-ERP rule
+   *  shortcut and the user-confirmed wizard mapping. Applies the
+   *  mapping, surfaces filter stats, builds the extracted ledger,
+   *  and submits to the audit endpoint. The optional successPrefix
+   *  labels the audit-running toast with the ERP name. */
+  const submitMapping = async (
+    grid: PdfGrid,
+    mapping: ColumnMapping,
+    filename: string,
+    successPrefix?: string,
+  ) => {
     const { rows: mapped, stats } = applyMapping(grid, mapping, 'ledger');
     if (mapped.length === 0) {
       const reason = stats.skippedNoAmount > 0
@@ -258,13 +280,21 @@ export function LedgerUploader({ manager }: Props) {
       toast.error('Could not detect any account headers (Tally-style "-Account Name" rows). The audit would treat all transactions as one account and produce wrong totals. Verify the PDF has account headers between blocks, or pre-split it.');
       return;
     }
-    toast(`Detected ${extracted.accounts.length.toLocaleString('en-IN')} account${extracted.accounts.length === 1 ? '' : 's'} · ${mapped.length.toLocaleString('en-IN')} transactions — running audit…`);
+    const prefix = successPrefix ? `${successPrefix} — ` : '';
+    toast(`${prefix}detected ${extracted.accounts.length.toLocaleString('en-IN')} account${extracted.accounts.length === 1 ? '' : 's'} · ${mapped.length.toLocaleString('en-IN')} transactions — running audit…`);
     try {
       const result = await manager.uploadMapped(extracted, filename);
       toast.success(`Audit complete: ${result.observations.length} observation${result.observations.length === 1 ? '' : 's'} across ${result.accounts.length} accounts`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Upload failed');
     }
+  };
+
+  const handleMappingConfirm = async (mapping: ColumnMapping) => {
+    if (!pendingGrid) return;
+    const { grid, filename } = pendingGrid;
+    setPendingGrid(null);
+    await submitMapping(grid, mapping, filename);
   };
 
   const currentStatus = manager.current?.job.status;

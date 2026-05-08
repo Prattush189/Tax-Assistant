@@ -6,7 +6,8 @@
       "Bash(npx vite:*)",
       "Bash(xargs grep:*)",
       "Bash(npx tsc:*)",
-      "Bash(npm uninstall:*)"
+      "Bash(npm uninstall:*)",
+      "Bash(node /tmp/inspect-pdf.mjs \"/c/Users/Prattush/Downloads/Statement - Suresh.pdf\")"
     ]
   }
 }
