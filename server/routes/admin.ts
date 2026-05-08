@@ -787,21 +787,28 @@ router.get('/payments', (req: AuthRequest, res: Response) => {
 
 // GET /api/admin/payments/:id/invoice.pdf — generate invoice on demand
 // GET /api/admin/payments/:id/receipt.pdf — generate receipt on demand
-router.get('/payments/:id/:kind(invoice|receipt).pdf', async (req: AuthRequest, res: Response) => {
-  const { id, kind } = req.params as { id: string; kind: 'invoice' | 'receipt' };
+router.get('/payments/:id/:kind(invoice|receipt|proforma).pdf', async (req: AuthRequest, res: Response) => {
+  const { id, kind } = req.params as { id: string; kind: 'invoice' | 'receipt' | 'proforma' };
   const pay = paymentRepo.findById(id);
   if (!pay) { res.status(404).json({ error: 'Payment not found' }); return; }
   const buyer = userRepo.findById(pay.user_id);
   if (!buyer) { res.status(404).json({ error: 'Payment user not found' }); return; }
+  const isCash = pay.payment_method === 'cash';
+  // Cash payments only get a proforma; non-cash payments only get
+  // tax invoice + receipt. Mismatch returns 404 so callers can't
+  // accidentally fetch the wrong document.
+  if (isCash && kind !== 'proforma') { res.status(404).json({ error: 'Cash payments only have a proforma invoice — use /proforma.pdf' }); return; }
+  if (!isCash && kind === 'proforma') { res.status(404).json({ error: 'Non-cash payments use tax invoice — use /invoice.pdf' }); return; }
   const billingDetails = userRepo.getBillingDetails(buyer.id);
-  const { buildInvoiceBuffer, buildReceiptBuffer } = await import('../lib/serverPdf.js');
-  const buildFn = kind === 'invoice' ? buildInvoiceBuffer : buildReceiptBuffer;
+  const { buildInvoiceBuffer, buildReceiptBuffer, buildProformaBuffer } = await import('../lib/serverPdf.js');
+  const buildFn = kind === 'invoice' ? buildInvoiceBuffer : kind === 'receipt' ? buildReceiptBuffer : buildProformaBuffer;
   const buffer = buildFn({
     id: pay.id, plan: pay.plan, billing: pay.billing,
     amount: pay.amount, paidAt: pay.paid_at, expiresAt: pay.expires_at,
     invoiceNumber: pay.invoice_number,
-      paymentMethod: pay.payment_method,
-      paymentReference: pay.payment_reference,
+    proformaNumber: pay.proforma_number,
+    paymentMethod: pay.payment_method,
+    paymentReference: pay.payment_reference,
   }, { name: buyer.name ?? '', email: buyer.email ?? '', billingDetails });
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="${kind}-${pay.id}.pdf"`);

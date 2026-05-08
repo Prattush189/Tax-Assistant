@@ -97,6 +97,9 @@ export interface PdfPaymentData {
    *  for the few cases the field is absent (e.g. a hypothetical row
    *  that pre-dates the migration but skipped the backfill). */
   invoiceNumber?: number | null;
+  /** Per-tenant proforma sequence — set on cash-paid rows instead of
+   *  invoice_number. Renders as "AIP-NNN" on the proforma PDF. */
+  proformaNumber?: number | null;
   /** How the payment was made — used to render the "Payment Mode" line
    *  on the invoice. 'razorpay' (default), 'cash' / 'cheque' / 'neft' /
    *  'imps' / 'upi' / 'rtgs' / 'card' / 'other'. Falls back to
@@ -129,6 +132,16 @@ function docNo(id: string, invoiceNumber?: number | null): string {
     return 'AI-' + String(invoiceNumber).padStart(3, '0');
   }
   return 'AI-' + id.slice(0, 10).toUpperCase();
+}
+
+/** Render the proforma number ("AIP-001"). Falls back to AIP-<id-prefix>
+ *  for rows that somehow ended up cash-paid before the proforma_number
+ *  column was added. */
+function proformaDocNo(id: string, proformaNumber?: number | null): string {
+  if (typeof proformaNumber === 'number' && Number.isFinite(proformaNumber) && proformaNumber > 0) {
+    return 'AIP-' + String(proformaNumber).padStart(3, '0');
+  }
+  return 'AIP-' + id.slice(0, 10).toUpperCase();
 }
 
 function planLabel(plan: string, billing: string): string {
@@ -413,5 +426,107 @@ export function buildInvoiceBuffer(payment: PdfPaymentData, buyer: PdfBuyer): Bu
     L, y);
 
   drawFooter(doc, 'This is a computer-generated tax invoice and does not require a physical signature.');
+  return toBuffer(doc);
+}
+
+// ── Proforma Invoice (cash payments only) ────────────────────────────────────
+//
+// Cash-paid licenses don't qualify for a tax invoice because there's no
+// formal settlement reference. We issue a proforma instead — same line
+// items + GST breakdown shown for the customer's records, but the
+// document is explicitly marked "PROFORMA INVOICE", numbered AIP-NNN,
+// and footnoted as non-binding for input-tax-credit claims.
+
+export function buildProformaBuffer(payment: PdfPaymentData, buyer: PdfBuyer): Buffer {
+  const doc = new jsPDF('p', 'mm', 'a4');
+  const W = doc.internal.pageSize.getWidth();
+  const L = 20, R = W - 20;
+  let y = 28;
+
+  drawHeader(doc, 'PROFORMA INVOICE');
+  doc.setTextColor(30, 30, 30);
+
+  doc.setFontSize(10); doc.setFont('helvetica', 'bold');
+  doc.text('Proforma No:', L, y); doc.setFont('helvetica', 'normal');
+  doc.text(proformaDocNo(payment.id, payment.proformaNumber), L + 28, y);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Date:', R - 52, y); doc.setFont('helvetica', 'normal');
+  doc.text(fmtDate(payment.paidAt), R - 41, y); y += 7;
+
+  doc.setFontSize(8.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(80, 80, 80);
+  doc.text(`SAC Code: 9983 (IT & software services)  |  Place of Supply: ${placeOfSupply(buyer.billingDetails)}`, L, y); y += 10;
+
+  doc.setDrawColor(220, 220, 220); doc.line(L, y, R, y); y += 8;
+
+  const mid = W / 2 + 5;
+  doc.setFontSize(8); doc.setFont('helvetica', 'bold'); doc.setTextColor(110, 110, 110);
+  doc.text('BILLED BY', L, y); doc.text('BILLED TO', mid, y); y += 5;
+
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5); doc.setTextColor(30, 30, 30);
+  doc.text(COMPANY_BRAND, L, y);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(70, 70, 70);
+  let byY = y + 5;
+  doc.text(COMPANY_NAME, L, byY); byY += 4.5;
+  doc.text('GSTIN: ' + COMPANY_GSTIN, L, byY); byY += 4.5;
+  doc.text(COMPANY_ADDR1, L, byY); byY += 4.5;
+  doc.text(COMPANY_ADDR2, L, byY);
+
+  drawBilledToBlock(doc, buyer, mid, y);
+  y = Math.max(byY, y + 24) + 10;
+
+  doc.setDrawColor(220, 220, 220); doc.line(L, y, R, y); y += 8;
+
+  const intra = isIntraState(buyer.billingDetails);
+  const colDesc = L + 2, colQty = L + 82, colRate = L + 112, colTax = L + 144, colTot = R - 2;
+  doc.setFillColor(245, 247, 250); doc.rect(L, y, R - L, 8, 'F');
+  doc.setFontSize(8); doc.setFont('helvetica', 'bold'); doc.setTextColor(60, 60, 60);
+  doc.text('Description', colDesc, y + 5.5);
+  doc.text('Qty',  colQty,  y + 5.5, { align: 'right' });
+  doc.text('Rate', colRate, y + 5.5, { align: 'right' });
+  doc.text(intra ? 'GST 18%' : 'IGST 18%', colTax, y + 5.5, { align: 'right' });
+  doc.text('Total', colTot, y + 5.5, { align: 'right' }); y += 10;
+
+  const { mrpBaseExcl, discountExcl, discountedBaseExcl, gst, total } = decomposeAmount(payment.amount, payment.plan);
+
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(30, 30, 30);
+  doc.text(planLabel(payment.plan, payment.billing), colDesc, y + 5);
+  doc.text('1', colQty, y + 5, { align: 'right' });
+  doc.text(fmt(mrpBaseExcl), colRate, y + 5, { align: 'right' });
+  doc.text(fmt(gst), colTax, y + 5, { align: 'right' });
+  doc.text(fmt(total), colTot, y + 5, { align: 'right' }); y += 10;
+
+  doc.setDrawColor(220, 220, 220); doc.line(L, y, R, y); y += 6;
+
+  const tCol = R - 65;
+  doc.setFontSize(9); doc.setTextColor(80, 80, 80);
+  doc.text('Taxable Amount (excl. GST):', tCol, y); doc.text(fmt(mrpBaseExcl), R - 2, y, { align: 'right' }); y += 6;
+  if (discountExcl > 0) {
+    doc.text('Discount:', tCol, y); doc.text('-' + fmt(discountExcl), R - 2, y, { align: 'right' }); y += 6;
+    doc.text('Discounted Taxable Amount:', tCol, y); doc.text(fmt(discountedBaseExcl), R - 2, y, { align: 'right' }); y += 6;
+  }
+  if (intra) {
+    const half = Math.round((gst / 2) * 100) / 100;
+    doc.text('CGST @ 9%:', tCol, y); doc.text(fmt(half), R - 2, y, { align: 'right' }); y += 6;
+    doc.text('SGST @ 9%:', tCol, y); doc.text(fmt(gst - half), R - 2, y, { align: 'right' }); y += 6;
+  } else {
+    doc.text('IGST @ 18%:', tCol, y); doc.text(fmt(gst), R - 2, y, { align: 'right' }); y += 6;
+  }
+
+  doc.setDrawColor(BRAND_R, BRAND_G, BRAND_H); doc.line(tCol, y, R, y); y += 6;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(BRAND_R, BRAND_G, BRAND_H);
+  doc.text('Total (INR):', tCol, y); doc.text(fmt(total), R - 2, y, { align: 'right' }); y += 14;
+
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(80, 80, 80);
+  doc.text('Payment Mode: ' + paymentModeLabel(payment.paymentMethod, payment.paymentReference), L, y); y += 5;
+  doc.text('Payment Date: ' + fmtDate(payment.paidAt), L, y); y += 5;
+  if (payment.expiresAt) { doc.text('Plan Valid Until: ' + fmtDate(payment.expiresAt), L, y); y += 5; }
+  y += 4;
+  doc.setFontSize(7.5); doc.setTextColor(130, 130, 130);
+  doc.text(
+    'Note: This is a Proforma Invoice issued for a cash payment. It is for record-keeping only and is NOT a tax invoice — input tax credit cannot be claimed against this document.',
+    L, y, { maxWidth: R - L },
+  );
+
+  drawFooter(doc, 'This is a computer-generated proforma invoice and does not require a physical signature.');
   return toBuffer(doc);
 }

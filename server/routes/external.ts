@@ -216,11 +216,31 @@ router.post('/licenses', (req: ExternalApiRequest, res: Response) => {
     issuedByDealer: dealerClaim,
   });
 
+  // Cash payments → proforma only (no tax invoice / receipt). Other
+  // methods → tax invoice + receipt as before. The documentType /
+  // documentNumber / documentUrl trio is what assist should display
+  // to the dealer; the legacy invoiceUrl / receiptUrl fields stay
+  // populated only for non-cash so older assist bundles keep working.
+  const paid = paymentRowId ? paymentRepo.findById(paymentRowId) : null;
+  const documentType: 'proforma' | 'tax_invoice' = paymentMethod === 'cash' ? 'proforma' : 'tax_invoice';
+  const documentNumber = documentType === 'proforma'
+    ? (paid?.proforma_number ? `AIP-${String(paid.proforma_number).padStart(3, '0')}` : null)
+    : (paid?.invoice_number ? `AI-${String(paid.invoice_number).padStart(3, '0')}` : null);
+
   res.json({
     license,
     paymentId: paymentRowId,
-    invoiceUrl: paymentRowId ? `/api/external/payments/${paymentRowId}/invoice.pdf` : null,
-    receiptUrl: paymentRowId ? `/api/external/payments/${paymentRowId}/receipt.pdf` : null,
+    documentType,
+    documentNumber,
+    documentUrl: paymentRowId
+      ? `/api/external/payments/${paymentRowId}/${documentType === 'proforma' ? 'proforma' : 'invoice'}.pdf`
+      : null,
+    // Legacy fields — populated only for non-cash so older assist
+    // builds that read invoiceUrl/receiptUrl unconditionally don't
+    // break. Cash payments expose null here; assist should fall back
+    // to documentUrl.
+    invoiceUrl: paymentRowId && paymentMethod !== 'cash' ? `/api/external/payments/${paymentRowId}/invoice.pdf` : null,
+    receiptUrl: paymentRowId && paymentMethod !== 'cash' ? `/api/external/payments/${paymentRowId}/receipt.pdf` : null,
   });
 });
 
@@ -285,20 +305,24 @@ router.get('/payments', (req: ExternalApiRequest, res: Response) => {
   res.json({ rows, total, page, limit });
 });
 
-router.get('/payments/:id/:kind(invoice|receipt).pdf', async (req: ExternalApiRequest, res: Response) => {
-  const { id, kind } = req.params as { id: string; kind: 'invoice' | 'receipt' };
+router.get('/payments/:id/:kind(invoice|receipt|proforma).pdf', async (req: ExternalApiRequest, res: Response) => {
+  const { id, kind } = req.params as { id: string; kind: 'invoice' | 'receipt' | 'proforma' };
   try {
     const pay = paymentRepo.findById(id);
     if (!pay) { res.status(404).json({ error: 'Payment not found' }); return; }
     const buyer = userRepo.findById(pay.user_id);
     if (!buyer) { res.status(404).json({ error: 'Payment user not found' }); return; }
+    const isCash = pay.payment_method === 'cash';
+    if (isCash && kind !== 'proforma') { res.status(404).json({ error: 'Cash payments only have a proforma invoice — use /proforma.pdf' }); return; }
+    if (!isCash && kind === 'proforma') { res.status(404).json({ error: 'Non-cash payments use tax invoice — use /invoice.pdf' }); return; }
     const billingDetails = userRepo.getBillingDetails(buyer.id);
-    const { buildInvoiceBuffer, buildReceiptBuffer } = await import('../lib/serverPdf.js');
-    const buildFn = kind === 'invoice' ? buildInvoiceBuffer : buildReceiptBuffer;
+    const { buildInvoiceBuffer, buildReceiptBuffer, buildProformaBuffer } = await import('../lib/serverPdf.js');
+    const buildFn = kind === 'invoice' ? buildInvoiceBuffer : kind === 'receipt' ? buildReceiptBuffer : buildProformaBuffer;
     const buffer = buildFn({
       id: pay.id, plan: pay.plan, billing: pay.billing,
       amount: pay.amount, paidAt: pay.paid_at, expiresAt: pay.expires_at,
       invoiceNumber: pay.invoice_number,
+      proformaNumber: pay.proforma_number,
       paymentMethod: pay.payment_method,
       paymentReference: pay.payment_reference,
     }, { name: buyer.name ?? '', email: buyer.email ?? '', billingDetails });

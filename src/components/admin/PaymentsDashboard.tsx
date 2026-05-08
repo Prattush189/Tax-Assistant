@@ -58,9 +58,11 @@ export function PaymentsDashboard() {
   }, [load]);
 
   const handleDelete = async (row: AdminPaymentRow) => {
-    const label = row.invoice_number != null
-      ? `invoice AI-${String(row.invoice_number).padStart(3, '0')}`
-      : `payment ${row.id.slice(0, 8)}`;
+    const label = row.payment_method === 'cash' && row.proforma_number != null
+      ? `proforma AIP-${String(row.proforma_number).padStart(3, '0')}`
+      : row.invoice_number != null
+        ? `invoice AI-${String(row.invoice_number).padStart(3, '0')}`
+        : `payment ${row.id.slice(0, 8)}`;
     const ok = window.confirm(
       `Delete ${label} for ${row.user_email}?\n\n` +
       `Amount: ${fmtINR(row.amount)} · Status: ${row.status}\n\n` +
@@ -122,7 +124,9 @@ export function PaymentsDashboard() {
                   <>
                     <tr key={r.id} className="border-t border-gray-100 dark:border-gray-800">
                       <td className="px-3 py-2 font-mono text-gray-500 whitespace-nowrap">
-                        {r.invoice_number != null ? `AI-${String(r.invoice_number).padStart(3, '0')}` : '—'}
+                        {r.payment_method === 'cash'
+                          ? (r.proforma_number != null ? `AIP-${String(r.proforma_number).padStart(3, '0')}` : '—')
+                          : (r.invoice_number != null ? `AI-${String(r.invoice_number).padStart(3, '0')}` : '—')}
                       </td>
                       <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{fmtDate(r.paid_at ?? r.created_at)}</td>
                       <td className="px-3 py-2">
@@ -146,7 +150,18 @@ export function PaymentsDashboard() {
                       </td>
                       <td className="px-3 py-2">
                         <div className="flex gap-1 items-center">
-                          {r.status === 'paid' && (
+                          {r.status === 'paid' && r.payment_method === 'cash' && (
+                            <a
+                              href={`/api/admin/payments/${r.id}/proforma.pdf`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title="Download proforma"
+                              className="p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 dark:text-gray-400"
+                            >
+                              <FileText className="w-3.5 h-3.5" />
+                            </a>
+                          )}
+                          {r.status === 'paid' && r.payment_method !== 'cash' && (
                             <>
                               <a
                                 href={`/api/admin/payments/${r.id}/invoice.pdf`}

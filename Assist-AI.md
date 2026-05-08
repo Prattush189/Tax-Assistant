@@ -76,7 +76,25 @@ Write endpoints additionally require a `dealer` object in the JSON body — at m
 }
 ```
 
-Response: `{ license, paymentId, invoiceUrl, receiptUrl }`. The license object includes the full `key` (e.g. `PRO-XXXX-XXXX-XXXX-XX`). The PDF URLs are `/api/external/payments/<id>/(invoice|receipt).pdf` — proxy these through assist's backend so the browser can download them without seeing the EXTKEY.
+Response:
+```json
+{
+  "license": { "key": "PRO-XXXX-XXXX-XXXX-XX", "...": "..." },
+  "paymentId": "<payment row id>",
+  "documentType": "proforma" | "tax_invoice",
+  "documentNumber": "AIP-001" | "AI-042" | null,
+  "documentUrl": "/api/external/payments/<id>/proforma.pdf"
+                | "/api/external/payments/<id>/invoice.pdf",
+  "invoiceUrl":  null | "/api/external/payments/<id>/invoice.pdf",  // legacy, null for cash
+  "receiptUrl":  null | "/api/external/payments/<id>/receipt.pdf"   // legacy, null for cash
+}
+```
+
+**Cash payments** (`paymentMethod: "cash"`) get a Proforma Invoice (`AIP-NNN` numbering, separate sequence). Tax-Assistant does NOT generate a tax invoice or receipt for cash — only the proforma. Hide the invoice / receipt buttons in the dealer console for these rows; show a single "Proforma" button that hits `documentUrl`.
+
+**Non-cash payments** (cheque, NEFT, IMPS, UPI, RTGS, card, other) get a Tax Invoice (`AI-NNN`) and a separate Receipt PDF, accessible via `/invoice.pdf` and `/receipt.pdf`. `documentUrl` points at the invoice for these.
+
+Both PDF endpoints should be proxied through assist's backend so the browser doesn't see the EXTKEY.
 
 ### Pricing
 

@@ -254,17 +254,28 @@ router.get('/history', (req: AuthRequest, res: Response) => {
   if (!req.user) { res.status(401).json({ error: 'Authentication required' }); return; }
 
   const user     = userRepo.findById(req.user.id);
-  const payments = paymentRepo.findByUserId(req.user.id).map(p => ({
-    id:         p.id,
-    plan:       p.plan,
-    billing:    p.billing,
-    amount:     p.amount,
-    currency:   p.currency,
-    status:     p.status,
-    createdAt:  p.created_at,
-    paidAt:     p.paid_at,
-    expiresAt:  p.expires_at,
-  }));
+  const payments = paymentRepo.findByUserId(req.user.id).map(p => {
+    const isCash = p.payment_method === 'cash';
+    return {
+      id:             p.id,
+      plan:           p.plan,
+      billing:        p.billing,
+      amount:         p.amount,
+      currency:       p.currency,
+      status:         p.status,
+      createdAt:      p.created_at,
+      paidAt:         p.paid_at,
+      expiresAt:      p.expires_at,
+      paymentMethod:  p.payment_method,
+      // documentType / documentNumber drive the user's "past payments"
+      // UI: cash payments show a single "Proforma" button (AIP-NNN);
+      // everything else shows Invoice + Receipt (AI-NNN).
+      documentType:   isCash ? 'proforma' : 'tax_invoice',
+      documentNumber: isCash
+        ? (p.proforma_number ? `AIP-${String(p.proforma_number).padStart(3, '0')}` : null)
+        : (p.invoice_number ? `AI-${String(p.invoice_number).padStart(3, '0')}` : null),
+    };
+  });
 
   res.json({
     // Kept for API shape compatibility — stores the last Razorpay order ID

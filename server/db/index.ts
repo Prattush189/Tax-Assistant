@@ -717,6 +717,16 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_payments_order_id ON payments(razorpay_o
       console.log(`[DB] Backfilled invoice_number on ${paidRows.length} paid payment rows`);
     }
   }
+  // Proforma number — independent forward-only sequence for cash
+  // payments. Cash doesn't get a tax invoice (no formal settlement
+  // reference); we issue a proforma instead with prefix "AIP-".
+  // Either invoice_number OR proforma_number is set on a paid row,
+  // never both. Both columns nullable so non-paid / pre-cash rows
+  // stay untouched.
+  if (!paymentCols.includes('proforma_number')) {
+    db.exec("ALTER TABLE payments ADD COLUMN proforma_number INTEGER");
+    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_proforma_number ON payments(proforma_number) WHERE proforma_number IS NOT NULL");
+  }
 }
 
 // Gemini search-grounding quota — persisted per API key so counters survive

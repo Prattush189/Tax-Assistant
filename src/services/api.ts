@@ -518,6 +518,9 @@ export interface PaymentHistoryResponse {
     createdAt: string;
     paidAt: string | null;
     expiresAt: string | null;
+    paymentMethod: string | null;
+    documentType: 'proforma' | 'tax_invoice';
+    documentNumber: string | null;
   }[];
 }
 
@@ -1456,6 +1459,8 @@ export interface AdminPaymentRow {
   billing_details: string | null;
   license: { id: string; key: string; plan: string; status: string; expires_at: string | null } | null;
   invoice_number: number | null;
+  proforma_number: number | null;
+  payment_method: string | null;
 }
 
 export async function adminFetchLicenses(opts: { search?: string; plan?: string; status?: string; page?: number } = {}): Promise<{ rows: AdminLicenseRow[]; total: number; page: number; limit: number }> {

@@ -26,6 +26,7 @@ export interface PaymentRow {
   payment_method: PaymentMethod | null;
   payment_reference: string | null;
   invoice_number: number | null;
+  proforma_number: number | null;
 }
 
 const stmts = {
@@ -45,7 +46,20 @@ const stmts = {
         razorpay_payment_id = ?,
         paid_at = datetime('now', '+5 hours', '+30 minutes'),
         expires_at = ?,
-        invoice_number = COALESCE(invoice_number, (SELECT COALESCE(MAX(invoice_number), 0) + 1 FROM payments))
+        -- Cash payments get a Proforma number (AIP-NNN); everything
+        -- else gets a tax-invoice number (AI-NNN). Sequences are
+        -- independent and forward-only — deletes don't reuse numbers
+        -- on either side. Idempotent via COALESCE so a re-run of
+        -- markPaid on an already-paid row leaves the existing number
+        -- alone.
+        invoice_number  = CASE
+          WHEN payment_method = 'cash' THEN invoice_number
+          ELSE COALESCE(invoice_number, (SELECT COALESCE(MAX(invoice_number), 0) + 1 FROM payments))
+        END,
+        proforma_number = CASE
+          WHEN payment_method = 'cash' THEN COALESCE(proforma_number, (SELECT COALESCE(MAX(proforma_number), 0) + 1 FROM payments))
+          ELSE proforma_number
+        END
     WHERE razorpay_order_id = ?
   `),
   markFailed: db.prepare(`

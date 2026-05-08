@@ -643,7 +643,12 @@ function BillingTab({ userName, userEmail }: { userName: string; userEmail: stri
               const total   = p.amount / 100;
               const base    = Math.round(total / (1 + 0.18) * 100) / 100;
               const gst     = Math.round((total - base) * 100) / 100;
-              const rcptNo  = 'AI-' + p.id.slice(0, 10).toUpperCase();
+              const isCash  = p.paymentMethod === 'cash';
+              // Cash payments display the AIP-NNN proforma number;
+              // everything else falls back to the AI- form. Server's
+              // documentNumber is canonical; legacy rows may not have
+              // one yet, so fall back to the id-prefix form.
+              const rcptNo  = p.documentNumber ?? ('AI-' + p.id.slice(0, 10).toUpperCase());
               const isPaid  = p.status === 'paid';
               const payData: PaymentData = {
                 id: p.id, plan: p.plan, billing: p.billing,
@@ -679,8 +684,11 @@ function BillingTab({ userName, userEmail }: { userName: string; userEmail: stri
                       </p>
                     </div>
 
-                    {/* Right: download buttons (only for paid) */}
-                    {isPaid && (
+                    {/* Right: download buttons (only for paid).
+                         Cash payments don't expose receipt / tax-invoice
+                         here — proforma is the only document for cash and
+                         it's available from the dealer / admin. */}
+                    {isPaid && !isCash && (
                       <div className="flex items-center gap-2 shrink-0">
                         <button
                           onClick={() => handleReceipt(payData)}
@@ -696,6 +704,11 @@ function BillingTab({ userName, userEmail }: { userName: string; userEmail: stri
                         >
                           <Download className="w-3.5 h-3.5" /> Invoice
                         </button>
+                      </div>
+                    )}
+                    {isPaid && isCash && (
+                      <div className="text-[11px] text-gray-500 dark:text-gray-400 shrink-0 text-right">
+                        Cash payment · proforma available from your dealer
                       </div>
                     )}
                   </div>
