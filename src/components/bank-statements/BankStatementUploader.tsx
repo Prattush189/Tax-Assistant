@@ -93,8 +93,18 @@ export function BankStatementUploader({ manager }: Props) {
   // The original File is kept too so the "Use AI Vision instead"
   // escape hatch in the wizard can route the same upload through the
   // vision pipeline without re-prompting.
-  const [pendingGrid, setPendingGrid] = useState<{ grid: PdfGrid; filename: string; file: File | null }
-    | null>(null);
+  // pendingGrid optionally carries a preset mapping + detected bank
+  // name. When present, the wizard opens with the columns pre-tagged
+  // and a banner saying "Auto-detected as <Bank>" so the user
+  // reviews the mapping before clicking Continue rather than having
+  // transactions silently extracted on the wrong columns.
+  const [pendingGrid, setPendingGrid] = useState<{
+    grid: PdfGrid;
+    filename: string;
+    file: File | null;
+    presetMapping?: ColumnMapping;
+    detectedBank?: string;
+  } | null>(null);
   // Password-protected PDFs go here. The dialog calls onSubmit with
   // the entered password; we re-run extractPdfGrid with it. If it
   // still fails, wrongPassword flips and the user can try again.
@@ -238,14 +248,28 @@ export function BankStatementUploader({ manager }: Props) {
 
         // Per-bank deterministic column rule. HDFC / ICICI / Canara
         // have stable header layouts; if the grid extracted cleanly
-        // we can map columns from the bank-specific header→role
-        // table and skip both the wizard and AI vision. Vision is
-        // reserved for genuinely unreadable PDFs.
+        // we can pre-fill the column mapping from a bank-specific
+        // header→role table. We DON'T auto-submit — the user always
+        // sees the wizard with the detected mapping pre-applied so
+        // they can verify it. Catches the failure mode where the
+        // rule fires but the extractor's column anchors don't
+        // actually line up with the rule's role assignments
+        // (Canara's "Deposits"/"Balance" data lands in the column
+        // next to its left-aligned header; ICICI's compact layout
+        // can split "Transaction Date" into two columns). Without
+        // the review step the user got an opaque "no transactions
+        // extracted" error instead of a fixable mapping screen.
         const detected = detectAndMapBank(grid);
         if (detected && grid) {
-          console.log(`[BankStatementUploader] auto-mapped as ${detected.bank} via per-bank rule`);
+          console.log(`[BankStatementUploader] auto-detected ${detected.bank} — pre-filling wizard for review`);
           setIsReadingPdf(false);
-          await submitMapping(grid, detected.mapping, file.name, `Auto-mapped ${detected.bank} layout`);
+          setPendingGrid({
+            grid,
+            filename: file.name,
+            file,
+            presetMapping: detected.mapping,
+            detectedBank: detected.bank,
+          });
           return;
         }
 
@@ -477,6 +501,8 @@ export function BankStatementUploader({ manager }: Props) {
           kind="bank"
           grid={pendingGrid.grid}
           filename={pendingGrid.filename}
+          initialMapping={pendingGrid.presetMapping}
+          detectedSource={pendingGrid.detectedBank}
           onConfirm={handleMappingConfirm}
           onCancel={() => setPendingGrid(null)}
           onUseVision={pendingGrid.file && pendingGrid.file.type === 'application/pdf' ? () => {

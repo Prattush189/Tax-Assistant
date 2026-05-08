@@ -1000,15 +1000,47 @@ function detectAccountHeader(
     return null;
   }
 
+  // Reject "( Contd. )" continuation page markers. Busy ledgers print
+  // "A R ENTERPRISES ( Contd. )" at the top of every page that
+  // continues an account from the previous page — same account, not
+  // a new one. Treating it as a header creates phantom accounts and
+  // (with multi-line header concatenation) garbles the real name.
+  if (/\(\s*contd\.?\s*\)/i.test(candidate)) return null;
+
+  // Reject page-banner rows that recur on every page of a multi-page
+  // export. Without this guard the recurring "GSTIN: A/F" / "Ledger"
+  // / "Period : ..." lines on each page break each became their own
+  // pseudo-account in the audit, and (with header concatenation)
+  // produced the "GSTIN: A/F — H A OVERSEAS — Ledger — Period : ..."
+  // Frankenstein names users complained about.
+  const LEDGER_BANNER = /^(?:gstin\s*[:.]|period\s*[:.]|ledger(?:\s+account)?$|page\s+no\.?|statement\s+of\s+account|generated\s+by|printed\s+on)/i;
+  if (LEDGER_BANNER.test(candidate)) return null;
+
   // Strip Tally's leading dash and trim.
   let name = candidate.replace(/^[\s\-•]+/, '').trim();
   // "Account: HDFC Bank" → "HDFC Bank"
   name = name.replace(/^Account\s*[:.]\s*/i, '').trim();
+  // Strip the "( Contd. )" suffix if it slipped past the candidate
+  // check — sometimes the longest-cell heuristic picks a different
+  // cell on the same row.
+  name = name.replace(/\s*\(\s*contd\.?\s*\)\s*$/i, '').trim();
 
   // Need a meaningful length.
   if (name.length < 3) return null;
   return name;
 }
+
+/** Marker for ledger-side page subtotal / carry-forward rows. Catches
+ *  "Totals C/F" / "Totals B/F" / "Totals" (Busy), "Balance c/f:" /
+ *  "Balance b/f:" (Marg), "Carried Over" / "Brought Forward" /
+ *  "Continued.." (Tally), bare "C/F" / "B/F". Deliberately does NOT
+ *  match "Opening Balance" / "Closing Balance" — those rows carry
+ *  meaningful data that mappedRowsToExtractedLedger reads to populate
+ *  accounts[].opening / accounts[].closing. Bank statements use a
+ *  separate, broader marker (SUBTOTAL_MARKER inside applyMapping)
+ *  that DOES include opening/closing because banks don't use those
+ *  rows the same way. */
+const LEDGER_SUBTOTAL_MARKER = /\b(?:totals?\s*[bc]\s*\/\s*f|^totals?\s*$|page\s+total|carried\s+over|brought\s+forward|carried\s+forward|balance\s+[bc]\s*\/\s*f|continued\.\.|^[bc]\s*\/\s*f$)/i;
 
 /**
  * Apply a column mapping to a raw grid → array of normalized rows.
@@ -1304,18 +1336,50 @@ export function applyMapping(
     if (accountCell) lastAccount = accountCell;
 
     if (kind === 'ledger') {
-      const headerName = detectAccountHeader(row, colByRole, inferredYear ?? undefined);
-      if (headerName) {
+      // Ledger-side page subtotal / carry-forward rows. Busy prints
+      // "Totals C/F" / "Totals B/F" with aggregate values that look
+      // structurally like a transaction — without flushing here, the
+      // continuation-merge below absorbs those aggregates into the
+      // previous transaction's pending block, doubling its amount or
+      // overwriting its balance. Marg's "Balance c/f:" and Tally's
+      // "Carried Over" / "Continued.." do the same. Treat as
+      // non-transaction noise: flush whatever was pending so we don't
+      // pollute it, then skip the row.
+      const ledgerSubtotalHaystack = `${cell('narration')} ${cell('voucher')} ${cell('reference')}`.trim();
+      if (!parseDate(cell('date'), inferredYear ?? undefined) && LEDGER_SUBTOTAL_MARKER.test(ledgerSubtotalHaystack)) {
         flushPending();
-        // If the previous row was also an account header, this is the
-        // second line of a multi-line Busy header (city / branch under
-        // the company name) — concatenate so we keep both.
-        lastAccount = prevRowWasAccountHeader && lastAccount
-          ? `${lastAccount} — ${headerName}`
-          : headerName;
-        prevRowWasAccountHeader = true;
-        stats.accountHeaders += 1;
+        prevRowWasAccountHeader = false;
+        stats.skippedNoAmount += 1;
         continue;
+      }
+
+      // Account-header detection ONLY when there's no in-flight
+      // transaction. A row with no date, no debit/credit, and a
+      // string of text matches both the "wrapped continuation of the
+      // previous narration" AND the "new account header" patterns —
+      // we can only tell them apart by context. Inside a transaction
+      // (pending != null), every date-less row should be treated as
+      // a continuation; account headers only appear AFTER the prior
+      // transaction has been flushed (which happens on a new dated
+      // row, on a totals row above, or at the end of the loop).
+      // Without this gate, every "BS/25-26/41 dt. 02-02-2026"
+      // continuation row in a Busy bill-narration produced a phantom
+      // account, ballooning the audit's account count from ~30 real
+      // accounts to "677 accounts" of which most were bill numbers.
+      if (pending === null) {
+        const headerName = detectAccountHeader(row, colByRole, inferredYear ?? undefined);
+        if (headerName) {
+          // If the previous row was also an account header, this is
+          // the second line of a multi-line Busy header (city /
+          // branch under the company name) — concatenate so we keep
+          // both.
+          lastAccount = prevRowWasAccountHeader && lastAccount
+            ? `${lastAccount} — ${headerName}`
+            : headerName;
+          prevRowWasAccountHeader = true;
+          stats.accountHeaders += 1;
+          continue;
+        }
       }
       prevRowWasAccountHeader = false;
     }

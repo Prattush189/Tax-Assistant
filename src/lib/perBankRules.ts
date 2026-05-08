@@ -71,7 +71,12 @@ const ICICI: BankRule = {
     { pattern: /deposit/i, role: 'credit' },
     { pattern: /cheque\s*number|chq\.?|ref\.?\s*no|reference|utr/i, role: 'reference' },
     { pattern: /transaction\s*remarks|^remarks|narration|particulars/i, role: 'narration' },
-    { pattern: /transaction\s*date|^date$|txn\s*date/i, role: 'date' },
+    // ICICI's compact statement prints "Transaction" / "Date" as a
+    // two-line column header; the grid extractor sometimes captures
+    // only "Transaction". Accept that variant — the date-content
+    // verification step downstream will reject any false-positive
+    // assignment to a column that doesn't actually contain dates.
+    { pattern: /^transaction$|transaction\s*date|^date$|txn\s*date/i, role: 'date' },
     // S No. column has no header word the extractor recognises, so it
     // stays as 'skip' — no rule fires. That's fine.
   ],
