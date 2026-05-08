@@ -1355,7 +1355,12 @@ router.post(
             req.file.buffer,
             mimeType,
             fullPrompt,
-            { maxTokens: 16_384 },
+            // Bumped to 64K so dense multi-page statements (BoB-style
+            // 6 pages × ~25 txns) don't hit MAX_TOKENS and silently
+            // truncate to page 1. visionFallback now throws on
+            // MAX_TOKENS so any remaining truncation surfaces as an
+            // explicit failure rather than corrupt totals.
+            { maxTokens: 65_536 },
           );
           extracted = visionResult.data;
           (res.locals as Record<string, unknown>).geminiUsages = [{

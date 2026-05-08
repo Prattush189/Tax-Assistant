@@ -181,6 +181,14 @@ DO NOT invent, summarize, or group transactions. Every row in the input text tha
 
 export const BANK_STATEMENT_PROMPT = `You are parsing an Indian bank statement (PDF or image). Return ONLY a JSON object. No markdown fences. No prose.
 
+CRITICAL — read every page:
+- The PDF may have multiple pages (often 6–20 for a year-long statement).
+- You MUST process EVERY page and emit EVERY transaction, not just the first page.
+- The "transactions" array should contain rows from page 1, page 2, page 3, … through to the last page, in chronological order.
+- Page headers ("Statement of transactions in Savings Account ..."), banners, ads, "Page X of Y" footers — ignore them, they are not transactions.
+- Do NOT stop after page 1 even if the structure repeats. The statement is one logical table that wraps across pages.
+- If you find yourself summarising or sampling, STOP and start over emitting every row.
+
 This prompt deliberately does NOT ask for transaction amounts. The bank's printed running balance column is the most legible, deterministic data on the page (bold, right-aligned, full-magnitude numbers in their own column). The server derives every signed amount as balance[i] - balance[i-1] from your output, which means you only have to read each balance correctly once. You will NOT be asked to extract the debit/credit column at all — focus all attention on reading dates, narrations, and balances precisely.
 
 Schema (all fields required, use null where unknown):

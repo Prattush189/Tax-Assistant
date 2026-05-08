@@ -83,16 +83,29 @@ export async function extractGeminiVision<T = unknown>(
           throw err;
         }
         const json = await res.json() as {
-          candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+          candidates?: Array<{
+            content?: { parts?: Array<{ text?: string }> };
+            finishReason?: string;
+          }>;
           usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
         };
         inputTokens = json.usageMetadata?.promptTokenCount ?? 0;
         outputTokens = json.usageMetadata?.candidatesTokenCount ?? 0;
+        const finishReason = json.candidates?.[0]?.finishReason;
 
         const raw = (json.candidates?.[0]?.content?.parts ?? [])
           .map(p => p.text ?? '')
           .join('');
         if (!raw) throw new Error('Gemini returned empty response');
+        // Output-cap truncation — the JSON gets cut mid-array. Surface
+        // it so callers can either retry with a higher cap or chunk
+        // the input. safeParseJson would otherwise silently recover a
+        // partial array and the caller would never know data was lost.
+        if (finishReason === 'MAX_TOKENS') {
+          const err = new Error(`Gemini ${model} hit MAX_TOKENS (output: ${outputTokens}/${maxTokens}) — response truncated. Increase maxTokens or chunk the input.`);
+          (err as { truncated?: boolean }).truncated = true;
+          throw err;
+        }
         const parsed = safeParseJson<T>(raw);
         if (parsed === null) throw new Error('Failed to parse AI response');
         succeeded = true;
