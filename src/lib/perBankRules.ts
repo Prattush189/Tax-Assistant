@@ -147,6 +147,38 @@ export function detectAndMapBank(grid: PdfGrid | null): DetectedBankMapping | nu
     }
   }
 
+  // Header-column → data-column shift correction. Some PDF layouts
+  // split each numeric column in two: one for the left-aligned
+  // header text ("Withdrawal" / "Deposit" / "Balance") and a right-
+  // aligned data column for the actual numbers. The header→role
+  // mapping anchors on the header column, but the data lives one
+  // column to the right with an empty header. For each numeric
+  // role, if the assigned column is empty for most dated rows but
+  // the next column is rich with numbers AND currently mapped to
+  // 'skip', shift the role over by one.
+  const dateColForShift = roles.indexOf('date');
+  if (dateColForShift >= 0) {
+    const datedRows = grid.rows
+      .slice(1)
+      .filter(r => parseDate((r[dateColForShift] ?? '').trim()))
+      .slice(0, 10);
+    if (datedRows.length >= 3) {
+      const numAt = (i: number) => datedRows.filter(r => /\d/.test((r[i] ?? '').trim())).length;
+      for (const numericRole of ['debit', 'credit', 'amount', 'balance'] as const) {
+        const col = roles.indexOf(numericRole);
+        if (col < 0 || col >= roles.length - 1) continue;
+        if (roles[col + 1] !== 'skip') continue;
+        const cur = numAt(col);
+        const next = numAt(col + 1);
+        if (cur < datedRows.length / 4 && next >= Math.ceil(datedRows.length / 2)) {
+          console.log(`[perBankRules] ${rule.name} shifting ${numericRole} from col ${col} → col ${col + 1} (${cur}/${datedRows.length} numeric vs ${next}/${datedRows.length} in next column)`);
+          roles[col] = 'skip';
+          roles[col + 1] = numericRole;
+        }
+      }
+    }
+  }
+
   // Trust-but-verify: the rule maps columns by header text, but the
   // grid extractor sometimes merges adjacent narrow columns (S.No. +
   // Transaction Date in ICICI's compact layout collapses into one

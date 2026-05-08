@@ -177,6 +177,41 @@ export function detectAndMapLedgerErp(grid: PdfGrid | null): DetectedErpMapping 
     }
   }
 
+  // Header-column → data-column shift correction. Some Busy ledger
+  // PDFs split each numeric column in two: a left-aligned header
+  // text column ("Debit" / "Credit" / "Balance") and a right-
+  // aligned data column for the actual numbers. The header→role
+  // mapping anchors the role on the header column, but the data
+  // lives one column to the right with an empty header. For each
+  // numeric role, if the assigned column is empty for most dated
+  // rows but the next column is rich with numbers AND currently
+  // mapped to 'skip', shift the role over by one. Catches the
+  // "credit/debit/balance one column behind" extractor symptom
+  // without requiring the user to fix it manually.
+  const dateColForShift = roles.indexOf('date');
+  if (dateColForShift >= 0) {
+    const defaultYearForShift = inferFiscalYearStart(grid.rows) ?? undefined;
+    const datedRows = grid.rows
+      .slice(1)
+      .filter(r => parseDate((r[dateColForShift] ?? '').trim(), defaultYearForShift))
+      .slice(0, 10);
+    if (datedRows.length >= 3) {
+      const numAt = (i: number) => datedRows.filter(r => /\d/.test((r[i] ?? '').trim())).length;
+      for (const numericRole of ['debit', 'credit', 'amount', 'balance'] as const) {
+        const col = roles.indexOf(numericRole);
+        if (col < 0 || col >= roles.length - 1) continue;
+        if (roles[col + 1] !== 'skip') continue;
+        const cur = numAt(col);
+        const next = numAt(col + 1);
+        if (cur < datedRows.length / 4 && next >= Math.ceil(datedRows.length / 2)) {
+          console.log(`[perLedgerErpRules] ${rule.name} shifting ${numericRole} from col ${col} → col ${col + 1} (${cur}/${datedRows.length} numeric vs ${next}/${datedRows.length} in next column)`);
+          roles[col] = 'skip';
+          roles[col + 1] = numericRole;
+        }
+      }
+    }
+  }
+
   // Trust-but-verify: confirm the columns the rule mapped actually
   // contain the kind of data the role expects. The grid extractor
   // sometimes merges adjacent columns when one is narrow / sparse,

@@ -826,8 +826,18 @@ function parseNumber(raw: string): number | null {
  *  as headers / footers / continuation lines and skips them. */
 export function parseDate(raw: string, defaultYear?: number): string | null {
   if (!raw) return null;
-  const cleaned = raw.trim();
+  let cleaned = raw.trim();
   if (!cleaned) return null;
+  // Strip a leading row-number prefix when the grid extractor merged
+  // a narrow S.No. column into the date cell. ICICI's compact
+  // statement layout collapses "S No." into "Transaction Date" so
+  // cells arrive as "1 30.04.2026", "2 02.05.2026", … We only strip
+  // when the prefix is 1-4 digits + whitespace AND the next token
+  // looks like a date (digits + a date separator) — that avoids
+  // accidentally clobbering legitimate text where a number happens
+  // to lead the cell.
+  const sNoPrefix = cleaned.match(/^\d{1,4}\s+(?=\d{1,2}[\/.\-])/);
+  if (sNoPrefix) cleaned = cleaned.slice(sNoPrefix[0].length);
   // ISO already?
   const iso = cleaned.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
