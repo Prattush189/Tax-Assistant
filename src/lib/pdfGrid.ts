@@ -193,7 +193,16 @@ export async function extractPdfGrid(file: File, password?: string): Promise<Pdf
     // left edges, which handles right-aligned numeric columns
     // because items inside one column pack densely while inter-
     // column gaps are 30-100 units.
-    const HEADER_WORD = /^(date|narration|particulars|description|details|withdraw\w*|deposit\w*|debit|credit|balance|chq|cheque|voucher|amount|reference|ref|utr|type)$/i;
+    // Prefix match (no trailing $) so a single text item carrying a
+    // multi-word header like "Withdrawal Amt." or "Chq./Ref.No." still
+    // matches by its leading word. HDFC, ICICI, and a few SBI templates
+    // emit those compound headers as one pdfjs text item; the older
+    // anchored ^...$ form silently dropped them and starved the
+    // header-row matcher below the >= 3 threshold, sending us into
+    // the gap-clustering fallback that produced a degenerate grid.
+    // "closing" / "value" are added so "Closing Balance" and "Value Dt"
+    // (when split into sub-tokens below) anchor to their own column.
+    const HEADER_WORD = /^(date|narration|particulars|description|details|remarks|withdraw\w*|deposit\w*|debit|credit|balance|closing|chq|cheque|voucher|amount|reference|ref|utr|type|value)/i;
     // Numeric headers correspond to right-aligned data columns. Indian
     // bank statements (and most accounting exports) right-align rupee
     // values with the header word's RIGHT edge; the LEFT edge drifts
@@ -221,38 +230,119 @@ export async function extractPdfGrid(file: File, password?: string): Promise<Pdf
       // when deciding whether to merge it as a continuation suffix.
       _lastTokenRight?: number;
     }
+    // Some PDF templates (HDFC, ICICI) emit a multi-word header label
+    // ("Withdrawal Amt.", "Closing Balance", "Value Dt") as a SINGLE
+    // pdfjs text item. Split such items on whitespace and distribute
+    // the original width proportionally so each sub-token has a
+    // plausible x-position the matcher below can use. Without this,
+    // the leading word would still match (after the prefix-regex fix)
+    // but a continuation like "Amt." would never appear as a separate
+    // token, so the anchor would carry only "Withdrawal" and the data
+    // tokens would land in a slightly off-anchor column.
+    type ExpandedItem = RawItem & { _parentX?: number };
+    const expandHeaderItem = (it: RawItem): ExpandedItem[] => {
+      const text = it.text;
+      if (!/\s/.test(text.trim())) return [it];
+      const totalLen = text.length || 1;
+      const out: ExpandedItem[] = [];
+      const re = /\S+/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(text)) !== null) {
+        const tok = m[0];
+        const offset = m.index;
+        out.push({
+          text: tok,
+          x: it.x + (offset / totalLen) * it.width,
+          y: it.y,
+          width: (tok.length / totalLen) * it.width,
+          // Carry the parent item's leftX. When a non-leading sub-token
+          // is the only HEADER_WORD match (e.g. "Transaction Remarks" —
+          // "Transaction" doesn't match, "Remarks" does), the column
+          // visually starts where the parent label starts, not where
+          // the matching word sits. Using parentX as the anchor's leftX
+          // pulls the anchor leftward so it captures data items that
+          // align with the visual column edge.
+          _parentX: it.x,
+        });
+      }
+      return out.length > 0 ? out : [it];
+    };
+
+    // Continuations include short suffix tokens that pdfjs may emit
+    // as separate items OR as the trailing word of a multi-word header
+    // that was split above (e.g. "Value Dt" → Value + Dt; "Closing
+    // Balance" → Closing + Balance). Adding "dt" / "date" / "no" lets
+    // the wizard render "Value Dt" and similar as a single column
+    // labelled correctly, which suggestMapping then routes to its
+    // right role (Value Dt → skip, etc.).
+    //
+    // Hoisted to function scope so the row-iteration filter can include
+    // continuation-only tokens — without that, "Amt." gets dropped
+    // before the merge loop sees it and "Withdrawal" carries the wrong
+    // headerText.
+    const CONTINUATION = /^(amt\.?|amount|balance|bal\.?|paid|received|recd\.?|dt\.?|date|no\.?)$/i;
+    const MAX_INTRA_LABEL_GAP = 8;
+
+    // Some banks (Axis "OpTransactionHistory") stack the header across
+    // 2-3 y-bands — "Transaction" sits on row y=223, "Date" on y=233,
+    // "S No." / "Cheque Number" on y=228 — so each band individually
+    // has fewer than 3 header words. Merge adjacent buckets when the
+    // y-gap is below HEADER_BAND_MERGE; the next data row sits well
+    // beyond this gap (20+ units) so we won't accidentally pull in
+    // narration text. The merged item set is what we run header
+    // detection over; the original buckets remain untouched for cell
+    // assignment downstream.
+    const HEADER_BAND_MERGE = 12;
+    const bucketY = (b: RawItem[]): number => b.length ? b[0].y : 0;
+
     let columnAnchors: ColumnAnchor[] = [];
-    for (const bucket of rowBuckets) {
-      const headerItems = bucket.filter(it => HEADER_WORD.test(it.text.trim()));
-      // Need at least 3 distinct header words to consider this a real
-      // table-header row (filters out a stray "Balance" in narration).
-      if (headerItems.length >= 3) {
-        // Sort by x and dedup near-duplicates (some PDFs split a
-        // header word like "Withdrawal Amt." across two text items).
-        const sorted = [...headerItems].sort((a, b) => a.x - b.x);
+    for (let bi = 0; bi < rowBuckets.length; bi++) {
+      const merged: RawItem[] = [...rowBuckets[bi]];
+      const startY = bucketY(rowBuckets[bi]);
+      let bj = bi + 1;
+      while (bj < rowBuckets.length && Math.abs(bucketY(rowBuckets[bj]) - startY) <= HEADER_BAND_MERGE) {
+        merged.push(...rowBuckets[bj]);
+        bj++;
+      }
+      const expanded = merged.flatMap(expandHeaderItem);
+      // Gate the header-row decision on REAL header words only — a row
+      // that just happens to contain "Amt." or "No." in narration text
+      // shouldn't trigger the matcher.
+      const headerWordHits = expanded.filter(it => HEADER_WORD.test(it.text.trim()));
+      if (headerWordHits.length >= 3) {
+        // But INCLUDE continuation tokens in the iteration so multi-
+        // word headers like "Withdrawal Amt." or "Value Dt" can merge
+        // into one anchor with the correct combined headerText.
+        const headerOrCont = expanded.filter(it => {
+          const t = it.text.trim();
+          return HEADER_WORD.test(t) || CONTINUATION.test(t);
+        });
+        const sorted = [...headerOrCont].sort((a, b) => a.x - b.x);
         for (const it of sorted) {
           const trimmed = it.text.trim();
           const isNumeric = NUMERIC_HEADER.test(trimmed);
+          const parentX = (it as ExpandedItem)._parentX;
+          // For LEFT-aligned anchors, prefer the parent item's leftX
+          // when this sub-token isn't at offset 0 — see expandHeaderItem
+          // for the "Transaction Remarks" rationale. For numeric (right-
+          // aligned) anchors, the right edge is what matters; leftX is
+          // only used for visual sort, so still safe to pull leftward.
+          const useLeftX = parentX !== undefined && parentX < it.x ? parentX : it.x;
           const anchor: ColumnAnchor = isNumeric
-            ? { x: it.x + it.width, align: 'right', leftX: it.x, headerText: trimmed }
-            : { x: it.x, align: 'left', leftX: it.x, headerText: trimmed };
+            ? { x: it.x + it.width, align: 'right', leftX: useLeftX, headerText: trimmed }
+            : { x: useLeftX, align: 'left', leftX: useLeftX, headerText: trimmed };
           // Dedup using the header word's left edge so a "Withdrawal"
           // header that pdfjs split into "Withdrawal" + "Amt." across
           // two adjacent text items collapses to one column. Append
           // the second token's text to the existing header so we
           // capture "Withdrawal Amt." as one label, not just
           // "Withdrawal".
-          // Continuation tokens — words that sometimes follow another
-          // header word as part of the SAME column label ("Withdrawal"
-          // + "Amt.", "Closing" + "Balance", "Debit" + "Amount").
           // Distinct columns even when tightly packed (e.g. Type next
           // to Debit) keep their own anchor — we measure the WHITESPACE
           // GAP between the previous token's right edge and this
           // token's left edge, not left-to-left distance. A real
           // within-label space is ~3-6 PDF units; a column boundary is
           // 15+ units even in dense Tally exports.
-          const CONTINUATION = /^(amt\.?|amount|balance|bal\.?|paid|received|recd\.?)$/i;
-          const MAX_INTRA_LABEL_GAP = 8;
           const lastAnchor = columnAnchors.length === 0 ? null : columnAnchors[columnAnchors.length - 1];
           // lastAnchor.x is the right edge for numeric anchors and the
           // left edge for text anchors — but we always need the right
@@ -261,6 +351,14 @@ export async function extractPdfGrid(file: File, password?: string): Promise<Pdf
           const lastRight = lastAnchor?._lastTokenRight ?? lastAnchor?.leftX ?? -Infinity;
           const gap = it.x - lastRight;
           const isContinuation = !!lastAnchor && CONTINUATION.test(trimmed) && gap >= 0 && gap <= MAX_INTRA_LABEL_GAP;
+          // A continuation-only token (e.g. "Amt." that doesn't also
+          // match HEADER_WORD) without a preceding anchor would create
+          // a spurious column. Skip — the anchor it was meant to suffix
+          // never showed up.
+          const isContOnly = !HEADER_WORD.test(trimmed) && CONTINUATION.test(trimmed);
+          if (!isContinuation && isContOnly) {
+            continue;
+          }
           if (!isContinuation) {
             (anchor as ColumnAnchor & { _lastTokenRight: number })._lastTokenRight = it.x + it.width;
             columnAnchors.push(anchor);
@@ -281,6 +379,57 @@ export async function extractPdfGrid(file: File, password?: string): Promise<Pdf
         }
         break;
       }
+    }
+
+    // Dedup near-duplicate anchors that came from a multi-line header.
+    // Axis OpTransactionHistory stacks "Withdrawal" on the top band
+    // and "Amount (INR)" on the bottom band at almost the same x —
+    // when we merge bands for detection, both become anchors. Collapse
+    // any pair within MAX_INTRA_LABEL_GAP, preferring the more specific
+    // (non-continuation) NUMERIC_HEADER as the canonical text.
+    if (columnAnchors.length > 1) {
+      // Sort by leftX for the dedup pass — right-edges drift apart
+      // when the longer header word ("Withdrawal") and the shorter
+      // one ("Amount") share a left edge but differ in width.
+      columnAnchors.sort((a, b) => a.leftX - b.leftX);
+      const dedup: ColumnAnchor[] = [];
+      // When one of the candidates is a generic continuation-eligible
+      // word ("Amount", "Balance" alone), allow a wider dedup window —
+      // the lower band's "Amount (INR)" can sit 10-15 units left of
+      // "Deposit" because headers are centered above their column.
+      const looksGeneric = (t: string | null): boolean => {
+        const w = t?.trim().split(/\s+/)[0] ?? '';
+        return CONTINUATION.test(w);
+      };
+      for (const a of columnAnchors) {
+        const prev = dedup[dedup.length - 1];
+        const threshold = prev && (looksGeneric(prev.headerText) || looksGeneric(a.headerText))
+          ? 18
+          : MAX_INTRA_LABEL_GAP;
+        if (prev && Math.abs(a.leftX - prev.leftX) <= threshold) {
+          // Pick the better headerText. NUMERIC_HEADER tokens that are
+          // not also CONTINUATION (Withdrawal / Deposit / Debit / Credit)
+          // are the most specific; "Amount" / "Balance" are generic.
+          const score = (t: string | null): number => {
+            if (!t) return 0;
+            const w = t.trim().split(/\s+/)[0] ?? '';
+            if (NUMERIC_HEADER.test(w) && !CONTINUATION.test(w)) return 3;
+            if (HEADER_WORD.test(w) && !CONTINUATION.test(w)) return 2;
+            if (HEADER_WORD.test(w)) return 1;
+            return 0;
+          };
+          if (score(a.headerText) > score(prev.headerText)) {
+            prev.headerText = a.headerText;
+          }
+          if (a.align === 'right') {
+            prev.align = 'right';
+            prev.x = Math.max(prev.x, a.x);
+          }
+          continue;
+        }
+        dedup.push(a);
+      }
+      columnAnchors = dedup;
     }
 
     // ── Numeric-column augmentation pass ──────────────────────────────
@@ -1438,7 +1587,7 @@ function roleFromHeader(header: string): ColumnRole | null {
   if (/\baccount\b|^ledger$|party\s*name/.test(h)) return 'account';
   // Date — checked AFTER value-date so the real Date column wins
   if (/^date$|\btxn\s*date\b|\btransaction\s*date\b|^dt$/.test(h)) return 'date';
-  if (/^narration|^particulars|^description|^details|^narrative$/.test(h)) return 'narration';
+  if (/^narration|^particulars|^description|^details|^narrative$|remarks?$|transaction\s*remarks?/.test(h)) return 'narration';
   return null;
 }
 
