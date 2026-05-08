@@ -208,14 +208,24 @@ export function BankStatementUploader({ manager }: Props) {
       setIsReadingPdf(true);
       try {
         const grid = await extractPdfGrid(file);
-        if (grid && grid.rows.length >= 3) {
+        // Heuristic: if the grid extractor finds <5 columns, the
+        // wizard is going to merge important columns (Date+Narration,
+        // Withdrawal+Deposit collapsed, etc.). Auto-route to AI
+        // vision instead — Gemini 3.1 Flash-Lite handles the layout
+        // reliably and the cost stays modest.
+        if (grid && grid.rows.length >= 3 && (grid.columnCount ?? 0) >= 5) {
           setIsReadingPdf(false);
           setPendingGrid({ grid, filename: file.name, file });
           return;
         }
-        // No text layer — route through Sonnet vision. Block at 100
-        // pages (Anthropic's hard limit) and warn at any size since
-        // vision is 30× more tokens per page than the text path.
+        if (grid && (grid.columnCount ?? 0) < 5) {
+          console.log(`[BankStatementUploader] only ${grid.columnCount} columns detected — routing to vision`);
+        }
+        // Either no text layer or grid is too sparse — route through
+        // vision. 100-page block (Anthropic limit kept in case
+        // Sonnet fallback re-enters the chain later). The scanned-PDF
+        // confirm dialog explains the cost trade-off so dense
+        // statements don't surprise the user.
         const pageCount = await countPdfPagesClient(file) ?? 0;
         setIsReadingPdf(false);
         if (pageCount > 100) {

@@ -191,10 +191,19 @@ export function LedgerUploader({ manager }: Props) {
     setIsReadingPdf(true);
     try {
       const grid = await extractPdfGrid(file);
-      if (grid && grid.rows.length >= 3) {
+      // Auto-route to vision when the grid extractor surfaces <5
+      // columns. Indian ledger PDFs (Tally / Busy / Marg) have 6-7
+      // columns minimum (Date · Vch.No. · Particulars · Type · Debit
+      // · Credit · Balance); anything less means the detector merged
+      // adjacent columns and the wizard would produce broken
+      // mappings. Vision (Gemini 3.1) handles the layout cleanly.
+      if (grid && grid.rows.length >= 3 && (grid.columnCount ?? 0) >= 5) {
         setIsReadingPdf(false);
         setPendingGrid({ grid, filename: file.name, file });
         return;
+      }
+      if (grid && (grid.columnCount ?? 0) < 5) {
+        console.log(`[LedgerUploader] only ${grid.columnCount} columns detected — routing to vision`);
       }
       const pageCount = await countPdfPagesClient(file) ?? 0;
       setIsReadingPdf(false);

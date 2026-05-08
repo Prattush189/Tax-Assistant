@@ -14,10 +14,10 @@ interface Props {
  * by bank-statement / ledger / notice uploads to warn the user before
  * routing the upload to the AI vision path (Sonnet 4.5).
  *
- * Vision is significantly more expensive per token than the text
- * paths — Sonnet 4.5 weighs ~30× per input token vs the cheapest
- * Gemini path. The warning gives the user a chance to back out and
- * upload a digital export (CSV / readable PDF) before the cost lands.
+ * Vision runs on Gemini 3.1 Flash-Lite (primary) → 2.5 Flash-Lite
+ * (fallback) and uses roughly 1.5×–2× the tokens a wizard-mapped
+ * digital PDF / CSV would. The warning gives the user a chance to
+ * back out and upload a digital export instead.
  *
  * Skips for: digital PDFs (text path used directly), images (no
  * alternative path exists, user already knows it's an image).
@@ -41,12 +41,12 @@ export function ScannedPdfConfirmDialog({
               This {documentLabel} has no readable text
             </h2>
             <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">
-              The file appears to be scanned or image-only. AI vision can read it, but uses
-              significantly more of your token quota than a digital export.
+              The file appears to be scanned or has an unusual layout. AI vision can read it,
+              but uses a bit more of your token quota than a digital export with a clean column structure.
             </p>
             <p className="mt-2 text-sm text-amber-700 dark:text-amber-300">
-              Heads up: a typical scanned PDF can consume 30× more tokens than a readable PDF or CSV.
-              Upload a digital export instead to keep your quota intact.
+              Heads up: AI vision uses roughly 1.5×–2× more tokens than a readable PDF or CSV.
+              Upload a digital export if you want to keep token usage minimal.
             </p>
             <p className="mt-2 text-xs font-mono text-gray-500 dark:text-gray-400 break-all">
               {filename}

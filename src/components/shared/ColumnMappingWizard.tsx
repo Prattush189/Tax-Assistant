@@ -12,8 +12,8 @@ interface Props {
   onCancel: () => void;
   /** Optional escape hatch — when provided, a "Use AI Vision instead"
    *  button appears in the footer. Closes the wizard and routes the
-   *  same file through the Sonnet 4.5 vision pipeline (~30× tokens
-   *  but works on any layout). */
+   *  same file through the Gemini-based vision pipeline (~1.5×–2×
+   *  tokens vs the wizard path, but works on any layout). */
   onUseVision?: () => void;
 }
 
@@ -194,9 +194,9 @@ export function ColumnMappingWizard({ kind, grid, filename, onConfirm, onCancel,
                 type="button"
                 onClick={() => {
                   const ok = window.confirm(
-                    'Switch to AI Vision (Sonnet 4.5)?\n\n' +
-                    'Vision reads the PDF directly and handles unusual layouts the deterministic parser misses. ' +
-                    'Trade-off: roughly 30× more tokens than the column-mapping path. ' +
+                    'Switch to AI Vision?\n\n' +
+                    'Vision reads the PDF directly with Gemini 3.1 Flash-Lite and handles unusual layouts the deterministic parser misses. ' +
+                    'Trade-off: roughly 1.5×–2× more tokens than the column-mapping path. ' +
                     'Use this if the columns above don\'t match your file or the wizard rejects the mapping.',
                   );
                   if (ok) onUseVision();

@@ -170,7 +170,7 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
 
     // For PDFs: probe the text layer + page count. Block over 100
     // pages, warn the user before routing scanned PDFs to the AI
-    // vision path (Sonnet 4.5 — ~30× cost vs digital PDFs). Image
+    // vision path (Gemini-based — ~1.5×–2× cost vs digital PDFs). Image
     // uploads have no alternative path so they go through silently.
     if (file.type === 'application/pdf') {
       try {
