@@ -104,7 +104,18 @@ const MAX_BYTES = 10 * 1024 * 1024;
 export function LedgerUploader({ manager }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
-  const [pendingGrid, setPendingGrid] = useState<{ grid: PdfGrid; filename: string; file: File | null } | null>(null);
+  // pendingGrid optionally carries a preset mapping + the detected
+  // ERP label. When present, the wizard opens with the columns
+  // pre-tagged and a banner saying "Auto-detected as <ERP>" so the
+  // user reviews the mapping before clicking Confirm rather than
+  // having transactions silently extracted on the wrong columns.
+  const [pendingGrid, setPendingGrid] = useState<{
+    grid: PdfGrid;
+    filename: string;
+    file: File | null;
+    presetMapping?: ColumnMapping;
+    detectedErp?: string;
+  } | null>(null);
   // Password-protected PDFs go here; the dialog re-runs extractPdfGrid
   // with the supplied password. wrongPassword flips on a retry so the
   // user gets the inline "try again" hint.
@@ -222,15 +233,28 @@ export function LedgerUploader({ manager }: Props) {
       }
 
       // Per-ERP deterministic column rule. Tally / Busy / Marg
-      // exports have stable banner + header layouts AND extract
-      // cleanly; if the grid surfaced normally we can map columns
-      // from the ERP-specific header→role table and skip the
-      // wizard. Mirrors the bank-statement auto-mapping shortcut.
+      // exports have stable banner + header layouts; if the grid
+      // surfaced cleanly we can pre-fill the column mapping from
+      // an ERP-specific header→role table. We DON'T auto-submit
+      // any more — the user always sees the wizard with the
+      // detected mapping pre-applied (and a banner saying which
+      // ERP we matched) so they can verify the columns before
+      // committing. Catches the failure mode where the rule fires
+      // but the extractor's column anchors don't actually line up
+      // with the rule's role assignments — without the review
+      // step the user got an opaque "192 dated rows but no
+      // amount" toast instead of a fixable mapping screen.
       const detected = detectAndMapLedgerErp(grid);
       if (detected && grid) {
-        console.log(`[LedgerUploader] auto-mapped as ${detected.erp} via per-ERP rule`);
+        console.log(`[LedgerUploader] auto-detected ${detected.erp} — pre-filling wizard for review`);
         setIsReadingPdf(false);
-        await submitMapping(grid, detected.mapping, file.name, `Auto-mapped ${detected.erp} layout`);
+        setPendingGrid({
+          grid,
+          filename: file.name,
+          file,
+          presetMapping: detected.mapping,
+          detectedErp: detected.erp,
+        });
         return;
       }
 
@@ -420,6 +444,8 @@ export function LedgerUploader({ manager }: Props) {
           kind="ledger"
           grid={pendingGrid.grid}
           filename={pendingGrid.filename}
+          initialMapping={pendingGrid.presetMapping}
+          detectedSource={pendingGrid.detectedErp}
           onConfirm={handleMappingConfirm}
           onCancel={() => setPendingGrid(null)}
           onUseVision={pendingGrid.file && pendingGrid.file.type === 'application/pdf' ? () => {

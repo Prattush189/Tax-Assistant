@@ -15,6 +15,17 @@ interface Props {
    *  same file through the Gemini-based vision pipeline (~1.5×–2×
    *  tokens vs the wizard path, but works on any layout). */
   onUseVision?: () => void;
+  /** Optional preset mapping. When supplied, the wizard opens with
+   *  this mapping selected instead of running `suggestMapping`.
+   *  Used by the per-ERP / per-bank auto-detection rules so the
+   *  user sees the deterministic mapping pre-applied and can
+   *  review or correct it before clicking Confirm. */
+  initialMapping?: ColumnMapping;
+  /** Display name of the auto-detected source (e.g. "Busy",
+   *  "ICICI Bank") — shown as a banner above the mapping when
+   *  `initialMapping` is supplied. Tells the user the mapping was
+   *  pre-filled by a rule and they should verify it. */
+  detectedSource?: string;
 }
 
 // Role-label per kind. Bank statements speak "Withdrawal / Deposit"
@@ -45,14 +56,17 @@ const BASE_ROLES: Array<{
 
 const PREVIEW_ROWS = 12;
 
-export function ColumnMappingWizard({ kind, grid, filename, onConfirm, onCancel, onUseVision }: Props) {
-  const [mapping, setMapping] = useState<ColumnMapping>(() => suggestMapping(grid));
+export function ColumnMappingWizard({ kind, grid, filename, onConfirm, onCancel, onUseVision, initialMapping, detectedSource }: Props) {
+  const [mapping, setMapping] = useState<ColumnMapping>(() => initialMapping ?? suggestMapping(grid));
 
   // Re-seed mapping if the grid prop changes (e.g. user cancels and
-  // picks a different PDF). useEffect handles the reset cleanly.
+  // picks a different PDF). When the parent supplied a preset
+  // mapping (per-ERP / per-bank auto-detection), prefer that over
+  // suggestMapping's content-based heuristic — the rule is more
+  // accurate when it fires.
   useEffect(() => {
-    setMapping(suggestMapping(grid));
-  }, [grid]);
+    setMapping(initialMapping ?? suggestMapping(grid));
+  }, [grid, initialMapping]);
 
   const availableRoles = useMemo(
     () => BASE_ROLES
@@ -126,6 +140,15 @@ export function ColumnMappingWizard({ kind, grid, filename, onConfirm, onCancel,
         </div>
 
         <div className="flex-1 overflow-auto p-5">
+          {detectedSource && (
+            <div className="mb-4 flex items-start gap-2 rounded-lg border border-emerald-200 dark:border-emerald-800/60 bg-emerald-50 dark:bg-emerald-900/20 p-3 text-sm">
+              <CheckCircle2 className="w-4 h-4 mt-0.5 flex-none text-emerald-600 dark:text-emerald-400" />
+              <div className="text-emerald-900 dark:text-emerald-100">
+                <span className="font-semibold">Auto-detected as {detectedSource}.</span>{' '}
+                The columns below are pre-mapped from a built-in rule. Look them over — adjust any column whose dropdown is wrong, then click Continue.
+              </div>
+            </div>
+          )}
           <div className="border border-gray-200 dark:border-gray-800 rounded-lg overflow-x-auto">
             <table className="text-xs min-w-full">
               <thead className="bg-gray-50 dark:bg-gray-800/60 sticky top-0">

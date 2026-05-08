@@ -167,7 +167,13 @@ export function LedgerCompareView() {
   const inputRefB = useRef<HTMLInputElement>(null);
   const [sideA, setSideA] = useState<SideState>({ label: '', filename: null, extracted: null });
   const [sideB, setSideB] = useState<SideState>({ label: '', filename: null, extracted: null });
-  const [pendingGrid, setPendingGrid] = useState<{ side: Side; grid: PdfGrid; filename: string } | null>(null);
+  const [pendingGrid, setPendingGrid] = useState<{
+    side: Side;
+    grid: PdfGrid;
+    filename: string;
+    presetMapping?: ColumnMapping;
+    detectedErp?: string;
+  } | null>(null);
   const [comparing, setComparing] = useState(false);
   const [report, setReport] = useState<LedgerComparisonReport | null>(null);
   const [usedLabels, setUsedLabels] = useState<{ A: string; B: string } | null>(null);
@@ -226,15 +232,21 @@ export function LedgerCompareView() {
           return;
         }
 
-        // Per-ERP deterministic auto-mapping. If the grid matches a
-        // known Tally / Busy / Marg layout, skip the wizard and
-        // apply the mapping directly. Same shortcut the single-
-        // ledger uploader uses; on a miss we fall through to the
-        // wizard below.
+        // Per-ERP deterministic auto-mapping. If the grid matches
+        // a known Tally / Busy / Marg layout, pre-fill the wizard
+        // with the rule's mapping + a banner identifying the ERP
+        // — the user reviews and confirms rather than having
+        // transactions silently extracted on the wrong columns.
         const detected = detectAndMapLedgerErp(grid);
         if (detected) {
-          console.log(`[LedgerCompareView] side ${side} auto-mapped as ${detected.erp}`);
-          applyAndStore(side, grid, detected.mapping, file.name, detected.erp);
+          console.log(`[LedgerCompareView] side ${side} auto-detected ${detected.erp} — pre-filling wizard for review`);
+          setPendingGrid({
+            side,
+            grid,
+            filename: file.name,
+            presetMapping: detected.mapping,
+            detectedErp: detected.erp,
+          });
           return;
         }
         setPendingGrid({ side, grid, filename: file.name });
@@ -381,6 +393,8 @@ export function LedgerCompareView() {
           kind="ledger"
           grid={pendingGrid.grid}
           filename={pendingGrid.filename}
+          initialMapping={pendingGrid.presetMapping}
+          detectedSource={pendingGrid.detectedErp}
           onConfirm={handleMappingConfirm}
           onCancel={() => setPendingGrid(null)}
         />
