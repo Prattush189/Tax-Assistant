@@ -261,14 +261,23 @@ async function extractBankStatementTsvOnce(
     // the parsed count. The statement-level countLikelyDates cross-check still
     // catches wholesale row loss.
     if (parsed.actualCount < parsed.declaredCount) {
-      // Summarize why rows were dropped so the logs tell us whether to relax
-      // the parser, retune the prompt, or investigate a specific statement.
       const reasonCounts = parsed.droppedReasons.reduce<Record<string, number>>((acc, r) => {
         acc[r] = (acc[r] ?? 0) + 1;
         return acc;
       }, {});
       const reasonStr = Object.entries(reasonCounts).map(([k, v]) => `${k}=${v}`).join(',') || 'unknown';
-      throw new Error(`TSV row-count mismatch: trailer claims ${parsed.declaredCount}, parsed ${parsed.actualCount} (dropped: ${reasonStr})`);
+      // Tolerate small drops — up to 2 rows AND under 10% — and accept
+      // the parsed batch with a warning instead of failing the whole
+      // chunk. The statement-level countLikelyDates cross-check still
+      // catches wholesale row loss; this just stops a 31/32 off-by-one
+      // from cascading T2 → T1 → user-facing error.
+      const dropped = parsed.declaredCount - parsed.actualCount;
+      const dropFrac = parsed.declaredCount > 0 ? dropped / parsed.declaredCount : 1;
+      if (dropped <= 2 && dropFrac < 0.10) {
+        console.warn(`[bank-statements] ${model} minor row loss: claimed ${parsed.declaredCount}, parsed ${parsed.actualCount} (${reasonStr}) — accepting`);
+      } else {
+        throw new Error(`TSV row-count mismatch: trailer claims ${parsed.declaredCount}, parsed ${parsed.actualCount} (dropped: ${reasonStr})`);
+      }
     }
     if (parsed.actualCount > parsed.declaredCount) {
       console.warn(`[bank-statements] ${model} trailer undercount: claimed ${parsed.declaredCount}, parsed ${parsed.actualCount} — accepting parsed count`);
