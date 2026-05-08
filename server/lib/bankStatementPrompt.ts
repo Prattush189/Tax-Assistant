@@ -229,6 +229,23 @@ Counterparty extraction rules (populate counterparty with the cleanest human-rea
 - Bank-initiated charges/interest ("SB INT", "ATM WDL CHG") → use the charge type as the label.
 - If nothing identifiable, leave as null. Never copy the entire narration verbatim.
 
+CRITICAL — wrapped names across lines:
+Many statements wrap a single name across two lines so it shows up in
+the narration as e.g. "FD THROUGH DIGITALFD-...:SURE\nSH KUMAR" or
+"...SANI\nL SETHI...". Reading naively yields phantom counterparties
+"SURE", "SANI", "SH KUMAR", "L SETHI" — each gets its own row in the
+counterparty list and totals split across them.
+- ALWAYS join wrapped continuation lines into ONE counterparty before
+  emitting. "SURE" + "SH KUMAR" → "SURESH KUMAR". "SANI" + "L SETHI"
+  → "SANIL SETHI". "SURE" + "SH SETHI AND ASSOCIATES" → "SURESH SETHI
+  AND ASSOCIATES".
+- A short ALL-CAPS word (≤4 chars) at the END of a narration whose next
+  line begins with another ALL-CAPS fragment is almost always a wrap.
+  Concatenate the two fragments (no separator) and emit the joined
+  string as the counterparty.
+- Apply the same merge to the narration field itself — the wrapped
+  name should appear as one word, not two.
+
 Reference extraction: pull UTR / cheque number / reference number (usually a 10–16 digit alphanumeric token) into the reference field. If none, null.
 
 Categorization rules (apply the FIRST match):

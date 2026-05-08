@@ -459,6 +459,77 @@ function normalizeCategory(raw: unknown): string {
  * previous one, deriveAmountsFromBalance overrides whatever amount we
  * stored here.
  */
+/**
+ * Final defence against PDF line-wrap splitting a single counterparty
+ * name across two visual lines (e.g. "SURESH KUMAR" → "SURE\nSH KUMAR"
+ * → wizard / vision sometimes emits "SURE" or "SH KUMAR" as separate
+ * counterparties). The prompt already asks the model to merge wraps,
+ * but for stragglers we run a deterministic pass over the unique
+ * counterparty list and fold short orphan fragments back into a
+ * neighbouring full name.
+ *
+ * Heuristic — fires when ALL of these hold:
+ *   - one counterparty (orphan) is ≤4 ALL-CAPS characters with no spaces;
+ *   - another counterparty exists whose name STARTS with those chars
+ *     (e.g. orphan "SURE" + sibling "SURESH KUMAR" — orphan is the
+ *     first half of the sibling's first token);
+ *   - the orphan appears in at least one transaction whose raw
+ *     narration also contains the full sibling name.
+ *
+ * Rewrites every transaction tagged with the orphan to use the
+ * full sibling name instead.
+ */
+function mergeWrappedCounterparties(txs: BankTransactionInput[]): BankTransactionInput[] {
+  if (txs.length === 0) return txs;
+  const counterpartyNames = new Set<string>();
+  for (const t of txs) if (t.counterparty) counterpartyNames.add(t.counterparty);
+
+  // Build a map of orphan → full-name for each candidate pair.
+  const remap = new Map<string, string>();
+  for (const orphan of counterpartyNames) {
+    const o = orphan.trim();
+    if (!o || o.length > 4 || /\s/.test(o) || !/^[A-Z]+$/.test(o)) continue;
+    // Find any other counterparty whose first token starts with the
+    // orphan as a prefix and is strictly longer (i.e. orphan is the
+    // wrapped first half).
+    let bestMatch: string | null = null;
+    let bestLen = Infinity;
+    for (const candidate of counterpartyNames) {
+      if (candidate === orphan) continue;
+      const firstTok = candidate.trim().split(/\s+/)[0] ?? '';
+      if (firstTok.length <= o.length) continue;
+      if (!firstTok.startsWith(o)) continue;
+      // Prefer the SHORTEST full name that matches — closer in length
+      // to the orphan, more likely to be the actual wrapped pair.
+      if (candidate.length < bestLen) { bestLen = candidate.length; bestMatch = candidate; }
+    }
+    if (!bestMatch) continue;
+    // Confirm: at least one transaction tagged with the orphan has a
+    // narration that also mentions the sibling's full string. Avoids
+    // false positives where two unrelated names happen to share a
+    // prefix.
+    const sibling = bestMatch;
+    const orphanTxs = txs.filter(t => t.counterparty === orphan);
+    const corroborated = orphanTxs.some(t =>
+      typeof t.narration === 'string' && t.narration.toUpperCase().includes(sibling),
+    );
+    if (corroborated) {
+      remap.set(orphan, sibling);
+    }
+  }
+
+  if (remap.size === 0) return txs;
+  for (const [orphan, sibling] of remap) {
+    console.log(`[bank-statements] wrap-merge: counterparty "${orphan}" → "${sibling}"`);
+  }
+  return txs.map(t => {
+    if (t.counterparty && remap.has(t.counterparty)) {
+      return { ...t, counterparty: remap.get(t.counterparty)! };
+    }
+    return t;
+  });
+}
+
 function normalizeTransactions(raw: unknown[]): BankTransactionInput[] {
   if (!Array.isArray(raw)) return [];
   return raw.map((t) => {
@@ -866,8 +937,9 @@ function persistStatement(
   fallbackName: string,
 ) {
   const rawTxs = normalizeTransactions(data.transactions ?? []);
+  const mergedTxs = mergeWrappedCounterparties(rawTxs);
   const rules = bankStatementRuleRepo.listByUser(userId);
-  const txs = applyUserRules(rawTxs, rules);
+  const txs = applyUserRules(mergedTxs, rules);
 
   // Phase 0: drop inline-date phantoms BEFORE balance derivation.
   // Phantoms are rows the AI hallucinated from inline date strings
