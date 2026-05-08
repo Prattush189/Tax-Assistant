@@ -968,6 +968,11 @@ export function inferFiscalYearStart(rows: string[][]): number | null {
  * become meaningless aggregates and reconciliation flags fire
  * spuriously across unrelated accounts.
  */
+/** Words that, when they appear as the leading token of a cell,
+ *  flag the row as a column-header row rather than an account
+ *  separator. ALL Busy / Tally / Marg column headers are covered. */
+const COLUMN_HEADER_KEYWORD = /\b(date|narration|particulars|description|debit|credit|balance|chq|cheque|voucher|vch\.?\s*no|amount|reference|ref|utr|type|^b$)\b/i;
+
 function detectAccountHeader(
   row: string[],
   colByRole: Map<ColumnRole, number>,
@@ -996,23 +1001,45 @@ function detectAccountHeader(
 
   // Reject column-header rows defensively (findTableStart already
   // skips these but this function might be called on the raw grid).
-  if (/^(date|narration|particulars|description|debit|credit|balance|chq|voucher|amount|reference|ref|utr|type)\b/i.test(candidate)) {
-    return null;
-  }
+  // Two checks:
+  //   1. The candidate itself starts with a header keyword.
+  //   2. TWO OR MORE cells contain header keywords — catches rows
+  //      where the extractor merged narrow header columns ("B
+  //      Narration" when the 1-char "B" column collapsed into the
+  //      wider "Narration" column produces a single cell that no
+  //      longer starts with "narration"). Without this, the column
+  //      header row at the top of every Busy page became a phantom
+  //      account that swallowed thousands of transactions.
+  if (COLUMN_HEADER_KEYWORD.test(candidate)) return null;
+  const headerLikeCells = nonEmpty.filter(c => COLUMN_HEADER_KEYWORD.test(c)).length;
+  if (headerLikeCells >= 2) return null;
 
   // Reject "( Contd. )" continuation page markers. Busy ledgers print
   // "A R ENTERPRISES ( Contd. )" at the top of every page that
   // continues an account from the previous page — same account, not
-  // a new one. Treating it as a header creates phantom accounts and
-  // (with multi-line header concatenation) garbles the real name.
+  // a new one. Note: applyMapping ALSO has continuation-block
+  // suppression so the city line below the marker doesn't become
+  // a standalone phantom account.
   if (/\(\s*contd\.?\s*\)/i.test(candidate)) return null;
+
+  // Reject candidates that are themselves parseable dates. Busy bill
+  // narrations sometimes wrap onto a continuation row that contains
+  // ONLY the bill date ("25-03-2026" alone) — when that row lands
+  // after a Totals flush has cleared `pending`, the date string
+  // would otherwise become a phantom account.
+  if (parseDate(candidate, defaultYear)) return null;
+
+  // Reject candidates that look like bill / voucher / D-Note numbers
+  // — same fall-through as above. Patterns:
+  //   BS/25-26/41, RE/25-26/26, JME/003, GST/25-26/449, PDN/25-26/447
+  //   "Bill No.", "D/Note", "Cheque No.", etc. as a leading prefix.
+  if (/^(?:bill\s*no|d\/?note|cheque\s*no|chq\s*no|inv|invoice\s*no|voucher\s*no|ref\s*no|rtgs|neft|imps|upi|tds)\b/i.test(candidate)) return null;
+  if (/^[A-Z]{2,5}\/[\dA-Z\-/]+$/i.test(candidate)) return null;
 
   // Reject page-banner rows that recur on every page of a multi-page
   // export. Without this guard the recurring "GSTIN: A/F" / "Ledger"
   // / "Period : ..." lines on each page break each became their own
-  // pseudo-account in the audit, and (with header concatenation)
-  // produced the "GSTIN: A/F — H A OVERSEAS — Ledger — Period : ..."
-  // Frankenstein names users complained about.
+  // pseudo-account in the audit.
   const LEDGER_BANNER = /^(?:gstin\s*[:.]|period\s*[:.]|ledger(?:\s+account)?$|page\s+no\.?|statement\s+of\s+account|generated\s+by|printed\s+on)/i;
   if (LEDGER_BANNER.test(candidate)) return null;
 
@@ -1178,6 +1205,15 @@ export function applyMapping(
   // header row appends to the previous name with " — " instead of
   // replacing it.
   let prevRowWasAccountHeader = false;
+  // Set when we see a Busy / Tally "( Contd. )" page-continuation
+  // marker. Suppresses account-header detection on every subsequent
+  // date-less row UNTIL we hit a real dated transaction. Without
+  // this, the city line that follows ("KAPURTHALA" in
+  // "A R ENTERPRISES ( Contd. ) / KAPURTHALA") was being recognized
+  // as a fresh standalone account, producing the city-name phantom
+  // accounts (KPT, DELHI, ZIRA, PATTI, BIHAR, ...) the audit kept
+  // surfacing on multi-page exports.
+  let inContinuationBlock = false;
   // Last successfully-emitted balance — used as the fallback source
   // for an amount when the row's debit/credit cells lost the value
   // to pdfjs column-clustering (small charges like ₹0.03 / ₹5 / ₹7
@@ -1351,6 +1387,37 @@ export function applyMapping(
         prevRowWasAccountHeader = false;
         stats.skippedNoAmount += 1;
         continue;
+      }
+
+      // Page-continuation marker detection. When we see a date-less
+      // row containing "( Contd. )" anywhere in its text, set the
+      // continuation flag — every subsequent date-less row is part
+      // of the same page-continuation block (city, banner, repeated
+      // column header, Totals B/F) and must NOT create a new
+      // account. The flag clears when we see a real dated
+      // transaction, signalling the block is over and we're back
+      // in the previous account's data.
+      const dateRawForContd = cell('date');
+      const dateParsedForContd = parseDate(dateRawForContd, inferredYear ?? undefined);
+      const allRowText = row.map(c => (c ?? '').trim()).filter(Boolean).join(' ');
+      if (!dateParsedForContd && /\(\s*contd\.?\s*\)/i.test(allRowText)) {
+        flushPending();
+        inContinuationBlock = true;
+        prevRowWasAccountHeader = false;
+        stats.accountHeaders += 1;
+        continue;
+      }
+      if (inContinuationBlock) {
+        if (dateParsedForContd) {
+          // Block is over — fall through to normal transaction
+          // processing on this row. lastAccount stays unchanged
+          // (continuation page belongs to the same account).
+          inContinuationBlock = false;
+        } else {
+          // Still inside the block — skip city / banner / column
+          // header / Totals B/F rows without touching lastAccount.
+          continue;
+        }
       }
 
       // Account-header detection ONLY when there's no in-flight

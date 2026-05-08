@@ -250,6 +250,12 @@ router.post('/licenses', (req: ExternalApiRequest, res: Response) => {
   res.json({
     license,
     paymentId: paymentRowId,
+    // Echo the payment method back to assist so its License Issued
+    // dialog can render the METHOD column without inferring from
+    // documentType. Mirrors the snake_case `payment_method` field
+    // returned by GET /api/external/payments rows.
+    paymentMethod,
+    payment_method: paymentMethod,
     documentType,
     documentNumber,
     documentUrl,
