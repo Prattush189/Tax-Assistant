@@ -27,6 +27,7 @@ import bankStatementsRouter from './routes/bankStatements.js';
 import ledgerScrutinyRouter from './routes/ledgerScrutiny.js';
 import invitationsRouter, { publicInvitationRouter } from './routes/invitations.js';
 import billingDetailsRouter from './routes/billingDetails.js';
+import documentDownloadRouter from './routes/documentDownload.js';
 import { authMiddleware, adminMiddleware, trialCheckMiddleware } from './middleware/auth.js';
 import {
   authLimiter,
@@ -158,6 +159,13 @@ app.use('/api/ledger-scrutiny', ledgerScrutinyLimiter, ledgerScrutinyRouter);
 app.use('/api/invitations', invitationsRouter);
 app.use('/api/payments', paymentsRouter);
 app.use('/api/billing-details', billingDetailsRouter);
+
+// Public document download — gated by a self-signed JWT in the URL,
+// not user auth. Mounted BEFORE the admin/external routers so a
+// dealer console can hand the documentUrl to a browser without
+// needing to ferry server-side credentials. See
+// lib/documentDownloadToken.ts for the signing scheme.
+app.use('/api/documents', documentDownloadRouter);
 
 // Admin — requires auth + admin role
 app.use('/api/admin', authMiddleware, adminMiddleware, adminRouter);

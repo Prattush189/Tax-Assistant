@@ -22,6 +22,7 @@ import { licenseKeyRepo } from '../db/repositories/licenseKeyRepo.js';
 import { paymentRepo, type PaymentMethod } from '../db/repositories/paymentRepo.js';
 import { PLAN_AMOUNTS, planKey, MAX_DEALER_DISCOUNT_INCL_PAISE } from '../lib/razorpayPlans.js';
 import type { PaidPlan } from '../lib/razorpayPlans.js';
+import { signDocumentDownloadToken } from '../lib/documentDownloadToken.js';
 
 const router = Router();
 router.use(requireExternalApiKey);
@@ -227,20 +228,37 @@ router.post('/licenses', (req: ExternalApiRequest, res: Response) => {
     ? (paid?.proforma_number ? `AIP-${String(paid.proforma_number).padStart(3, '0')}` : null)
     : (paid?.invoice_number ? `AI-${String(paid.invoice_number).padStart(3, '0')}` : null);
 
+  // Self-authenticating ?token= on each document URL so the dealer
+  // console can hand the link straight to a browser. Without this,
+  // assist's "Download Proforma" button 401'd because the browser
+  // has no way to attach the server-side EXTKEY to the request.
+  // The public download route at /api/documents/:id/:kind.pdf
+  // verifies the token (signed at license-creation, scoped to
+  // paymentId+kind, 30-day TTL) and serves the PDF without any
+  // EXTKEY/JWT auth header. See lib/documentDownloadToken.ts.
+  const docKind: 'proforma' | 'invoice' = documentType === 'proforma' ? 'proforma' : 'invoice';
+  const documentUrl = paymentRowId
+    ? `/api/documents/${paymentRowId}/${docKind}.pdf?token=${encodeURIComponent(signDocumentDownloadToken(paymentRowId, docKind))}`
+    : null;
+  const invoiceUrl = paymentRowId && paymentMethod !== 'cash'
+    ? `/api/documents/${paymentRowId}/invoice.pdf?token=${encodeURIComponent(signDocumentDownloadToken(paymentRowId, 'invoice'))}`
+    : null;
+  const receiptUrl = paymentRowId && paymentMethod !== 'cash'
+    ? `/api/documents/${paymentRowId}/receipt.pdf?token=${encodeURIComponent(signDocumentDownloadToken(paymentRowId, 'receipt'))}`
+    : null;
+
   res.json({
     license,
     paymentId: paymentRowId,
     documentType,
     documentNumber,
-    documentUrl: paymentRowId
-      ? `/api/external/payments/${paymentRowId}/${documentType === 'proforma' ? 'proforma' : 'invoice'}.pdf`
-      : null,
+    documentUrl,
     // Legacy fields — populated only for non-cash so older assist
     // builds that read invoiceUrl/receiptUrl unconditionally don't
     // break. Cash payments expose null here; assist should fall back
     // to documentUrl.
-    invoiceUrl: paymentRowId && paymentMethod !== 'cash' ? `/api/external/payments/${paymentRowId}/invoice.pdf` : null,
-    receiptUrl: paymentRowId && paymentMethod !== 'cash' ? `/api/external/payments/${paymentRowId}/receipt.pdf` : null,
+    invoiceUrl,
+    receiptUrl,
   });
 });
 

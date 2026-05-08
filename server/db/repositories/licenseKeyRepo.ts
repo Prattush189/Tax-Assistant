@@ -48,6 +48,19 @@ const stmts = {
   listByUser: db.prepare('SELECT * FROM license_keys WHERE user_id = ? ORDER BY created_at DESC'),
   setUserActive: db.prepare('UPDATE users SET license_key_id = ? WHERE id = ?'),
   setUserPlan: db.prepare('UPDATE users SET plan = ?, updated_at = datetime(\'now\', \'+5 hours\', \'+30 minutes\') WHERE id = ?'),
+  // Sync users.plan_expires_at to the new license expiry on every
+  // issue/renew. Token quota's getUsagePeriodStart computes the
+  // period as plan_expires_at - 1y, so without this update a
+  // license reissue would NOT reset the token usage window — the
+  // user would keep counting against last year's tokens.
+  setUserPlanWithExpiry: db.prepare(
+    'UPDATE users SET plan = ?, plan_expires_at = ?, updated_at = datetime(\'now\', \'+5 hours\', \'+30 minutes\') WHERE id = ?'
+  ),
+  // Free-plan reissue: plan_expires_at must be NULL (the quota gate
+  // falls back to created_at lifetime for free users).
+  setUserPlanFree: db.prepare(
+    'UPDATE users SET plan = \'free\', plan_expires_at = NULL, updated_at = datetime(\'now\', \'+5 hours\', \'+30 minutes\') WHERE id = ?'
+  ),
   markSuperseded: db.prepare('UPDATE license_keys SET status = \'superseded\', superseded_by_id = ? WHERE id = ?'),
   markRevoked: db.prepare('UPDATE license_keys SET status = \'revoked\', revoked_at = datetime(\'now\', \'+5 hours\', \'+30 minutes\'), revoke_reason = ? WHERE id = ?'),
   loadActiveByUser: db.prepare(`
@@ -163,8 +176,20 @@ export const licenseKeyRepo = {
       // is independent of billing plan, and we don't want issuing
       // an admin license to overwrite an admin-user's underlying
       // 'enterprise' plan.
-      if (input.plan !== 'admin') {
-        stmts.setUserPlan.run(input.plan, input.userId);
+      //
+      // Also sync plan_expires_at to the new license expiry — without
+      // this, the token quota window (computed by getUsagePeriodStart
+      // as plan_expires_at - 1y) stays anchored to the old expiry
+      // and the user keeps counting last year's tokens against this
+      // year's budget. Reissue/renew now advances the period
+      // forward → token usage effectively resets.
+      if (input.plan === 'free') {
+        // Free reissue: plan_expires_at must be NULL so the quota
+        // gate uses the user's lifetime (the trial wall handles
+        // the cutoff at 30 days, not the token quota).
+        stmts.setUserPlanFree.run(input.userId);
+      } else if (input.plan !== 'admin') {
+        stmts.setUserPlanWithExpiry.run(input.plan, input.expiresAt, input.userId);
       }
       return stmts.findById.get(id) as LicenseKeyRow;
     });

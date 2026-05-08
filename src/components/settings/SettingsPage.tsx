@@ -666,7 +666,13 @@ function BillingTab({ userName, userEmail }: { userName: string; userEmail: stri
                         </span>
                         <StatusBadge status={p.status} />
                       </div>
-                      <p className="text-xs text-gray-500 dark:text-gray-400 font-mono">{rcptNo}</p>
+                      {/* Document number (AIP/AI receipt/invoice no.) is
+                          hidden for cash payments — those are settled
+                          offline through the dealer and the user shouldn't
+                          see invoice/receipt identifiers in their app
+                          history. Only the plan, status, and date are
+                          visible. */}
+                      {!isCash && <p className="text-xs text-gray-500 dark:text-gray-400 font-mono">{rcptNo}</p>}
                       <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
                         {p.paidAt
                           ? new Date(p.paidAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
@@ -674,15 +680,20 @@ function BillingTab({ userName, userEmail }: { userName: string; userEmail: stri
                       </p>
                     </div>
 
-                    {/* Centre: amount breakdown */}
-                    <div className="text-right sm:text-center shrink-0">
-                      <p className="text-sm font-bold text-gray-800 dark:text-white">
-                        ₹{total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                      </p>
-                      <p className="text-xs text-gray-400 dark:text-gray-500">
-                        ₹{base.toLocaleString('en-IN', { minimumFractionDigits: 2 })} + ₹{gst.toLocaleString('en-IN', { minimumFractionDigits: 2 })} GST
-                      </p>
-                    </div>
+                    {/* Centre: amount breakdown — hidden for cash payments
+                        per the same rationale as the document number.
+                        Cash users see only "Paid" status; amount /
+                        GST split lives on the dealer's invoice. */}
+                    {!isCash && (
+                      <div className="text-right sm:text-center shrink-0">
+                        <p className="text-sm font-bold text-gray-800 dark:text-white">
+                          ₹{total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        </p>
+                        <p className="text-xs text-gray-400 dark:text-gray-500">
+                          ₹{base.toLocaleString('en-IN', { minimumFractionDigits: 2 })} + ₹{gst.toLocaleString('en-IN', { minimumFractionDigits: 2 })} GST
+                        </p>
+                      </div>
+                    )}
 
                     {/* Right: download buttons (only for paid).
                          Cash payments don't expose receipt / tax-invoice
