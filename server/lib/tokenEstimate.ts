@@ -24,14 +24,16 @@
  */
 
 const SAFETY_MARGIN = 1.10;
-// Heavier multiplier for routes that routinely retry/bisect/fallback.
-// Empirically the bank-statement and ledger paths run 3-8× the ideal-
-// case estimate because of T1 fallback (2.5× weighted), bisection of
-// dense batches (full prompt re-run on each sub-chunk), and parse-
-// failure retries. Set conservatively at 3.5× — still occasionally
-// undershoots on the densest 1500+ row statements but avoids the
-// 700-800% overrun bands we were seeing in the dashboard.
-const RETRY_HEAVY_MARGIN = 3.5;
+// Heavier multiplier for routes that occasionally retry/bisect/
+// fallback. Earlier this was set at 3.5× to avoid a "you'd exceed
+// your quota" pre-flight rejection on dense statements. Empirically
+// that produced massive negative deviations on the dashboard
+// (estimate 3.3M vs actual 350K → -89%): bank/ledger calls almost
+// always run once cleanly, the T1 fallback (2.5× weights) only
+// fires on a Gemini outage, and bisection only triggers on
+// Gemini-3 MAX_TOKENS truncation. 1.5× covers the small-tail of
+// retries while keeping average-case deviations in the ±25% band.
+const RETRY_HEAVY_MARGIN = 1.5;
 const TOKENS_PER_CHAR = 1 / 4;
 
 // T2 (gemini-2.5-flash-lite) weights — the cheapest active model
@@ -90,8 +92,10 @@ export function estimateBankStatementText(rawTextChars: number): number {
   const PROMPT_CHARS_PER_CHUNK = 1_500;
   const chunks = Math.max(1, Math.ceil(rawTextChars / CHUNK_CHARS));
   const inputTokens = (rawTextChars + chunks * PROMPT_CHARS_PER_CHUNK) * TOKENS_PER_CHAR;
-  // Output ≈ ~half the input chars on a typical TSV extraction.
-  const outputTokens = rawTextChars * 0.5 * TOKENS_PER_CHAR;
+  // Output ratio observed in production averages ~0.3× the input
+  // chars on a typical TSV extraction (was 0.5× — overcounted on
+  // average and pushed bank pre-flight estimates ~10× over actual).
+  const outputTokens = rawTextChars * 0.3 * TOKENS_PER_CHAR;
   return Math.ceil((inputTokens * T2_W_IN + outputTokens * T2_W_OUT) * RETRY_HEAVY_MARGIN);
 }
 
@@ -123,19 +127,37 @@ export function estimateBankStatementVision(fileSizeBytes: number): number {
 }
 
 /**
+ * Weighted-token estimate for ONLY the ledger scrutiny audit pass —
+ * no preceding extract pass. Used by pre-extracted upload (the
+ * client-side wizard already extracted), the side-by-side compare
+ * (both ledgers come pre-structured), and the resume-after-failure
+ * path (raw_extracted is already on disk). Anchored to T2 weights
+ * because that's where the scrutiny prompt always runs.
+ *
+ * Without this, those four paths used `estimateFromChars` which
+ * counted ONLY input chars at 1× T2 weight — missing the audit
+ * JSON output entirely. Output is the dominant component once T2
+ * weighting (4× per output token) is applied; pre-flight estimates
+ * came in 5-13× under actuals, which the dashboard surfaced as
+ * +800-1200% deviation bands.
+ */
+export function estimateLedgerScrutinyOnly(rawTextChars: number): number {
+  if (rawTextChars <= 0) return 0;
+  const SCRUTINY_PROMPT_CHARS = 3_500;
+  const SCRUTINY_OUTPUT_FACTOR = 0.35;
+  const inputTokens = (rawTextChars + SCRUTINY_PROMPT_CHARS) * TOKENS_PER_CHAR;
+  const outputTokens = rawTextChars * SCRUTINY_OUTPUT_FACTOR * TOKENS_PER_CHAR;
+  return Math.ceil((inputTokens * T2_W_IN + outputTokens * T2_W_OUT) * RETRY_HEAVY_MARGIN);
+}
+
+/**
  * Estimate for the ledger-scrutiny TEXT path. Same shape as bank
  * statements but with a heavier scrutiny pass on top — every chunk
  * runs the audit prompt over the same rows.
  */
 export function estimateLedgerText(rawTextChars: number): number {
   if (rawTextChars <= 0) return 0;
-  const extractEstimate = estimateBankStatementText(rawTextChars);
-  const SCRUTINY_PROMPT_CHARS = 3_500;
-  const SCRUTINY_OUTPUT_FACTOR = 0.35;
-  const scrutinyInputTokens = (rawTextChars + SCRUTINY_PROMPT_CHARS) * TOKENS_PER_CHAR;
-  const scrutinyOutputTokens = rawTextChars * SCRUTINY_OUTPUT_FACTOR * TOKENS_PER_CHAR;
-  const scrutinyWeighted = Math.ceil((scrutinyInputTokens * T2_W_IN + scrutinyOutputTokens * T2_W_OUT) * RETRY_HEAVY_MARGIN);
-  return extractEstimate + scrutinyWeighted;
+  return estimateBankStatementText(rawTextChars) + estimateLedgerScrutinyOnly(rawTextChars);
 }
 
 /** Vision path for ledger PDFs. Two-pass (extract + scrutinize). */

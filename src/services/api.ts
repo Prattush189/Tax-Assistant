@@ -2580,3 +2580,42 @@ export async function createLedgerComparison(input: {
 export async function deleteLedgerComparison(id: string): Promise<void> {
   await authFetch(`/api/ledger-scrutiny/compare/${id}`, { method: 'DELETE' });
 }
+
+/** Run the ledger extract pass via AI vision and return the parsed
+ *  ExtractedLedger without running the scrutiny audit. Compare mode
+ *  uses this when one side is a Finsys / scanned PDF the
+ *  deterministic grid extractor can't handle — feeds the result
+ *  back into createLedgerComparison as preExtractedA/B. */
+export async function extractLedgerViaVision(file: File): Promise<{
+  id: string;
+  status: string;
+  extracted: {
+    partyName: string | null;
+    gstin: string | null;
+    periodFrom: string | null;
+    periodTo: string | null;
+    accounts: Array<{
+      name: string;
+      accountType: string | null;
+      opening: number;
+      closing: number;
+      totalDebit: number;
+      totalCredit: number;
+      transactions: Array<{
+        date: string | null;
+        narration: string | null;
+        voucher: string | null;
+        debit: number;
+        credit: number;
+        balance: number | null;
+      }>;
+    }>;
+  };
+}> {
+  const form = new FormData();
+  form.append('file', file);
+  return authFetch('/api/ledger-scrutiny/upload?extractOnly=1', {
+    method: 'POST',
+    body: form,
+  });
+}

@@ -24,7 +24,7 @@ import { SseWriter } from '../lib/sseStream.js';
 import { gemini, GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, costForModel } from '../lib/gemini.js';
 import { creditsForPages, creditsForCsvRows, PAGES_PER_CREDIT, CSV_ROWS_PER_CREDIT } from '../lib/creditPolicy.js';
 import { enforceTokenQuota } from '../lib/tokenQuota.js';
-import { estimateLedgerText, estimateClaudeVision, estimateFromChars } from '../lib/tokenEstimate.js';
+import { estimateLedgerText, estimateClaudeVision, estimateFromChars, estimateLedgerScrutinyOnly } from '../lib/tokenEstimate.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import {
   LEDGER_EXTRACT_PROMPT,
@@ -1248,7 +1248,10 @@ router.post('/compare', async (req: AuthRequest, res: Response) => {
   const billingUser = getBillingUser(actor);
   const aJson = JSON.stringify(extractedA);
   const bJson = JSON.stringify(extractedB);
-  const estimatedTokens = estimateFromChars(aJson.length + bJson.length + LEDGER_COMPARE_SYSTEM_PROMPT.length);
+  // Compare uses the scrutiny-only estimator since both sides are
+  // already-extracted JSON; no extract pass runs. Includes the audit
+  // JSON output the bare estimateFromChars previously missed.
+  const estimatedTokens = estimateLedgerScrutinyOnly(aJson.length + bJson.length + LEDGER_COMPARE_SYSTEM_PROMPT.length);
   const tokenQuota = enforceTokenQuota(req, res, estimatedTokens);
   if (!tokenQuota.ok) return;
   res.once('close', () => tokenQuota.release());
@@ -1384,6 +1387,15 @@ router.post(
   async (req: AuthRequest, res: Response) => {
     if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
 
+    // Wall-clock anchors for duration logging in usageRepo so the
+    // admin Recent API Calls dashboard shows ledger run times the
+    // way it does for bank statements. extractStartMs covers the
+    // extract pass (text + vision); scrutinyStartMs is reset right
+    // before the audit pass kicks off and used by the scrutiny
+    // success / failed / cancelled log lines below.
+    const extractStartMs = Date.now();
+    let scrutinyStartMs = extractStartMs;
+
     const isPdfText = !req.file && typeof req.body?.pdfText === 'string' && req.body.pdfText.length > 0;
     // Pre-extracted path: the frontend ran the column-mapping wizard on a
     // digital PDF and already produced an ExtractedLedger structure. We
@@ -1415,7 +1427,7 @@ router.post(
       if (typeof req.body?.pdfText === 'string') return estimateLedgerText(req.body.pdfText.length);
       if (isPreExtracted && typeof req.body?.preExtracted === 'string') {
         // Pre-extracted skips the extract pass; estimate scrutiny only.
-        return estimateFromChars(req.body.preExtracted.length + 4_000);
+        return estimateLedgerScrutinyOnly(req.body.preExtracted.length + 4_000);
       }
       return 0;
     })();
@@ -1611,6 +1623,8 @@ router.post(
               'ledger_extract',
               0,
               'failed',
+              0,
+              Date.now() - extractStartMs,
             );
           } catch (e) {
             console.error('[ledger-scrutiny] failed-attempt cost log error', e);
@@ -1693,6 +1707,9 @@ router.post(
             false,
             'ledger_extract',
             totalTx,
+            'success',
+            0,
+            Date.now() - extractStartMs,
           );
         } catch (err) {
           console.error('[ledger-scrutiny] cost log failed', err);
@@ -1739,6 +1756,9 @@ router.post(
             false,
             'ledger_extract',
             visionTotalTx,
+            'success',
+            0,
+            Date.now() - extractStartMs,
           );
         } catch (err) {
           console.error('[ledger-scrutiny] cost log failed', err);
@@ -1768,6 +1788,25 @@ router.post(
       const totalTx = extracted.accounts.reduce((s, a) => s + a.transactions.length, 0);
       console.log(`[ledger-scrutiny] extract done via ${extractPath}: ${accounts.length} accounts, ${totalTx} TX${chunkCount ? `, ${chunkCount} chunk(s)` : ''}`);
 
+      // ── Extract-only short-circuit ────────────────────────────────────
+      // The compare-mode flow uses ?extractOnly=1 to get back the
+      // ExtractedLedger structure WITHOUT running the audit pass —
+      // it then feeds the structure into the side-by-side compare
+      // endpoint as preExtractedA/B. Saves the entire scrutiny pass
+      // (~70-90% of token spend on a ledger run) when the user only
+      // wants the parsed accounts, not the audit observations. Marks
+      // the job as 'done' so the duplicate-retry guard doesn't keep
+      // it pending.
+      if (req.query?.extractOnly === '1') {
+        ledgerScrutinyRepo.setStatus(job.id, req.user.id, 'done');
+        res.json({
+          id: job.id,
+          status: 'done',
+          extracted,
+        });
+        return;
+      }
+
       // ── Auto-chain into the audit pass ────────────────────────────────
       // Runs the chunked scrutiny inline so the user sees a single end-to-
       // end progress bar instead of "extract done, click Run scrutiny".
@@ -1778,6 +1817,9 @@ router.post(
       // run and the upload route's `findInProgressByHashForUser` guard
       // refuses any duplicate retry.
       ledgerScrutinyRepo.setStatus(job.id, req.user.id, 'scrutinizing');
+      // Reset the duration anchor so scrutiny-side logs measure the
+      // audit pass on its own (not extract + audit combined).
+      scrutinyStartMs = Date.now();
       const accountIdByName = new Map<string, string>();
       for (const a of accounts) accountIdByName.set(a.name.toLowerCase(), a.id);
 
@@ -1797,6 +1839,10 @@ router.post(
             model,
             false,
             'ledger_scrutiny_failed',
+            0,
+            'failed',
+            0,
+            Date.now() - scrutinyStartMs,
           );
         } catch (e) {
           console.error('[ledger-scrutiny] scrutiny failed-attempt cost log error', e);
@@ -1860,7 +1906,7 @@ router.post(
         try {
           if (scrutinyResult.inputTokens + scrutinyResult.outputTokens > 0) {
             const cost = costForModel(scrutinyResult.modelUsed, scrutinyResult.inputTokens, scrutinyResult.outputTokens);
-            usageRepo.logWithBilling(ledgerClientIp, req.user.id, quota.billingUserId, scrutinyResult.inputTokens, scrutinyResult.outputTokens, cost, false, scrutinyResult.modelUsed, false, 'ledger_scrutiny', persistedObs.length, 'cancelled');
+            usageRepo.logWithBilling(ledgerClientIp, req.user.id, quota.billingUserId, scrutinyResult.inputTokens, scrutinyResult.outputTokens, cost, false, scrutinyResult.modelUsed, false, 'ledger_scrutiny', persistedObs.length, 'cancelled', 0, Date.now() - scrutinyStartMs);
           }
         } catch (e) {
           console.error('[ledger-scrutiny] cancelled-run cost log failed', e);
@@ -1971,7 +2017,7 @@ router.post('/:id/scrutinize', async (req: AuthRequest, res: Response) => {
 
   // Scrutiny-only on already-extracted data. Estimate from the stored
   // raw_extracted JSON length (that's what gets fed to the audit prompt).
-  const scrutinyEstimate = estimateFromChars(job.raw_extracted.length + 4_000);
+  const scrutinyEstimate = estimateLedgerScrutinyOnly(job.raw_extracted.length + 4_000);
   const tokenQuota = enforceTokenQuota(req, res, scrutinyEstimate);
   if (!tokenQuota.ok) return;
   res.once('close', () => tokenQuota.release());
@@ -2124,6 +2170,7 @@ router.post('/:id/scrutinize', async (req: AuthRequest, res: Response) => {
         scrutinyTxCount,
         'success',
         tokenQuota.estimatedTokens,
+        Date.now() - scrutinyStartMs,
       );
     } catch (err) {
       console.error('[ledger-scrutiny] cost log failed', err);
@@ -2213,7 +2260,7 @@ router.post('/:id/resume', async (req: AuthRequest, res: Response) => {
   // Token-budget gate (resume = new audit work). Ledger Scrutiny is
   // open to all plans. Estimate from the partially-extracted payload
   // already on disk — we're only running the scrutiny pass on resume.
-  const resumeEstimate = estimateFromChars(job.raw_extracted.length + 4_000);
+  const resumeEstimate = estimateLedgerScrutinyOnly(job.raw_extracted.length + 4_000);
   const tokenQuota = enforceTokenQuota(req, res, resumeEstimate);
   if (!tokenQuota.ok) return;
   res.once('close', () => tokenQuota.release());
@@ -2262,7 +2309,7 @@ router.post('/:id/resume', async (req: AuthRequest, res: Response) => {
         if (inputTokens === 0 && outputTokens === 0) return;
         try {
           const cost = costForModel(model, inputTokens, outputTokens);
-          usageRepo.logWithBilling(clientIp, req.user!.id, billingUserId, inputTokens, outputTokens, cost, false, model, false, 'ledger_scrutiny', 0, 'failed');
+          usageRepo.logWithBilling(clientIp, req.user!.id, billingUserId, inputTokens, outputTokens, cost, false, model, false, 'ledger_scrutiny', 0, 'failed', 0, Date.now() - resumeStartMs);
         } catch (e) {
           console.error('[ledger-scrutiny] resume failed-attempt log error', e);
         }
