@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, X, AlertTriangle } from 'lucide-react';
 import type { ColumnMapping, ColumnRole, PdfGrid } from '../../lib/pdfGrid';
 import { findTableStart, suggestMapping } from '../../lib/pdfGrid';
@@ -91,9 +91,53 @@ export function ColumnMappingWizard({ kind, grid, filename, onConfirm, onCancel,
     return findTableStart(grid, dateCol >= 0 ? dateCol : null);
   }, [grid, mapping]);
   const previewRows = useMemo(() => {
-    if (!tableStart) return grid.rows.slice(0, PREVIEW_ROWS);
-    return grid.rows.slice(tableStart.firstDataRowIndex, tableStart.firstDataRowIndex + PREVIEW_ROWS);
-  }, [grid, tableStart]);
+    const startIdx = tableStart ? tableStart.firstDataRowIndex : 0;
+    const window = grid.rows.slice(startIdx, startIdx + PREVIEW_ROWS);
+    // Find columns that have data SOMEWHERE in the document but
+    // happen to be empty across the visible window. For each one,
+    // pull one rich row from later in the document and append. The
+    // user then sees real data for every column they need to map,
+    // not just whichever transactions happened to live near the
+    // table start. Canonical example: a Canara epassbook whose
+    // first 12 transactions are all withdrawals, leaving the
+    // Deposits column blank in the preview — without this lookup
+    // the user thinks the column is missing.
+    const colHasDataInWindow = new Array(grid.columnCount).fill(false);
+    for (const r of window) {
+      for (let c = 0; c < grid.columnCount; c++) {
+        if ((r[c] ?? '').trim().length > 0) colHasDataInWindow[c] = true;
+      }
+    }
+    const supplementalRows: string[][] = [];
+    for (let c = 0; c < grid.columnCount; c++) {
+      if (colHasDataInWindow[c]) continue;
+      // Walk forward from end of window to find a row where this
+      // column has data AND there's a date in the date column
+      // (otherwise we might pull a continuation / footer row).
+      const dateColIdx = mapping.roles.indexOf('date');
+      const searchStart = startIdx + PREVIEW_ROWS;
+      for (let r = searchStart; r < grid.rows.length; r++) {
+        const row = grid.rows[r];
+        const cellVal = (row[c] ?? '').trim();
+        if (cellVal.length === 0) continue;
+        const hasDate = dateColIdx < 0 || (row[dateColIdx] ?? '').trim().length > 0;
+        if (!hasDate) continue;
+        // De-dup against rows we've already pulled.
+        if (supplementalRows.some(existing => existing.join('|') === row.join('|'))) continue;
+        supplementalRows.push(row);
+        break;
+      }
+    }
+    return [...window, ...supplementalRows];
+  }, [grid, tableStart, mapping]);
+  // Index of the first row that's a "supplemental" pull from later
+  // in the document — used by the table renderer to draw a divider
+  // and label so the user knows those rows aren't sequential.
+  const supplementalStartIdx = useMemo(() => {
+    const startIdx = tableStart ? tableStart.firstDataRowIndex : 0;
+    const windowSize = Math.min(PREVIEW_ROWS, grid.rows.length - startIdx);
+    return previewRows.length > windowSize ? windowSize : -1;
+  }, [previewRows.length, tableStart, grid.rows.length]);
   const headerHintRow = useMemo(() => {
     if (!tableStart || tableStart.headerRowIndex === null) return null;
     return grid.rows[tableStart.headerRowIndex];
@@ -153,36 +197,19 @@ export function ColumnMappingWizard({ kind, grid, filename, onConfirm, onCancel,
             <table className="text-xs min-w-full">
               <thead className="bg-gray-50 dark:bg-gray-800/60 sticky top-0">
                 <tr>
-                  {mapping.roles.map((role, c) => {
-                    // Per-column data-density indicator. If the entire
-                    // visible window for a column is empty, surface
-                    // "(no data in window)" so the user doesn't think
-                    // they're missing a column. This is the difference
-                    // between a Canara statement window with only
-                    // withdrawals (Deposits column legitimately blank
-                    // for all visible rows) and a genuinely-misparsed
-                    // grid — the header tells the truth, and this
-                    // tooltip-style hint stops the panic.
-                    const hasAnyData = previewRows.some(row => (row[c] ?? '').trim().length > 0);
-                    return (
-                      <th key={c} className="p-2 border-b border-gray-200 dark:border-gray-800 text-left font-normal align-top">
-                        <select
-                          value={role}
-                          onChange={e => setRole(c, e.target.value as ColumnRole)}
-                          className="w-full text-xs rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-1.5 py-1"
-                        >
-                          {availableRoles.map(r => (
-                            <option key={r.value} value={r.value}>{r.label}</option>
-                          ))}
-                        </select>
-                        {!hasAnyData && (
-                          <p className="mt-1 text-[10px] text-amber-600 dark:text-amber-400 italic">
-                            no data in visible rows
-                          </p>
-                        )}
-                      </th>
-                    );
-                  })}
+                  {mapping.roles.map((role, c) => (
+                    <th key={c} className="p-2 border-b border-gray-200 dark:border-gray-800 text-left font-normal align-top">
+                      <select
+                        value={role}
+                        onChange={e => setRole(c, e.target.value as ColumnRole)}
+                        className="w-full text-xs rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-1.5 py-1"
+                      >
+                        {availableRoles.map(r => (
+                          <option key={r.value} value={r.value}>{r.label}</option>
+                        ))}
+                      </select>
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
@@ -195,15 +222,27 @@ export function ColumnMappingWizard({ kind, grid, filename, onConfirm, onCancel,
                     ))}
                   </tr>
                 )}
-                {previewRows.map((row, r) => (
-                  <tr key={r} className="border-t border-gray-100 dark:border-gray-800/60">
-                    {mapping.roles.map((_, c) => (
-                      <td key={c} className="p-2 text-gray-700 dark:text-gray-300 whitespace-nowrap max-w-[18rem] overflow-hidden text-ellipsis">
-                        {row[c] ?? ''}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
+                {previewRows.map((row, r) => {
+                  const isFirstSupplemental = supplementalStartIdx >= 0 && r === supplementalStartIdx;
+                  return (
+                    <Fragment key={r}>
+                      {isFirstSupplemental && (
+                        <tr className="border-t-2 border-dashed border-amber-300 dark:border-amber-700/60 bg-amber-50/50 dark:bg-amber-900/10">
+                          <td colSpan={mapping.roles.length} className="px-2 py-1.5 text-[11px] text-amber-700 dark:text-amber-300 italic">
+                            ↓ Sample rows pulled from later in the document — shown so every column has at least one example. Not sequential to the rows above.
+                          </td>
+                        </tr>
+                      )}
+                      <tr className="border-t border-gray-100 dark:border-gray-800/60">
+                        {mapping.roles.map((_, c) => (
+                          <td key={c} className="p-2 text-gray-700 dark:text-gray-300 whitespace-nowrap max-w-[18rem] overflow-hidden text-ellipsis">
+                            {row[c] ?? ''}
+                          </td>
+                        ))}
+                      </tr>
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>

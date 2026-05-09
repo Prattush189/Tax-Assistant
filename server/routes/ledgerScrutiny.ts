@@ -17,7 +17,7 @@
 import crypto from 'crypto';
 import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
-import { extractClaudeVision, ClaudePageLimitError } from '../lib/claudeVision.js';
+import { extractVisionWithFallback, ClaudePageLimitError } from '../lib/visionFallback.js';
 import { safeParseJson } from '../lib/geminiJson.js';
 import { pickChatProvider } from '../lib/chatProvider.js';
 import { SseWriter } from '../lib/sseStream.js';
@@ -1840,12 +1840,19 @@ router.post(
         // on long ledgers — the frontend should prefer the pdfText path.
         console.log(`[ledger-scrutiny] vision path: scanned PDF, no text layer`);
         ledgerScrutinyRepo.setStatus(job.id, req.user.id, 'extracting');
-        // Sonnet 4.5 vision. Anthropic's PDF document blocks handle
-        // up to 100 pages natively; >100 raises ClaudePageLimitError
-        // which the route surfaces as 400 with a CSV-export hint.
+        // Two-tier Gemini vision (3.1 → 2.5 fallback). Used to be
+        // Claude Sonnet 4.5, but production servers commonly don't
+        // have ANTHROPIC_API_KEY provisioned (Sonnet vision was
+        // pulled from the chain in visionFallback.ts pending that)
+        // so the call would 401 on every Finsys-style PDF. Gemini
+        // already powers bank-statement vision and ledger TSV
+        // extraction so its key is reliably configured. The 100-
+        // page guard is preserved (re-exported as
+        // ClaudePageLimitError) so when Sonnet is reintroduced
+        // the existing 400-with-CSV-hint behaviour still works.
         let result;
         try {
-          result = await extractClaudeVision<ExtractedLedger>(req.file!.buffer, mimeType, LEDGER_EXTRACT_PROMPT, {
+          result = await extractVisionWithFallback<ExtractedLedger>(req.file!.buffer, mimeType, LEDGER_EXTRACT_PROMPT, {
             maxTokens: 16_384,
           });
         } catch (err) {
