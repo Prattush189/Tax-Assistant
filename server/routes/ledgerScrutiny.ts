@@ -2111,20 +2111,21 @@ router.post(
       ledgerScrutinyRepo.setStatus(job.id, req.user.id, 'error', errMsg.slice(0, 500));
       // Specific error types get specific messages so the user (or
       // dev) can act without parsing a stack trace.
-      const isAnthropicAuthError = /authentication_error|invalid x-api-key|401\b/i.test(errMsg) && extractPath === 'vision';
+      const isVisionAuthError = /authentication_error|invalid x-api-key|401\b/i.test(errMsg) && extractPath === 'vision';
       // Tailor the hint to the path that was attempted. Telling a user with a
       // 100-page digital PDF to "split the year" is misleading once chunking
       // is in play — chunked failures usually mean a chunk consistently
       // truncated or sanity-failed, which a smaller export won't fix.
-      const hint = isAnthropicAuthError
-        ? 'AI vision is not configured on this server: ANTHROPIC_API_KEY environment variable is missing or invalid. Ask the administrator to set ANTHROPIC_API_KEY in the server .env and restart. (For digital PDFs, the wizard path doesn\'t need this key — only scanned / Finsys-style layouts hit vision.)'
+      // User-facing strings deliberately do NOT name AI providers.
+      const hint = isVisionAuthError
+        ? 'AI vision is not configured on this server. Ask the administrator to provision the vision API key in the server environment and restart. (Digital PDFs that go through the column-mapping wizard work without this — only scanned / stacked-cell layouts hit vision.)'
         : extractPath === 'tsv-chunked'
         ? `Failed in the chunked extractor (${chunkCount} chunk(s) attempted). If a section keeps timing out, retry — the AI service may have been throttling. If the error mentions "trailer" or "truncated", a single chunk genuinely overflowed and you'll need a smaller export.`
         : extractPath === 'vision'
           ? 'Vision extractor used (PDF has no text layer or text extraction failed in the browser). Re-save the PDF as a digital export rather than a scan, or split the year into halves.'
           : 'Re-export from Tally / Busy with smaller account groups, or split the year into halves.';
-      res.status(isAnthropicAuthError ? 503 : 500).json({
-        error: isAnthropicAuthError ? 'AI vision unavailable on this server.' : 'Failed to extract ledger.',
+      res.status(isVisionAuthError ? 503 : 500).json({
+        error: isVisionAuthError ? 'AI vision unavailable on this server.' : 'Failed to extract ledger.',
         detail: errMsg.slice(0, 400),
         extractPath,
         chunkCount,

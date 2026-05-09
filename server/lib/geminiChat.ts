@@ -129,7 +129,10 @@ export async function* streamGeminiChat(
 
   if (!response.ok) {
     const errText = await response.text();
-    throw new Error(`Gemini ${model} error ${response.status}: ${errText.slice(0, 300)}`);
+    // Console keeps the model name for debugging; the thrown error
+    // text — which surfaces in user-facing toasts — does not.
+    console.warn(`[geminiChat] ${model} HTTP ${response.status}: ${errText.slice(0, 300)}`);
+    throw new Error(`AI service error ${response.status}: ${errText.slice(0, 300)}`);
   }
 
   const reader = response.body!.getReader();

@@ -47,7 +47,10 @@ export async function extractVisionWithFallback<T = unknown>(
       model: GEMINI_CHAT_MODEL_T1,
     });
     if (opts.looksValid && !opts.looksValid(result.data)) {
-      throw new Error('Gemini 3.1 parse passed schema but looksValid returned false');
+      // Internal — caller catches this and falls through to tier 2.
+      // Brand name is fine inside this error since it's never
+      // surfaced to the UI (the catch wraps it in a generic message).
+      throw new Error('Tier-1 vision parse passed schema but looksValid returned false');
     }
     return result;
   } catch (err) {

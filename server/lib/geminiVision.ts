@@ -96,13 +96,18 @@ export async function extractGeminiVision<T = unknown>(
         const raw = (json.candidates?.[0]?.content?.parts ?? [])
           .map(p => p.text ?? '')
           .join('');
-        if (!raw) throw new Error('Gemini returned empty response');
+        if (!raw) throw new Error('AI service returned empty response');
         // Output-cap truncation — the JSON gets cut mid-array. Surface
         // it so callers can either retry with a higher cap or chunk
         // the input. safeParseJson would otherwise silently recover a
         // partial array and the caller would never know data was lost.
         if (finishReason === 'MAX_TOKENS') {
-          const err = new Error(`Gemini ${model} hit MAX_TOKENS (output: ${outputTokens}/${maxTokens}) — response truncated. Increase maxTokens or chunk the input.`);
+          // User-facing message must NOT name the AI provider —
+          // surface the symptom (output truncated, file too dense)
+          // and the action (split / smaller export). Model name is
+          // kept in console.warn for debugging only.
+          console.warn(`[geminiVision] ${model} MAX_TOKENS hit (${outputTokens}/${maxTokens})`);
+          const err = new Error(`Output limit hit (${outputTokens}/${maxTokens} tokens) — the file is too dense for a single pass. Split the year into halves and re-upload.`);
           (err as { truncated?: boolean }).truncated = true;
           throw err;
         }
