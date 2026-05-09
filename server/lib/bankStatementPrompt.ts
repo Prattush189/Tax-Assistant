@@ -74,13 +74,22 @@ export const BANK_STATEMENT_SUBCATEGORIES: Record<BankStatementCategory, string[
   Investments: ['SIP', 'MF', 'Stocks', 'FD'],
   'Loan EMI': ['Home', 'Car', 'Business', 'Personal'],
   'Taxes Paid': ['Advance Tax', 'Self Assessment'],
-  'Bank Charges': ['ATM', 'NEFT/IMPS/RTGS', 'SMS', 'Min Balance', 'Loan Processing', 'Cheque', 'GST', 'Other'],
-  'Bank Interest (Dr)': [],
+  // Bank Charges subcategories track the buckets the user maintains
+  // in BANK CHARGES FORMAT.xlsx so the dashboard rolls up the way
+  // they expect. New buckets added: SoundBox/POS Rent, CIBIL,
+  // Cash Txn (deposit/withdrawal counter charges), Penal, Inspection,
+  // Rejection (inward / outward cheque returns), Card Fees.
+  'Bank Charges': [
+    'ATM', 'NEFT/IMPS/RTGS', 'SMS', 'Min Balance', 'Loan Processing',
+    'Cheque', 'GST', 'POS Rental', 'SoundBox Rent', 'CIBIL',
+    'Cash Txn', 'Penal', 'Inspection', 'Rejection', 'Card Fee', 'Other',
+  ],
+  'Bank Interest (Dr)': ['Loan Interest', 'OD Interest', 'Other'],
   'Bank Interest (Cr)': ['Savings', 'FD', 'Other'],
-  Insurance: [],
-  'Mobile Charges': [],
-  'Electricity Charges': [],
-  'Water Charges': [],
+  Insurance: ['Premium', 'Renewal', 'Other'],
+  'Mobile Charges': ['BSNL', 'Airtel', 'Jio', 'Vi', 'Other'],
+  'Electricity Charges': ['DISCOM', 'Other'],
+  'Water Charges': ['Municipal', 'Other'],
   Other: [],
 };
 
@@ -161,13 +170,38 @@ Categorization rules (apply the FIRST match):
 - "GSTN", "GSTIN", "GST PMT" → GST Payments
 - "TDS", "26Q", "26QB" → TDS
 - "ADV TAX", "SELF ASMNT", "CHALLAN 280" → Taxes Paid
-- "EMI", "LOAN", "HDFC HL", "HOUSING LOAN" → Loan EMI
+- "EMI", "LOAN", "HDFC HL", "HOUSING LOAN", "LOAN RECOVERY" → Loan EMI
 - "SIP", "MUTUAL FUND", "MF ", "ZERODHA", "GROWW", "UPSTOX" → Investments
 - "NEFT", "IMPS", "UPI", "RTGS" with personal counterparty → Transfers
 - Debits to vendors (rent, utilities, office, travel, ads) → Business Expenses
 - Credits from customers to a business account → Business Income
 - Grocery, shopping, restaurants, personal consumption → Personal
 - Otherwise → Other
+
+Bank-fee narration anchors (apply BEFORE the generic NEFT/UPI rule above — these always win, with the listed subcategory):
+- "ATM CHARGES", "ATM ANN.CHRG", "ATM WDR", "ATM WDL CHG", "DEBIT ATM CARD" → Bank Charges / ATM
+- "CHRGS/NEFT", "NEFT CHGS", "CHRGS/IMPS", "IMPS CHARGES", "RTGS CHGS", "RTGS-GST-COMMISSION" → Bank Charges / NEFT/IMPS/RTGS
+- "SMS CHARGES", "SMS CHRG" → Bank Charges / SMS
+- "Min Bal Chrg", "MAB CHRG", "Avg bal Chgs", "MINIMUM BALANCE CHARGES" → Bank Charges / Min Balance
+- "LOAN_PROC", "Loan Processing Fee" → Bank Charges / Loan Processing
+- "CHEQUE BOOK CHGS", "CHEQUE BOOK CHARGES", "CHEQUE BOOK CHAREGS" → Bank Charges / Cheque
+- "Cash Deposit Charges", "CashDep Chgs", "Cash Txn Chgs-Branch" → Bank Charges / Cash Txn
+- "POS Rental" → Bank Charges / POS Rental
+- "SoundBox Rent" → Bank Charges / SoundBox Rent
+- "CIBIL" → Bank Charges / CIBIL
+- "Penal Charges", "Penal Cha" → Bank Charges / Penal
+- "INSPC CHARGES", "INSPECTION CHARGES" → Bank Charges / Inspection (note: "INSPC" is bank-charge inspection, NOT insurance)
+- "Reject Insufficient Balance", "Outward Rejection Charges", "Inward Rejection Charges" → Bank Charges / Rejection
+- "DEBIT CARD ANNUAL FEE" → Bank Charges / Card Fee
+- "ADHOC STMT CHGS", "ACCT MAIN CHARGES", "INCIDENTAL CHARGES", "LOW DENOMINATION CHARGE", "SGST", "CGST" (when paired with a charge line) → Bank Charges / Other
+- "Int.Coll" (interest collected on debit balance) → Bank Interest (Dr) / Loan Interest
+- "Int.Pd:", "CREDIT INTEREST" → Bank Interest (Cr)
+- "INS-", "INS_", "Insurance", "_PROPERTY_INS_", "_INS_RENEWAL_" → Insurance / Premium
+- "BIL/BPAY/BSNL", "PAYTMBSNL" → Mobile Charges / BSNL
+- "BIL/BPAY/AIRTEL", "PAYTMAIRTEL" → Mobile Charges / Airtel
+- "BIL/BPAY/JIO", "PAYTMJIO" → Mobile Charges / Jio
+- "BILL DK POWER", "BILL DKP", "DISCOM" → Electricity Charges / DISCOM
+- "WATER BILL" → Water Charges / Municipal
 
 Counterparty extraction:
 - UPI "UPI/<ref>/<note>/<vpa>/..." → VPA or payee name after the VPA
@@ -264,13 +298,38 @@ Categorization rules (apply the FIRST match):
 - Narration contains "GSTN", "GSTIN", "GST PMT" → GST Payments
 - Narration contains "TDS", "26Q", "26QB" → TDS
 - Narration contains "ADV TAX", "SELF ASMNT", "CHALLAN 280" → Taxes Paid
-- Narration contains "EMI", "LOAN", "HDFC HL", "HOUSING LOAN" → Loan EMI
+- Narration contains "EMI", "LOAN", "HDFC HL", "HOUSING LOAN", "LOAN RECOVERY" → Loan EMI
 - Narration contains "SIP", "MUTUAL FUND", "MF ", "ZERODHA", "GROWW", "UPSTOX" → Investments
 - Narration contains "NEFT", "IMPS", "UPI", "RTGS" with a personal counterparty (not GSTIN) → Transfers
 - Debits to vendors (rent, utilities, office supplies, travel, ads) → Business Expenses with appropriate subcategory
 - Credits to a business account from customers → Business Income
 - Grocery, shopping, restaurants, personal consumption → Personal
 - Anything that doesn't match → Other
+
+Bank-fee narration anchors — apply BEFORE the generic NEFT/UPI/Transfers rule above. Each match also sets the listed subcategory:
+- "ATM CHARGES" / "ATM ANN.CHRG" / "ATM WDR" / "ATM WDL CHG" / "DEBIT ATM CARD" → Bank Charges / ATM
+- "CHRGS/NEFT" / "NEFT CHGS" / "CHRGS/IMPS" / "IMPS CHARGES" / "RTGS CHGS" / "RTGS-GST-COMMISSION" → Bank Charges / NEFT/IMPS/RTGS
+- "SMS CHARGES" / "SMS CHRG" → Bank Charges / SMS
+- "Min Bal Chrg" / "MAB CHRG" / "Avg bal Chgs" / "MINIMUM BALANCE CHARGES" → Bank Charges / Min Balance
+- "LOAN_PROC" / "Loan Processing Fee" → Bank Charges / Loan Processing
+- "CHEQUE BOOK CHGS" / "CHEQUE BOOK CHARGES" / "CHEQUE BOOK CHAREGS" → Bank Charges / Cheque
+- "Cash Deposit Charges" / "CashDep Chgs" / "Cash Txn Chgs-Branch" → Bank Charges / Cash Txn
+- "POS Rental" → Bank Charges / POS Rental
+- "SoundBox Rent" → Bank Charges / SoundBox Rent
+- "CIBIL" → Bank Charges / CIBIL
+- "Penal Charges" / "Penal Cha" → Bank Charges / Penal
+- "INSPC CHARGES" / "INSPECTION CHARGES" → Bank Charges / Inspection (note: INSPC is bank inspection charge, NOT insurance)
+- "Reject Insufficient Balance" / "Outward Rejection Charges" / "Inward Rejection Charges" → Bank Charges / Rejection
+- "DEBIT CARD ANNUAL FEE" → Bank Charges / Card Fee
+- "ADHOC STMT CHGS" / "ACCT MAIN CHARGES" / "INCIDENTAL CHARGES" / "LOW DENOMINATION CHARGE" → Bank Charges / Other
+- "Int.Coll" → Bank Interest (Dr) / Loan Interest
+- "Int.Pd:" / "CREDIT INTEREST" → Bank Interest (Cr)
+- "INS-" / "INS_" / "Insurance" / "_PROPERTY_INS_" / "_INS_RENEWAL_" → Insurance / Premium
+- "BIL/BPAY/BSNL" / "PAYTMBSNL" → Mobile Charges / BSNL
+- "BIL/BPAY/AIRTEL" / "PAYTMAIRTEL" → Mobile Charges / Airtel
+- "BIL/BPAY/JIO" / "PAYTMJIO" → Mobile Charges / Jio
+- "BILL DK POWER" / "BILL DKP" / DISCOM names → Electricity Charges / DISCOM
+- "WATER BILL" → Water Charges / Municipal
 
 isRecurring = true when the same narration pattern appears at least twice with similar amounts (monthly salary, EMI, SIP, rent).
 

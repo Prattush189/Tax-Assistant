@@ -274,19 +274,28 @@ export function BankStatementUploader({ manager }: Props) {
         }
 
         // Bank fingerprint shortcut for layouts we don't yet have a
-        // per-bank rule for: BoB packs all transaction text into one
-        // column, Union/PNB/CBI/BoI/Indian Bank/IDBI ship multi-row
-        // headers that bleed into data. Route those straight to AI
-        // vision. HDFC / ICICI / Canara are NOT in this list — they
-        // hit the per-bank rule above.
+        // per-bank rule for, OR layouts that ship as image-only PDFs
+        // and need vision regardless of fingerprint. BoB packs all
+        // transaction text into one column. Union/CBI/BoI/Indian
+        // Bank/IDBI ship multi-row headers that bleed into data.
+        // Axis Bank's e-statement is a glyph-rendered PDF (no text
+        // layer at all), so even when the grid extractor returns a
+        // grid it has zero useful content. SBI's most common export
+        // is similarly image-only.
+        //
+        // HDFC / ICICI / Canara / PNB / Yes Bank / J&K Bank are NOT
+        // in this list — they have deterministic rules above. PNB
+        // was previously here but the e-statement turned out to be
+        // text-extractable on closer inspection.
         const KNOWN_VISION_ONLY_BANKS = [
           'bank of baroda', 'bob',
           'union bank',
-          'pnb', 'punjab national bank',
           'central bank of india',
           'bank of india',
           'indian bank',
           'idbi',
+          'axis bank', 'axisbank', 'utib0',
+          'state bank of india', 'sbin0',
         ];
         const fingerprint = grid
           ? grid.rows.slice(0, 30).flat().join(' ').toLowerCase()

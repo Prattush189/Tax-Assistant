@@ -269,20 +269,32 @@ export function detectAndMapLedgerErp(grid: PdfGrid | null): DetectedErpMapping 
   //      check the rule fires, applyMapping produces transactions
   //      with empty narrations, and the audit can't classify them.
   //
-  // Sample only rows where the date column has text — ledger PDFs
-  // are full of header / continuation / totals rows with empty
-  // date columns that would drag the parse-rate down for benign
-  // reasons. Tally compact dates ("Apr 1") need a defaultYear —
-  // pull it from the period header via inferFiscalYearStart.
+  // Pre-filter samples to "date-shaped" candidates (substring matches
+  // /\d{1,4}[\/.\-]\d{1,2}[\/.\-]\d{1,4}/ for numeric dates, or a
+  // 3-letter month for Tally's "Apr 1" / "Jun 30" compact form).
+  // Without that filter, multi-account ledgers that repeat a banner
+  // on every page (Tally's "Statement of Account", Busy's section
+  // headers) drown the first 10 non-empty col-0 cells in banner text,
+  // every parseDate call returns null, and the rule self-vetoes on a
+  // perfectly valid file. Banner-only rows lack date shape; real
+  // transaction rows always have one — so this filter cleanly
+  // separates them. Same fix is applied in perBankRules.ts.
   const dateCol = roles.indexOf('date');
   const narrationCol = roles.indexOf('narration');
   if (dateCol >= 0) {
     const defaultYear = inferFiscalYearStart(grid.rows) ?? undefined;
+    const dateLike = /\d{1,4}[\/.\-]\d{1,2}[\/.\-]\d{1,4}|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b/i;
     const samples = grid.rows
       .slice(1)
-      .filter(r => (r[dateCol] ?? '').trim() !== '')
-      .slice(0, 10);
-    if (samples.length > 0) {
+      .filter(r => dateLike.test((r[dateCol] ?? '').trim()))
+      .slice(0, 20);
+    if (samples.length === 0) {
+      console.warn(
+        `[perLedgerErpRules] ${rule.name} fingerprint + headers matched but column ${dateCol} ("${headers[dateCol] ?? ''}") had no date-shaped values. Falling back to wizard.`,
+      );
+      return null;
+    }
+    {
       const dateHits = samples.filter(r => parseDate((r[dateCol] ?? '').trim(), defaultYear)).length;
       if (dateHits < Math.max(2, Math.ceil(samples.length / 2))) {
         console.warn(
