@@ -55,6 +55,12 @@ interface SideState {
   label: string;
   filename: string | null;
   extracted: ExtractedLedger | null;
+  /** True while a freshly-picked file is being parsed (browser-side
+   *  PDF/Excel/CSV read + grid extract) BEFORE the wizard opens or
+   *  the result lands in `extracted`. Renders a spinner so the user
+   *  sees the click registered — without it the upload button
+   *  appears unresponsive for the 1-3s of extractPdfGrid work. */
+  processing: boolean;
 }
 
 const ACCEPT = '.pdf,.csv,.xlsx,.xls,application/pdf,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel';
@@ -104,6 +110,14 @@ function SideUploader({
           <button type="button" onClick={onClear} className="p-1 rounded hover:bg-emerald-100 dark:hover:bg-emerald-900/30">
             <X className="w-4 h-4 text-gray-500" />
           </button>
+        </div>
+      ) : state.processing ? (
+        <div className="flex items-center gap-3 px-3 py-4 rounded-lg bg-emerald-50/50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800/60">
+          <Loader2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 animate-spin shrink-0" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">Reading {state.filename ?? 'file'}…</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400">Detecting ERP, mapping columns, extracting accounts</p>
+          </div>
         </div>
       ) : (
         <button
@@ -165,8 +179,8 @@ function ReportTable<T>({
 export function LedgerCompareView() {
   const inputRefA = useRef<HTMLInputElement>(null);
   const inputRefB = useRef<HTMLInputElement>(null);
-  const [sideA, setSideA] = useState<SideState>({ label: '', filename: null, extracted: null });
-  const [sideB, setSideB] = useState<SideState>({ label: '', filename: null, extracted: null });
+  const [sideA, setSideA] = useState<SideState>({ label: '', filename: null, extracted: null, processing: false });
+  const [sideB, setSideB] = useState<SideState>({ label: '', filename: null, extracted: null, processing: false });
   const [pendingGrid, setPendingGrid] = useState<{
     side: Side;
     grid: PdfGrid;
@@ -197,6 +211,20 @@ export function LedgerCompareView() {
       toast.error('File exceeds 10 MB. Split the export and try again.');
       return;
     }
+
+    // Show the per-side spinner with the filename as soon as parse
+    // work begins. Cleared by a `finally` below — covers the wizard-
+    // open path, the error-toast path, and the CSV/Excel quick paths
+    // alike. Without this the upload button just disabled itself for
+    // the 1-3s of extractPdfGrid work and the user couldn't tell if
+    // anything was happening.
+    const setProcessing = (on: boolean) => {
+      const updater = (prev: SideState) => ({ ...prev, processing: on, filename: on ? file.name : prev.filename });
+      if (side === 'A') setSideA(updater);
+      else setSideB(updater);
+    };
+    setProcessing(true);
+    try {
 
     if (isCsv) {
       const text = await file.text();
@@ -270,6 +298,13 @@ export function LedgerCompareView() {
     } catch (err) {
       console.error(err);
       toast.error('Could not read this PDF.');
+    }
+
+    } finally {
+      // Always clear the spinner — whether we exited via the wizard
+      // (pendingGrid set, the wizard takes over visually), via toast
+      // error, or via successful CSV/Excel commit.
+      setProcessing(false);
     }
   };
 
@@ -346,8 +381,8 @@ export function LedgerCompareView() {
   };
 
   const reset = () => {
-    setSideA({ label: '', filename: null, extracted: null });
-    setSideB({ label: '', filename: null, extracted: null });
+    setSideA({ label: '', filename: null, extracted: null, processing: false });
+    setSideB({ label: '', filename: null, extracted: null, processing: false });
     setReport(null);
     setUsedLabels(null);
   };
@@ -375,7 +410,7 @@ export function LedgerCompareView() {
           state={sideA}
           onLabelChange={(l) => setSideA(prev => ({ ...prev, label: l }))}
           onPickFile={() => inputRefA.current?.click()}
-          onClear={() => setSideA({ label: sideA.label, filename: null, extracted: null })}
+          onClear={() => setSideA({ label: sideA.label, filename: null, extracted: null, processing: false })}
           busy={comparing}
         />
         <SideUploader
@@ -383,7 +418,7 @@ export function LedgerCompareView() {
           state={sideB}
           onLabelChange={(l) => setSideB(prev => ({ ...prev, label: l }))}
           onPickFile={() => inputRefB.current?.click()}
-          onClear={() => setSideB({ label: sideB.label, filename: null, extracted: null })}
+          onClear={() => setSideB({ label: sideB.label, filename: null, extracted: null, processing: false })}
           busy={comparing}
         />
       </div>
