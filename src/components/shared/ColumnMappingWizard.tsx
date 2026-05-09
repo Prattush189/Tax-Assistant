@@ -153,19 +153,36 @@ export function ColumnMappingWizard({ kind, grid, filename, onConfirm, onCancel,
             <table className="text-xs min-w-full">
               <thead className="bg-gray-50 dark:bg-gray-800/60 sticky top-0">
                 <tr>
-                  {mapping.roles.map((role, c) => (
-                    <th key={c} className="p-2 border-b border-gray-200 dark:border-gray-800 text-left font-normal align-top">
-                      <select
-                        value={role}
-                        onChange={e => setRole(c, e.target.value as ColumnRole)}
-                        className="w-full text-xs rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-1.5 py-1"
-                      >
-                        {availableRoles.map(r => (
-                          <option key={r.value} value={r.value}>{r.label}</option>
-                        ))}
-                      </select>
-                    </th>
-                  ))}
+                  {mapping.roles.map((role, c) => {
+                    // Per-column data-density indicator. If the entire
+                    // visible window for a column is empty, surface
+                    // "(no data in window)" so the user doesn't think
+                    // they're missing a column. This is the difference
+                    // between a Canara statement window with only
+                    // withdrawals (Deposits column legitimately blank
+                    // for all visible rows) and a genuinely-misparsed
+                    // grid — the header tells the truth, and this
+                    // tooltip-style hint stops the panic.
+                    const hasAnyData = previewRows.some(row => (row[c] ?? '').trim().length > 0);
+                    return (
+                      <th key={c} className="p-2 border-b border-gray-200 dark:border-gray-800 text-left font-normal align-top">
+                        <select
+                          value={role}
+                          onChange={e => setRole(c, e.target.value as ColumnRole)}
+                          className="w-full text-xs rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-1.5 py-1"
+                        >
+                          {availableRoles.map(r => (
+                            <option key={r.value} value={r.value}>{r.label}</option>
+                          ))}
+                        </select>
+                        {!hasAnyData && (
+                          <p className="mt-1 text-[10px] text-amber-600 dark:text-amber-400 italic">
+                            no data in visible rows
+                          </p>
+                        )}
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody>

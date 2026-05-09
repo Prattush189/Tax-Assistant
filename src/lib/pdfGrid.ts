@@ -85,6 +85,120 @@ export class PdfPasswordError extends Error {
 }
 
 /**
+ * Post-process a freshly-extracted grid: merge adjacent column pairs
+ * where one is a header-only column ("Debit" / "Credit" / "Balance"
+ * text, almost no data underneath because the data is right-aligned)
+ * and the next is a data-only column (right-aligned numerics, empty
+ * header). Busy ledgers split EVERY numeric column this way, which
+ * left the wizard with 8 columns for a logical 5-column table —
+ * three of them dead Skip / Ignore dropdowns the user couldn't get
+ * rid of. After merge the user sees exactly the columns they need.
+ *
+ * Detection per adjacent pair (cL, cR):
+ *   - cL has a non-empty header AND ≥85% of its cells are empty.
+ *   - cR has an empty (or null) header AND ≥30% of its cells contain
+ *     numeric-looking text.
+ * On match: combine cR's data with cL's header. Drop cR. The shift
+ * preserves the user's column-anchor positions for the wizard
+ * preview (cL keeps its leftX, just gains the data).
+ *
+ * Idempotent: if a grid has no phantom pairs, it's returned
+ * unchanged. Safe to call on every extraction.
+ */
+function mergeHeaderDataColumnPairs(grid: PdfGrid): PdfGrid {
+  if (grid.columnCount < 2) return grid;
+  const rowsToScan = Math.min(grid.rows.length, 200);
+  if (rowsToScan === 0) return grid;
+  const NUMERIC_RE = /\d/;
+  const fillRate = (col: number, predicate: (s: string) => boolean): number => {
+    let hits = 0;
+    let scanned = 0;
+    for (let r = 0; r < rowsToScan; r++) {
+      const cell = (grid.rows[r][col] ?? '').trim();
+      if (cell.length > 0) scanned += 1;
+      if (cell.length > 0 && predicate(cell)) hits += 1;
+    }
+    return scanned > 0 ? hits / rowsToScan : 0;
+  };
+  const totalDataRate = (col: number): number => {
+    let nonEmpty = 0;
+    for (let r = 0; r < rowsToScan; r++) {
+      if ((grid.rows[r][col] ?? '').trim().length > 0) nonEmpty += 1;
+    }
+    return nonEmpty / rowsToScan;
+  };
+  const dropCols = new Set<number>();
+  for (let cL = 0; cL < grid.columnCount - 1; cL++) {
+    if (dropCols.has(cL)) continue;
+    let cR = cL + 1;
+    while (cR < grid.columnCount && dropCols.has(cR)) cR += 1;
+    if (cR >= grid.columnCount) break;
+    const headerL = (grid.columnHeaders?.[cL] ?? '').trim();
+    const headerR = (grid.columnHeaders?.[cR] ?? '').trim();
+    const dataRateL = totalDataRate(cL);
+    const dataRateR = fillRate(cR, s => NUMERIC_RE.test(s));
+    // cL is header-only: has header text, almost no data underneath.
+    // cR is data-only: empty header, ≥30% of cells are numeric.
+    if (headerL && !headerR && dataRateL <= 0.15 && dataRateR >= 0.3) {
+      // Merge: pull header from cL onto cR, drop cL.
+      const newHeaders = [...(grid.columnHeaders ?? [])];
+      newHeaders[cR] = headerL;
+      grid = { ...grid, columnHeaders: newHeaders };
+      dropCols.add(cL);
+    }
+  }
+  // Second pass: drop "void" columns — no header AND truly empty
+  // across EVERY row in the document. These are pure extractor
+  // noise (column anchors detected at gap positions where right-
+  // aligned numerics from neighbouring columns sometimes spilled).
+  // Canara epassbook produces 2-3 of these between Deposits /
+  // Withdrawals / Balance, showing up as Skip / Ignore dropdowns
+  // in the wizard with nothing under them.
+  //
+  // SAFETY — only drop when the column is provably empty across the
+  // ENTIRE document, not just the first N sampled rows. A sparse
+  // real column (e.g. a sub-total appearing only on row 1500) would
+  // trip a sampling threshold but is not actually safe to drop.
+  // We scan all grid.rows and require zero non-empty cells before
+  // tagging the column for removal.
+  for (let c = 0; c < grid.columnCount; c++) {
+    if (dropCols.has(c)) continue;
+    const header = (grid.columnHeaders?.[c] ?? '').trim();
+    if (header) continue; // surviving header → keep, even with empty data
+    let nonEmptyCount = 0;
+    for (let r = 0; r < grid.rows.length; r++) {
+      if ((grid.rows[r][c] ?? '').trim().length > 0) {
+        nonEmptyCount += 1;
+        break; // any single non-empty cell disqualifies the drop
+      }
+    }
+    if (nonEmptyCount === 0) {
+      dropCols.add(c);
+    }
+  }
+
+  if (dropCols.size === 0) return grid;
+  // Re-build columnXs / columnHeaders / rows without the dropped
+  // columns. Walking left-to-right preserves the surviving columns'
+  // relative order, which is the only thing the wizard cares about.
+  const survive: number[] = [];
+  for (let c = 0; c < grid.columnCount; c++) {
+    if (!dropCols.has(c)) survive.push(c);
+  }
+  const newRows = grid.rows.map(row => survive.map(c => row[c] ?? ''));
+  const newHeaders = survive.map(c => grid.columnHeaders?.[c] ?? null);
+  const newXs = survive.map(c => grid.columnXs[c]);
+  console.log(`[pdfGrid] dropped ${dropCols.size} phantom column(s) (header-only + data-only merges, void columns) — ${grid.columnCount} → ${survive.length} columns`);
+  return {
+    ...grid,
+    rows: newRows,
+    columnCount: survive.length,
+    columnXs: newXs,
+    columnHeaders: newHeaders,
+  };
+}
+
+/**
  * Extract a 2D grid from a digital PDF. Returns null when the PDF
  * has no extractable text layer (scanned image) — caller should
  * fall back to the vision pipeline in that case. Throws
@@ -754,14 +868,14 @@ export async function extractPdfGrid(file: File, password?: string): Promise<Pdf
       // Skipped: visual hint only, costs more than it earns in v1.
     }
 
-    return {
+    return mergeHeaderDataColumnPairs({
       rows,
       columnCount: columnXs.length,
       columnXs,
       columnHeaders: columnAnchors.map(a => a.headerText),
       pageBreaks,
       pageCount: pdf.numPages,
-    };
+    });
   } catch (err) {
     // Surface password-protected PDFs as a typed error so the uploader
     // can prompt the user. pdfjs's PasswordException uses code 1 for
@@ -1620,10 +1734,19 @@ export interface ExtractedLedgerLike {
  *  — the audit prompt's reconciliation check tolerates a starting
  *  point of zero, and the precise opening can be recovered by the user
  *  from the source PDF if needed. */
-export function mappedRowsToExtractedLedger(rows: MappedRow[]): ExtractedLedgerLike {
+export function mappedRowsToExtractedLedger(
+  rows: MappedRow[],
+  /** Used when applyMapping never set an account context — single-
+   *  account exports (Tally / Finsys "Ledger Account : <NAME>"
+   *  banners with one party) don't have account-separator rows
+   *  because they don't need them; the party name lives in the
+   *  banner. Caller passes that name here so the resulting
+   *  accounts[0].name is meaningful instead of literal 'Default'. */
+  defaultAccountName?: string,
+): ExtractedLedgerLike {
   const byAccount = new Map<string, MappedRow[]>();
   for (const r of rows) {
-    const key = r.account ?? 'Default';
+    const key = r.account ?? defaultAccountName ?? 'Default';
     if (!byAccount.has(key)) byAccount.set(key, []);
     byAccount.get(key)!.push(r);
   }

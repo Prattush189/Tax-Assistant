@@ -119,6 +119,116 @@ interface ScrutinyResultRaw {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────
+
+/** Server-side post-filter for raw observations from the scrutiny
+ *  pass. Drops observations whose body or severity violates rules
+ *  the prompt already states (and that the model violates ~5-15% of
+ *  the time despite explicit instruction). The prompt is at the
+ *  diminishing-returns end of fixing these via wording — easier to
+ *  filter at egress than to keep tuning. Each rule maps to a
+ *  concrete failure mode seen on real reports.
+ *
+ *  Rules:
+ *   1. Drop §40A(3) flags whose body says "within the Rs. 10,000
+ *      limit" / "within the limit" / "no disallowance applies" /
+ *      "No action needed" — these are noise, the prompt explicitly
+ *      forbids emitting them at any severity.
+ *   2. Drop §40A(3) flags where the parsed rupee amount in the body
+ *      is ≤ Rs. 10,000 AND severity is warn/high — "Rs. 7,000
+ *      exceeds Rs. 10,000 limit" is mathematically false; "Rs.
+ *      6,000 exceeds Rs. 10,000 limit" same.
+ *   3. Drop §194Q flags whose body says "Rs. 0 (purchases above
+ *      Rs. 50 lakh)" or whose vendor aggregate (parsed from body)
+ *      is below Rs. 50 lakh. Sub-threshold = no obligation.
+ *   4. Drop RECON_BREAK flags whose body claims gap of Rs. 0 / 0.0
+ *      / sub-rupee floating-point noise / "the account balances" /
+ *      "no action needed" / "reconciles".
+ *   5. Cap the `amount` field on documentation-style codes to a
+ *      null / sane value — the gross-volume-in-amount bug stuffs
+ *      crore-scale numbers in there and blows up totalFlaggedAmount
+ *      by 10-100×. */
+function sanitizeObservations(raw: ScrutinyObservationRaw[]): ScrutinyObservationRaw[] {
+  const out: ScrutinyObservationRaw[] = [];
+  for (const o of raw) {
+    if (!o || typeof o.message !== 'string' || !o.message.trim()) continue;
+    const msg = o.message.toLowerCase();
+    const code = (o.code ?? '').toUpperCase();
+    const sev = (o.severity ?? '').toLowerCase();
+
+    // Rule 1 — within-limit cash flags at any severity.
+    if (code.includes('40A3') || /40a\(3\)/i.test(o.message)) {
+      const benignBody = /within the rs\.?\s*10,?000 limit|within the rs\.?\s*35,?000 limit|within the limit|no disallowance|no action (needed|required)|payment is compliant/i.test(o.message);
+      if (benignBody) {
+        console.warn(`[scrutiny-filter] dropped within-limit §40A(3) ${sev}: ${o.message.slice(0, 120)}`);
+        continue;
+      }
+    }
+
+    // Rule 2 — §40A(3) where body claims "X exceeds Rs. 10,000" but
+    // parsed X is ≤ Rs. 10,000. Pulls the FIRST rupee figure that
+    // appears before "exceeds" / "exceeded".
+    if (code.includes('40A3') && /exceed/i.test(msg)) {
+      const m = /rs\.?\s*([\d,]+)(?:\.\d+)?\s+on\s+\d|rs\.?\s*([\d,]+)(?:\.\d+)?\s+(?:exceed|exceeded)/i.exec(o.message);
+      const rawNum = m?.[1] ?? m?.[2];
+      if (rawNum) {
+        const n = Number(rawNum.replace(/,/g, ''));
+        if (Number.isFinite(n) && n <= 10_000) {
+          console.warn(`[scrutiny-filter] dropped false-positive §40A(3) "Rs. ${n} exceeds Rs. 10,000": ${o.message.slice(0, 120)}`);
+          continue;
+        }
+      }
+    }
+
+    // Rule 3 — §194Q on sub-threshold vendors. Either explicit "Rs. 0
+    // (purchases above Rs. 50 lakh)" OR the aggregate cited in body
+    // is below Rs. 50,00,000 = 50 lakh.
+    if (code.includes('194Q')) {
+      if (/rs\.?\s*0\s*\(purchases above rs\.?\s*50 lakh\)/i.test(o.message)) {
+        console.warn(`[scrutiny-filter] dropped sub-threshold §194Q: ${o.message.slice(0, 120)}`);
+        continue;
+      }
+      const aggMatch = /total purchases.*?aggregate(?:s)?\s*(?:to\s*)?rs\.?\s*([\d,]+)(?:\.\d+)?/i.exec(o.message);
+      if (aggMatch) {
+        const agg = Number(aggMatch[1].replace(/,/g, ''));
+        if (Number.isFinite(agg) && agg <= 50_00_000) {
+          console.warn(`[scrutiny-filter] dropped sub-threshold §194Q (agg Rs. ${agg.toLocaleString('en-IN')}): ${o.message.slice(0, 120)}`);
+          continue;
+        }
+      }
+    }
+
+    // Rule 4 — RECON_BREAK with gap < Rs. 1.
+    if (code.includes('RECON_BREAK') || code.includes('RECON')) {
+      const balancesText = /account balances|reconciliation appears? to be in order|no action (needed|required)|reconciles\b/i.test(o.message);
+      const zeroGap = /gap rs\.?\s*0(?:\.0+)?(?:\s|$|,|\.)/i.test(o.message);
+      // Sub-rupee gap (e.g. "gap Rs. 0.5" / "gap Rs. 3.6" — floating-
+      // point noise, not a real reconciliation issue).
+      const gapMatch = /gap rs\.?\s*(-?[\d,]+(?:\.\d+)?)/i.exec(o.message);
+      let subRupeeGap = false;
+      if (gapMatch) {
+        const g = Math.abs(Number(gapMatch[1].replace(/,/g, '')));
+        if (Number.isFinite(g) && g < 1) subRupeeGap = true;
+      }
+      if (balancesText || zeroGap || subRupeeGap) {
+        console.warn(`[scrutiny-filter] dropped no-op RECON_BREAK: ${o.message.slice(0, 120)}`);
+        continue;
+      }
+    }
+
+    // Rule 5 — gross-volume-in-amount on documentation-only codes.
+    // INFO_DOCUMENTATION_REQUIRED / DOCUMENTATION_REQUEST / similar
+    // shouldn't carry a multi-crore at-risk amount. Cap by nulling.
+    if (/DOCUMENTATION|DOCS|INFO_LARGE|LARGE_TRANSACTION|LARGE_VOLUME/i.test(code) && o.amount !== null && o.amount !== undefined && Math.abs(o.amount) > 1_00_00_000) {
+      console.warn(`[scrutiny-filter] nulled outsized amount on ${code}: was Rs. ${o.amount}`);
+      out.push({ ...o, amount: null });
+      continue;
+    }
+
+    out.push(o);
+  }
+  return out;
+}
+
 function toNumber(v: unknown): number {
   if (typeof v === 'number' && Number.isFinite(v)) return v;
   if (typeof v === 'string') {
@@ -1067,17 +1177,25 @@ async function runChunkedScrutiny(
     const t0 = Date.now();
     try {
       const r = await scrutinizeWithSplit(extracted, group, TX_PER_ACCOUNT, accounts.length, recordAttempt);
-      console.log(`[ledger-scrutiny] scrutiny group ${idx + 1}/${groups.length} ✓ ${r.observations.length} observations in ${Date.now() - t0}ms`);
-      allObservations.push(...r.observations);
+      // sanitizeObservations drops rule-violating noise (within-
+      // limit §40A(3) flags, sub-threshold §194Q flags, zero-gap
+      // RECON_BREAKs, gross-volume-in-amount documentation flags)
+      // before they reach the DB and the audit report. Applied
+      // BEFORE allObservations.push so the final reconciliation
+      // reflects only sanitized findings — the un-sanitized model
+      // output is no longer kept anywhere downstream.
+      const sanitizedChunkObs = sanitizeObservations(r.observations);
+      console.log(`[ledger-scrutiny] scrutiny group ${idx + 1}/${groups.length} ✓ ${r.observations.length} → ${sanitizedChunkObs.length} observations after sanitize in ${Date.now() - t0}ms`);
+      allObservations.push(...sanitizedChunkObs);
       totalInput += r.inputTokens;
       totalOutput += r.outputTokens;
       modelUsed = r.modelUsed || modelUsed;
 
-      // Persist this chunk's observations now so a Pause click after
-      // this point preserves them. Map raw → DB shape using the same
-      // logic as the final reconciliation below.
-      if (pauseControl && r.observations.length > 0) {
-        const inputs: LedgerObservationCreateInput[] = r.observations.map((o) => {
+      // Persist this chunk's sanitized observations now so a Pause
+      // click after this point preserves them. Map raw → DB shape
+      // using the same logic as the final reconciliation below.
+      if (pauseControl && sanitizedChunkObs.length > 0) {
+        const inputs: LedgerObservationCreateInput[] = sanitizedChunkObs.map((o) => {
           const accountId = o.accountName ? accountIdByName.get(o.accountName.toLowerCase()) ?? null : null;
           return {
             accountId,
@@ -1984,17 +2102,22 @@ router.post(
       const errMsg = err instanceof Error ? err.message : String(err);
       console.error(`[ledger-scrutiny] extract error (path=${extractPath}, chunks=${chunkCount}):`, errMsg);
       ledgerScrutinyRepo.setStatus(job.id, req.user.id, 'error', errMsg.slice(0, 500));
+      // Specific error types get specific messages so the user (or
+      // dev) can act without parsing a stack trace.
+      const isAnthropicAuthError = /authentication_error|invalid x-api-key|401\b/i.test(errMsg) && extractPath === 'vision';
       // Tailor the hint to the path that was attempted. Telling a user with a
       // 100-page digital PDF to "split the year" is misleading once chunking
       // is in play — chunked failures usually mean a chunk consistently
       // truncated or sanity-failed, which a smaller export won't fix.
-      const hint = extractPath === 'tsv-chunked'
+      const hint = isAnthropicAuthError
+        ? 'AI vision is not configured on this server: ANTHROPIC_API_KEY environment variable is missing or invalid. Ask the administrator to set ANTHROPIC_API_KEY in the server .env and restart. (For digital PDFs, the wizard path doesn\'t need this key — only scanned / Finsys-style layouts hit vision.)'
+        : extractPath === 'tsv-chunked'
         ? `Failed in the chunked extractor (${chunkCount} chunk(s) attempted). If a section keeps timing out, retry — the AI service may have been throttling. If the error mentions "trailer" or "truncated", a single chunk genuinely overflowed and you'll need a smaller export.`
         : extractPath === 'vision'
           ? 'Vision extractor used (PDF has no text layer or text extraction failed in the browser). Re-save the PDF as a digital export rather than a scan, or split the year into halves.'
           : 'Re-export from Tally / Busy with smaller account groups, or split the year into halves.';
-      res.status(500).json({
-        error: 'Failed to extract ledger.',
+      res.status(isAnthropicAuthError ? 503 : 500).json({
+        error: isAnthropicAuthError ? 'AI vision unavailable on this server.' : 'Failed to extract ledger.',
         detail: errMsg.slice(0, 400),
         extractPath,
         chunkCount,

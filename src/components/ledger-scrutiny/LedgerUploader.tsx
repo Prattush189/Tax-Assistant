@@ -323,14 +323,36 @@ export function LedgerUploader({ manager }: Props) {
         toast(`From ${stats.totalGridRows.toLocaleString('en-IN')} grid rows: ${stats.transactions.toLocaleString('en-IN')} transactions — ${parts.join(', ')}.`, { duration: 6000 });
       }
     }
-    const extracted = mappedRowsToExtractedLedger(mapped);
+    // Single-account exports (Tally / Finsys "Ledger Account : <NAME>"
+    // banner with ONE party) have no account-separator rows because
+    // they don't need them — the party name lives in the banner.
+    // Pull it out so accounts[0].name is meaningful instead of
+    // literal 'Default'. We scan the first 30 grid rows for the
+    // banner pattern; if absent (multi-account books, Busy ledgers
+    // with section headers), defaultAccountName stays undefined and
+    // mappedRowsToExtractedLedger uses the per-row r.account that
+    // applyMapping populated from the section headers.
+    const bannerText = grid.rows.slice(0, 30).flat().filter(Boolean).join(' ');
+    const partyMatch = /(?:ledger\s+account|account|statement\s+of\s+account|acc\s*[:.])\s*[:.]?\s*([A-Z][A-Z0-9 &.,'\-/()]{3,80})/i.exec(bannerText);
+    const partyFromBanner = partyMatch?.[1]?.trim().replace(/\s{2,}/g, ' ');
+    const extracted = mappedRowsToExtractedLedger(mapped, partyFromBanner);
     // Tally / Busy party-books bundle many GL accounts (often 100s)
     // in a single PDF separated by header rows. Surface the detected
     // account count so the user can spot the "single Default account"
     // failure mode before paying for an audit on a misparsed file.
-    if (extracted.accounts.length === 1 && extracted.accounts[0].name === 'Default') {
+    // Only hard-fail when we ALSO couldn't read a party from the
+    // banner — single-account exports with a clear banner name are
+    // legitimate (Finsys / Tally ledger-account exports).
+    if (extracted.accounts.length === 1 && extracted.accounts[0].name === 'Default' && !partyFromBanner) {
       toast.error('Could not detect any account headers (Tally-style "-Account Name" rows). The audit would treat all transactions as one account and produce wrong totals. Verify the PDF has account headers between blocks, or pre-split it.');
       return;
+    }
+    if (extracted.accounts.length === 1) {
+      // Soft-warn so the user knows this is being audited as a
+      // single-account ledger (the only failure mode this hides is
+      // a multi-account book whose section headers we missed; if
+      // the user knows the file is single-party, they accept).
+      toast(`Single-account ledger detected (${extracted.accounts[0].name}). Auditing as one account.`, { duration: 5000 });
     }
     const prefix = successPrefix ? `${successPrefix} — ` : '';
     toast(`${prefix}detected ${extracted.accounts.length.toLocaleString('en-IN')} account${extracted.accounts.length === 1 ? '' : 's'} · ${mapped.length.toLocaleString('en-IN')} transactions — running audit…`);

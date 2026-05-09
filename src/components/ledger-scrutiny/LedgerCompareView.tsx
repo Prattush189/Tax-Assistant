@@ -311,7 +311,14 @@ export function LedgerCompareView() {
       toast.error(`No transactions extracted. ${reason}`, { duration: 8000 });
       return;
     }
-    const extracted = mappedRowsToExtractedLedger(mapped);
+    // Pull party name from the Tally / Finsys "Ledger Account :
+    // <NAME>" banner so single-account exports don't bucket
+    // everything under literal 'Default'. Same pattern as the
+    // single-ledger uploader.
+    const bannerText = grid.rows.slice(0, 30).flat().filter(Boolean).join(' ');
+    const partyMatch = /(?:ledger\s+account|account|statement\s+of\s+account|acc\s*[:.])\s*[:.]?\s*([A-Z][A-Z0-9 &.,'\-/()]{3,80})/i.exec(bannerText);
+    const partyFromBanner = partyMatch?.[1]?.trim().replace(/\s{2,}/g, ' ');
+    const extracted = mappedRowsToExtractedLedger(mapped, partyFromBanner);
     if (side === 'A') {
       setSideA(prev => ({ ...prev, filename, extracted }));
     } else {
