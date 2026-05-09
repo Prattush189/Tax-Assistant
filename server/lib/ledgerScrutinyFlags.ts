@@ -705,3 +705,89 @@ export function runAllFlags(ledger: DetLedger, opts?: RunDetFlagsOptions): DetOb
   merge(flagTurnoverThresholds(ledger));
   return all;
 }
+
+// ── Codes the deterministic engine owns ─────────────────────────────
+// The slimmed-down LLM prompt tells the model NOT to emit any of these
+// codes. The merge step also uses this set to drop any duplicate the
+// model emits anyway (defence in depth — the prompt is plain English
+// and we should never trust it to be obeyed 100%).
+export const DETERMINISTIC_CODES: ReadonlySet<string> = new Set([
+  'CASH_40A3',
+  'CASH_269ST',
+  'CASH_269SS',
+  'CASH_269T',
+  'TDS_194Q_MISSING',
+  'TDS_194C_MISSING',
+  'TDS_194I_MISSING',
+  'TDS_194H_MISSING',
+  'TDS_194J_MISSING',
+  'TDS_192_VERIFY',
+  'RECON_BREAK',
+  'PATTERN_SQUARED_OFF',
+  'PATTERN_ONE_SIDED_CREDIT',
+  'TURNOVER_AUDIT_FLAG',
+]);
+
+// ── Merge: deterministic + LLM observations ─────────────────────────
+// Merge rules:
+//   1. All deterministic observations are kept verbatim.
+//   2. LLM observations that re-use a deterministic code are dropped
+//      (the deterministic version is authoritative on numbers; the LLM
+//      version often disagrees by 0.1–10× and we don't want either to
+//      win by accident).
+//   3. LLM observations that match a deterministic observation on
+//      (accountName + dateRef + amount within 1%) are dropped as
+//      probable duplicates of the same finding under a different code.
+//   4. The remaining LLM observations are appended.
+//   5. Order is preserved within each source.
+
+export interface MergeableObservation {
+  accountName: string | null;
+  code: string;
+  severity: string;
+  message: string;
+  amount: number | null;
+  dateRef: string | null;
+  suggestedAction: string | null;
+  // Optional 'source' lets callers tell deterministic from LLM at
+  // persistence time (we tag deterministic with 'deterministic' and
+  // LLM with whatever the model emits — typically absent).
+  source?: string;
+}
+
+export function mergeObservations(
+  det: DetObservation[],
+  llm: MergeableObservation[],
+): MergeableObservation[] {
+  const out: MergeableObservation[] = [];
+  // Deterministic first — they're authoritative.
+  for (const d of det) out.push(d);
+
+  // Build an index for duplicate detection: (accountName.lower | dateRef | rounded amount).
+  const detIndex = new Set<string>();
+  for (const d of det) {
+    const acct = (d.accountName ?? '').toLowerCase();
+    const date = d.dateRef ?? '';
+    if (d.amount !== null && d.amount !== undefined) {
+      // Round to nearest rupee for comparison — LLM often loses paise.
+      detIndex.add(`${acct}|${date}|${Math.round(d.amount)}`);
+    }
+    detIndex.add(`${acct}|${date}|*`); // any-amount key for accountName+date matches
+  }
+
+  for (const l of llm) {
+    const code = (l.code ?? '').toUpperCase();
+    if (DETERMINISTIC_CODES.has(code)) {
+      // Rule 2 — LLM tried to emit a code we own. Drop.
+      continue;
+    }
+    const acct = (l.accountName ?? '').toLowerCase();
+    const date = l.dateRef ?? '';
+    if (l.amount !== null && l.amount !== undefined) {
+      const k = `${acct}|${date}|${Math.round(l.amount)}`;
+      if (detIndex.has(k)) continue; // same account/date/amount as a deterministic flag — drop
+    }
+    out.push(l);
+  }
+  return out;
+}

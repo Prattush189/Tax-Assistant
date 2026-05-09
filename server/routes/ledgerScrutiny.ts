@@ -31,7 +31,15 @@ import {
   LEDGER_EXTRACT_TSV_PROMPT,
   LEDGER_SCRUTINY_SYSTEM_PROMPT,
   LEDGER_SCRUTINY_USER_PROMPT_HEAD,
+  formatPreRaisedFlags,
 } from '../lib/ledgerScrutinyPrompt.js';
+import {
+  runAllFlags,
+  mergeObservations,
+  DETERMINISTIC_CODES,
+  type DetObservation,
+  type DetLedger,
+} from '../lib/ledgerScrutinyFlags.js';
 import {
   ledgerScrutinyRepo,
   LedgerObservationCreateInput,
@@ -120,33 +128,27 @@ interface ScrutinyResultRaw {
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-/** Server-side post-filter for raw observations from the scrutiny
- *  pass. Drops observations whose body or severity violates rules
- *  the prompt already states (and that the model violates ~5-15% of
- *  the time despite explicit instruction). The prompt is at the
- *  diminishing-returns end of fixing these via wording — easier to
- *  filter at egress than to keep tuning. Each rule maps to a
- *  concrete failure mode seen on real reports.
+/** Defence-in-depth post-filter for raw LLM observations.
  *
- *  Rules:
- *   1. Drop §40A(3) flags whose body says "within the Rs. 10,000
- *      limit" / "within the limit" / "no disallowance applies" /
- *      "No action needed" — these are noise, the prompt explicitly
- *      forbids emitting them at any severity.
- *   2. Drop §40A(3) flags where the parsed rupee amount in the body
- *      is ≤ Rs. 10,000 AND severity is warn/high — "Rs. 7,000
- *      exceeds Rs. 10,000 limit" is mathematically false; "Rs.
- *      6,000 exceeds Rs. 10,000 limit" same.
- *   3. Drop §194Q flags whose body says "Rs. 0 (purchases above
- *      Rs. 50 lakh)" or whose vendor aggregate (parsed from body)
- *      is below Rs. 50 lakh. Sub-threshold = no obligation.
- *   4. Drop RECON_BREAK flags whose body claims gap of Rs. 0 / 0.0
- *      / sub-rupee floating-point noise / "the account balances" /
- *      "no action needed" / "reconciles".
- *   5. Cap the `amount` field on documentation-style codes to a
- *      null / sane value — the gross-volume-in-amount bug stuffs
- *      crore-scale numbers in there and blows up totalFlaggedAmount
- *      by 10-100×. */
+ *  After Phase 3 of the scrutiny rewrite, every section-threshold rule
+ *  is computed by the deterministic engine in lib/ledgerScrutinyFlags
+ *  and the LLM is instructed not to emit those codes. The merge step
+ *  in mergeObservations() also drops any LLM observation whose code
+ *  matches the deterministic-engine set.
+ *
+ *  This filter remains as a safety net for the rare case where the
+ *  model emits a non-canonical code (e.g. 'TDS_194Q' instead of the
+ *  canonical 'TDS_194Q_MISSING') for a finding the merge step then
+ *  doesn't recognise as a duplicate. The historical failure modes —
+ *  within-limit §40A(3), sub-threshold §194Q, zero-gap RECON_BREAK —
+ *  are kept here as cheap regex checks. The expected hit rate is now
+ *  ~zero (the prompt no longer asks for these), but the cost of
+ *  leaving them is also ~zero, so we keep them.
+ *
+ *  The cap on outsized 'amount' fields (Rule 5 in the prior version)
+ *  is still genuinely useful — the LLM happily dumps gross account
+ *  volume into 'amount' on documentation codes, which inflates the
+ *  totalFlaggedAmount headline. */
 function sanitizeObservations(raw: ScrutinyObservationRaw[]): ScrutinyObservationRaw[] {
   const out: ScrutinyObservationRaw[] = [];
   for (const o of raw) {
@@ -155,33 +157,26 @@ function sanitizeObservations(raw: ScrutinyObservationRaw[]): ScrutinyObservatio
     const code = (o.code ?? '').toUpperCase();
     const sev = (o.severity ?? '').toLowerCase();
 
-    // Rule 1 — within-limit cash flags at any severity.
+    // §40A(3) safety net — within-limit rejection.
     if (code.includes('40A3') || /40a\(3\)/i.test(o.message)) {
-      const benignBody = /within the rs\.?\s*10,?000 limit|within the rs\.?\s*35,?000 limit|within the limit|no disallowance|no action (needed|required)|payment is compliant/i.test(o.message);
-      if (benignBody) {
+      if (/within the rs\.?\s*10,?000 limit|within the rs\.?\s*35,?000 limit|within the limit|no disallowance|no action (needed|required)|payment is compliant/i.test(o.message)) {
         console.warn(`[scrutiny-filter] dropped within-limit §40A(3) ${sev}: ${o.message.slice(0, 120)}`);
         continue;
       }
-    }
-
-    // Rule 2 — §40A(3) where body claims "X exceeds Rs. 10,000" but
-    // parsed X is ≤ Rs. 10,000. Pulls the FIRST rupee figure that
-    // appears before "exceeds" / "exceeded".
-    if (code.includes('40A3') && /exceed/i.test(msg)) {
-      const m = /rs\.?\s*([\d,]+)(?:\.\d+)?\s+on\s+\d|rs\.?\s*([\d,]+)(?:\.\d+)?\s+(?:exceed|exceeded)/i.exec(o.message);
-      const rawNum = m?.[1] ?? m?.[2];
-      if (rawNum) {
-        const n = Number(rawNum.replace(/,/g, ''));
-        if (Number.isFinite(n) && n <= 10_000) {
-          console.warn(`[scrutiny-filter] dropped false-positive §40A(3) "Rs. ${n} exceeds Rs. 10,000": ${o.message.slice(0, 120)}`);
-          continue;
+      if (/exceed/i.test(msg)) {
+        const m = /rs\.?\s*([\d,]+)(?:\.\d+)?\s+on\s+\d|rs\.?\s*([\d,]+)(?:\.\d+)?\s+(?:exceed|exceeded)/i.exec(o.message);
+        const rawNum = m?.[1] ?? m?.[2];
+        if (rawNum) {
+          const n = Number(rawNum.replace(/,/g, ''));
+          if (Number.isFinite(n) && n <= 10_000) {
+            console.warn(`[scrutiny-filter] dropped false-positive §40A(3) "Rs. ${n} exceeds Rs. 10,000": ${o.message.slice(0, 120)}`);
+            continue;
+          }
         }
       }
     }
 
-    // Rule 3 — §194Q on sub-threshold vendors. Either explicit "Rs. 0
-    // (purchases above Rs. 50 lakh)" OR the aggregate cited in body
-    // is below Rs. 50,00,000 = 50 lakh.
+    // §194Q safety net — sub-threshold rejection.
     if (code.includes('194Q')) {
       if (/rs\.?\s*0\s*\(purchases above rs\.?\s*50 lakh\)/i.test(o.message)) {
         console.warn(`[scrutiny-filter] dropped sub-threshold §194Q: ${o.message.slice(0, 120)}`);
@@ -197,12 +192,10 @@ function sanitizeObservations(raw: ScrutinyObservationRaw[]): ScrutinyObservatio
       }
     }
 
-    // Rule 4 — RECON_BREAK with gap < Rs. 1.
+    // RECON_BREAK safety net — gap < Rs. 1 / "balances" rejection.
     if (code.includes('RECON_BREAK') || code.includes('RECON')) {
       const balancesText = /account balances|reconciliation appears? to be in order|no action (needed|required)|reconciles\b/i.test(o.message);
       const zeroGap = /gap rs\.?\s*0(?:\.0+)?(?:\s|$|,|\.)/i.test(o.message);
-      // Sub-rupee gap (e.g. "gap Rs. 0.5" / "gap Rs. 3.6" — floating-
-      // point noise, not a real reconciliation issue).
       const gapMatch = /gap rs\.?\s*(-?[\d,]+(?:\.\d+)?)/i.exec(o.message);
       let subRupeeGap = false;
       if (gapMatch) {
@@ -215,9 +208,10 @@ function sanitizeObservations(raw: ScrutinyObservationRaw[]): ScrutinyObservatio
       }
     }
 
-    // Rule 5 — gross-volume-in-amount on documentation-only codes.
-    // INFO_DOCUMENTATION_REQUIRED / DOCUMENTATION_REQUEST / similar
-    // shouldn't carry a multi-crore at-risk amount. Cap by nulling.
+    // Outsized amount on documentation-only codes — cap by nulling.
+    // This is the genuinely-useful rule that survives the rewrite:
+    // the LLM frequently puts gross volume in 'amount' on codes like
+    // INFO_DOCUMENTATION_REQUEST, blowing up totalFlaggedAmount.
     if (/DOCUMENTATION|DOCS|INFO_LARGE|LARGE_TRANSACTION|LARGE_VOLUME/i.test(code) && o.amount !== null && o.amount !== undefined && Math.abs(o.amount) > 1_00_00_000) {
       console.warn(`[scrutiny-filter] nulled outsized amount on ${code}: was Rs. ${o.amount}`);
       out.push({ ...o, amount: null });
@@ -946,6 +940,11 @@ async function scrutinizeAccountGroupOnce(
   model: string,
   maxTokens: number,
   recordAttempt: RecordAttempt = NOOP_RECORD,
+  /** Deterministic flags already raised against accounts in this chunk
+   *  (or ledger-wide). Passed to the LLM so it can avoid duplicating
+   *  what the deterministic engine already covered. Empty array if
+   *  callers haven't computed them — backwards compatible. */
+  preRaisedFlags: DetObservation[] = [],
 ): Promise<ScrutinyChunkResult> {
   const ledgerForPrompt = {
     partyName: extracted.partyName,
@@ -962,7 +961,16 @@ async function scrutinizeAccountGroupOnce(
       transactions: (a.transactions ?? []).slice(0, txPerAccount),
     })),
   };
-  const userMessage = `${LEDGER_SCRUTINY_USER_PROMPT_HEAD}This is a SUBSET of ${groupAccounts.length} accounts out of ${totalAccounts} in the full ledger. Apply the rubric and emit observations only for the accounts shown below. Skip cross-ledger reconciliation findings (those are computed server-side from totals). Do NOT fabricate accounts not shown.\n\n${JSON.stringify(ledgerForPrompt, null, 2)}`;
+  // Filter the deterministic flags to those the LLM should know about
+  // for this chunk: ledger-wide flags (accountName=null) plus any flag
+  // attached to one of the accounts in this group. Sending the full
+  // list would bloat the prompt for big ledgers without helping.
+  const groupNamesLower = new Set(groupAccounts.map(a => a.name.toLowerCase()));
+  const relevantFlags = preRaisedFlags.filter(f =>
+    f.accountName === null || groupNamesLower.has(f.accountName.toLowerCase()),
+  );
+  const preRaisedBlock = formatPreRaisedFlags(relevantFlags);
+  const userMessage = `${LEDGER_SCRUTINY_USER_PROMPT_HEAD}${preRaisedBlock}This is a SUBSET of ${groupAccounts.length} accounts out of ${totalAccounts} in the full ledger. Emit ONLY narration-driven observations (personal expense, round-tripping with contra evidence, large unexplained credits, RCM categorisation, deemed dividend, documentation requests). Threshold/arithmetic checks above are already covered — do NOT re-emit any code listed in the system prompt's deterministic-codes block.\n\n${JSON.stringify(ledgerForPrompt, null, 2)}`;
 
   const response = await gemini.chat.completions.create({
     model,
@@ -1009,6 +1017,7 @@ async function scrutinizeAccountGroup(
   txPerAccount: number,
   totalAccounts: number,
   recordAttempt: RecordAttempt,
+  preRaisedFlags: DetObservation[] = [],
 ): Promise<ScrutinyChunkResult> {
   const MAX_PRIMARY_ATTEMPTS = 3;
   const MAX_FALLBACK_ATTEMPTS = 2;
@@ -1020,7 +1029,7 @@ async function scrutinizeAccountGroup(
 
   for (let attempt = 0; attempt < MAX_PRIMARY_ATTEMPTS; attempt++) {
     try {
-      return await scrutinizeAccountGroupOnce(extracted, groupAccounts, txPerAccount, totalAccounts, GEMINI_CHAT_MODEL_T2, 16384, recordAttempt);
+      return await scrutinizeAccountGroupOnce(extracted, groupAccounts, txPerAccount, totalAccounts, GEMINI_CHAT_MODEL_T2, 16384, recordAttempt, preRaisedFlags);
     } catch (err) {
       lastErr = err;
       const status = (err as { status?: number })?.status ?? 0;
@@ -1033,7 +1042,7 @@ async function scrutinizeAccountGroup(
   }
   for (let attempt = 0; attempt < MAX_FALLBACK_ATTEMPTS; attempt++) {
     try {
-      return await scrutinizeAccountGroupOnce(extracted, groupAccounts, txPerAccount, totalAccounts, GEMINI_CHAT_MODEL_T1, 32768, recordAttempt);
+      return await scrutinizeAccountGroupOnce(extracted, groupAccounts, txPerAccount, totalAccounts, GEMINI_CHAT_MODEL_T1, 32768, recordAttempt, preRaisedFlags);
     } catch (err) {
       lastErr = err;
       if (attempt < MAX_FALLBACK_ATTEMPTS - 1) {
@@ -1066,9 +1075,10 @@ async function scrutinizeWithSplit(
   totalAccounts: number,
   recordAttempt: RecordAttempt,
   depth: number = 0,
+  preRaisedFlags: DetObservation[] = [],
 ): Promise<ScrutinyChunkResult> {
   try {
-    return await scrutinizeAccountGroup(extracted, group, txPerAccount, totalAccounts, recordAttempt);
+    return await scrutinizeAccountGroup(extracted, group, txPerAccount, totalAccounts, recordAttempt, preRaisedFlags);
   } catch (err) {
     const msg = (err as Error).message ?? String(err);
     // Only split on truncation/parse errors — server / network /
@@ -1084,8 +1094,8 @@ async function scrutinizeWithSplit(
     console.warn(`[ledger-scrutiny] chunk too dense (${group.length} accts at depth ${depth}), bisecting → [${a.length}, ${b.length}]: ${msg.slice(0, 120)}`);
 
     const [ra, rb] = await Promise.all([
-      scrutinizeWithSplit(extracted, a, txPerAccount, totalAccounts, recordAttempt, depth + 1),
-      scrutinizeWithSplit(extracted, b, txPerAccount, totalAccounts, recordAttempt, depth + 1),
+      scrutinizeWithSplit(extracted, a, txPerAccount, totalAccounts, recordAttempt, depth + 1, preRaisedFlags),
+      scrutinizeWithSplit(extracted, b, txPerAccount, totalAccounts, recordAttempt, depth + 1, preRaisedFlags),
     ]);
     return {
       observations: [...ra.observations, ...rb.observations],
@@ -1146,6 +1156,31 @@ async function runChunkedScrutiny(
   if (accounts.length === 0) {
     return { observations: [], inputTokens: 0, outputTokens: 0, modelUsed: GEMINI_CHAT_MODEL_T2, paused: false };
   }
+
+  // Run the deterministic flag engine once over the full extracted
+  // ledger BEFORE any LLM call. The engine is pure / side-effect-free,
+  // costs ~milliseconds even on 200-account ledgers, and produces the
+  // observations that section-threshold rules used to depend on the
+  // LLM for. The LLM pass then only adds narration/personal/RCM/round-
+  // tripping observations on top.
+  const detLedger: DetLedger = {
+    partyName: extracted.partyName,
+    gstin: extracted.gstin,
+    periodFrom: extracted.periodFrom,
+    periodTo: extracted.periodTo,
+    accounts: accounts.map(a => ({
+      name: a.name,
+      accountType: a.accountType,
+      opening: a.opening,
+      closing: a.closing,
+      totalDebit: a.totalDebit,
+      totalCredit: a.totalCredit,
+      transactions: a.transactions ?? [],
+    })),
+  };
+  const deterministicFlags: DetObservation[] = runAllFlags(detLedger);
+  console.log(`[ledger-scrutiny] deterministic engine produced ${deterministicFlags.length} flags before LLM pass`);
+
   const groups: ExtractedAccount[][] = [];
   for (let i = 0; i < accounts.length; i += ACCOUNTS_PER_CHUNK) {
     groups.push(accounts.slice(i, i + ACCOUNTS_PER_CHUNK));
@@ -1176,7 +1211,7 @@ async function runChunkedScrutiny(
     }
     const t0 = Date.now();
     try {
-      const r = await scrutinizeWithSplit(extracted, group, TX_PER_ACCOUNT, accounts.length, recordAttempt);
+      const r = await scrutinizeWithSplit(extracted, group, TX_PER_ACCOUNT, accounts.length, recordAttempt, 0, deterministicFlags);
       // sanitizeObservations drops rule-violating noise (within-
       // limit §40A(3) flags, sub-threshold §194Q flags, zero-gap
       // RECON_BREAKs, gross-volume-in-amount documentation flags)
@@ -1239,7 +1274,25 @@ async function runChunkedScrutiny(
     }
   });
 
-  const observationInputs: LedgerObservationCreateInput[] = allObservations.map((o) => {
+  // Merge deterministic flags with LLM observations. Deterministic
+  // flags are authoritative on numbers; LLM-emitted duplicates (same
+  // code, or same account+date+amount) are dropped at the merge step
+  // — a defence-in-depth check on top of the prompt instruction. If
+  // the LLM still ignores the "do not emit deterministic codes" rule,
+  // the merge guards us from publishing two contradictory versions.
+  // Don't merge if pausedFlag — we already persisted the LLM pieces
+  // incrementally and adding deterministic flags here would create a
+  // partial double-write on resume. Persist deterministic flags only
+  // when the full chunked run completed.
+  const beforeMerge = allObservations.length;
+  const merged = pausedFlag
+    ? allObservations.slice()
+    : mergeObservations(deterministicFlags, allObservations);
+  if (!pausedFlag) {
+    console.log(`[ledger-scrutiny] merged ${deterministicFlags.length} deterministic + ${beforeMerge} LLM = ${merged.length} total observations`);
+  }
+
+  const observationInputs: LedgerObservationCreateInput[] = merged.map((o) => {
     const accountId = o.accountName ? accountIdByName.get(o.accountName.toLowerCase()) ?? null : null;
     return {
       accountId,

@@ -76,26 +76,26 @@ export function estimateFromChars(chars: number): number {
 
 /**
  * Estimate for the bank-statement TEXT path (digital PDFs the client
- * pre-extracted). Input is rawText; output is TSV (~70 chars/row, one
- * row per transaction). Empirically ~1 transaction per 35 chars of
- * raw input on dense statements.
+ * pre-extracted). Input is rawText; output is TSV — one row per
+ * transaction. After Phase A, the TSV emits 5 structural fields per
+ * row (~45 chars) instead of 10 (~70 chars) — categorization is now
+ * server-side. Output ratio drops from ~0.3× to ~0.18× of raw input
+ * chars accordingly.
  *
  *   input_tokens  ≈ chars / 4
- *   output_tokens ≈ (chars / 35) × 70 / 4   ≈ chars / 2 / 4
+ *   output_tokens ≈ chars × 0.18 / 4
  *
- * Plus per-chunk prompt overhead — the 8K-char chunks add ~1500
- * chars of fixed prompt each, which dominates on small statements.
+ * Plus per-chunk prompt overhead — the system prompt also shrunk
+ * from ~8K chars to ~3.5K chars after the categorization rules
+ * moved to bankClassifier.ts, so PROMPT_CHARS_PER_CHUNK drops too.
  */
 export function estimateBankStatementText(rawTextChars: number): number {
   if (rawTextChars <= 0) return 0;
   const CHUNK_CHARS = 8_000;
-  const PROMPT_CHARS_PER_CHUNK = 1_500;
+  const PROMPT_CHARS_PER_CHUNK = 800;
   const chunks = Math.max(1, Math.ceil(rawTextChars / CHUNK_CHARS));
   const inputTokens = (rawTextChars + chunks * PROMPT_CHARS_PER_CHUNK) * TOKENS_PER_CHAR;
-  // Output ratio observed in production averages ~0.3× the input
-  // chars on a typical TSV extraction (was 0.5× — overcounted on
-  // average and pushed bank pre-flight estimates ~10× over actual).
-  const outputTokens = rawTextChars * 0.3 * TOKENS_PER_CHAR;
+  const outputTokens = rawTextChars * 0.18 * TOKENS_PER_CHAR;
   return Math.ceil((inputTokens * T2_W_IN + outputTokens * T2_W_OUT) * RETRY_HEAVY_MARGIN);
 }
 

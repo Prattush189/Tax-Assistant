@@ -114,9 +114,9 @@ export const BANK_STATEMENT_SUBCATEGORIES: Record<BankStatementCategory, string[
  */
 export const BANK_STATEMENT_TSV_PROMPT = `You are parsing an Indian bank statement. The input below is the raw text layer from a digitally-generated PDF (already extracted by pdfjs — no OCR needed). Extract EVERY transaction.
 
-Output format — STRICT. No JSON, no prose, no code fences. Emit ONE transaction per line. Fields separated by a single TAB character. Exactly 10 fields per row:
+Output format — STRICT. No JSON, no prose, no code fences. Emit ONE transaction per line. Fields separated by a single TAB character. Exactly 5 fields per row:
 
-date<TAB>narration<TAB>debit<TAB>credit<TAB>balance<TAB>category<TAB>subcategory<TAB>counterparty<TAB>reference<TAB>isRecurring
+date<TAB>narration<TAB>debit<TAB>credit<TAB>balance
 
 Field rules:
 - date: YYYY-MM-DD (convert from DD/MM/YYYY if the statement uses that). Required.
@@ -125,16 +125,11 @@ Field rules:
 - credit: the credit / deposit / inflow amount EXACTLY as shown in the statement's Credit column — positive number with decimals, no commas. EMPTY STRING if this row is a debit. Never negative.
 - EXACTLY ONE of debit/credit MUST be populated per row. Never both. Never neither. Copy directly from the statement's Debit/Credit columns (or from the DR/CR marker). DO NOT infer, flip signs, or swap columns.
 - balance: number with decimals, no commas. Empty string if the statement doesn't show one.
-- category: one of ${BANK_STATEMENT_CATEGORIES.map(c => `"${c}"`).join(' | ')}. Required.
-- subcategory: string or empty.
-- counterparty: cleanest human-readable payee/merchant label (VPA for UPI, NAME for NEFT/IMPS/RTGS, merchant for POS). Empty if nothing identifiable.
-- reference: UTR / cheque number / txn reference number. Empty if none.
-- isRecurring: "1" if the same narration pattern appears at least twice with similar amounts (salary/EMI/SIP/rent), else "0".
 
 Concrete example — EXACTLY this tab pattern, with two consecutive tabs where a column is empty:
-2025-02-28\tUPI/DR/100732291255/THE MUSCL\t500.00\t\t6152.58\tPersonal\t\tTHE MUSCL\t100732291255\t0
-2025-03-01\tNEFT-HDFC-SALARY MAR\t\t85000.00\t91152.58\tSalary\t\tACME CORP\tN123456\t1
-Notice row 1 has an EMPTY credit column (two consecutive tabs between 500.00 and 6152.58) and row 2 has an EMPTY debit column (two consecutive tabs between the narration and 85000.00). ALWAYS emit 10 fields per row = 9 tabs per row, including empty ones.
+2025-02-28\tUPI/DR/100732291255/THE MUSCL\t500.00\t\t6152.58
+2025-03-01\tNEFT-HDFC-SALARY MAR\t\t85000.00\t91152.58
+Notice row 1 has an EMPTY credit column (two consecutive tabs between 500.00 and 6152.58) and row 2 has an EMPTY debit column (two consecutive tabs between the narration and 85000.00). ALWAYS emit 5 fields per row = 4 tabs per row, including empty ones.
 
 After the last transaction row, emit exactly one trailer line:
 ---END:<N>---
@@ -162,54 +157,7 @@ CRITICAL — debit and credit fidelity:
 - If a single row shows both a debit AND a credit (typical for contra entries or bank-charge-and-tax pairs), emit them as TWO separate rows in the order they appear, NOT one row with both populated.
 - If the row has a single amount with a "Dr" / "Cr" suffix or marker, route to the matching column.
 
-Categorization rules (apply the FIRST match):
-- "SALARY" / "SAL CREDIT" → Salary
-- "RENT" as a credit → Rent Received
-- "INT.", "INTEREST PAID", "SB INT", "FD INT" → Interest Income
-- "DIV", "DIVIDEND" → Dividends
-- "GSTN", "GSTIN", "GST PMT" → GST Payments
-- "TDS", "26Q", "26QB" → TDS
-- "ADV TAX", "SELF ASMNT", "CHALLAN 280" → Taxes Paid
-- "EMI", "LOAN", "HDFC HL", "HOUSING LOAN", "LOAN RECOVERY" → Loan EMI
-- "SIP", "MUTUAL FUND", "MF ", "ZERODHA", "GROWW", "UPSTOX" → Investments
-- "NEFT", "IMPS", "UPI", "RTGS" with personal counterparty → Transfers
-- Debits to vendors (rent, utilities, office, travel, ads) → Business Expenses
-- Credits from customers to a business account → Business Income
-- Grocery, shopping, restaurants, personal consumption → Personal
-- Otherwise → Other
-
-Bank-fee narration anchors (apply BEFORE the generic NEFT/UPI rule above — these always win, with the listed subcategory):
-- "ATM CHARGES", "ATM ANN.CHRG", "ATM WDR", "ATM WDL CHG", "DEBIT ATM CARD" → Bank Charges / ATM
-- "CHRGS/NEFT", "NEFT CHGS", "CHRGS/IMPS", "IMPS CHARGES", "RTGS CHGS", "RTGS-GST-COMMISSION" → Bank Charges / NEFT/IMPS/RTGS
-- "SMS CHARGES", "SMS CHRG" → Bank Charges / SMS
-- "Min Bal Chrg", "MAB CHRG", "Avg bal Chgs", "MINIMUM BALANCE CHARGES" → Bank Charges / Min Balance
-- "LOAN_PROC", "Loan Processing Fee" → Bank Charges / Loan Processing
-- "CHEQUE BOOK CHGS", "CHEQUE BOOK CHARGES", "CHEQUE BOOK CHAREGS" → Bank Charges / Cheque
-- "Cash Deposit Charges", "CashDep Chgs", "Cash Txn Chgs-Branch" → Bank Charges / Cash Txn
-- "POS Rental" → Bank Charges / POS Rental
-- "SoundBox Rent" → Bank Charges / SoundBox Rent
-- "CIBIL" → Bank Charges / CIBIL
-- "Penal Charges", "Penal Cha" → Bank Charges / Penal
-- "INSPC CHARGES", "INSPECTION CHARGES" → Bank Charges / Inspection (note: "INSPC" is bank-charge inspection, NOT insurance)
-- "Reject Insufficient Balance", "Outward Rejection Charges", "Inward Rejection Charges" → Bank Charges / Rejection
-- "DEBIT CARD ANNUAL FEE" → Bank Charges / Card Fee
-- "ADHOC STMT CHGS", "ACCT MAIN CHARGES", "INCIDENTAL CHARGES", "LOW DENOMINATION CHARGE", "SGST", "CGST" (when paired with a charge line) → Bank Charges / Other
-- "Int.Coll" (interest collected on debit balance) → Bank Interest (Dr) / Loan Interest
-- "Int.Pd:", "CREDIT INTEREST" → Bank Interest (Cr)
-- "INS-", "INS_", "Insurance", "_PROPERTY_INS_", "_INS_RENEWAL_" → Insurance / Premium
-- "BIL/BPAY/BSNL", "PAYTMBSNL" → Mobile Charges / BSNL
-- "BIL/BPAY/AIRTEL", "PAYTMAIRTEL" → Mobile Charges / Airtel
-- "BIL/BPAY/JIO", "PAYTMJIO" → Mobile Charges / Jio
-- "BILL DK POWER", "BILL DKP", "DISCOM" → Electricity Charges / DISCOM
-- "WATER BILL" → Water Charges / Municipal
-
-Counterparty extraction:
-- UPI "UPI/<ref>/<note>/<vpa>/..." → VPA or payee name after the VPA
-- NEFT/IMPS/RTGS "...-NAME-REF" → the NAME segment
-- POS → merchant name (SWIGGY, AMAZON, ZOMATO)
-- Cheque / cash → "Cheque", "Cash deposit"
-- Bank charges ("SB INT", "ATM WDL CHG") → the charge type
-- If nothing identifiable, empty. NEVER copy the entire narration.
+You do NOT classify category / subcategory / counterparty / reference / isRecurring. Those fields are derived server-side from your output by a deterministic narration-anchor classifier — your job here is purely to read date / narration / debit / credit / balance off the statement accurately.
 
 DO NOT invent, summarize, or group transactions. Every row in the input text that shows a date + amount must appear. The trailer count MUST match the rows you emit.`;
 

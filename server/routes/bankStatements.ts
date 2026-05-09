@@ -6,6 +6,7 @@ import Papa from 'papaparse';
 import { extractVisionWithFallback, ClaudePageLimitError } from '../lib/visionFallback.js';
 import { callGeminiJson, type GeminiJsonResult } from '../lib/geminiJson.js';
 import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_TSV_PROMPT, BANK_STATEMENT_CATEGORIES, buildConditionsBlock, countWords, MAX_CONDITION_WORDS } from '../lib/bankStatementPrompt.js';
+import { classifyRow, extractCounterpartyAndReference, markRecurring } from '../lib/bankClassifier.js';
 import { gemini, GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, costForModel } from '../lib/gemini.js';
 import { creditsForPages, creditsForCsvRows, PAGES_PER_CREDIT, CSV_ROWS_PER_CREDIT } from '../lib/creditPolicy.js';
 import { enforceTokenQuota } from '../lib/tokenQuota.js';
@@ -131,13 +132,12 @@ function parseTsvResponse(raw: string): Omit<TsvExtractResult, 'inputTokens' | '
       break; // trailer — ignore anything after
     }
     const parts = line.split('\t');
-    // Required fields: date + narration + (debit OR credit). Gemini empirically
-    // trims trailing empty cells (production: 43 rows in one chunk dropped
-    // because the model omitted the trailing isRecurring column when it was
-    // false). Accept rows down to 5 fields and treat missing trailing cells
-    // as empty — matches the leniency we already extended to the ledger TSV
-    // parser.
-    if (parts.length < 5) {
+    // Required: date + narration + (debit OR credit) + balance — five
+    // structural fields, no categorization columns (those are derived
+    // server-side now). Gemini occasionally trims trailing empty cells,
+    // so we tolerate down to 4 fields (missing balance) and treat the
+    // last as empty.
+    if (parts.length < 4) {
       droppedReasons.push(`fields=${parts.length}`);
       continue;
     }
@@ -168,17 +168,47 @@ function parseTsvResponse(raw: string): Omit<TsvExtractResult, 'inputTokens' | '
     }
     const balanceStr = cleanTsvCell(parts[4] ?? '');
     const balance = balanceStr === '' ? null : Number(balanceStr.replace(/[,\s]/g, ''));
+    const narration = cleanTsvCell(parts[1] ?? '');
+    const type: 'credit' | 'debit' = signedAmount >= 0 ? 'credit' : 'debit';
+    // Server-side classifier pre-pass. The TSV prompt no longer asks
+    // for category / subcategory / counterparty / reference (Phase A
+    // token-cost cut). For rows the classifier hits, we fill the
+    // fields here. For rows it doesn't, we fall back to category=Other
+    // with regex-extracted counterparty/reference. The TSV path
+    // doesn't currently send unclassified rows to a second AI call —
+    // it's accepted that a chunk-extracted statement on an exotic
+    // narration may end up in "Other" rather than the perfect
+    // category. Users can re-tag from the UI; this is a deliberate
+    // cost / accuracy tradeoff for the raw-text path that the CSV
+    // path (rule-matched banks) doesn't share.
+    const classified = classifyRow({ narration, type, amount: signedAmount });
+    let category: string;
+    let subcategory: string | null;
+    let counterparty: string | null;
+    let reference: string | null;
+    if (classified) {
+      category = classified.category;
+      subcategory = classified.subcategory;
+      counterparty = classified.counterparty;
+      reference = classified.reference;
+    } else {
+      const extracted = extractCounterpartyAndReference(narration);
+      category = 'Other';
+      subcategory = null;
+      counterparty = extracted.counterparty;
+      reference = extracted.reference;
+    }
     rows.push({
       date: cleanTsvCell(parts[0] ?? ''),
-      narration: cleanTsvCell(parts[1] ?? ''),
+      narration,
       amount: signedAmount,
-      type: signedAmount >= 0 ? 'credit' : 'debit',
+      type,
       balance: Number.isFinite(balance as number) ? balance : null,
-      category: cleanTsvCell(parts[5] ?? '') || 'Other',
-      subcategory: cleanTsvCell(parts[6] ?? '') || null,
-      counterparty: cleanTsvCell(parts[7] ?? '') || null,
-      reference: cleanTsvCell(parts[8] ?? '') || null,
-      isRecurring: cleanTsvCell(parts[9] ?? '') === '1',
+      category,
+      subcategory,
+      counterparty,
+      reference,
+      isRecurring: false, // markRecurring runs once after all chunks merge
     });
   }
 
@@ -1549,6 +1579,13 @@ router.post(
         );
 
         const merged = chunkResults.flatMap(r => r.transactions);
+        // markRecurring sees the full statement in one pass (recurring
+        // detection needs at least 2 occurrences of the same narration
+        // pattern, which can sit in different chunks). Each chunk
+        // already classified its rows; this pass just sets the
+        // isRecurring flag where appropriate. Cast through the row
+        // shape since merged[] is unknown[] at this point.
+        markRecurring(merged as Array<{ narration: string; amount: number; isRecurring?: boolean }>);
         // openingBalance from the FIRST chunk that reported one (chunk 0
         // covers page 1 where the bank prints the B/F line). closingBalance
         // from the LAST chunk that reported one (final page's C/F line).
@@ -1619,6 +1656,31 @@ router.post(
           };
         });
 
+        // ──── Server-side classifier pre-pass (Phase A token-cost cut) ────
+        // Run the deterministic narration anchors over every row first.
+        // Rows that match (typically 60-75% of an Indian bank statement —
+        // bank charges, interest, EMI, salary, GST, recognizable UPI VPAs)
+        // get their category/subcategory/counterparty/reference filled
+        // in here for free. Only the unclassified rows are sent to AI,
+        // which slashes input + output tokens proportionally.
+        //
+        // For rows that DO go to AI, we still pre-fill counterparty +
+        // reference from the regex extractor — those are deterministic
+        // even when category isn't, and pre-filling means the AI prompt
+        // can focus on the category decision and produces shorter
+        // output (the schema below drops counterparty/reference too).
+        const ruleResults = normalized.map((row, index) => {
+          const classified = classifyRow({ narration: row.narration, type: row.type as 'credit' | 'debit', amount: row.amount });
+          if (classified) {
+            return { index, row, classified, needsAi: false };
+          }
+          const { counterparty, reference } = extractCounterpartyAndReference(row.narration);
+          return { index, row, classified: null, counterparty, reference, needsAi: true };
+        });
+        const ambiguous = ruleResults.filter(r => r.needsAi);
+        const classified = ruleResults.filter(r => !r.needsAi);
+        console.log(`[bank-statements] csv classifier pre-pass: ${classified.length}/${normalized.length} rows handled deterministically, ${ambiguous.length} sent to AI`);
+
         const CSV_BATCH_SIZE = 80;
         const CSV_BATCH_CONCURRENCY = 3;
         const CSV_MAX_OUTPUT_TOKENS = 16_384;
@@ -1632,18 +1694,29 @@ router.post(
           enrichments: Array<{
             category: string | null;
             subcategory: string | null;
-            counterparty: string | null;
-            reference: string | null;
-            isRecurring: boolean | null;
           }>;
         }
 
-        // Compact prompt: ask only for the fields the wizard / CSV
-        // doesn't already have. Categorisation rules + counterparty
-        // extraction rules are inlined from BANK_STATEMENT_PROMPT —
-        // we don't include the schema header for the full transaction
-        // because we don't want Gemini echoing date/amount/balance.
-        const buildEnrichmentPrompt = (batch: typeof normalized, isFirst: boolean) => `${conditionsBlock}You are enriching pre-extracted bank-statement transactions. Read the input rows below and return ONE JSON object — no markdown fences, no prose:
+        // Compact AI prompt — Phase A: classifier already handled the
+        // 60-75% of rows that hit a known anchor (bank charges, interest,
+        // EMI, salary, GST, etc.) AND already extracted counterparty +
+        // reference for every row. The AI's job here is reduced to:
+        //
+        //   1. Decide category for the un-classified subset (typically
+        //      "is this UPI/NEFT to a vendor → Business Expenses, or
+        //      to a person → Transfers, or grocery/shopping → Personal").
+        //   2. Optionally a subcategory.
+        //   3. Read bankName / accountNumberMasked / period from the
+        //      first batch's narrations.
+        //
+        // What we deleted: the 30-line categorisation rule list (now
+        // server-side), counterparty extraction rules (regex-extracted
+        // server-side), reference extraction rules, isRecurring guidance
+        // (computed in markRecurring after merge). Output schema is
+        // also slimmer — 2 fields per row vs 5, ~25-30 chars instead of
+        // ~80, which directly cuts output tokens and lets bigger batches
+        // fit in the same max_tokens ceiling without truncation.
+        const buildEnrichmentPrompt = (batch: Array<{ narration: string; type: string; amount: number }>, isFirst: boolean) => `${conditionsBlock}You are categorising pre-extracted Indian bank-statement transactions that a deterministic rule-based classifier could not auto-tag. Return ONE JSON object — no markdown fences, no prose:
 
 {
   "bankName": "string or null",
@@ -1652,209 +1725,197 @@ router.post(
   "periodTo": "YYYY-MM-DD or null",
   "currency": "INR",
   "enrichments": [
-    { "category": "...", "subcategory": "string or null", "counterparty": "string or null", "reference": "string or null", "isRecurring": false }
+    { "category": "...", "subcategory": "string or null" }
   ]
 }
 
 CRITICAL:
 - enrichments MUST be the same length as INPUT_ROWS and in the same order. One enrichment object per input row, no skipping, no reordering.
-- Do NOT echo date / amount / balance / narration — they come from the input as-is.
+- Do NOT echo date / amount / balance / narration / counterparty / reference. Those come from server-side extraction and are merged in after.
 ${isFirst
   ? '- Set bankName / accountNumberMasked / periodFrom / periodTo from context if you can read them in the narrations; null otherwise.'
   : '- Set bankName / accountNumberMasked / periodFrom / periodTo to null (this is a continuation batch).'}
 
 category MUST be one of: ${BANK_STATEMENT_CATEGORIES.map(c => `"${c}"`).join(' | ')}.
 
-Categorisation rules (apply the FIRST match to the input row's narration):
-- "SALARY" / "SAL CREDIT" → Salary
-- "RENT" as a credit → Rent Received
-- "INT.", "INTEREST PAID", "SB INT", "FD INT" → Interest Income
-- "DIV", "DIVIDEND" → Dividends
-- "GSTN", "GSTIN", "GST PMT" → GST Payments
-- "TDS", "26Q", "26QB" → TDS
-- "ADV TAX", "SELF ASMNT", "CHALLAN 280" → Taxes Paid
-- "EMI", "LOAN", "HDFC HL", "HOUSING LOAN" → Loan EMI
-- "SIP", "MUTUAL FUND", "MF ", "ZERODHA", "GROWW", "UPSTOX" → Investments
-- "NEFT", "IMPS", "UPI", "RTGS" with personal counterparty → Transfers
-- Debits to vendors (rent, utilities, office, travel, ads) → Business Expenses
-- Credits from customers to a business account → Business Income
-- Grocery, shopping, restaurants, personal consumption → Personal
-- Otherwise → Other
-
-Counterparty extraction:
-- UPI "UPI/<refno>/<note>/<vpa>/..." → VPA or payee name
-- NEFT/IMPS/RTGS "...-NAME-REF" → NAME segment
-- POS → merchant (SWIGGY / AMAZON / ZOMATO)
-- Cheque / cash → "Cheque" / "Cash deposit"
-- Bank charges → charge type
-- If nothing identifiable, null. Never copy the entire narration.
-
-reference: pull UTR / cheque / txn ref (10-16 digit alphanumeric token) into reference, or null.
-
-isRecurring: true if the same narration pattern appears at least twice with similar amounts (salary / EMI / SIP / rent).
+Categorisation rules (apply the FIRST match):
+- NEFT / IMPS / RTGS / UPI to a clearly-identifiable BUSINESS counterparty (ENTERPRISES / TRADERS / PVT LTD / corporate name / GSTIN-shaped 15-digit ref) → Business Expenses (debit) or Business Income (credit)
+- POS / merchant payments (SWIGGY, AMAZON, ZOMATO, FLIPKART, BIGBASKET, BLINKIT, etc.) → Personal
+- Grocery / restaurants / shopping / fuel / personal-consumption merchants → Personal
+- Anything else that isn't clearly business OR personal → Other
 
 INPUT_ROWS (${batch.length} rows):
 ${JSON.stringify(batch)}`;
 
-        // Zip Gemini's enrichments back onto the deterministic input
-        // to build the full transaction array. If Gemini returned
-        // fewer enrichments than rows (truncation we couldn't detect),
-        // default the missing ones to category=Other so we don't drop
-        // rows silently.
-        const zipBatch = (
-          batch: typeof normalized,
-          enrichments: EnrichmentResponse['enrichments'],
-        ): unknown[] => batch.map((row, i) => {
-          const e = enrichments[i] ?? {};
-          return {
-            date: row.date,
-            narration: row.narration,
-            amount: row.amount,
-            type: row.type,
-            balance: row.balance,
-            category: typeof e.category === 'string' && e.category.trim() ? e.category : 'Other',
-            subcategory: typeof e.subcategory === 'string' ? e.subcategory : null,
-            counterparty: typeof e.counterparty === 'string' ? e.counterparty : null,
-            reference: typeof e.reference === 'string' ? e.reference : null,
-            isRecurring: e.isRecurring === true,
-          };
-        });
+        // Build a slim AI input row — narration + type + amount only.
+        // The classifier already extracted counterparty + reference; the
+        // AI doesn't need them and re-emitting them would just waste
+        // tokens. The full ruleResults indices are kept on the wrapping
+        // ambiguous[] array so we can stitch enrichments back into the
+        // original positions when we merge below.
+        type AiBatchRow = { narration: string; type: 'credit' | 'debit'; amount: number };
+        const buildAiBatch = (slice: typeof ambiguous): AiBatchRow[] =>
+          slice.map(r => ({ narration: r.row.narration, type: r.row.type as 'credit' | 'debit', amount: r.row.amount }));
 
-        if (normalized.length <= CSV_BATCH_SIZE) {
-          const csvResult = await callGeminiJson<EnrichmentResponse>(
-            [{ role: 'user', content: buildEnrichmentPrompt(normalized, true) }],
-            {
-              maxTokens: CSV_MAX_OUTPUT_TOKENS,
-              onFallback: () => { try { bankStatementRepo.markProviderFallback(placeholder.id); } catch (e) { console.warn('[bank-statements] markProviderFallback failed:', (e as Error).message); } },
-            },
-          );
-          extracted = {
-            bankName: csvResult.data.bankName ?? null,
-            accountNumberMasked: csvResult.data.accountNumberMasked ?? null,
-            periodFrom: csvResult.data.periodFrom ?? null,
-            periodTo: csvResult.data.periodTo ?? null,
-            currency: csvResult.data.currency ?? 'INR',
-            transactions: zipBatch(normalized, csvResult.data.enrichments ?? []),
-          };
-          (res.locals as Record<string, unknown>).geminiUsages = [{
-            inputTokens: csvResult.inputTokens,
-            outputTokens: csvResult.outputTokens,
-            modelUsed: csvResult.modelUsed,
-          }];
-        } else {
-          const batches: Array<typeof normalized> = [];
-          for (let i = 0; i < normalized.length; i += CSV_BATCH_SIZE) {
-            batches.push(normalized.slice(i, i + CSV_BATCH_SIZE));
-          }
-          console.log(`[bank-statements] csv path: ${normalized.length} rows → ${batches.length} batch(es) of up to ${CSV_BATCH_SIZE}`);
-          sendSse({ type: 'start', totalChunks: batches.length, pages: batches.length });
-
-          // Persist analyze-batch progress to bank_statements row so
-          // the frontend's 5s polling can read "3 of 5 batches done".
-          // Uses dedicated columns (analyze_chunks_total / done) so we
-          // don't conflict with the existing pages_total/processed
-          // columns that drive credit billing math.
-          try { bankStatementRepo.setAnalyzeChunksTotal(placeholder.id, req.user!.id, batches.length); } catch (e) { console.error('[bank-statements] set chunks total failed', e); }
-
-          // Recursive bisect for CSV batches. When a batch's enrichments
-          // come back short (Gemini truncated mid-array on a chunk that
-          // happened to have especially verbose narrations), halve the
-          // batch and retry. Same pattern as the ledger scrutiny
-          // bisect — without it, one truncating batch failed the entire
-          // analysis and the user lost the run.
-          const categorizeWithSplit = async (
-            batch: typeof normalized,
-            label: string,
-            depth: number,
-          ): Promise<{ batch: typeof normalized; enrichments: EnrichmentResponse['enrichments']; meta: EnrichmentResponse; inputTokens: number; outputTokens: number; modelUsed: string }> => {
-            const t0 = Date.now();
-            let result: GeminiJsonResult<EnrichmentResponse> | null = null;
-            try {
-              result = await callGeminiJson<EnrichmentResponse>(
-                [{ role: 'user', content: buildEnrichmentPrompt(batch, label.endsWith('/0')) }],
-                {
-                  maxTokens: CSV_MAX_OUTPUT_TOKENS,
-                  onFallback: () => { try { bankStatementRepo.markProviderFallback(placeholder.id); } catch (e) { console.warn('[bank-statements] markProviderFallback failed:', (e as Error).message); } },
-                },
-              );
-              const enrichments = result.data.enrichments ?? [];
-              if (enrichments.length < batch.length * 0.95) {
-                throw new Error(`csv ${label}: enrichments undercount (${enrichments.length} of ${batch.length}) — likely truncation`);
-              }
-              console.log(`[bank-statements] csv ${label} ✓ ${enrichments.length} enrichments in ${Date.now() - t0}ms`);
-              return {
-                batch,
-                enrichments,
-                meta: result.data,
-                inputTokens: result.inputTokens,
-                outputTokens: result.outputTokens,
-                modelUsed: result.modelUsed,
-              };
-            } catch (err) {
-              const msg = (err as Error).message ?? String(err);
-              const truncationLike = /undercount|parse failed|finish_reason=length|JSON/i.test(msg);
-              // Log the failed attempt to api_usage with status='failed'
-              // so the admin dashboard sees the wasted spend; user not
-              // billed against their token budget.
-              if (result) {
-                try {
-                  const failedClientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
-                  const failedCost = costForModel(result.modelUsed, result.inputTokens, result.outputTokens);
-                  usageRepo.logWithBilling(failedClientIp, req.user!.id, quota.billingUserId, result.inputTokens, result.outputTokens, failedCost, false, result.modelUsed, false, 'bank_statement', 0, 'failed');
-                } catch (e) {
-                  console.error('[bank-statements] failed-batch log error', e);
-                }
-              }
-              if (!truncationLike || depth >= 3 || batch.length <= 1) throw err;
-              const mid = Math.ceil(batch.length / 2);
-              const a = batch.slice(0, mid);
-              const b = batch.slice(mid);
-              console.warn(`[bank-statements] csv ${label} too dense (${batch.length} rows at depth ${depth}), bisecting → [${a.length}, ${b.length}]`);
-              const [ra, rb] = await Promise.all([
-                categorizeWithSplit(a, `${label}.a`, depth + 1),
-                categorizeWithSplit(b, `${label}.b`, depth + 1),
-              ]);
-              return {
-                batch: [...ra.batch, ...rb.batch],
-                enrichments: [...ra.enrichments, ...rb.enrichments],
-                meta: ra.meta,
-                inputTokens: ra.inputTokens + rb.inputTokens,
-                outputTokens: ra.outputTokens + rb.outputTokens,
-                modelUsed: ra.modelUsed || rb.modelUsed,
-              };
+        // Recursive bisect for AI batches — same pattern as before.
+        // Halves on truncation, retries up to depth 3.
+        const categorizeWithSplit = async (
+          slice: typeof ambiguous,
+          label: string,
+          depth: number,
+        ): Promise<{ slice: typeof ambiguous; enrichments: EnrichmentResponse['enrichments']; meta: EnrichmentResponse; inputTokens: number; outputTokens: number; modelUsed: string }> => {
+          const t0 = Date.now();
+          let result: GeminiJsonResult<EnrichmentResponse> | null = null;
+          try {
+            result = await callGeminiJson<EnrichmentResponse>(
+              [{ role: 'user', content: buildEnrichmentPrompt(buildAiBatch(slice), label.endsWith('/0')) }],
+              {
+                maxTokens: CSV_MAX_OUTPUT_TOKENS,
+                onFallback: () => { try { bankStatementRepo.markProviderFallback(placeholder.id); } catch (e) { console.warn('[bank-statements] markProviderFallback failed:', (e as Error).message); } },
+              },
+            );
+            const enrichments = result.data.enrichments ?? [];
+            if (enrichments.length < slice.length * 0.95) {
+              throw new Error(`csv ${label}: enrichments undercount (${enrichments.length} of ${slice.length}) — likely truncation`);
             }
-          };
+            console.log(`[bank-statements] csv ${label} ✓ ${enrichments.length} enrichments in ${Date.now() - t0}ms`);
+            return {
+              slice,
+              enrichments,
+              meta: result.data,
+              inputTokens: result.inputTokens,
+              outputTokens: result.outputTokens,
+              modelUsed: result.modelUsed,
+            };
+          } catch (err) {
+            const msg = (err as Error).message ?? String(err);
+            const truncationLike = /undercount|parse failed|finish_reason=length|JSON/i.test(msg);
+            if (result) {
+              try {
+                const failedClientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
+                const failedCost = costForModel(result.modelUsed, result.inputTokens, result.outputTokens);
+                usageRepo.logWithBilling(failedClientIp, req.user!.id, quota.billingUserId, result.inputTokens, result.outputTokens, failedCost, false, result.modelUsed, false, 'bank_statement', 0, 'failed');
+              } catch (e) {
+                console.error('[bank-statements] failed-batch log error', e);
+              }
+            }
+            if (!truncationLike || depth >= 3 || slice.length <= 1) throw err;
+            const mid = Math.ceil(slice.length / 2);
+            const a = slice.slice(0, mid);
+            const b = slice.slice(mid);
+            console.warn(`[bank-statements] csv ${label} too dense (${slice.length} rows at depth ${depth}), bisecting → [${a.length}, ${b.length}]`);
+            const [ra, rb] = await Promise.all([
+              categorizeWithSplit(a, `${label}.a`, depth + 1),
+              categorizeWithSplit(b, `${label}.b`, depth + 1),
+            ]);
+            return {
+              slice: [...ra.slice, ...rb.slice],
+              enrichments: [...ra.enrichments, ...rb.enrichments],
+              meta: ra.meta,
+              inputTokens: ra.inputTokens + rb.inputTokens,
+              outputTokens: ra.outputTokens + rb.outputTokens,
+              modelUsed: ra.modelUsed || rb.modelUsed,
+            };
+          }
+        };
+
+        // Map ambiguous[].index → enrichment, so when we walk the
+        // original normalized[] we can pull either the classifier
+        // result or the AI enrichment at that index.
+        const aiEnrichmentsByIndex = new Map<number, { category: string; subcategory: string | null }>();
+        let bankMeta: EnrichmentResponse = {
+          bankName: null,
+          accountNumberMasked: null,
+          periodFrom: null,
+          periodTo: null,
+          currency: 'INR',
+          enrichments: [],
+        };
+        const aiUsages: Array<{ inputTokens: number; outputTokens: number; modelUsed: string }> = [];
+
+        if (ambiguous.length === 0) {
+          // Best case — every row hit a rule. Skip the AI call entirely.
+          // Bank metadata stays null; the dashboard handles that. If a
+          // statement is 100% rule-classifiable AND the user wants the
+          // bank name on charts, that comes from a future Phase B
+          // change (client passes detected bank into upload).
+          console.log('[bank-statements] csv path: 0 ambiguous rows — skipping AI call entirely');
+          sendSse({ type: 'start', totalChunks: 0, pages: 0 });
+        } else {
+          const batches: Array<typeof ambiguous> = [];
+          for (let i = 0; i < ambiguous.length; i += CSV_BATCH_SIZE) {
+            batches.push(ambiguous.slice(i, i + CSV_BATCH_SIZE));
+          }
+          console.log(`[bank-statements] csv path: ${ambiguous.length} ambiguous rows → ${batches.length} batch(es) of up to ${CSV_BATCH_SIZE}`);
+          sendSse({ type: 'start', totalChunks: batches.length, pages: batches.length });
+          try { bankStatementRepo.setAnalyzeChunksTotal(placeholder.id, req.user!.id, batches.length); } catch (e) { console.error('[bank-statements] set chunks total failed', e); }
 
           const batchResults = await mapWithConcurrency(
             batches,
             CSV_BATCH_CONCURRENCY,
-            async (batch, idx) => {
-              const result = await categorizeWithSplit(batch, `batch ${idx + 1}/${batches.length}/0`, 0);
+            async (slice, idx) => {
+              const result = await categorizeWithSplit(slice, `batch ${idx + 1}/${batches.length}/0`, 0);
               try { bankStatementRepo.bumpAnalyzeChunksDone(placeholder.id, req.user!.id); } catch (e) { console.error('[bank-statements] bump chunks done failed', e); }
               sendSse({ type: 'progress', completed: idx + 1, total: batches.length, txInChunk: result.enrichments.length });
               return result;
             },
           );
 
-          const allTransactions: unknown[] = [];
-          for (const { batch, enrichments } of batchResults) {
-            allTransactions.push(...zipBatch(batch, enrichments));
+          // First batch carries bank metadata.
+          if (batchResults[0]) bankMeta = batchResults[0].meta;
+          for (const br of batchResults) {
+            br.slice.forEach((r, i) => {
+              const e: Partial<EnrichmentResponse['enrichments'][number]> = br.enrichments[i] ?? {};
+              const category = typeof e.category === 'string' && e.category.trim() ? e.category : 'Other';
+              const subcategory = typeof e.subcategory === 'string' && e.subcategory.trim() ? e.subcategory : null;
+              aiEnrichmentsByIndex.set(r.index, { category, subcategory });
+            });
+            aiUsages.push({ inputTokens: br.inputTokens, outputTokens: br.outputTokens, modelUsed: br.modelUsed });
           }
-
-          extracted = {
-            bankName: batchResults[0]?.meta.bankName ?? null,
-            accountNumberMasked: batchResults[0]?.meta.accountNumberMasked ?? null,
-            periodFrom: batchResults[0]?.meta.periodFrom ?? null,
-            periodTo: batchResults[0]?.meta.periodTo ?? null,
-            currency: batchResults[0]?.meta.currency ?? 'INR',
-            transactions: allTransactions,
-          };
-          (res.locals as Record<string, unknown>).geminiUsages = batchResults.map(r => ({
-            inputTokens: r.inputTokens,
-            outputTokens: r.outputTokens,
-            modelUsed: r.modelUsed,
-          }));
         }
+
+        // Merge: walk normalized[] in order, fill each row from
+        // classifier result OR AI enrichment, and run markRecurring
+        // over the final list so the recurring flag rides on every row
+        // regardless of which path produced its category.
+        const mergedTransactions = ruleResults.map((r) => {
+          const baseRow = {
+            date: r.row.date,
+            narration: r.row.narration,
+            amount: r.row.amount,
+            type: r.row.type,
+            balance: r.row.balance,
+            isRecurring: false,
+          };
+          if (r.classified) {
+            return {
+              ...baseRow,
+              category: r.classified.category,
+              subcategory: r.classified.subcategory,
+              counterparty: r.classified.counterparty,
+              reference: r.classified.reference,
+            };
+          }
+          const ai = aiEnrichmentsByIndex.get(r.index);
+          return {
+            ...baseRow,
+            category: ai?.category ?? 'Other',
+            subcategory: ai?.subcategory ?? null,
+            counterparty: r.counterparty ?? null,
+            reference: r.reference ?? null,
+          };
+        });
+        markRecurring(mergedTransactions);
+
+        extracted = {
+          bankName: bankMeta.bankName ?? null,
+          accountNumberMasked: bankMeta.accountNumberMasked ?? null,
+          periodFrom: bankMeta.periodFrom ?? null,
+          periodTo: bankMeta.periodTo ?? null,
+          currency: bankMeta.currency ?? 'INR',
+          transactions: mergedTransactions,
+        };
+        (res.locals as Record<string, unknown>).geminiUsages = aiUsages;
       }
 
       // Honor a mid-flight cancel. If the user clicked Cancel while
