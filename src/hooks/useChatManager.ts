@@ -392,6 +392,20 @@ export function useChatManager() {
     setActiveDocuments([]);
   };
 
+  // Inject a synthetic user→model exchange WITHOUT calling the LLM.
+  // Used by the welcome-screen notification cards: the detail text was
+  // either fetched from the cache or freshly generated server-side, and
+  // we want it to appear in the chat as if the user had asked about
+  // that notification. Subsequent follow-up questions in the same
+  // session go through normal `send` and use the chat's history.
+  const injectExchange = useCallback((userText: string, modelText: string) => {
+    setMessages(prev => [
+      ...prev,
+      { role: 'user', content: userText, timestamp: new Date() },
+      { role: 'model', content: modelText, timestamp: new Date() },
+    ]);
+  }, []);
+
   return {
     chatList,
     currentChatId,
@@ -413,5 +427,6 @@ export function useChatManager() {
     continueResponse,
     referencedProfile,
     setReferencedProfile,
+    injectExchange,
   };
 }

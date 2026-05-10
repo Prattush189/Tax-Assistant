@@ -708,6 +708,33 @@ export async function deleteNotice(id: string) {
   return authFetch(`/api/notices/${id}`, { method: 'DELETE' });
 }
 
+// ── Tax Notifications (welcome-screen daily list) ───────────────────────
+
+export interface TaxNotificationListItem {
+  id: string;
+  category: 'GST' | 'TDS' | 'INCOME_TAX' | 'OTHER';
+  heading: string;
+  summary: string | null;
+  notificationDate: string | null;
+  sourceUrl: string | null;
+  hasDetail: boolean;
+  fetchedAt: string;
+}
+
+export async function fetchLatestNotifications(): Promise<{ items: TaxNotificationListItem[] }> {
+  return authFetch('/api/notifications/latest');
+}
+
+export async function fetchNotificationDetail(id: string): Promise<{
+  detail: string;
+  cached: boolean;
+  generatedAt: string;
+  heading: string;
+  sourceUrl: string | null;
+}> {
+  return authFetch(`/api/notifications/${id}/detail`, { method: 'POST' });
+}
+
 // ── Tax Profile API ─────────────────────────────────────────────────────
 
 export interface TaxProfileData {

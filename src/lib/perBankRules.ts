@@ -33,12 +33,34 @@ interface BankRule {
   /** Header → role table. Iterated in order for each grid column;
    *  first matching pattern wins. List the more specific patterns
    *  first ("Value Dt" before plain "Date", "Closing Balance" before
-   *  any other balance variant) so the right role wins. */
-  headerRules: Array<{ pattern: RegExp; role: ColumnRole }>;
+   *  any other balance variant) so the right role wins. Optional —
+   *  a rule can be purely positional (see `positional` below) for
+   *  formats where the PDF has no transaction-header row at all
+   *  (JKBANK DCR / CASH CREDIT SCHEME is the canonical case). */
+  headerRules?: Array<{ pattern: RegExp; role: ColumnRole }>;
   /** Roles that MUST be present after mapping for the rule to fire.
    *  Missing any one of these means grid extraction didn't surface
-   *  the full table — bail and fall back. */
-  required: ColumnRole[];
+   *  the full table — bail and fall back. Required when headerRules
+   *  is set; ignored for positional rules. */
+  required?: ColumnRole[];
+  /** Positional fallback: when the PDF has no transaction-header row
+   *  (some legacy bank exports just print the metadata banner then
+   *  jump straight into transaction rows), match by column INDEX
+   *  with content verification. Mutually exclusive with headerRules
+   *  in practice — set one or the other. */
+  positional?: {
+    /** Exact columnCount the rule expects. Cheap structural gate
+     *  before the verify callback runs. */
+    columnCount: number;
+    /** Role assignment per column index. `roles[i]` is the role
+     *  that column i carries. Length must equal columnCount. */
+    roles: ColumnRole[];
+    /** Content-based verification — confirms the grid matches the
+     *  layout we think it does before we trust the positional
+     *  mapping. Runs after the columnCount gate. Returns true to
+     *  fire, false to fall through to other rules / wizard. */
+    verify: (grid: PdfGrid) => boolean;
+  };
 }
 
 const HDFC: BankRule = {
@@ -205,10 +227,64 @@ const JK_BANK: BankRule = {
   required: ['date', 'narration', 'debit', 'credit', 'balance'],
 };
 
+// J&K Bank's legacy DCR / CASH CREDIT SCHEME export (FORMAT-1) prints
+// a metadata banner ("JAMMU AND KASHMIR BANK LTD" / "TYPE: CASH CREDIT
+// SCHEME" / customer address) and then jumps straight into transaction
+// rows with NO column-header row. The grid extractor's header-detection
+// heuristic latches onto the metadata banner ("TYPE:", "DATE:", "CREDIT"
+// inside "CASH CREDIT SCHEME") and produces a degenerate column layout —
+// the JK_BANK header rule then bails because none of withdraw/deposit/
+// balance words appear as a header. Fall through to wizard was the
+// previous behaviour and the wizard preview also shows metadata rows
+// rather than transactions, leaving the user no usable mapping.
+//
+// Layout, by column index (six columns, fixed positions):
+//   0 — date (dd-mm-yyyy)
+//   1 — narration (spans two grid rows per transaction)
+//   2 — empty (spacer)
+//   3 — debit (withdrawal)
+//   4 — credit (deposit, repayment)
+//   5 — running balance with "Dr" / "Cr" suffix (e.g. "510239.27Dr")
+//
+// The unique fingerprint is "CASH CREDIT SCHEME" (the literal string
+// printed in the TYPE field). Verification confirms the column layout
+// before we commit to the positional mapping — col 0 must hold dates
+// and col 5 must hold Dr/Cr-suffixed balances.
+const JK_BANK_DCR: BankRule = {
+  name: 'J&K Bank (Cash Credit Scheme)',
+  fingerprints: [
+    'cash credit scheme',
+  ],
+  positional: {
+    columnCount: 6,
+    roles: ['date', 'narration', 'skip', 'debit', 'credit', 'balance'],
+    verify: (grid) => {
+      // Col 0: at least 5 date-shaped entries.
+      const datePat = /^\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4}$/;
+      const dateCount = grid.rows.reduce(
+        (acc, r) => acc + (datePat.test((r[0] ?? '').trim()) ? 1 : 0),
+        0,
+      );
+      if (dateCount < 5) return false;
+      // Col 5: at least 5 Dr/Cr-suffixed balance entries — the JK
+      // CC-account convention (loan balance always carries direction).
+      const drCrPat = /^[\d,]+(?:\.\d+)?(Dr|Cr)$/i;
+      const balCount = grid.rows.reduce(
+        (acc, r) => acc + (drCrPat.test((r[5] ?? '').trim()) ? 1 : 0),
+        0,
+      );
+      if (balCount < 5) return false;
+      return true;
+    },
+  },
+};
+
 // Order matters: rules with more-specific fingerprints first so a
 // generic substring (like "detailed account statement") doesn't get
 // stolen by a different rule's broader fingerprint.
-const RULES: BankRule[] = [HDFC, ICICI, CANARA, PNB, YES_BANK, JK_BANK];
+// JK_BANK_DCR sits BEFORE JK_BANK because its "cash credit scheme"
+// fingerprint is more specific and only matches FORMAT-1.
+const RULES: BankRule[] = [HDFC, ICICI, CANARA, PNB, YES_BANK, JK_BANK_DCR, JK_BANK];
 
 export interface DetectedBankMapping {
   bank: string;
@@ -254,13 +330,40 @@ export function detectAndMapBank(grid: PdfGrid | null): DetectedBankMapping | nu
 }
 
 function tryRule(rule: BankRule, grid: PdfGrid): DetectedBankMapping | null {
+  // Positional mode — used for legacy formats with no header row
+  // (JKBANK FORMAT-1 / CASH CREDIT SCHEME). Column count must match
+  // exactly, then the verify callback confirms the data shape before
+  // we trust the index-based mapping.
+  if (rule.positional) {
+    if (grid.columnCount !== rule.positional.columnCount) {
+      console.warn(
+        `[perBankRules] ${rule.name} positional mismatch: expected ${rule.positional.columnCount} columns, got ${grid.columnCount}. Falling back.`,
+      );
+      return null;
+    }
+    if (!rule.positional.verify(grid)) {
+      console.warn(
+        `[perBankRules] ${rule.name} positional content verification failed. Falling back.`,
+      );
+      return null;
+    }
+    return { bank: rule.name, mapping: { roles: rule.positional.roles.slice() } };
+  }
+
+  if (!rule.headerRules || !rule.required) {
+    console.warn(`[perBankRules] ${rule.name} has neither headerRules+required nor positional config — skipping.`);
+    return null;
+  }
+  const headerRules = rule.headerRules;
+  const required = rule.required;
+
   const roles: ColumnRole[] = new Array(grid.columnCount).fill('skip');
   const headers = grid.columnHeaders ?? [];
   const taken = new Set<ColumnRole>();
   for (let c = 0; c < grid.columnCount; c++) {
     const header = (headers[c] ?? '').trim();
     if (!header) continue;
-    const match = rule.headerRules.find(r => r.pattern.test(header));
+    const match = headerRules.find(r => r.pattern.test(header));
     if (!match) continue;
     // First-wins for unique roles — a duplicate header occurrence
     // somewhere downstream shouldn't overwrite the canonical column.
@@ -269,7 +372,7 @@ function tryRule(rule: BankRule, grid: PdfGrid): DetectedBankMapping | null {
     taken.add(match.role);
   }
 
-  for (const r of rule.required) {
+  for (const r of required) {
     if (!roles.includes(r)) {
       console.warn(
         `[perBankRules] ${rule.name} fingerprint matched but required role "${r}" missing. Headers: ${headers.map(h => `"${h ?? ''}"`).join(', ')}. Trying next candidate / falling back to wizard.`,

@@ -10,6 +10,7 @@ import authRouter from './routes/auth.js';
 import adminRouter from './routes/admin.js';
 import externalRouter from './routes/external.js';
 import noticesRouter from './routes/notices.js';
+import notificationsRouter from './routes/notifications.js';
 import suggestionsRouter from './routes/suggestions.js';
 import profilesRouter from './routes/profiles.js';
 import genericProfilesRouter from './routes/genericProfiles.js';
@@ -44,6 +45,7 @@ import {
   form16ImportLimiter,
 } from './middleware/rateLimiter.js';
 import { startRenewalReminderJob } from './jobs/renewalReminder.js';
+import { startNotificationRefreshJob } from './jobs/notificationRefresh.js';
 import { startStuckJobSweeper } from './lib/sweepStuckJobs.js';
 import { licenseKeyRepo } from './db/repositories/licenseKeyRepo.js';
 import { usageRepo } from './db/repositories/usageRepo.js';
@@ -153,6 +155,7 @@ app.use('/api', chatRouter);
 app.use('/api', uploadRouter);
 app.use('/api/chats', chatsRouter);
 app.use('/api/notices', noticesLimiter, noticesRouter);
+app.use('/api/notifications', notificationsRouter);
 app.use('/api/suggestions', suggestionsLimiter, suggestionsRouter);
 app.use('/api/profiles', profilesRouter);
 app.use('/api/generic-profiles', genericProfilesRouter);
@@ -254,6 +257,12 @@ app.listen(PORT, () => {
   // reload or a new login doesn't leave the user staring at a forever-
   // 'generating' row.
   startStuckJobSweeper();
+
+  // Daily refresh of GST / TDS / Income Tax notifications shown on the
+  // chat welcome screen. First run 90s post-boot, every 24h after.
+  // Logged to api_usage as category='notifications_fetch'. Manual run
+  // via `npx tsx server/scripts/fetch-tax-notifications.ts`.
+  startNotificationRefreshJob();
 });
 
 export default app;

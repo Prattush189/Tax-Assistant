@@ -798,6 +798,30 @@ db.exec(`CREATE TABLE IF NOT EXISTS ledger_comparisons (
 db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_comparisons_user ON ledger_comparisons(user_id)");
 db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_comparisons_updated ON ledger_comparisons(updated_at DESC)");
 
+// tax_notifications — populated daily by server/jobs/notificationRefresh.ts.
+// Source list shown on the chat welcome screen instead of static prompt
+// cards. category captures GST / TDS / INCOME_TAX / OTHER buckets the UI
+// groups by. notification_date is the date stamped on the actual
+// government circular (e.g. "Notification No. 12/2025-Central Tax dated
+// 2026-04-30"); fetched_at is when our Gemini job pulled it. full_detail
+// is null until a user clicks the card the first time — the detail
+// route then generates with grounding once and caches the result so
+// every subsequent click is a free-on-our-side DB read.
+db.exec(`CREATE TABLE IF NOT EXISTS tax_notifications (
+  id TEXT PRIMARY KEY,
+  category TEXT NOT NULL CHECK (category IN ('GST', 'TDS', 'INCOME_TAX', 'OTHER')),
+  heading TEXT NOT NULL,
+  summary TEXT,
+  notification_date TEXT,
+  source_url TEXT,
+  full_detail TEXT,
+  full_detail_generated_at TEXT,
+  fetched_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+)`);
+db.exec("CREATE INDEX IF NOT EXISTS idx_tax_notifications_fetched ON tax_notifications(fetched_at DESC)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_tax_notifications_category ON tax_notifications(category, fetched_at DESC)");
+
 // Ensure admin has enterprise plan
 db.prepare("UPDATE users SET plan = 'enterprise' WHERE email = ? AND role = 'admin'").run(ADMIN_EMAIL);
 
