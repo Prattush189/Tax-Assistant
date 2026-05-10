@@ -236,6 +236,16 @@ export interface FetchResult {
    *  Kept separate from `errors` so a typical "model proposed 1 taxguru
    *  link" run is still ok=true. */
   rejectedUrls: string[];
+  /** Number of items whose long-form `full_detail` was successfully
+   *  pre-generated and cached during this fetch. Click → detail
+   *  becomes a DB read instead of a 10-20s grounded LLM call when
+   *  this count matches `inserted`. */
+  pregenerated: number;
+  /** Items where pregeneration failed (network, no-official-sources,
+   *  empty response). The notification still appears on the welcome
+   *  screen; the next click falls back to live generation. */
+  pregenerateFailed: number;
+  /** Total Gemini cost for this fetch run including pregeneration. */
   inputTokens: number;
   outputTokens: number;
   cost: number;
@@ -245,13 +255,13 @@ export interface FetchResult {
 /** One-shot daily fetcher. Runs grounded Gemini call → parses → persists.
  *  Idempotent in the sense that calling it twice in a row simply produces
  *  two batches; the welcome screen only ever shows the latest. */
-export async function fetchLatestNotifications(opts: { dryRun?: boolean; logUsage?: boolean } = {}): Promise<FetchResult> {
+export async function fetchLatestNotifications(opts: { dryRun?: boolean; logUsage?: boolean; pregenerate?: boolean } = {}): Promise<FetchResult> {
   const errors: string[] = [];
   const rejectedUrls: string[] = [];
   const apiKey = pickApiKey();
   if (!apiKey) {
     errors.push('No GEMINI_API_KEY configured');
-    return { ok: false, inserted: 0, pruned: 0, rejectedNonOfficial: 0, rejectedUrls, inputTokens: 0, outputTokens: 0, cost: 0, errors };
+    return { ok: false, inserted: 0, pruned: 0, rejectedNonOfficial: 0, rejectedUrls, pregenerated: 0, pregenerateFailed: 0, inputTokens: 0, outputTokens: 0, cost: 0, errors };
   }
 
   // Use the Gemini 3.x family model (T1) — the user explicitly asked for
@@ -267,10 +277,17 @@ export async function fetchLatestNotifications(opts: { dryRun?: boolean; logUsag
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     errors.push(`Gemini call failed: ${msg}`);
-    return { ok: false, inserted: 0, pruned: 0, rejectedNonOfficial: 0, rejectedUrls, inputTokens: 0, outputTokens: 0, cost: 0, errors };
+    return { ok: false, inserted: 0, pruned: 0, rejectedNonOfficial: 0, rejectedUrls, pregenerated: 0, pregenerateFailed: 0, inputTokens: 0, outputTokens: 0, cost: 0, errors };
   }
   const durationMs = Date.now() - startedAt;
-  const cost = costForModel(model, result.inputTokens, result.outputTokens);
+  const fetchCost = costForModel(model, result.inputTokens, result.outputTokens);
+  // Token + cost totals will accumulate the pregeneration step too;
+  // start from the fetch-call values and add to them as detail
+  // generations complete so the script's reported total reflects the
+  // entire run.
+  let totalInputTokens = result.inputTokens;
+  let totalOutputTokens = result.outputTokens;
+  let totalCost = fetchCost;
 
   // Log to api_usage so the admin dashboard's recent-API-calls table picks
   // it up. user_id and billing_user_id are 'system' since the daily fetch
@@ -284,7 +301,7 @@ export async function fetchLatestNotifications(opts: { dryRun?: boolean; logUsag
         null,
         result.inputTokens,
         result.outputTokens,
-        cost,
+        fetchCost,
         false,
         model,
         true,
@@ -302,18 +319,18 @@ export async function fetchLatestNotifications(opts: { dryRun?: boolean; logUsag
   const json = extractJsonObject(result.text);
   if (!json) {
     errors.push(`Gemini returned no parseable JSON. finishReason=${result.finishReason ?? 'unknown'}, length=${result.text.length}, head="${result.text.slice(0, 200).replace(/\s+/g, ' ')}"`);
-    return { ok: false, inserted: 0, pruned: 0, rejectedNonOfficial: 0, rejectedUrls, inputTokens: result.inputTokens, outputTokens: result.outputTokens, cost, errors };
+    return { ok: false, inserted: 0, pruned: 0, rejectedNonOfficial: 0, rejectedUrls, pregenerated: 0, pregenerateFailed: 0, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, cost: totalCost, errors };
   }
   let parsed: { items?: RawNotification[] };
   try {
     parsed = JSON.parse(json);
   } catch (e) {
     errors.push(`JSON.parse failed: ${e instanceof Error ? e.message : e}`);
-    return { ok: false, inserted: 0, pruned: 0, rejectedNonOfficial: 0, rejectedUrls, inputTokens: result.inputTokens, outputTokens: result.outputTokens, cost, errors };
+    return { ok: false, inserted: 0, pruned: 0, rejectedNonOfficial: 0, rejectedUrls, pregenerated: 0, pregenerateFailed: 0, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, cost: totalCost, errors };
   }
   if (!Array.isArray(parsed.items) || parsed.items.length === 0) {
     errors.push(`Empty items array in response (text head="${result.text.slice(0, 160)}")`);
-    return { ok: false, inserted: 0, pruned: 0, rejectedNonOfficial: 0, rejectedUrls, inputTokens: result.inputTokens, outputTokens: result.outputTokens, cost, errors };
+    return { ok: false, inserted: 0, pruned: 0, rejectedNonOfficial: 0, rejectedUrls, pregenerated: 0, pregenerateFailed: 0, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, cost: totalCost, errors };
   }
 
   // Validate each item before insertion. The user explicitly required
@@ -344,7 +361,7 @@ export async function fetchLatestNotifications(opts: { dryRun?: boolean; logUsag
   }
   if (items.length === 0) {
     errors.push(`Parsed ${parsed.items.length} items but none had a usable heading + official source URL (${rejectedNonOfficial} rejected for non-official source)`);
-    return { ok: false, inserted: 0, pruned: 0, rejectedNonOfficial, rejectedUrls, inputTokens: result.inputTokens, outputTokens: result.outputTokens, cost, errors };
+    return { ok: false, inserted: 0, pruned: 0, rejectedNonOfficial, rejectedUrls, pregenerated: 0, pregenerateFailed: 0, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, cost: totalCost, errors };
   }
 
   if (opts.dryRun) {
@@ -352,7 +369,7 @@ export async function fetchLatestNotifications(opts: { dryRun?: boolean; logUsag
     for (const it of items) {
       console.log(`  [${it.category}] ${it.heading} (${it.notificationDate ?? 'no date'}) ${it.sourceUrl ?? ''}`);
     }
-    return { ok: true, inserted: 0, pruned: 0, rejectedNonOfficial, rejectedUrls, inputTokens: result.inputTokens, outputTokens: result.outputTokens, cost, errors };
+    return { ok: true, inserted: 0, pruned: 0, rejectedNonOfficial, rejectedUrls, pregenerated: 0, pregenerateFailed: 0, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, cost: totalCost, errors };
   }
 
   const { inserted } = notificationsRepo.replaceLatest(items);
@@ -364,8 +381,90 @@ export async function fetchLatestNotifications(opts: { dryRun?: boolean; logUsag
   const cutoff = new Date(Date.now() + offsetMs - PRUNE_AGE_DAYS * 24 * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19);
   const pruned = notificationsRepo.pruneOlderThan(cutoff);
 
-  console.log(`[notificationFetcher] OK · inserted=${inserted} pruned=${pruned} rejectedNonOfficial=${rejectedNonOfficial} model=${model} input=${result.inputTokens} output=${result.outputTokens} cost=$${cost.toFixed(5)} durationMs=${durationMs}`);
-  return { ok: true, inserted, pruned, rejectedNonOfficial, rejectedUrls, inputTokens: result.inputTokens, outputTokens: result.outputTokens, cost, errors };
+  // Pre-generate `full_detail` for every freshly-inserted item so a
+  // user click hits the cache and feels instant (a 10-20s grounded
+  // LLM call would make the welcome screen feel broken). Concurrency
+  // is bounded to keep us under Gemini's per-key rate limits — 2
+  // simultaneous requests is well below the burst ceiling and an
+  // 8-12 item batch finishes in ~30-60s wall time.
+  let pregenerated = 0;
+  let pregenerateFailed = 0;
+  if (opts.pregenerate !== false) {
+    // listLatest reads the new batch we just inserted (it's now the
+    // MAX(fetched_at)), giving us the assigned ids.
+    const insertedRows = notificationsRepo.listLatest(50);
+    const pregenStarted = Date.now();
+    const pregenResults = await pregenerateDetails(insertedRows, opts.logUsage !== false);
+    pregenerated = pregenResults.ok;
+    pregenerateFailed = pregenResults.failed;
+    totalInputTokens += pregenResults.inputTokens;
+    totalOutputTokens += pregenResults.outputTokens;
+    totalCost += pregenResults.cost;
+    console.log(`[notificationFetcher] pregeneration · ok=${pregenerated} failed=${pregenerateFailed} input=${pregenResults.inputTokens} output=${pregenResults.outputTokens} cost=$${pregenResults.cost.toFixed(5)} durationMs=${Date.now() - pregenStarted}`);
+  }
+
+  console.log(`[notificationFetcher] OK · inserted=${inserted} pruned=${pruned} rejectedNonOfficial=${rejectedNonOfficial} pregenerated=${pregenerated}/${pregenerated + pregenerateFailed} model=${model} totalInput=${totalInputTokens} totalOutput=${totalOutputTokens} totalCost=$${totalCost.toFixed(5)} durationMs=${durationMs}`);
+  return { ok: true, inserted, pruned, rejectedNonOfficial, rejectedUrls, pregenerated, pregenerateFailed, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, cost: totalCost, errors };
+}
+
+/** Walk a freshly-inserted batch of notifications and generate the
+ *  long-form `full_detail` for each, so user clicks read from cache.
+ *  Concurrency is bounded so we stay under Gemini's per-key burst
+ *  ceiling — 2 simultaneous calls finishes a 12-item batch in ~30-60s.
+ *  Failures (no official sources, network, empty response) are
+ *  counted but don't fail the whole batch — the click flow falls
+ *  back to live generation for those items. */
+async function pregenerateDetails(
+  rows: Array<{ id: string; heading: string; summary: string | null; source_url: string | null; full_detail: string | null }>,
+  logUsage: boolean,
+): Promise<{ ok: number; failed: number; inputTokens: number; outputTokens: number; cost: number }> {
+  const CONCURRENCY = 2;
+  let ok = 0;
+  let failed = 0;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cost = 0;
+
+  // Skip rows that already have a cached detail (idempotency — re-running
+  // the script after a partial failure shouldn't re-pay for items that
+  // already succeeded).
+  const todo = rows.filter(r => !r.full_detail || r.full_detail.trim().length === 0);
+  if (todo.length === 0) return { ok, failed, inputTokens, outputTokens, cost };
+
+  let cursor = 0;
+  const next = (): typeof todo[number] | null => (cursor < todo.length ? todo[cursor++] : null);
+
+  const worker = async () => {
+    while (true) {
+      const r = next();
+      if (!r) return;
+      try {
+        const res = await generateNotificationDetail(r.id, r.heading, r.summary, r.source_url, {
+          // No actor — this is a system pregeneration step. Logging
+          // path uses null user, matching how the daily fetch row is
+          // attributed.
+          actorUserId: undefined,
+          billingUserId: undefined,
+          ip: '0.0.0.0',
+        }, { logUsage });
+        if (res.ok) {
+          ok += 1;
+        } else {
+          failed += 1;
+          console.warn(`[notificationFetcher] pregenerate failed for "${r.heading.slice(0, 80)}": ${res.error ?? 'unknown'}`);
+        }
+        inputTokens += res.inputTokens;
+        outputTokens += res.outputTokens;
+        cost += res.cost;
+      } catch (e) {
+        failed += 1;
+        console.warn(`[notificationFetcher] pregenerate threw for "${r.heading.slice(0, 80)}": ${e instanceof Error ? e.message : e}`);
+      }
+    }
+  };
+
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, todo.length) }, () => worker()));
+  return { ok, failed, inputTokens, outputTokens, cost };
 }
 
 export interface DetailResult {
@@ -387,6 +486,11 @@ export async function generateNotificationDetail(
   summary: string | null,
   sourceUrl: string | null,
   opts: { actorUserId?: string; billingUserId?: string; ip?: string } = {},
+  /** When false, the api_usage row is NOT written. Used by the
+   *  pregeneration path (the parent fetcher already accounts for the
+   *  whole batch's tokens via its own log). Defaults to true so the
+   *  user-facing click route keeps logging individually. */
+  detailOpts: { logUsage?: boolean } = {},
 ): Promise<DetailResult> {
   const apiKey = pickApiKey();
   if (!apiKey) return { ok: false, detail: null, cached: false, inputTokens: 0, outputTokens: 0, cost: 0, error: 'No GEMINI_API_KEY configured' };
@@ -404,38 +508,49 @@ export async function generateNotificationDetail(
   const cost = costForModel(model, result.inputTokens, result.outputTokens);
   const durationMs = Date.now() - startedAt;
 
-  // Append a Sources block so the user can verify against the real PDFs.
+  // Filter Gemini's grounding sources to OFFICIAL government domains
+  // only. Google Search may return a mix (the model's prompt asks for
+  // gov-only, but the grounding pipeline doesn't enforce); we publish
+  // only the official ones to the user. If the explanation has zero
+  // official sources backing it, reject the result entirely so we
+  // don't cache a hallucinated body — the next click retries live and
+  // the user sees a clear error rather than unverified content.
+  const officialSources = result.sources.filter(s => isOfficialSource(s.url));
   let detailText = result.text.trim();
-  if (result.sources.length > 0) {
-    const sourceLines = result.sources.slice(0, 5).map(s => `- [${s.title}](${s.url})`).join('\n');
-    detailText += `\n\n**Sources**\n${sourceLines}`;
-  }
-
   if (detailText.length === 0) {
     return { ok: false, detail: null, cached: false, inputTokens: result.inputTokens, outputTokens: result.outputTokens, cost, error: `Empty response (finishReason=${result.finishReason})` };
   }
+  if (officialSources.length === 0) {
+    console.warn(`[notificationFetcher] detail rejected — 0 official sources backed grounding (had ${result.sources.length} non-official). id=${id} heading="${heading.slice(0, 80)}"`);
+    return { ok: false, detail: null, cached: false, inputTokens: result.inputTokens, outputTokens: result.outputTokens, cost, error: 'No official government source backed the explanation; refusing to cache' };
+  }
+  // Sources block — only the gov.in / nic.in entries make it through.
+  const sourceLines = officialSources.slice(0, 5).map(s => `- [${s.title}](${s.url})`).join('\n');
+  detailText += `\n\n**Sources**\n${sourceLines}`;
 
   notificationsRepo.setDetail(id, detailText);
 
-  try {
-    usageRepo.logWithBilling(
-      opts.ip ?? '0.0.0.0',
-      opts.actorUserId ?? null,
-      opts.billingUserId ?? null,
-      result.inputTokens,
-      result.outputTokens,
-      cost,
-      false,
-      model,
-      true,
-      'notification_detail',
-      1,
-      'success',
-      0,
-      durationMs,
-    );
-  } catch (e) {
-    console.warn('[notificationFetcher] detail usage log failed:', e instanceof Error ? e.message : e);
+  if (detailOpts.logUsage !== false) {
+    try {
+      usageRepo.logWithBilling(
+        opts.ip ?? '0.0.0.0',
+        opts.actorUserId ?? null,
+        opts.billingUserId ?? null,
+        result.inputTokens,
+        result.outputTokens,
+        cost,
+        false,
+        model,
+        true,
+        'notification_detail',
+        1,
+        'success',
+        0,
+        durationMs,
+      );
+    } catch (e) {
+      console.warn('[notificationFetcher] detail usage log failed:', e instanceof Error ? e.message : e);
+    }
   }
 
   return { ok: true, detail: detailText, cached: false, inputTokens: result.inputTokens, outputTokens: result.outputTokens, cost };

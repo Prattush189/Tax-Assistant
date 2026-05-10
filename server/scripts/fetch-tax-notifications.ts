@@ -32,15 +32,17 @@ interface Flags {
   dryRun: boolean;
   noLog: boolean;
   showLatest: boolean;
+  skipPregenerate: boolean;
   help: boolean;
 }
 
 function parseFlags(argv: string[]): Flags {
-  const flags: Flags = { dryRun: false, noLog: false, showLatest: false, help: false };
+  const flags: Flags = { dryRun: false, noLog: false, showLatest: false, skipPregenerate: false, help: false };
   for (const a of argv) {
     if (a === '--dry-run') flags.dryRun = true;
     else if (a === '--no-log') flags.noLog = true;
     else if (a === '--show-latest') flags.showLatest = true;
+    else if (a === '--skip-pregenerate' || a === '--no-pregenerate') flags.skipPregenerate = true;
     else if (a === '--help' || a === '-h') flags.help = true;
     else console.warn(`[fetch-tax-notifications] unknown flag: ${a}`);
   }
@@ -54,6 +56,7 @@ async function main(): Promise<void> {
     console.log('  npx tsx server/scripts/fetch-tax-notifications.ts');
     console.log('  npx tsx server/scripts/fetch-tax-notifications.ts --dry-run');
     console.log('  npx tsx server/scripts/fetch-tax-notifications.ts --no-log');
+    console.log('  npx tsx server/scripts/fetch-tax-notifications.ts --skip-pregenerate');
     console.log('  npx tsx server/scripts/fetch-tax-notifications.ts --show-latest');
     process.exit(0);
   }
@@ -71,27 +74,29 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  console.log(`[fetch-tax-notifications] starting${flags.dryRun ? ' (DRY RUN)' : ''}${flags.noLog ? ' (NO LOG)' : ''} ...`);
+  console.log(`[fetch-tax-notifications] starting${flags.dryRun ? ' (DRY RUN)' : ''}${flags.noLog ? ' (NO LOG)' : ''}${flags.skipPregenerate ? ' (skip pregenerate)' : ''} ...`);
   const startedAt = Date.now();
   const result = await fetchLatestNotifications({
     dryRun: flags.dryRun,
     logUsage: !flags.noLog,
+    pregenerate: !flags.skipPregenerate,
   });
   const durationMs = Date.now() - startedAt;
 
   console.log('');
   console.log(`[fetch-tax-notifications] done in ${(durationMs / 1000).toFixed(1)}s`);
-  console.log(`  ok                  : ${result.ok}`);
-  console.log(`  inserted            : ${result.inserted}`);
-  console.log(`  pruned              : ${result.pruned}`);
-  console.log(`  rejected (non-gov)  : ${result.rejectedNonOfficial}`);
+  console.log(`  ok                    : ${result.ok}`);
+  console.log(`  inserted              : ${result.inserted}`);
+  console.log(`  pruned                : ${result.pruned}`);
+  console.log(`  rejected (non-gov)    : ${result.rejectedNonOfficial}`);
   if (result.rejectedUrls.length > 0) {
     for (const u of result.rejectedUrls) console.log(`    ↪ ${u}`);
   }
-  console.log(`  tokens              : ${result.inputTokens} in / ${result.outputTokens} out`);
-  console.log(`  cost                : $${result.cost.toFixed(5)}`);
+  console.log(`  pregenerated detail   : ${result.pregenerated} ok / ${result.pregenerateFailed} failed`);
+  console.log(`  tokens (total)        : ${result.inputTokens} in / ${result.outputTokens} out`);
+  console.log(`  cost (total)          : $${result.cost.toFixed(5)}`);
   if (result.errors.length > 0) {
-    console.log('  errors              :');
+    console.log('  errors                :');
     for (const e of result.errors) console.log(`    - ${e}`);
   }
 

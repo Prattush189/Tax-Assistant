@@ -51,12 +51,15 @@ router.post('/:id/detail', async (req: AuthRequest, res: Response) => {
     return;
   }
 
-  // The frontend creates a fresh chat for each click and passes its id
-  // here so the synthetic user→model exchange is PERSISTED — without
-  // this, the conversation only lived in component state, never showed
-  // up in the chat list, and follow-up questions had no chat to attach
-  // to. With chatId set, the user can ask follow-ups in the same
-  // thread and the chat appears in the sidebar like any other.
+  // The frontend posts to /detail with no chatId; the route creates a
+  // fresh chat itself, persists the synthetic exchange, and returns
+  // the new chatId so the client can switch to it. This collapses
+  // what used to be two round-trips (POST /api/chats then POST
+  // /api/notifications/:id/detail) into one — combined with the
+  // pre-generated cache, the end-to-end click feels instant.
+  // Frontend MAY still pass chatId to attach the exchange to an
+  // existing chat (used by tests / future "open in current chat"
+  // links); when absent we own the chat-creation step.
   const requestedChatId = typeof req.body?.chatId === 'string' ? req.body.chatId.trim() : null;
 
   let resolvedDetail: string | null = null;
@@ -90,29 +93,42 @@ router.post('/:id/detail', async (req: AuthRequest, res: Response) => {
     generatedAt = new Date().toISOString();
   }
 
-  // If a chatId was supplied, verify it belongs to this user, then
-  // append the user→model exchange so it appears in the chat history.
-  // We also retitle the chat to the notification heading so the chat
-  // list reads like any other branch ("Explain: GST Notification 12/2025…").
+  // Resolve the chat: either attach to a caller-supplied one (verified
+  // ownership) OR create a new chat titled with the notification heading.
+  let chatId: string | null = null;
   if (requestedChatId) {
     const chat = chatRepo.findById(requestedChatId);
     if (chat && chat.user_id === req.user.id) {
-      const userText = `Explain: ${row.heading}`;
-      try {
-        messageRepo.create(requestedChatId, 'user', userText);
-        messageRepo.create(requestedChatId, 'model', resolvedDetail);
-        // Title only re-set if the chat is still on its default name —
-        // don't clobber a user-renamed chat.
-        if (!chat.title || chat.title === 'New Chat') {
-          chatRepo.updateTitle(requestedChatId, row.heading.slice(0, 80));
-        }
-      } catch (e) {
-        console.error('[notifications] failed to persist exchange to chat:', e instanceof Error ? e.message : e);
-        // Don't fail the request — frontend still gets the detail and
-        // can render it locally; only the chat-history side-effect failed.
-      }
+      chatId = requestedChatId;
     } else {
-      console.warn(`[notifications] requested chatId=${requestedChatId} not found or not owned by user=${req.user.id}; skipping persistence`);
+      console.warn(`[notifications] requested chatId=${requestedChatId} not found or not owned by user=${req.user.id}; creating new chat instead`);
+    }
+  }
+  if (!chatId) {
+    try {
+      const created = chatRepo.create(req.user.id, row.heading.slice(0, 80) || 'Notification');
+      chatId = created.id;
+    } catch (e) {
+      console.error('[notifications] failed to create chat:', e instanceof Error ? e.message : e);
+      // We still have the detail — return it without persistence
+      // so the user at least sees the answer; chat history just
+      // won't include it for this click.
+    }
+  }
+
+  if (chatId) {
+    const userText = `Explain: ${row.heading}`;
+    try {
+      messageRepo.create(chatId, 'user', userText);
+      messageRepo.create(chatId, 'model', resolvedDetail);
+      // Title only re-set on a fresh / default chat — don't clobber
+      // a user-renamed chat the caller may have passed in.
+      const chat = chatRepo.findById(chatId);
+      if (chat && (!chat.title || chat.title === 'New Chat')) {
+        chatRepo.updateTitle(chatId, row.heading.slice(0, 80));
+      }
+    } catch (e) {
+      console.error('[notifications] failed to persist exchange to chat:', e instanceof Error ? e.message : e);
     }
   }
 
@@ -122,7 +138,7 @@ router.post('/:id/detail', async (req: AuthRequest, res: Response) => {
     generatedAt,
     heading: row.heading,
     sourceUrl: row.source_url,
-    chatId: requestedChatId ?? null,
+    chatId,
   });
 });
 

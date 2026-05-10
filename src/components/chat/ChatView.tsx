@@ -46,7 +46,7 @@ interface ChatViewProps {
 const ATTACHMENT_LIMITS: Record<string, number> = { free: 1, pro: 3, enterprise: 5 };
 
 export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewProps) {
-  const { messages, input, setInput, isLoading, messagesEndRef, scrollAreaRef, lastUserMsgRef, send, activeDocuments, attachDocument, detachDocument, continueResponse, referencedProfile, setReferencedProfile, injectExchange, createNewChat } = chatManager;
+  const { messages, input, setInput, isLoading, messagesEndRef, scrollAreaRef, lastUserMsgRef, send, activeDocuments, attachDocument, detachDocument, continueResponse, referencedProfile, setReferencedProfile, injectExchange } = chatManager;
   const { user } = useAuth();
   const fileUpload = useFileUpload();
   const [isDragOver, setIsDragOver] = useState(false);
@@ -75,18 +75,18 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
     if (pendingNotificationId) return;
     setPendingNotificationId(n.id);
     try {
-      // Create a brand-new chat first so the exchange is durable,
-      // shows up in the sidebar, and the user can keep asking
-      // follow-ups in the same thread. Without this, the synthetic
-      // exchange only lives in component state — refresh, navigate
-      // away, or click a different chat and it's gone.
-      const newChatId = await createNewChat();
-      const res = await fetchNotificationDetail(n.id, newChatId);
-      // Render the heading as the user message and the detail as the
-      // model's answer. Server already persisted both; we mirror them
-      // into local state so they appear immediately without a refetch.
+      // Single round-trip: the server creates a fresh chat, persists
+      // the user→model exchange, and returns both the cached detail
+      // and the new chatId. With pre-generated full_detail in the DB
+      // this typically completes in 100-200ms — the user sees the
+      // explanation effectively instantly. (Pre-Phase-2-fix this was
+      // two round-trips plus a 10-20s grounded LLM call.)
+      const res = await fetchNotificationDetail(n.id);
       const userText = `Explain: ${n.heading}`;
-      injectExchange(userText, res.detail);
+      // injectExchange with chatId switches the active chat and
+      // refreshes the sidebar so the new thread appears. Follow-up
+      // questions then go through normal `send` against this chat.
+      injectExchange(userText, res.detail, res.chatId ?? undefined);
     } catch (err) {
       console.error('[notifications] detail fetch failed', err);
       // Fall back: drop the heading into the input so the user can
@@ -95,7 +95,7 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
     } finally {
       setPendingNotificationId(null);
     }
-  }, [createNewChat, injectExchange, pendingNotificationId, setInput]);
+  }, [injectExchange, pendingNotificationId, setInput]);
 
   useEffect(() => {
     if (!isPro) return;

@@ -398,13 +398,25 @@ export function useChatManager() {
   // we want it to appear in the chat as if the user had asked about
   // that notification. Subsequent follow-up questions in the same
   // session go through normal `send` and use the chat's history.
-  const injectExchange = useCallback((userText: string, modelText: string) => {
-    setMessages(prev => [
-      ...prev,
+  //
+  // When `chatId` is provided, we ALSO switch the active chat to that
+  // id and refresh the sidebar so the new chat appears in the list —
+  // the server has already persisted the exchange under that chatId,
+  // so subsequent `send` calls use the chat history including our
+  // injected pair.
+  const injectExchange = useCallback((userText: string, modelText: string, chatId?: string) => {
+    setMessages([
       { role: 'user', content: userText, timestamp: new Date() },
       { role: 'model', content: modelText, timestamp: new Date() },
     ]);
-  }, []);
+    if (chatId) {
+      setCurrentChatId(chatId);
+      // Fire-and-forget — sidebar refresh is a UX nicety, not a
+      // correctness requirement, so we don't block the user-visible
+      // injection on it.
+      void loadChatList();
+    }
+  }, [loadChatList]);
 
   return {
     chatList,
