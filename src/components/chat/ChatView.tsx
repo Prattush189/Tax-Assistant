@@ -46,7 +46,7 @@ interface ChatViewProps {
 const ATTACHMENT_LIMITS: Record<string, number> = { free: 1, pro: 3, enterprise: 5 };
 
 export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewProps) {
-  const { messages, input, setInput, isLoading, messagesEndRef, scrollAreaRef, lastUserMsgRef, send, activeDocuments, attachDocument, detachDocument, continueResponse, referencedProfile, setReferencedProfile, injectExchange } = chatManager;
+  const { messages, input, setInput, isLoading, messagesEndRef, scrollAreaRef, lastUserMsgRef, send, activeDocuments, attachDocument, detachDocument, continueResponse, referencedProfile, setReferencedProfile, injectExchange, createNewChat } = chatManager;
   const { user } = useAuth();
   const fileUpload = useFileUpload();
   const [isDragOver, setIsDragOver] = useState(false);
@@ -75,21 +75,27 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
     if (pendingNotificationId) return;
     setPendingNotificationId(n.id);
     try {
-      const res = await fetchNotificationDetail(n.id);
+      // Create a brand-new chat first so the exchange is durable,
+      // shows up in the sidebar, and the user can keep asking
+      // follow-ups in the same thread. Without this, the synthetic
+      // exchange only lives in component state — refresh, navigate
+      // away, or click a different chat and it's gone.
+      const newChatId = await createNewChat();
+      const res = await fetchNotificationDetail(n.id, newChatId);
       // Render the heading as the user message and the detail as the
-      // model's answer. Subsequent follow-up questions in this thread
-      // go through normal `send` and use the chat history.
+      // model's answer. Server already persisted both; we mirror them
+      // into local state so they appear immediately without a refetch.
       const userText = `Explain: ${n.heading}`;
       injectExchange(userText, res.detail);
     } catch (err) {
       console.error('[notifications] detail fetch failed', err);
       // Fall back: drop the heading into the input so the user can
-      // simply press Enter to ask the model directly.
+      // press Enter to ask the model directly via the normal send flow.
       setInput(`Tell me about: ${n.heading}`);
     } finally {
       setPendingNotificationId(null);
     }
-  }, [injectExchange, pendingNotificationId, setInput]);
+  }, [createNewChat, injectExchange, pendingNotificationId, setInput]);
 
   useEffect(() => {
     if (!isPro) return;

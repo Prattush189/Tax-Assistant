@@ -38,9 +38,17 @@ export interface TaxNotificationCreateInput {
 }
 
 const stmts = {
+  // We pass fetched_at explicitly rather than letting the column
+  // default (`datetime('now', '+5 hours', '+30 minutes')`) fire per
+  // row. The default is re-evaluated for every INSERT, so a 12-row
+  // batch that straddles a wall-clock second boundary gets two
+  // distinct timestamps — and listLatest, which keys off
+  // MAX(fetched_at), then returns only the late half. With one
+  // timestamp computed up-front in replaceLatest and bound here, the
+  // entire batch is one identifiable group.
   insert: db.prepare(
-    `INSERT INTO tax_notifications (id, category, heading, summary, notification_date, source_url)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO tax_notifications (id, category, heading, summary, notification_date, source_url, fetched_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
   ),
   // The welcome screen shows the most recently fetched list. We want every
   // chat user to see the SAME set, so the list query returns the latest
@@ -74,22 +82,36 @@ const stmts = {
 
 export const notificationsRepo = {
   /** Replace the welcome-screen list with a freshly-fetched batch.
-   *  Inserts every item with the same fetched_at timestamp so listLatest
-   *  reads them as one batch. The previous batch is left in place; the
-   *  next listLatest call picks the new batch automatically. Older batches
-   *  are pruned by `pruneOlderThan` so the table doesn't grow unbounded. */
-  replaceLatest(items: TaxNotificationCreateInput[]): { inserted: number } {
-    if (items.length === 0) return { inserted: 0 };
+   *  Every row in the batch is written with the SAME fetched_at so
+   *  listLatest (which reads `WHERE fetched_at = MAX(fetched_at)`)
+   *  picks up the entire batch atomically. Previous batches stay in
+   *  place; pruneOlderThan trims them after the retention window. */
+  replaceLatest(items: TaxNotificationCreateInput[]): { inserted: number; fetchedAt: string } {
+    // Server is pinned to IST in the schema (`datetime('now', '+5 hours',
+    // '+30 minutes')`); replicate the same offset here so the batch
+    // timestamp matches what the column default would have produced and
+    // the prune query's UTC-derived cutoff still compares correctly.
+    const offsetMs = (5 * 60 + 30) * 60 * 1000;
+    const fetchedAt = new Date(Date.now() + offsetMs).toISOString().replace('T', ' ').slice(0, 19);
+    if (items.length === 0) return { inserted: 0, fetchedAt };
     const tx = db.transaction((rows: TaxNotificationCreateInput[]) => {
       let inserted = 0;
       for (const r of rows) {
         const id = crypto.randomUUID();
-        stmts.insert.run(id, r.category, r.heading.slice(0, 500), r.summary?.slice(0, 2000) ?? null, r.notificationDate ?? null, r.sourceUrl?.slice(0, 1000) ?? null);
+        stmts.insert.run(
+          id,
+          r.category,
+          r.heading.slice(0, 500),
+          r.summary?.slice(0, 2000) ?? null,
+          r.notificationDate ?? null,
+          r.sourceUrl?.slice(0, 1000) ?? null,
+          fetchedAt,
+        );
         inserted += 1;
       }
       return inserted;
     });
-    return { inserted: tx(items) };
+    return { inserted: tx(items), fetchedAt };
   },
 
   listLatest(limit: number = 12): TaxNotificationRow[] {

@@ -24,7 +24,12 @@ import { GEMINI_API_KEYS, GEMINI_CHAT_MODEL_T1, costForModel } from './gemini.js
 import { notificationsRepo, type NotificationCategory, type TaxNotificationCreateInput } from '../db/repositories/notificationsRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 
-const ADMIN_BILLING_ID_FALLBACK = 'system';
+// System-job rows in api_usage are written with NULL user_id /
+// billing_user_id. user_id is FK to users(id) — a sentinel string like
+// 'system' raises "FOREIGN KEY constraint failed" because no users row
+// exists with that id. The column allows NULL (ON DELETE SET NULL), so
+// null is the right marker for "no human actor" (cron, boot job).
+// Admin dashboard groups null-user rows under a "System job" heading.
 
 // 7 days of history is plenty for diagnostics — older batches just
 // inflate the table.
@@ -275,8 +280,8 @@ export async function fetchLatestNotifications(opts: { dryRun?: boolean; logUsag
     try {
       usageRepo.logWithBilling(
         '0.0.0.0',
-        ADMIN_BILLING_ID_FALLBACK,
-        ADMIN_BILLING_ID_FALLBACK,
+        null,
+        null,
         result.inputTokens,
         result.outputTokens,
         cost,
@@ -352,8 +357,11 @@ export async function fetchLatestNotifications(opts: { dryRun?: boolean; logUsag
 
   const { inserted } = notificationsRepo.replaceLatest(items);
   // Prune previous batches older than PRUNE_AGE_DAYS — keeps the table
-  // bounded while leaving a few days of history for diagnostics.
-  const cutoff = new Date(Date.now() - PRUNE_AGE_DAYS * 24 * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19);
+  // bounded while leaving a few days of history for diagnostics. The
+  // cutoff is built in the same IST shift used by replaceLatest so the
+  // string comparison against fetched_at is apples-to-apples.
+  const offsetMs = (5 * 60 + 30) * 60 * 1000;
+  const cutoff = new Date(Date.now() + offsetMs - PRUNE_AGE_DAYS * 24 * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19);
   const pruned = notificationsRepo.pruneOlderThan(cutoff);
 
   console.log(`[notificationFetcher] OK · inserted=${inserted} pruned=${pruned} rejectedNonOfficial=${rejectedNonOfficial} model=${model} input=${result.inputTokens} output=${result.outputTokens} cost=$${cost.toFixed(5)} durationMs=${durationMs}`);
@@ -412,8 +420,8 @@ export async function generateNotificationDetail(
   try {
     usageRepo.logWithBilling(
       opts.ip ?? '0.0.0.0',
-      opts.actorUserId ?? ADMIN_BILLING_ID_FALLBACK,
-      opts.billingUserId ?? ADMIN_BILLING_ID_FALLBACK,
+      opts.actorUserId ?? null,
+      opts.billingUserId ?? null,
       result.inputTokens,
       result.outputTokens,
       cost,

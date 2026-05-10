@@ -725,14 +725,21 @@ export async function fetchLatestNotifications(): Promise<{ items: TaxNotificati
   return authFetch('/api/notifications/latest');
 }
 
-export async function fetchNotificationDetail(id: string): Promise<{
+export async function fetchNotificationDetail(id: string, chatId?: string): Promise<{
   detail: string;
   cached: boolean;
   generatedAt: string;
   heading: string;
   sourceUrl: string | null;
+  chatId: string | null;
 }> {
-  return authFetch(`/api/notifications/${id}/detail`, { method: 'POST' });
+  return authFetch(`/api/notifications/${id}/detail`, {
+    method: 'POST',
+    // Including chatId tells the server to append the synthetic
+    // user→model exchange to that chat's history so the conversation
+    // is durable and the user can ask follow-ups in the same thread.
+    body: JSON.stringify({ chatId: chatId ?? null }),
+  });
 }
 
 // ── Tax Profile API ─────────────────────────────────────────────────────

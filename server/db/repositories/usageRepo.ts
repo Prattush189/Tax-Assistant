@@ -237,8 +237,18 @@ export const usageRepo = {
    *  counts success + cancelled but excludes failed. */
   logWithBilling(
     ip: string,
-    userId: string,
-    billingUserId: string,
+    /** users.id of the user who triggered the call. Pass null for
+     *  system-attributable rows (e.g. the daily notification refresh
+     *  cron, which has no human actor). The column has FK
+     *  REFERENCES users(id) ON DELETE SET NULL — passing a non-null
+     *  string that isn't a real user id raises FOREIGN KEY constraint
+     *  failed. */
+    userId: string | null,
+    /** Same nullability as userId. The billing_user_id column has no
+     *  FK in the live schema (added via ALTER TABLE), but we still
+     *  use null over a sentinel string so admin reports can group
+     *  system jobs separately from real-user usage. */
+    billingUserId: string | null,
     inputTokens: number,
     outputTokens: number,
     cost: number,
