@@ -38,37 +38,119 @@ interface RawNotification {
   source_url?: string;
 }
 
+// Hard allowlist of official Indian government domains for tax/GST/TDS
+// notifications. Any item whose source_url host doesn't end in one of
+// these is rejected at parse time — defence in depth on top of the
+// prompt instruction. Lower-cased, with leading dot so we can do a
+// strict suffix match (i.e. "cbic.gov.in" matches "x.cbic.gov.in" but
+// NOT "fakecbic.gov.in").
+//
+// Coverage rationale:
+//   - cbic-gst.gov.in / cbic.gov.in / taxinformation.cbic.gov.in   GST + Customs notifications
+//   - incometax.gov.in / incometaxindia.gov.in                     ITD portal + notification PDFs
+//   - cbdt.gov.in (legacy)                                         CBDT circulars (mostly redirects to ITD)
+//   - egazette.nic.in / egazette.gov.in                            Gazette of India (final source of truth)
+//   - gst.gov.in / gstcouncil.gov.in                               GST Council resolutions
+//   - finmin.nic.in / dor.gov.in                                   Ministry of Finance / Dept of Revenue
+//   - pib.gov.in                                                   Press Information Bureau (official press notes)
+//   - mca.gov.in                                                   MCA circulars overlapping with tax
+//   - india.gov.in / nic.in                                        National Informatics Centre umbrella
+const OFFICIAL_DOMAINS: readonly string[] = [
+  'cbic-gst.gov.in',
+  'cbic.gov.in',
+  'taxinformation.cbic.gov.in',
+  'incometax.gov.in',
+  'incometaxindia.gov.in',
+  'cbdt.gov.in',
+  'egazette.nic.in',
+  'egazette.gov.in',
+  'gst.gov.in',
+  'gstcouncil.gov.in',
+  'finmin.nic.in',
+  'dor.gov.in',
+  'pib.gov.in',
+  'mca.gov.in',
+  'india.gov.in',
+  // Catch-all for *.gov.in / *.nic.in subdomains we haven't enumerated
+  // (state-level GST departments, RBI circulars, etc.) — both TLD
+  // groups are reserved for Indian government use only.
+  'gov.in',
+  'nic.in',
+];
+
+/** Returns true iff `url` is a parseable HTTPS/HTTP URL whose hostname
+ *  is at OR a subdomain of one of OFFICIAL_DOMAINS. Uses suffix
+ *  matching with a leading dot so the comparison can't be tricked by
+ *  lookalike domains ("fakecbic.gov.in.evil.com" is rejected;
+ *  "x.cbic.gov.in" is allowed). */
+export function isOfficialSource(url: string): boolean {
+  if (!url || typeof url !== 'string') return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(url.trim());
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+  const host = parsed.hostname.toLowerCase();
+  if (!host) return false;
+  return OFFICIAL_DOMAINS.some(d => host === d || host.endsWith('.' + d));
+}
+
 const FETCH_PROMPT = `You are a tax/GST/TDS news researcher for an Indian chartered-accountant SaaS.
 
-Use Google Search to find the LATEST official notifications, circulars, and instructions issued by the Indian tax authorities. Search ONLY official sources:
-  - cbic-gst.gov.in (GST notifications)
-  - taxinformation.cbic.gov.in
-  - incometax.gov.in (Income Tax notifications/circulars)
-  - cbic.gov.in (Customs / CBIC announcements)
-  - cbdt.gov.in
-  - egazette.nic.in (gazette notifications)
+Your job: produce a JSON list of the LATEST notifications, circulars, and instructions issued by Indian tax authorities. Use Google Search.
 
-Pull notifications dated within the LAST 60 DAYS. Skip anything older. Skip press releases / news articles unless they reference a specific official notification number.
+HARD CONSTRAINT — OFFICIAL SOURCES ONLY.
 
-For each item, extract:
+Every source_url MUST point to a page or PDF hosted on one of these government domains (or a subdomain thereof):
+  - cbic-gst.gov.in            (CBIC GST notifications)
+  - cbic.gov.in                (CBIC Customs / Central Excise)
+  - taxinformation.cbic.gov.in (CBIC tax information portal)
+  - incometax.gov.in           (Income Tax e-filing portal)
+  - incometaxindia.gov.in      (Income Tax Department portal — notifications, circulars)
+  - cbdt.gov.in                (CBDT, where active)
+  - egazette.nic.in            (Gazette of India — final-source)
+  - gst.gov.in / gstcouncil.gov.in
+  - finmin.nic.in / dor.gov.in (Ministry of Finance / Dept of Revenue)
+  - pib.gov.in                 (Press Information Bureau, official press notes)
+  - any *.gov.in or *.nic.in (state-level GST departments etc.)
+
+If you cannot find an OFFICIAL source URL for a notification, OMIT THE ITEM ENTIRELY.
+
+DO NOT include items whose source_url points to:
+  - third-party tax-news sites (taxguru.in, taxscan.in, taxmann.com, cleartax.in, livemint.com, economictimes, business-standard, moneycontrol, etc.)
+  - law-firm blogs, consulting firms, social media (LinkedIn, Twitter), Substack, Medium, news aggregators
+  - PDF mirrors hosted by anyone other than the authority that issued the notification
+
+A third-party article MAY tip you off to a recent notification — but the source_url you write must be the authority's own URL, not the article's.
+
+DATE WINDOW. Pull only notifications dated within the LAST 60 DAYS. Skip anything older.
+
+CONTENT FILTER. Skip:
+  - GST monthly collection-figure press releases
+  - Budget-day commentary / explanatory memos
+  - Anything that's a press release without a corresponding numbered notification or circular
+
+For each item, return:
   - category: one of "GST" | "TDS" | "INCOME_TAX" | "OTHER"
-  - heading: a concise (≤ 90 chars) plain-English title that names the notification (e.g. "GST Notification 12/2025-CT — RCM extended to metal scrap")
-  - summary: a 1-2 sentence summary of what changed and who it affects (≤ 250 chars)
-  - notification_date: YYYY-MM-DD of the notification's official date (NOT today's date; the date stamped on the notification itself)
-  - source_url: the direct URL to the official notification PDF or page
+  - heading: ≤ 90 chars, includes the notification number (e.g. "GST Notification 12/2025-CT — RCM extended to metal scrap")
+  - summary: 1-2 sentences (≤ 250 chars) on what changed and who it affects
+  - notification_date: YYYY-MM-DD of the notification's stamped date (NOT today's date)
+  - source_url: the direct URL to the official notification PDF or notice page on one of the domains above
 
-Return STRICTLY a JSON object with this shape (no markdown fences, no prose):
+OUTPUT FORMAT — STRICT JSON, no markdown fences, no prose:
 {
   "items": [
     { "category": "...", "heading": "...", "summary": "...", "notification_date": "YYYY-MM-DD", "source_url": "https://..." }
   ]
 }
 
-RULES:
-- Aim for 8-12 items total, with a healthy mix across categories — at least 2 GST, 2 TDS-related, 2 Income Tax. Skip the rest if there genuinely aren't enough recent items in a category.
-- TDS items can be either CBDT TDS-rate-change circulars OR §194-series threshold revisions OR Finance-Act-implementing notifications.
-- Do NOT include CGST/SGST/IGST collection-figure releases or budget-day press notes — only operational notifications taxpayers need to act on.
-- Each notification must have a real, verifiable source_url — DO NOT invent URLs. If you can't find a direct link, omit the item.
+ABSOLUTE RULES:
+- Every source_url MUST be on the allowlist above. The server rejects any item whose URL is not on that list — wasting a slot on a non-official URL means one fewer notification reaches the user.
+- Aim for 8-12 items total, with a healthy mix across categories — at least 2 GST, 2 TDS-related, 2 Income Tax. Fewer is fine if recent items genuinely don't exist in a category.
+- TDS items can be CBDT TDS-rate-change circulars, §194-series threshold revisions, or Finance-Act-implementing notifications.
+- Do NOT invent URLs. Verifiable on the official site or omit the item.
 - Output ONLY the JSON object.`;
 
 const DETAIL_PROMPT_TEMPLATE = (heading: string, summary: string | null, sourceUrl: string | null) => `You are explaining an Indian tax/GST/TDS notification to a chartered accountant. The notification is:
@@ -77,7 +159,9 @@ const DETAIL_PROMPT_TEMPLATE = (heading: string, summary: string | null, sourceU
   ${summary ? `Summary: ${summary}` : ''}
   ${sourceUrl ? `Source: ${sourceUrl}` : ''}
 
-Use Google Search to read the official notification (and any clarification circular). Then write a structured explanation in 350-550 words covering:
+Use Google Search to read the official notification (and any clarification circular). HARD CONSTRAINT: only consult and cite content hosted on Indian government domains — cbic-gst.gov.in, cbic.gov.in, taxinformation.cbic.gov.in, incometax.gov.in, incometaxindia.gov.in, cbdt.gov.in, egazette.nic.in, gst.gov.in, gstcouncil.gov.in, finmin.nic.in, dor.gov.in, pib.gov.in, or any *.gov.in / *.nic.in subdomain. Do NOT use taxguru.in, taxscan.in, taxmann.com, cleartax.in, livemint, economic-times, business-standard, law-firm blogs, or any other third-party commentary as a source.
+
+Then write a structured explanation in 350-550 words covering:
 
   1. **What changed** — the operative provision in plain English
   2. **Who it affects** — the taxpayer category, threshold, sector
@@ -138,6 +222,15 @@ export interface FetchResult {
   ok: boolean;
   inserted: number;
   pruned: number;
+  /** Items the model emitted whose source_url failed the official-domain
+   *  allowlist check, OR were missing a URL entirely. Surfaced so the
+   *  manual script and admin logs can spot a model drifting toward
+   *  third-party sources. */
+  rejectedNonOfficial: number;
+  /** URLs that were rejected (truncated to the first 5 for log brevity).
+   *  Kept separate from `errors` so a typical "model proposed 1 taxguru
+   *  link" run is still ok=true. */
+  rejectedUrls: string[];
   inputTokens: number;
   outputTokens: number;
   cost: number;
@@ -149,10 +242,11 @@ export interface FetchResult {
  *  two batches; the welcome screen only ever shows the latest. */
 export async function fetchLatestNotifications(opts: { dryRun?: boolean; logUsage?: boolean } = {}): Promise<FetchResult> {
   const errors: string[] = [];
+  const rejectedUrls: string[] = [];
   const apiKey = pickApiKey();
   if (!apiKey) {
     errors.push('No GEMINI_API_KEY configured');
-    return { ok: false, inserted: 0, pruned: 0, inputTokens: 0, outputTokens: 0, cost: 0, errors };
+    return { ok: false, inserted: 0, pruned: 0, rejectedNonOfficial: 0, rejectedUrls, inputTokens: 0, outputTokens: 0, cost: 0, errors };
   }
 
   // Use the Gemini 3.x family model (T1) — the user explicitly asked for
@@ -168,7 +262,7 @@ export async function fetchLatestNotifications(opts: { dryRun?: boolean; logUsag
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     errors.push(`Gemini call failed: ${msg}`);
-    return { ok: false, inserted: 0, pruned: 0, inputTokens: 0, outputTokens: 0, cost: 0, errors };
+    return { ok: false, inserted: 0, pruned: 0, rejectedNonOfficial: 0, rejectedUrls, inputTokens: 0, outputTokens: 0, cost: 0, errors };
   }
   const durationMs = Date.now() - startedAt;
   const cost = costForModel(model, result.inputTokens, result.outputTokens);
@@ -203,43 +297,57 @@ export async function fetchLatestNotifications(opts: { dryRun?: boolean; logUsag
   const json = extractJsonObject(result.text);
   if (!json) {
     errors.push(`Gemini returned no parseable JSON. finishReason=${result.finishReason ?? 'unknown'}, length=${result.text.length}, head="${result.text.slice(0, 200).replace(/\s+/g, ' ')}"`);
-    return { ok: false, inserted: 0, pruned: 0, inputTokens: result.inputTokens, outputTokens: result.outputTokens, cost, errors };
+    return { ok: false, inserted: 0, pruned: 0, rejectedNonOfficial: 0, rejectedUrls, inputTokens: result.inputTokens, outputTokens: result.outputTokens, cost, errors };
   }
   let parsed: { items?: RawNotification[] };
   try {
     parsed = JSON.parse(json);
   } catch (e) {
     errors.push(`JSON.parse failed: ${e instanceof Error ? e.message : e}`);
-    return { ok: false, inserted: 0, pruned: 0, inputTokens: result.inputTokens, outputTokens: result.outputTokens, cost, errors };
+    return { ok: false, inserted: 0, pruned: 0, rejectedNonOfficial: 0, rejectedUrls, inputTokens: result.inputTokens, outputTokens: result.outputTokens, cost, errors };
   }
   if (!Array.isArray(parsed.items) || parsed.items.length === 0) {
     errors.push(`Empty items array in response (text head="${result.text.slice(0, 160)}")`);
-    return { ok: false, inserted: 0, pruned: 0, inputTokens: result.inputTokens, outputTokens: result.outputTokens, cost, errors };
+    return { ok: false, inserted: 0, pruned: 0, rejectedNonOfficial: 0, rejectedUrls, inputTokens: result.inputTokens, outputTokens: result.outputTokens, cost, errors };
   }
 
-  // Validate each item before insertion. Drop any item without a heading.
+  // Validate each item before insertion. The user explicitly required
+  // every notification to be sourced from an official Indian government
+  // website, so an item without an official source_url is dropped
+  // entirely — we do NOT show items with a null source on the welcome
+  // screen since they can't be verified by the practitioner.
   const items: TaxNotificationCreateInput[] = [];
+  let rejectedNonOfficial = 0;
   for (const it of parsed.items) {
     if (!it || typeof it.heading !== 'string' || !it.heading.trim()) continue;
+    const rawUrl = typeof it.source_url === 'string' ? it.source_url.trim() : '';
+    if (!rawUrl || !isOfficialSource(rawUrl)) {
+      rejectedNonOfficial += 1;
+      if (rejectedUrls.length < 5 && rawUrl) rejectedUrls.push(rawUrl);
+      continue;
+    }
     items.push({
       category: pickCategory(it.category),
       heading: it.heading.trim(),
       summary: typeof it.summary === 'string' && it.summary.trim() ? it.summary.trim() : null,
       notificationDate: isIsoDate(it.notification_date) ? it.notification_date!.trim() : null,
-      sourceUrl: typeof it.source_url === 'string' && /^https?:\/\//i.test(it.source_url.trim()) ? it.source_url.trim() : null,
+      sourceUrl: rawUrl,
     });
   }
+  if (rejectedNonOfficial > 0) {
+    console.warn(`[notificationFetcher] dropped ${rejectedNonOfficial} item(s) with non-official source URLs: ${rejectedUrls.join(', ')}${rejectedNonOfficial > rejectedUrls.length ? ', …' : ''}`);
+  }
   if (items.length === 0) {
-    errors.push(`Parsed ${parsed.items.length} items but none had a usable heading`);
-    return { ok: false, inserted: 0, pruned: 0, inputTokens: result.inputTokens, outputTokens: result.outputTokens, cost, errors };
+    errors.push(`Parsed ${parsed.items.length} items but none had a usable heading + official source URL (${rejectedNonOfficial} rejected for non-official source)`);
+    return { ok: false, inserted: 0, pruned: 0, rejectedNonOfficial, rejectedUrls, inputTokens: result.inputTokens, outputTokens: result.outputTokens, cost, errors };
   }
 
   if (opts.dryRun) {
-    console.log(`[notificationFetcher] DRY RUN — would insert ${items.length} items:`);
+    console.log(`[notificationFetcher] DRY RUN — would insert ${items.length} items (${rejectedNonOfficial} rejected for non-official source):`);
     for (const it of items) {
       console.log(`  [${it.category}] ${it.heading} (${it.notificationDate ?? 'no date'}) ${it.sourceUrl ?? ''}`);
     }
-    return { ok: true, inserted: 0, pruned: 0, inputTokens: result.inputTokens, outputTokens: result.outputTokens, cost, errors };
+    return { ok: true, inserted: 0, pruned: 0, rejectedNonOfficial, rejectedUrls, inputTokens: result.inputTokens, outputTokens: result.outputTokens, cost, errors };
   }
 
   const { inserted } = notificationsRepo.replaceLatest(items);
@@ -248,8 +356,8 @@ export async function fetchLatestNotifications(opts: { dryRun?: boolean; logUsag
   const cutoff = new Date(Date.now() - PRUNE_AGE_DAYS * 24 * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19);
   const pruned = notificationsRepo.pruneOlderThan(cutoff);
 
-  console.log(`[notificationFetcher] OK · inserted=${inserted} pruned=${pruned} model=${model} input=${result.inputTokens} output=${result.outputTokens} cost=$${cost.toFixed(5)} durationMs=${durationMs}`);
-  return { ok: true, inserted, pruned, inputTokens: result.inputTokens, outputTokens: result.outputTokens, cost, errors };
+  console.log(`[notificationFetcher] OK · inserted=${inserted} pruned=${pruned} rejectedNonOfficial=${rejectedNonOfficial} model=${model} input=${result.inputTokens} output=${result.outputTokens} cost=$${cost.toFixed(5)} durationMs=${durationMs}`);
+  return { ok: true, inserted, pruned, rejectedNonOfficial, rejectedUrls, inputTokens: result.inputTokens, outputTokens: result.outputTokens, cost, errors };
 }
 
 export interface DetailResult {

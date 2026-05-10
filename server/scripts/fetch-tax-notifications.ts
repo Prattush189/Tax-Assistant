@@ -81,13 +81,17 @@ async function main(): Promise<void> {
 
   console.log('');
   console.log(`[fetch-tax-notifications] done in ${(durationMs / 1000).toFixed(1)}s`);
-  console.log(`  ok        : ${result.ok}`);
-  console.log(`  inserted  : ${result.inserted}`);
-  console.log(`  pruned    : ${result.pruned}`);
-  console.log(`  tokens    : ${result.inputTokens} in / ${result.outputTokens} out`);
-  console.log(`  cost      : $${result.cost.toFixed(5)}`);
+  console.log(`  ok                  : ${result.ok}`);
+  console.log(`  inserted            : ${result.inserted}`);
+  console.log(`  pruned              : ${result.pruned}`);
+  console.log(`  rejected (non-gov)  : ${result.rejectedNonOfficial}`);
+  if (result.rejectedUrls.length > 0) {
+    for (const u of result.rejectedUrls) console.log(`    ↪ ${u}`);
+  }
+  console.log(`  tokens              : ${result.inputTokens} in / ${result.outputTokens} out`);
+  console.log(`  cost                : $${result.cost.toFixed(5)}`);
   if (result.errors.length > 0) {
-    console.log('  errors    :');
+    console.log('  errors              :');
     for (const e of result.errors) console.log(`    - ${e}`);
   }
 
