@@ -19,6 +19,12 @@
  * when you want a fresh batch outside the schedule.
  */
 
+// Load .env BEFORE any module that reads process.env at import time.
+// gemini.ts captures GEMINI_API_KEY in a top-level const, so importing it
+// before dotenv runs leaves the SDK with an empty key. server/index.ts
+// already does this for the running app; we replicate it here so the
+// standalone script picks up the same .env without needing CLI exports.
+import 'dotenv/config';
 import { fetchLatestNotifications } from '../lib/notificationFetcher.js';
 import { notificationsRepo } from '../db/repositories/notificationsRepo.js';
 
