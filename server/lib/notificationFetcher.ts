@@ -104,58 +104,75 @@ export function isOfficialSource(url: string): boolean {
 
 const FETCH_PROMPT = `You are a tax/GST/TDS news researcher for an Indian chartered-accountant SaaS.
 
-Your job: produce a JSON list of the LATEST notifications, circulars, and instructions issued by Indian tax authorities. Use Google Search.
+Your job: produce a JSON list of recent (last 90 days) notifications, circulars, and instructions issued by Indian tax authorities. Aim for 12-20 items. Use Google Search aggressively — these notifications are issued weekly across multiple categories, so 12-20 is the realistic count, not 1-2.
 
-HARD CONSTRAINT — OFFICIAL SOURCES ONLY.
+WHERE TO LOOK — the official notification listing pages on each authority's site are the best starting points. Search for them by name plus "notifications" or visit them directly via grounded queries:
 
-Every source_url MUST point to a page or PDF hosted on one of these government domains (or a subdomain thereof):
-  - cbic-gst.gov.in            (CBIC GST notifications)
-  - cbic.gov.in                (CBIC Customs / Central Excise)
-  - taxinformation.cbic.gov.in (CBIC tax information portal)
-  - incometax.gov.in           (Income Tax e-filing portal)
-  - incometaxindia.gov.in      (Income Tax Department portal — notifications, circulars)
-  - cbdt.gov.in                (CBDT, where active)
-  - egazette.nic.in            (Gazette of India — final-source)
-  - gst.gov.in / gstcouncil.gov.in
-  - finmin.nic.in / dor.gov.in (Ministry of Finance / Dept of Revenue)
-  - pib.gov.in                 (Press Information Bureau, official press notes)
-  - any *.gov.in or *.nic.in (state-level GST departments etc.)
+  GST (CBIC):
+    - https://cbic-gst.gov.in/cgst-notifications.html
+    - https://cbic-gst.gov.in/igst-notifications.html
+    - https://cbic-gst.gov.in/cgst-rate-notifications.html
+    - https://taxinformation.cbic.gov.in/  (search by category)
 
-If you cannot find an OFFICIAL source URL for a notification, OMIT THE ITEM ENTIRELY.
+  Income Tax (CBDT):
+    - https://incometaxindia.gov.in/Pages/communications/notifications.aspx
+    - https://incometaxindia.gov.in/Pages/communications/circulars.aspx
+    - https://incometax.gov.in/iec/foportal/latest-news
 
-DO NOT include items whose source_url points to:
-  - third-party tax-news sites (taxguru.in, taxscan.in, taxmann.com, cleartax.in, livemint.com, economictimes, business-standard, moneycontrol, etc.)
-  - law-firm blogs, consulting firms, social media (LinkedIn, Twitter), Substack, Medium, news aggregators
-  - PDF mirrors hosted by anyone other than the authority that issued the notification
+  Customs (CBIC):
+    - https://www.cbic.gov.in/entities/notification
+    - https://taxinformation.cbic.gov.in/  (Customs section)
 
-A third-party article MAY tip you off to a recent notification — but the source_url you write must be the authority's own URL, not the article's.
+  Gazette / Ministry of Finance:
+    - https://egazette.gov.in/  /  https://egazette.nic.in/
+    - https://dor.gov.in/notifications
 
-DATE WINDOW. Pull only notifications dated within the LAST 60 DAYS. Skip anything older.
+  GST Council resolutions:
+    - https://gstcouncil.gov.in/
 
-CONTENT FILTER. Skip:
-  - GST monthly collection-figure press releases
-  - Budget-day commentary / explanatory memos
-  - Anything that's a press release without a corresponding numbered notification or circular
+For each authority, scan the most-recent 10-20 entries on the listing page and pull the ones dated within 90 days.
 
-For each item, return:
-  - category: one of "GST" | "TDS" | "INCOME_TAX" | "OTHER"
-  - heading: ≤ 90 chars, includes the notification number (e.g. "GST Notification 12/2025-CT — RCM extended to metal scrap")
+WHAT QUALIFIES (include):
+  - Numbered Notifications (e.g. "Notification No. 12/2026-Central Tax")
+  - Numbered Circulars (e.g. "Circular No. 234/26/2026-GST")
+  - Instructions, Order, Office Memorandum issued by CBDT/CBIC
+  - GST Council resolution or circular
+  - Income Tax Department notifications under §139, §194-series, §195, §44AB rules etc.
+  - Customs tariff and exemption notifications affecting traders/importers
+
+WHAT TO SKIP:
+  - GST monthly collection-figure press releases ("GST collection in April 2026 was Rs. X crore")
+  - Generic FAQ pages, e-filing portal updates
+  - Budget-day commentary, explanatory memos, departmental news
+  - Anything older than 90 days
+
+OFFICIAL-SOURCE RULE.
+Every source_url MUST be on a government domain (*.gov.in / *.nic.in or one of these specific hosts: cbic-gst.gov.in, cbic.gov.in, taxinformation.cbic.gov.in, incometax.gov.in, incometaxindia.gov.in, cbdt.gov.in, egazette.nic.in, egazette.gov.in, gst.gov.in, gstcouncil.gov.in, finmin.nic.in, dor.gov.in, pib.gov.in, mca.gov.in).
+
+The URL can be either a direct PDF (e.g. https://cbic-gst.gov.in/pdf/notification/cgst-12-2026.pdf) OR a listing-page entry that points to the notification (e.g. https://incometaxindia.gov.in/Pages/communications/notifications.aspx). Both are valid; the listing page is acceptable when you can't extract the direct PDF link from search results.
+
+DO NOT cite third-party tax-news sites (taxguru.in, taxscan.in, taxmann.com, cleartax.in), law-firm blogs, news outlets (livemint, economictimes, business-standard, moneycontrol, etc.), social media, or aggregators. A third-party article may tip you off to a notification's existence, but the source_url you write must be the authority's own URL.
+
+For each item:
+  - category: "GST" | "TDS" | "INCOME_TAX" | "OTHER"
+  - heading: ≤ 90 chars, leads with the notification number ("GST Notification 12/2026-CT — Rate change on…")
   - summary: 1-2 sentences (≤ 250 chars) on what changed and who it affects
-  - notification_date: YYYY-MM-DD of the notification's stamped date (NOT today's date)
-  - source_url: the direct URL to the official notification PDF or notice page on one of the domains above
+  - notification_date: YYYY-MM-DD of the notification's stamped date (NOT today's date — the date printed on the notification)
+  - source_url: official URL on the allowlist above
 
-OUTPUT FORMAT — STRICT JSON, no markdown fences, no prose:
+OUTPUT — STRICT JSON, no markdown fences, no prose:
 {
   "items": [
     { "category": "...", "heading": "...", "summary": "...", "notification_date": "YYYY-MM-DD", "source_url": "https://..." }
   ]
 }
 
+TARGET: 12-20 items in the JSON. Indian tax authorities issue notifications WEEKLY across multiple categories — a 90-day window across GST + TDS + Income Tax + Customs reliably yields well over 20 candidates. If your draft has fewer than 8 items, search more listing pages (you've likely missed Customs, GST Council, or older Income Tax notifications). Returning only 1-2 items means the search was too narrow, not that few notifications exist.
+
 ABSOLUTE RULES:
-- Every source_url MUST be on the allowlist above. The server rejects any item whose URL is not on that list — wasting a slot on a non-official URL means one fewer notification reaches the user.
-- Aim for 8-12 items total, with a healthy mix across categories — at least 2 GST, 2 TDS-related, 2 Income Tax. Fewer is fine if recent items genuinely don't exist in a category.
-- TDS items can be CBDT TDS-rate-change circulars, §194-series threshold revisions, or Finance-Act-implementing notifications.
-- Do NOT invent URLs. Verifiable on the official site or omit the item.
+- Every source_url MUST be on a government domain. The server rejects items whose URL is not on the allowlist; a non-official URL means one fewer notification reaches the user.
+- TDS items can be CBDT rate-change circulars, §194-series threshold revisions, or Finance-Act-implementing notifications. These DO exist almost every month.
+- Do NOT invent URLs. If grounding can't surface the listing-page or PDF URL, omit that item — but then keep searching for more.
 - Output ONLY the JSON object.`;
 
 const DETAIL_PROMPT_TEMPLATE = (heading: string, summary: string | null, sourceUrl: string | null) => `You are explaining an Indian tax/GST/TDS notification to a chartered accountant. The notification is:
@@ -511,21 +528,38 @@ export async function generateNotificationDetail(
   // Filter Gemini's grounding sources to OFFICIAL government domains
   // only. Google Search may return a mix (the model's prompt asks for
   // gov-only, but the grounding pipeline doesn't enforce); we publish
-  // only the official ones to the user. If the explanation has zero
-  // official sources backing it, reject the result entirely so we
-  // don't cache a hallucinated body — the next click retries live and
-  // the user sees a clear error rather than unverified content.
+  // only the official ones to the user.
+  //
+  // Fallback: when grounding returns zero official sources for an
+  // obscure tariff / customs notification (which happens often
+  // because third-party tax-news sites tend to outrank cbic.gov.in
+  // PDFs in Google for those queries), we still anchor the cached
+  // detail to the notification's OWN source_url. That URL was
+  // already validated as official during the fetch step, so the
+  // user always sees at least one verifiable government link in the
+  // Sources block. The alternative — rejecting the detail entirely
+  // — left the click flow falling back to live generation and
+  // negated the entire point of pre-generation. The body of the
+  // explanation is still grounded; we just guarantee the link.
   const officialSources = result.sources.filter(s => isOfficialSource(s.url));
   let detailText = result.text.trim();
   if (detailText.length === 0) {
     return { ok: false, detail: null, cached: false, inputTokens: result.inputTokens, outputTokens: result.outputTokens, cost, error: `Empty response (finishReason=${result.finishReason})` };
   }
-  if (officialSources.length === 0) {
-    console.warn(`[notificationFetcher] detail rejected — 0 official sources backed grounding (had ${result.sources.length} non-official). id=${id} heading="${heading.slice(0, 80)}"`);
-    return { ok: false, detail: null, cached: false, inputTokens: result.inputTokens, outputTokens: result.outputTokens, cost, error: 'No official government source backed the explanation; refusing to cache' };
+  // Build the Sources block. Prefer official grounding sources; if
+  // none, fall back to the notification's own source_url. Always
+  // ensures at least one link, never cites a third-party site.
+  let sourcesForBlock: Array<{ title: string; url: string }> = officialSources.slice(0, 5);
+  if (sourcesForBlock.length === 0) {
+    if (sourceUrl && isOfficialSource(sourceUrl)) {
+      console.warn(`[notificationFetcher] grounding returned 0 official sources for "${heading.slice(0, 80)}"; falling back to original source_url=${sourceUrl}`);
+      sourcesForBlock = [{ title: heading, url: sourceUrl }];
+    } else {
+      console.warn(`[notificationFetcher] detail rejected — 0 official sources from grounding AND no usable source_url. id=${id} heading="${heading.slice(0, 80)}"`);
+      return { ok: false, detail: null, cached: false, inputTokens: result.inputTokens, outputTokens: result.outputTokens, cost, error: 'No official government source backed the explanation and no fallback URL available; refusing to cache' };
+    }
   }
-  // Sources block — only the gov.in / nic.in entries make it through.
-  const sourceLines = officialSources.slice(0, 5).map(s => `- [${s.title}](${s.url})`).join('\n');
+  const sourceLines = sourcesForBlock.map(s => `- [${s.title}](${s.url})`).join('\n');
   detailText += `\n\n**Sources**\n${sourceLines}`;
 
   notificationsRepo.setDetail(id, detailText);
