@@ -1,7 +1,13 @@
 // server/routes/upload.ts
 import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
-import { extractClaudeVision, ClaudePageLimitError } from '../lib/claudeVision.js';
+// Document upload extraction runs through extractVisionWithFallback
+// (Gemini 3.1 Flash-Lite Preview → Gemini 2.5 Flash-Lite). Originally
+// wired through extractClaudeVision; swapped after the Anthropic key
+// on prod was inactive (notices.ts hit the same 401 cascade).
+// ClaudePageLimitError is re-exported from visionFallback for the
+// 100-page guard kept in case Sonnet rejoins the chain later.
+import { extractVisionWithFallback, ClaudePageLimitError } from '../lib/visionFallback.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
@@ -100,13 +106,13 @@ router.post(
     let extractedData: Record<string, unknown>;
 
     try {
-      // Multi-page PDFs need the native generateContent endpoint;
-      // Sonnet 4.5 handles PDF and image attachments natively. PDFs
-      // >100 pages reject before the API call (Anthropic limit).
+      // Gemini handles PDF and image attachments natively via the
+      // native generateContent endpoint. PDFs >100 pages reject
+      // before the API call (limit kept across vision providers).
       let result;
       const callStartMs = Date.now();
       try {
-        result = await extractClaudeVision(req.file.buffer, mimetype, EXTRACTION_PROMPT);
+        result = await extractVisionWithFallback(req.file.buffer, mimetype, EXTRACTION_PROMPT);
       } catch (err) {
         if (err instanceof ClaudePageLimitError) {
           res.status(400).json({ error: err.message });
