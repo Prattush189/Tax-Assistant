@@ -1,7 +1,13 @@
 // server/routes/form16Import.ts
 import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
-import { extractClaudeVision, ClaudePageLimitError } from '../lib/claudeVision.js';
+// Form 16 extraction runs through extractVisionWithFallback (Gemini 3.1
+// Flash-Lite Preview → Gemini 2.5 Flash-Lite). Originally wired through
+// extractClaudeVision; swapped after the Anthropic key on prod was
+// inactive (notices.ts hit the same 401 cascade). visionFallback is
+// signature-compatible; ClaudePageLimitError is re-exported for the
+// 100-page guard.
+import { extractVisionWithFallback, ClaudePageLimitError } from '../lib/visionFallback.js';
 import { GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST } from '../lib/gemini.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
@@ -87,16 +93,15 @@ router.post(
     console.log(`[form16] Received: ${originalname} (${mimetype}, ${size} bytes)`);
 
     try {
-      // Multi-page PDFs need the native generateContent endpoint —
-      // the OpenAI compat shim silently truncates a PDF data URL to
       // Form 16 always goes through vision (no client-side text path).
-      // Sonnet 4.5 handles both PDF and image attachments natively.
-      // PDFs >100 pages are blocked at the helper level; Form 16s are
-      // typically 3-5 pages so this is rarely relevant.
+      // Gemini handles both PDF and image attachments natively via the
+      // native generateContent endpoint. PDFs >100 pages are blocked at
+      // the helper level; Form 16s are typically 3-5 pages so this is
+      // rarely relevant.
       let result;
       const callStartMs = Date.now();
       try {
-        result = await extractClaudeVision(req.file.buffer, mimetype, FORM16_EXTRACTION_PROMPT);
+        result = await extractVisionWithFallback(req.file.buffer, mimetype, FORM16_EXTRACTION_PROMPT);
       } catch (err) {
         if (err instanceof ClaudePageLimitError) {
           res.status(400).json({ error: err.message });

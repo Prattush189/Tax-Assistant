@@ -12,7 +12,17 @@ import { usageRepo } from '../db/repositories/usageRepo.js';
 import { enforceTokenQuota } from '../lib/tokenQuota.js';
 import { getBillingUser } from '../lib/billing.js';
 import { getUsagePeriodStart } from '../lib/planLimits.js';
-import { extractClaudeVision, ClaudePageLimitError } from '../lib/claudeVision.js';
+// Notice extraction runs through extractVisionWithFallback (Gemini 3.1
+// Flash-Lite Preview → Gemini 2.5 Flash-Lite). Originally wired through
+// extractClaudeVision; swapped because the Anthropic key on prod was
+// inactive (the "[notices] Notice file extraction failed: AuthenticationError
+// 401 invalid x-api-key" + "[circuit] anthropic → OPEN after 6 failures"
+// log line — Claude vision wasn't paid for any more). visionFallback's
+// signature is drop-in compatible (Buffer / mimeType / prompt + same
+// GeminiJsonResult shape with inputTokens / outputTokens / modelUsed).
+// ClaudePageLimitError is re-exported from visionFallback for the
+// 100-page guard kept in case Sonnet rejoins the chain later.
+import { extractVisionWithFallback, ClaudePageLimitError } from '../lib/visionFallback.js';
 import { GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST } from '../lib/gemini.js';
 import { AuthRequest } from '../types.js';
 
@@ -230,19 +240,33 @@ router.post(
   let extractionMeta: { mergedNoticeNumber?: string; mergedNoticeDate?: string; mergedSection?: string; mergedAssessmentYear?: string; mergedDin?: string } = {};
   if (req.file) {
     try {
-      // Sonnet 4.5 vision — handles both PDF and image notices
-      // natively. PDFs >100 pages throw and surface as 400.
+      // Gemini vision — handles both PDF and image notices natively.
+      // Tier-1 Gemini 3.1 Flash-Lite Preview, tier-2 fallback to
+      // Gemini 2.5 Flash-Lite when tier 1 returns syntactically-valid
+      // JSON with no usable summary (the same `looksValid` pattern
+      // bank-statement extraction uses to defeat empty responses).
+      // PDFs >100 pages throw ClaudePageLimitError (re-exported) and
+      // surface as 400.
       let extraction;
       const extractStartMs = Date.now();
       try {
-        extraction = await extractClaudeVision<{
+        extraction = await extractVisionWithFallback<{
           summary: string;
           noticeNumber: string | null;
           noticeDate: string | null;
           section: string | null;
           assessmentYear: string | null;
           din: string | null;
-        }>(req.file.buffer, req.file.mimetype, NOTICE_EXTRACTION_PROMPT);
+        }>(req.file.buffer, req.file.mimetype, NOTICE_EXTRACTION_PROMPT, {
+          // Reject empty-summary responses so tier 2 fires. Notice
+          // extraction MUST produce a summary — that's the field the
+          // downstream draft generation reads. If it's missing the
+          // first call effectively failed even though the JSON parsed.
+          looksValid: (data) => {
+            const d = data as { summary?: unknown } | null;
+            return !!d && typeof d.summary === 'string' && d.summary.trim().length > 0;
+          },
+        });
       } catch (err) {
         if (err instanceof ClaudePageLimitError) {
           res.status(400).json({ error: err.message });
