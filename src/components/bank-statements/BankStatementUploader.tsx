@@ -264,7 +264,21 @@ export function BankStatementUploader({ manager }: Props) {
           console.log(`[BankStatementUploader] auto-detected ${detected.bank} — pre-filling wizard for review`);
           setIsReadingPdf(false);
           setPendingGrid({
-            grid,
+            // Use the rule's preprocessed grid, NOT the raw grid from
+            // extractPdfGrid. For Kotak (and any future rule that
+            // defines a `preprocess` hook), the grid has been
+            // reshaped — e.g. the merged Date+Description column was
+            // split into two — and `detected.mapping.roles` is indexed
+            // against the post-preprocess column count. Feeding the
+            // wizard the raw grid here while passing a mapping array
+            // built for the reshaped grid puts the role dropdowns and
+            // the data preview off by one (user-reported on Kotak
+            // 2026-05: wizard dropdowns showed Date / Narration /
+            // Reference / Debit / Credit / Skip / Balance over a
+            // preview where col 1 still held "31 Mar 2025 PCI/9710/…"
+            // merged). For non-preprocess rules `detected.grid` is
+            // equal to the input grid, so this is a no-op.
+            grid: detected.grid,
             filename: file.name,
             file,
             presetMapping: detected.mapping,

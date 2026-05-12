@@ -45,6 +45,7 @@ export const BANK_STATEMENT_CATEGORIES = [
   'Business Expenses',
   'Personal',
   'Transfers',
+  'Cash Deposit',
   'Investments',
   'Loan EMI',
   'Taxes Paid',
@@ -71,6 +72,13 @@ export const BANK_STATEMENT_SUBCATEGORIES: Record<BankStatementCategory, string[
   'Business Expenses': ['Rent', 'Utilities', 'Travel', 'Office', 'Marketing', 'Professional Fees', 'Software'],
   Personal: [],
   Transfers: [],
+  // Cash Deposit covers cash INFLOWS to the account: counter deposits
+  // ("By Cash:", "BY CASH"), cash-deposit-machine drops (CDM/CAM
+  // narrations), and self-cheque cash deposits. Withdrawals stay
+  // under the existing flow (CDM/cheque debits land in Transfers or
+  // an AI-judged category). Subcategories let the dashboard split
+  // counter vs machine deposits if the user wants.
+  'Cash Deposit': ['Counter', 'CDM / ATM', 'Cheque', 'Other'],
   Investments: ['SIP', 'MF', 'Stocks', 'FD'],
   'Loan EMI': ['Home', 'Car', 'Business', 'Personal'],
   'Taxes Paid': ['Advance Tax', 'Self Assessment'],
@@ -270,6 +278,7 @@ Categorization rules (apply the FIRST match):
 - Narration contains "EMI", "LOAN", "HDFC HL", "HOUSING LOAN", "LOAN RECOVERY" → Loan EMI
 - Narration contains "SIP", "MUTUAL FUND", "MF ", "ZERODHA", "GROWW", "UPSTOX" → Investments
 - Narration contains "NEFT", "IMPS", "UPI", "RTGS" with a personal counterparty (not GSTIN) → Transfers
+- Narration starts with "By Cash", "BY CASH", "BY CSH", "CASH DEP", "CASH DEPOSIT" on a CREDIT row, OR contains "CAM/.../CASH DEP" / "CDM" on a credit → Cash Deposit (NOT Business Income — the customer paying cash into their own account is not a sale). Subcategory: "Counter" for over-the-counter / CC repayment, "CDM / ATM" for cash-deposit-machine, "Cheque" for self-cheque cash withdrawal/deposit pairs, "Other" otherwise.
 - Debits to vendors (rent, utilities, office supplies, travel, ads) → Business Expenses with appropriate subcategory
 - Credits to a business account from customers → Business Income
 - Grocery, shopping, restaurants, personal consumption → Personal

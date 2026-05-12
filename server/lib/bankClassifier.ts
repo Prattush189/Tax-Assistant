@@ -197,6 +197,48 @@ const RULES: Rule[] = [
   // ─── Dividends ─────────────────────────────────────────────────
   { name: 'dividend', pattern: /\bdividend\b|\bdiv\b.*credit/i, category: 'Dividends', direction: 'credit' },
 
+  // ─── Cash Deposit ──────────────────────────────────────────────
+  // Cash INFLOW to the account. Three common channels:
+  //   - "By Cash: N" — J&K Bank Cash Credit narration where the
+  //     customer deposits cash at the counter. Common in CC MORTG /
+  //     CASH CREDIT SCHEME formats. The transfer-personal rule below
+  //     also matches `^by cash\b`, so this rule sits before it and
+  //     wins on the credit side. Debit-direction "By Cash" rows
+  //     (rare — would mean cash withdrawal narrated this way) fall
+  //     through to the existing logic.
+  //   - "BY CASH - <branch>" — savings/current cash deposit, branch
+  //     location appended (e.g. "BY CASH -SRINAGAR - KARAN NAGAR").
+  //   - "CASH DEP" / "CASH DEPOSIT" / "CAM/.../CASH DEP-" — cash
+  //     deposit machine (CDM) / cash acceptor machine (CAM)
+  //     narrations on ICICI / HDFC / Axis statements.
+  //
+  // Direction-locked to credit so a "CASH PAID" / "CASH WDL" line
+  // doesn't accidentally get filed as a deposit. The narration alone
+  // ("Cash") is ambiguous about direction; the column the row landed
+  // in is authoritative.
+  //
+  // Without this rule the rows landed in "Business Income" via the
+  // AI fallback (Cash Credit deposit screenshots from May 2026 were
+  // the trigger). User wanted them in a distinct bucket so cash
+  // movements don't inflate operating-revenue totals.
+  {
+    name: 'cash-deposit-counter',
+    pattern: /^by\s+(?:cash|csh)\b|^cash\s+dep(?:osit)?\b/i,
+    category: 'Cash Deposit',
+    subcategory: 'Counter',
+    direction: 'credit',
+  },
+  {
+    name: 'cash-deposit-cdm',
+    // CAM / CDM narrations: "CAM/25271OAR/CASH DEP-Other/02-10-25/5228".
+    // The "CASH DEP" segment is the tell; the CAM prefix is the
+    // machine identifier (Cash Acceptor Machine).
+    pattern: /\bcam\b.*\bcash\s*dep|\bcdm\b|cash\s*deposit\s*machine|cash\s*acceptor/i,
+    category: 'Cash Deposit',
+    subcategory: 'CDM / ATM',
+    direction: 'credit',
+  },
+
   // ─── Transfers (UPI / NEFT / IMPS / RTGS / mTFR) ──────────────
   // Generic transfer rule fires LAST in this group so all the
   // specific charge / EMI / GST / salary anchors above win first.

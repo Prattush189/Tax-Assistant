@@ -495,6 +495,21 @@ const RULES: BankRule[] = [HDFC, ICICI, CANARA, PNB, YES_BANK, KOTAK, JK_BANK_DC
 export interface DetectedBankMapping {
   bank: string;
   mapping: ColumnMapping;
+  /** The grid the mapping is indexed against. Equal to the input grid
+   *  when the rule has no preprocess hook (which is the case for HDFC
+   *  / ICICI / Canara / PNB / Yes / J&K). When a rule DOES preprocess
+   *  the grid (Kotak splits a merged Date+Description cell into two
+   *  columns), this is the post-preprocess grid — column counts and
+   *  cell contents have changed relative to what extractPdfGrid
+   *  returned, and the mapping array indexes are aligned to THIS
+   *  grid, not the input.
+   *
+   *  Callers that show the user a preview (column-mapping wizard) MUST
+   *  use this grid — feeding the wizard the original grid plus a
+   *  preprocessed mapping array produces an off-by-one render where
+   *  the dropdowns describe one set of columns and the preview body
+   *  shows another. */
+  grid: PdfGrid;
 }
 
 /**
@@ -568,7 +583,7 @@ function tryRule(rule: BankRule, gridIn: PdfGrid): DetectedBankMapping | null {
       );
       return null;
     }
-    return { bank: rule.name, mapping: { roles: rule.positional.roles.slice() } };
+    return { bank: rule.name, mapping: { roles: rule.positional.roles.slice() }, grid };
   }
 
   if (!rule.headerRules || !rule.required) {
@@ -681,5 +696,5 @@ function tryRule(rule: BankRule, gridIn: PdfGrid): DetectedBankMapping | null {
     }
   }
 
-  return { bank: rule.name, mapping: { roles } };
+  return { bank: rule.name, mapping: { roles }, grid };
 }

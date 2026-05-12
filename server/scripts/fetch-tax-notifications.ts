@@ -1,22 +1,18 @@
 /**
- * Manual run of the daily tax-notifications fetcher.
+ * Tax-notifications fetcher.
  *
- * Calls the same fetchLatestNotifications() entry point the cron job
- * uses, but lets you preview without writing (--dry-run), see the full
- * Gemini response (--verbose), or skip usage logging (--no-log) when
- * you're testing prompt changes and don't want to poison admin
- * dashboards.
+ * This is the ONLY way the welcome-screen notifications list gets
+ * refreshed since 2026-05-12 — the boot-time / 24h cron job was
+ * removed by request. Run this script whenever a fresh batch is
+ * wanted. Welcome screen serves the most recent successful run.
  *
  * USAGE
  *
  *   npx tsx server/scripts/fetch-tax-notifications.ts                 # normal run
  *   npx tsx server/scripts/fetch-tax-notifications.ts --dry-run       # parse + print, no DB write
  *   npx tsx server/scripts/fetch-tax-notifications.ts --no-log        # write but don't log to api_usage
+ *   npx tsx server/scripts/fetch-tax-notifications.ts --skip-pregenerate  # fetch list, skip detail pregen
  *   npx tsx server/scripts/fetch-tax-notifications.ts --show-latest   # print the current welcome-screen list, no fetch
- *
- * The cron job runs at boot + every 24h via startNotificationRefreshJob
- * (server/jobs/notificationRefresh.ts). This script is for ad-hoc runs
- * when you want a fresh batch outside the schedule.
  */
 
 // Load .env BEFORE any module that reads process.env at import time.

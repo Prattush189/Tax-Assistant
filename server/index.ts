@@ -45,7 +45,6 @@ import {
   form16ImportLimiter,
 } from './middleware/rateLimiter.js';
 import { startRenewalReminderJob } from './jobs/renewalReminder.js';
-import { startNotificationRefreshJob } from './jobs/notificationRefresh.js';
 import { startStuckJobSweeper } from './lib/sweepStuckJobs.js';
 import { licenseKeyRepo } from './db/repositories/licenseKeyRepo.js';
 import { usageRepo } from './db/repositories/usageRepo.js';
@@ -258,11 +257,14 @@ app.listen(PORT, () => {
   // 'generating' row.
   startStuckJobSweeper();
 
-  // Daily refresh of GST / TDS / Income Tax notifications shown on the
-  // chat welcome screen. First run 90s post-boot, every 24h after.
-  // Logged to api_usage as category='notifications_fetch'. Manual run
-  // via `npx tsx server/scripts/fetch-tax-notifications.ts`.
-  startNotificationRefreshJob();
+  // Notification refresh is MANUAL-ONLY by request (2026-05-12).
+  // The fetcher used to run 90s after boot and every 24h thereafter
+  // via startNotificationRefreshJob — that job module was deleted to
+  // stop boot-time pulls from racing with deploys / restarts and to
+  // give the operator full control over when Gemini cost is spent
+  // on this feature. Welcome-screen list is refreshed by invoking:
+  //   npx tsx server/scripts/fetch-tax-notifications.ts
+  // from the project root whenever a fresh batch is wanted.
 });
 
 export default app;
