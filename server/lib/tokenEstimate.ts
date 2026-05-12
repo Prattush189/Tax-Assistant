@@ -36,6 +36,38 @@ const SAFETY_MARGIN = 1.10;
 const RETRY_HEAVY_MARGIN = 1.5;
 const TOKENS_PER_CHAR = 1 / 4;
 
+// ── Per-row calibration (2026-05) ──────────────────────────────────
+// Empirical observation from production runs: a single bank-statement
+// transaction row consumes ~80-100 raw tokens end-to-end (input row
+// chars + amortized system-prompt overhead + verbose TSV output that
+// echoes the narration). A ledger scrutiny row averages ~60-80 raw
+// tokens on top of the extract pass (chunked audit prompt over rows
+// + observation JSON output).
+//
+// The previous char-ratio formula (input = chars × 0.25, output = chars
+// × 0.18 × 0.25) underestimated this by ~3×: a 50-row chunk landed at
+// ~25 raw tokens/row in the estimator vs ~90 in actuals. That pushed
+// pre-flight estimates 5-13× under the real spend on the admin
+// dashboard's deviation tile.
+//
+// Numbers below are pinned to the user's observed range; pick the top
+// of each band so the estimator leans conservative (overestimating is
+// safe — underestimating is what lets users blow past their cap).
+const BANK_RAW_TOKENS_PER_ROW = 95;            // observed 80-100; pick 95
+const LEDGER_SCRUTINY_RAW_TOKENS_PER_ROW = 75; // observed 60-80; pick 75
+// Typical Tally / Busy / bank row width (date + voucher/ref + narration
+// + amount cols). 60-80 chars per row in real exports; 70 is a
+// reasonable middle for converting rawTextChars → rows.
+const CHARS_PER_ROW = 70;
+// Per-row split between input and output (raw tokens). Empirical:
+// output dominates because the model echoes narrations verbatim into
+// TSV/JSON and emits per-row fields (date/voucher/debit/credit/
+// balance/classification). With T2's 4× output weight, getting this
+// split right matters more than the total — input-heavy bias would
+// under-weight the final estimate.
+const ROW_INPUT_FRAC = 0.30;
+const ROW_OUTPUT_FRAC = 0.70;
+
 // T2 (gemini-2.5-flash-lite) weights — the cheapest active model
 // and the anchor of the weighting system. Most estimators below
 // assume the call will run on T2.
@@ -77,25 +109,26 @@ export function estimateFromChars(chars: number): number {
 /**
  * Estimate for the bank-statement TEXT path (digital PDFs the client
  * pre-extracted). Input is rawText; output is TSV — one row per
- * transaction. After Phase A, the TSV emits 5 structural fields per
- * row (~45 chars) instead of 10 (~70 chars) — categorization is now
- * server-side. Output ratio drops from ~0.3× to ~0.18× of raw input
- * chars accordingly.
+ * transaction.
  *
- *   input_tokens  ≈ chars / 4
- *   output_tokens ≈ chars × 0.18 / 4
+ * Calibrated to the BANK_RAW_TOKENS_PER_ROW empirical constant
+ * (~95 raw tokens / row, observed 80-100 in production). The
+ * previous char-ratio formula (input = chars × 0.25, output = chars
+ * × 0.18 × 0.25) under-counted by ~3× because it missed:
+ *   - amortized system-prompt overhead per chunk
+ *   - the TSV output echoing full narrations verbatim (not the
+ *     "~45 chars per row" the older comment claimed)
+ *   - per-row classification + balance columns
  *
- * Plus per-chunk prompt overhead — the system prompt also shrunk
- * from ~8K chars to ~3.5K chars after the categorization rules
- * moved to bankClassifier.ts, so PROMPT_CHARS_PER_CHUNK drops too.
+ * The per-row approach also makes the dependency explicit: estimate
+ * scales with row count, which matches how Gemini's tokenizer
+ * actually consumes the chunk.
  */
 export function estimateBankStatementText(rawTextChars: number): number {
   if (rawTextChars <= 0) return 0;
-  const CHUNK_CHARS = 8_000;
-  const PROMPT_CHARS_PER_CHUNK = 800;
-  const chunks = Math.max(1, Math.ceil(rawTextChars / CHUNK_CHARS));
-  const inputTokens = (rawTextChars + chunks * PROMPT_CHARS_PER_CHUNK) * TOKENS_PER_CHAR;
-  const outputTokens = rawTextChars * 0.18 * TOKENS_PER_CHAR;
+  const rows = Math.max(1, Math.ceil(rawTextChars / CHARS_PER_ROW));
+  const inputTokens = rows * BANK_RAW_TOKENS_PER_ROW * ROW_INPUT_FRAC;
+  const outputTokens = rows * BANK_RAW_TOKENS_PER_ROW * ROW_OUTPUT_FRAC;
   return Math.ceil((inputTokens * T2_W_IN + outputTokens * T2_W_OUT) * RETRY_HEAVY_MARGIN);
 }
 
@@ -131,22 +164,23 @@ export function estimateBankStatementVision(fileSizeBytes: number): number {
  * no preceding extract pass. Used by pre-extracted upload (the
  * client-side wizard already extracted), the side-by-side compare
  * (both ledgers come pre-structured), and the resume-after-failure
- * path (raw_extracted is already on disk). Anchored to T2 weights
- * because that's where the scrutiny prompt always runs.
+ * path (raw_extracted is already on disk).
  *
- * Without this, those four paths used `estimateFromChars` which
- * counted ONLY input chars at 1× T2 weight — missing the audit
- * JSON output entirely. Output is the dominant component once T2
- * weighting (4× per output token) is applied; pre-flight estimates
- * came in 5-13× under actuals, which the dashboard surfaced as
- * +800-1200% deviation bands.
+ * Calibrated to LEDGER_SCRUTINY_RAW_TOKENS_PER_ROW (~75 raw tokens /
+ * row, observed 60-80 in production). The previous char-ratio formula
+ * under-estimated by ~3× — same root cause as the bank text path:
+ * the audit output JSON includes observation messages, amounts, and
+ * suggested actions that scale with the row count, not just the
+ * input chars.
+ *
+ * Anchored to T2 weights because that's where the scrutiny prompt
+ * always runs.
  */
 export function estimateLedgerScrutinyOnly(rawTextChars: number): number {
   if (rawTextChars <= 0) return 0;
-  const SCRUTINY_PROMPT_CHARS = 3_500;
-  const SCRUTINY_OUTPUT_FACTOR = 0.35;
-  const inputTokens = (rawTextChars + SCRUTINY_PROMPT_CHARS) * TOKENS_PER_CHAR;
-  const outputTokens = rawTextChars * SCRUTINY_OUTPUT_FACTOR * TOKENS_PER_CHAR;
+  const rows = Math.max(1, Math.ceil(rawTextChars / CHARS_PER_ROW));
+  const inputTokens = rows * LEDGER_SCRUTINY_RAW_TOKENS_PER_ROW * ROW_INPUT_FRAC;
+  const outputTokens = rows * LEDGER_SCRUTINY_RAW_TOKENS_PER_ROW * ROW_OUTPUT_FRAC;
   return Math.ceil((inputTokens * T2_W_IN + outputTokens * T2_W_OUT) * RETRY_HEAVY_MARGIN);
 }
 

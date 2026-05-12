@@ -166,7 +166,16 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
       {/* Chat Area */}
       <div ref={scrollAreaRef} className="flex-1 overflow-y-auto p-4 lg:p-8 space-y-6 scroll-smooth">
         {messages.length === 0 && !isLoading ? (
-          <div className="h-full flex flex-col items-center justify-center text-center max-w-2xl mx-auto space-y-8 py-12">
+          /* Top-aligned layout: with the daily notifications list the
+             welcome content (logo + heading + 10-20 cards) is taller
+             than the viewport. The previous `h-full justify-center`
+             centered everything vertically, which clipped the first
+             two cards above the scrollable area's top edge with no
+             way to scroll up to them. Flowing from the top + adding
+             `min-h-full` keeps the empty / loading state balanced
+             when content is short, but lets it grow naturally when
+             there are many cards so all of them are scrollable. */
+          <div className="min-h-full flex flex-col items-center text-center max-w-2xl mx-auto space-y-8 py-12">
             <div className="w-20 h-20 rounded-2xl bg-emerald-50 dark:bg-emerald-900/20 flex items-center justify-center">
               <img src="/logoAI.png" alt="Smartbiz AI" className="w-14 h-14 object-contain" />
             </div>
