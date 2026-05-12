@@ -2,12 +2,10 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
 // Document upload extraction runs through extractVisionWithFallback
-// (Gemini 3.1 Flash-Lite Preview → Gemini 2.5 Flash-Lite). Originally
-// wired through extractClaudeVision; swapped after the Anthropic key
-// on prod was inactive (notices.ts hit the same 401 cascade).
-// ClaudePageLimitError is re-exported from visionFallback for the
-// 100-page guard kept in case Sonnet rejoins the chain later.
-import { extractVisionWithFallback, ClaudePageLimitError } from '../lib/visionFallback.js';
+// (Gemini 3.1 Flash-Lite Preview → Gemini 2.5 Flash-Lite). The
+// Anthropic provider was removed from the project; Gemini handles
+// all vision now.
+import { extractVisionWithFallback } from '../lib/visionFallback.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
@@ -107,19 +105,9 @@ router.post(
 
     try {
       // Gemini handles PDF and image attachments natively via the
-      // native generateContent endpoint. PDFs >100 pages reject
-      // before the API call (limit kept across vision providers).
-      let result;
+      // native generateContent endpoint.
       const callStartMs = Date.now();
-      try {
-        result = await extractVisionWithFallback(req.file.buffer, mimetype, EXTRACTION_PROMPT);
-      } catch (err) {
-        if (err instanceof ClaudePageLimitError) {
-          res.status(400).json({ error: err.message });
-          return;
-        }
-        throw err;
-      }
+      const result = await extractVisionWithFallback<Record<string, unknown>>(req.file.buffer, mimetype, EXTRACTION_PROMPT);
       extractedData = result.data;
 
       // Log successful upload toward monthly cap (non-fatal). Writes both

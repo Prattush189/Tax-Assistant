@@ -12,12 +12,12 @@ interface Props {
 /**
  * Shared "this PDF has no readable text" confirmation dialog. Used
  * by bank-statement / ledger / notice uploads to warn the user before
- * routing the upload to the AI vision path (Sonnet 4.5).
+ * routing the upload to the AI vision path.
  *
- * Vision runs on Gemini 3.1 Flash-Lite (primary) → 2.5 Flash-Lite
- * (fallback) and uses roughly 1.5×–2× the tokens a wizard-mapped
- * digital PDF / CSV would. The warning gives the user a chance to
- * back out and upload a digital export instead.
+ * Vision runs on Gemini 3.1 Flash-Lite Preview (primary) → 2.5
+ * Flash-Lite (fallback) and uses roughly 1.5×–2× the tokens a wizard-
+ * mapped digital PDF / CSV would. The warning gives the user a
+ * chance to back out and upload a digital export instead.
  *
  * Skips for: digital PDFs (text path used directly), images (no
  * alternative path exists, user already knows it's an image).

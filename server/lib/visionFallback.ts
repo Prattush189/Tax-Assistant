@@ -6,19 +6,18 @@
  *   Fallback : Gemini 2.5 Flash-Lite — different family, often handles
  *              what 3.1 trips on (and vice versa).
  *
- * Sonnet 4.5 is intentionally NOT in this chain right now — operator
- * will re-introduce when a key is provisioned. To add it, drop the
- * extractClaudeVision call into the catch below behind a third tier.
- *
- * Returns the standard GeminiJsonResult shape so call sites stay
- * identical to the legacy extractClaudeVision usage. ClaudePageLimitError
- * is re-exported for callers that want to short-circuit on >100 page
- * PDFs (Anthropic limit; Gemini doesn't have one but we keep the cap
- * so a future Sonnet tier doesn't suddenly fail on the same file).
+ * Previously this module also re-exported a `ClaudePageLimitError`
+ * type used as a backstop when Sonnet vision was in the chain. The
+ * Anthropic provider was removed from the codebase entirely (the
+ * 2026-05 prod key went inactive and the project standardised on
+ * Gemini for vision). Gemini has no documented 100-page hard limit,
+ * so the page-count backstop went away with the Claude removal —
+ * routes that used to `instanceof ClaudePageLimitError` now just
+ * propagate any error. The upstream page-count check (in the
+ * frontend's `pdfTooLarge` dialog) is still in place for UX.
  */
 
 import { extractGeminiVision } from './geminiVision.js';
-import { ClaudePageLimitError } from './claudeVision.js';
 import { GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2 } from './gemini.js';
 import type { GeminiJsonResult, GeminiJsonOptions } from './geminiJson.js';
 
@@ -48,8 +47,6 @@ export async function extractVisionWithFallback<T = unknown>(
     });
     if (opts.looksValid && !opts.looksValid(result.data)) {
       // Internal — caller catches this and falls through to tier 2.
-      // Brand name is fine inside this error since it's never
-      // surfaced to the UI (the catch wraps it in a generic message).
       throw new Error('Tier-1 vision parse passed schema but looksValid returned false');
     }
     return result;
@@ -66,5 +63,3 @@ export async function extractVisionWithFallback<T = unknown>(
     model: GEMINI_CHAT_MODEL_T2,
   });
 }
-
-export { ClaudePageLimitError };

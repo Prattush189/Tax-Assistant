@@ -13,16 +13,9 @@ import { enforceTokenQuota } from '../lib/tokenQuota.js';
 import { getBillingUser } from '../lib/billing.js';
 import { getUsagePeriodStart } from '../lib/planLimits.js';
 // Notice extraction runs through extractVisionWithFallback (Gemini 3.1
-// Flash-Lite Preview → Gemini 2.5 Flash-Lite). Originally wired through
-// extractClaudeVision; swapped because the Anthropic key on prod was
-// inactive (the "[notices] Notice file extraction failed: AuthenticationError
-// 401 invalid x-api-key" + "[circuit] anthropic → OPEN after 6 failures"
-// log line — Claude vision wasn't paid for any more). visionFallback's
-// signature is drop-in compatible (Buffer / mimeType / prompt + same
-// GeminiJsonResult shape with inputTokens / outputTokens / modelUsed).
-// ClaudePageLimitError is re-exported from visionFallback for the
-// 100-page guard kept in case Sonnet rejoins the chain later.
-import { extractVisionWithFallback, ClaudePageLimitError } from '../lib/visionFallback.js';
+// Flash-Lite Preview → Gemini 2.5 Flash-Lite). The Anthropic provider
+// was removed from the project; Gemini handles all vision now.
+import { extractVisionWithFallback } from '../lib/visionFallback.js';
 import { GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST } from '../lib/gemini.js';
 import { AuthRequest } from '../types.js';
 
@@ -245,37 +238,29 @@ router.post(
       // Gemini 2.5 Flash-Lite when tier 1 returns syntactically-valid
       // JSON with no usable summary (the same `looksValid` pattern
       // bank-statement extraction uses to defeat empty responses).
-      // PDFs >100 pages throw ClaudePageLimitError (re-exported) and
-      // surface as 400.
-      let extraction;
       const extractStartMs = Date.now();
-      try {
-        extraction = await extractVisionWithFallback<{
-          summary: string;
-          noticeNumber: string | null;
-          noticeDate: string | null;
-          section: string | null;
-          assessmentYear: string | null;
-          din: string | null;
-        }>(req.file.buffer, req.file.mimetype, NOTICE_EXTRACTION_PROMPT, {
-          // Reject empty-summary responses so tier 2 fires. Notice
-          // extraction MUST produce a summary — that's the field the
-          // downstream draft generation reads. If it's missing the
-          // first call effectively failed even though the JSON parsed.
-          looksValid: (data) => {
-            const d = data as { summary?: unknown } | null;
-            return !!d && typeof d.summary === 'string' && d.summary.trim().length > 0;
-          },
-        });
-      } catch (err) {
-        if (err instanceof ClaudePageLimitError) {
-          res.status(400).json({ error: err.message });
-          return;
-        }
-        throw err;
-      }
+      const extraction = await extractVisionWithFallback<{
+        summary: string;
+        noticeNumber: string | null;
+        noticeDate: string | null;
+        section: string | null;
+        assessmentYear: string | null;
+        din: string | null;
+      }>(req.file.buffer, req.file.mimetype, NOTICE_EXTRACTION_PROMPT, {
+        // Reject empty-summary responses so tier 2 fires. Notice
+        // extraction MUST produce a summary — that's the field the
+        // downstream draft generation reads. If it's missing the
+        // first call effectively failed even though the JSON parsed.
+        looksValid: (data) => {
+          const d = data as { summary?: unknown } | null;
+          return !!d && typeof d.summary === 'string' && d.summary.trim().length > 0;
+        },
+      });
 
-      const data = extraction.data ?? {};
+      // extraction.data is typed by the generic; the prior `?? {}`
+      // narrowed it to `{}` and broke field access. GeminiJsonResult
+      // guarantees `data: T` is set on a successful resolve.
+      const data = extraction.data;
       extractedText = (extractedText ?? '') + (data.summary ?? '');
       extractionMeta = {
         mergedNoticeNumber: data.noticeNumber ?? undefined,

@@ -17,7 +17,7 @@ import db from '../db/index.js';
 export type Period = 'minute' | 'day' | 'month';
 
 export interface BucketDef {
-  provider: string;   // 'anthropic', 'gemini', etc.
+  provider: string;   // 'gemini' — Anthropic provider was removed in 2026-05.
   dimension: string;  // 'rpm', 'input_tokens', 'search-grounding', ...
   label: string;      // 'global' for shared, or a per-key label
   limit: number;

@@ -6,10 +6,10 @@
  *   OPEN     — calls fail-fast for `cooldownMs`. After cooldown, transition to HALF_OPEN.
  *   HALF_OPEN — first call is allowed through as a probe. Success → CLOSED, failure → OPEN.
  *
- * Used by `geminiJson.ts` and `anthropic.ts` retry wrappers so a real upstream
- * outage stops the retry storm: instead of every concurrent request burning
- * 6+ seconds of backoff, the breaker opens after a few failures and the next
- * 60s of requests get a fast `BreakerOpenError` to surface to the user.
+ * Used by `geminiJson.ts` retry wrappers so a real upstream outage stops the
+ * retry storm: instead of every concurrent request burning 6+ seconds of
+ * backoff, the breaker opens after a few failures and the next 60s of
+ * requests get a fast `BreakerOpenError` to surface to the user.
  *
  * Config is intentionally simple (count-based, not error-rate-based) — at the
  * traffic levels we care about, error-rate windowing adds complexity without

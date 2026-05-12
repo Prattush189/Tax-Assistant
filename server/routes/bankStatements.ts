@@ -3,14 +3,14 @@ import crypto from 'crypto';
 import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
 import Papa from 'papaparse';
-import { extractVisionWithFallback, ClaudePageLimitError } from '../lib/visionFallback.js';
+import { extractVisionWithFallback } from '../lib/visionFallback.js';
 import { callGeminiJson, type GeminiJsonResult } from '../lib/geminiJson.js';
 import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_TSV_PROMPT, BANK_STATEMENT_CATEGORIES, buildConditionsBlock, countWords, MAX_CONDITION_WORDS } from '../lib/bankStatementPrompt.js';
 import { classifyRow, extractCounterpartyAndReference, markRecurring } from '../lib/bankClassifier.js';
 import { gemini, GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, costForModel } from '../lib/gemini.js';
 import { creditsForPages, creditsForCsvRows, PAGES_PER_CREDIT, CSV_ROWS_PER_CREDIT } from '../lib/creditPolicy.js';
 import { enforceTokenQuota } from '../lib/tokenQuota.js';
-import { estimateBankStatementText, estimateClaudeVision, estimateFromChars } from '../lib/tokenEstimate.js';
+import { estimateBankStatementText, estimateGeminiVision, estimateFromChars } from '../lib/tokenEstimate.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { bankStatementRepo } from '../db/repositories/bankStatementRepo.js';
 import { bankTransactionRepo, BankTransactionInput } from '../db/repositories/bankTransactionRepo.js';
@@ -1275,7 +1275,7 @@ router.post(
     // so two parallel uploads can't both pass on a thin remaining
     // budget and collectively bust the cap.
     const preflightEstimate = (() => {
-      if (req.file) return estimateClaudeVision(req.file.size);
+      if (req.file) return estimateGeminiVision(req.file.size);
       if (typeof req.body?.pdfText === 'string') return estimateBankStatementText(req.body.pdfText.length);
       if (typeof req.body?.csvText === 'string') return estimateFromChars(req.body.csvText.length + 800);
       return 0;
@@ -1431,13 +1431,12 @@ router.post(
       if (req.file) {
         filename = req.file.originalname;
         mimeType = req.file.mimetype;
-        // Vision path — Sonnet 4.5. PDFs >100 pages reject before
-        // the API call (Anthropic limit). Single call replaces the
-        // earlier 6-batch Gemini chunking + merge logic. Image
-        // uploads (jpeg/png/webp) flow through the same Sonnet
-        // helper since they're inherently single-page.
+        // Vision path — Gemini 3.1 Flash-Lite Preview → 2.5 Flash-Lite
+        // fallback. Single call replaces the earlier 6-batch chunking +
+        // merge logic. Image uploads (jpeg/png/webp) flow through the
+        // same helper since they're inherently single-page.
         const fullPrompt = `${conditionsBlock}${BANK_STATEMENT_PROMPT}`;
-        try {
+        {
           const visionResult = await extractVisionWithFallback<ExtractedStatement>(
             req.file.buffer,
             mimeType,
@@ -1484,12 +1483,6 @@ router.post(
             outputTokens: visionResult.outputTokens,
             modelUsed: visionResult.modelUsed,
           }];
-        } catch (err) {
-          if (err instanceof ClaudePageLimitError) {
-            res.status(400).json({ error: err.message });
-            return;
-          }
-          throw err;
         }
       } else if (isPdfText) {
         // Fast path: the frontend extracted the PDF text layer via pdfjs-dist

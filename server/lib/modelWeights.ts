@@ -7,15 +7,16 @@
  * 1× so the existing plan budgets (Free 250K, Pro 20M, Enterprise 60M)
  * keep their headline numbers but represent T2-input-equivalent units.
  *
- * The point is fairness: a 1M-token Sonnet call costs us ~30× what a
- * 1M-token flash-lite-input call costs (per Anthropic / Google list
- * pricing), so we count it 30×. Without this, a Pro user could
- * exhaust their entire $X/month plan running Sonnet for "free" while
- * a flash-lite user pays the same $X for 30× less compute.
+ * The point is fairness: a 1M-token Gemini 3.1 Preview call costs us
+ * ~2.5× more than a flash-lite-input call (per Google list pricing),
+ * so it counts 2.5×. Without weighting, a Pro user could exhaust an
+ * $X/month plan running the more expensive model for "free" while a
+ * flash-lite-only user pays the same $X for a fraction of the
+ * compute.
  *
  * Weights are derived directly from list pricing ratios. If pricing
- * changes, update both the cost constants in lib/gemini.ts (or the
- * Sonnet pricing here) and the weight values below in lockstep.
+ * changes, update both the cost constants in lib/gemini.ts and the
+ * weight values below in lockstep.
  *
  * Weights apply ONLY to the cross-feature quota gate. The cost
  * column on api_usage stays in actual USD, computed per-model in
@@ -39,15 +40,18 @@ const MODEL_WEIGHTS: Record<string, ModelWeight> = {
   'gemini-2.5-flash-lite':         { wIn: 1.0, wOut: 4.0 },    // $0.10 / $0.40
   'gemini-3.1-flash-lite-preview': { wIn: 2.5, wOut: 15.0 },   // $0.25 / $1.50
 
-  // Active vision (added in the Sonnet swap commit). Sonnet 4.5
-  // pricing: $3 in / $15 out. Anchored against flash-lite-input
-  // ($0.10) → 30× input, 150× output.
-  'claude-sonnet-4-5':             { wIn: 30.0, wOut: 150.0 },
-  'claude-sonnet-4-5-20250929':    { wIn: 30.0, wOut: 150.0 },
-
   // Retired (Stage: drop-think-tier). Kept for historic rows.
   'gemini-2.5-flash':              { wIn: 3.0, wOut: 25.0 },   // $0.30 / $2.50
   'gemini-3-flash-preview':        { wIn: 5.0, wOut: 30.0 },   // $0.50 / $3.00
+
+  // Retired (2026-05 Anthropic-removal). The vision pipeline used
+  // Sonnet 4.5 briefly between the original Gemini-only path and the
+  // current Gemini-only path. Weights kept here so any api_usage row
+  // logged against these model strings during that window still sums
+  // correctly into the cross-feature quota. No code path currently
+  // emits these model strings.
+  'claude-sonnet-4-5':             { wIn: 30.0, wOut: 150.0 },
+  'claude-sonnet-4-5-20250929':    { wIn: 30.0, wOut: 150.0 },
   'claude-haiku-4-5':              { wIn: 8.0, wOut: 40.0 },   // approximate
 };
 

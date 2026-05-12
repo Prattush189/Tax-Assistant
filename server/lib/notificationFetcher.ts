@@ -20,7 +20,7 @@
  */
 
 import { streamGeminiChat } from './geminiChat.js';
-import { GEMINI_API_KEYS, GEMINI_CHAT_MODEL_T1, costForModel } from './gemini.js';
+import { GEMINI_API_KEYS, GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, costForModel } from './gemini.js';
 import { notificationsRepo, type NotificationCategory, type TaxNotificationCreateInput } from '../db/repositories/notificationsRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 
@@ -227,7 +227,45 @@ async function consumeStream(model: string, prompt: string, apiKey: string, maxO
       finishReason = chunk.finishReason;
     }
   }
-  return { text: buffer, inputTokens, outputTokens, sources, finishReason };
+  return { text: buffer, inputTokens, outputTokens, sources, finishReason, modelUsed: model };
+}
+
+/** Match retryable upstream errors so we don't fall back to T2 for
+ *  errors that T2 would also fail (auth, bad request, content
+ *  filter). Pulls the HTTP status out of `streamGeminiChat`'s thrown
+ *  Error messages — they look like "AI service error 503: {..body..}".
+ *  Any of 429 / 500 / 502 / 503 / 504 is treated as "try T2"; the
+ *  log line that prompted this change was a `code: 503, status:
+ *  UNAVAILABLE` on Gemini 3.1 Flash-Lite Preview hitting "high
+ *  demand". 401/403 / 400 / 404 propagate immediately. */
+function isRetryableUpstream(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  const m = /AI service error (\d{3})/.exec(msg);
+  if (!m) return false;
+  const status = Number(m[1]);
+  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+/** consumeStream with a tier-2 fallback. Tries T1 (Gemini 3.1
+ *  Flash-Lite Preview) first — the user explicitly asked for "Gemini
+ *  3 Flash" and the 3.x family produces better-grounded summaries on
+ *  the news-search workload. On a retryable upstream error (typically
+ *  503 "high demand" on the preview model), falls back ONCE to T2
+ *  (Gemini 2.5 Flash-Lite). Non-retryable errors propagate
+ *  immediately.
+ *
+ *  The modelUsed field on the result reflects which tier actually
+ *  ran, so api_usage logging and cost computation use the correct
+ *  pricing for the fallback path. */
+async function consumeStreamWithFallback(prompt: string, apiKey: string, maxOutputTokens: number) {
+  try {
+    return await consumeStream(GEMINI_CHAT_MODEL_T1, prompt, apiKey, maxOutputTokens);
+  } catch (err) {
+    if (!isRetryableUpstream(err)) throw err;
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[notificationFetcher] tier-1 (${GEMINI_CHAT_MODEL_T1}) failed with retryable upstream error, falling back to ${GEMINI_CHAT_MODEL_T2}: ${msg.slice(0, 200)}`);
+    return await consumeStream(GEMINI_CHAT_MODEL_T2, prompt, apiKey, maxOutputTokens);
+  }
 }
 
 /** Strip markdown code fences or stray prose around a JSON object. */
@@ -281,21 +319,23 @@ export async function fetchLatestNotifications(opts: { dryRun?: boolean; logUsag
     return { ok: false, inserted: 0, pruned: 0, rejectedNonOfficial: 0, rejectedUrls, pregenerated: 0, pregenerateFailed: 0, inputTokens: 0, outputTokens: 0, cost: 0, errors };
   }
 
-  // Use the Gemini 3.x family model (T1) — the user explicitly asked for
-  // "Gemini 3 Flash". The closest available model in the line-up is
-  // gemini-3.1-flash-lite-preview; T2 (2.5-flash-lite) would also work
-  // but the 3.x family generates better-grounded summaries on the news
-  // search workload from spot checks.
-  const model = GEMINI_CHAT_MODEL_T1;
+  // Primary: Gemini 3.x family (T1) — the user explicitly asked for
+  // "Gemini 3 Flash" and the 3.x family produces better-grounded
+  // summaries on the news-search workload from spot checks. Tier-2
+  // fallback (Gemini 2.5 Flash-Lite) fires automatically on 429 /
+  // 5xx upstream errors (gemini-3.1-flash-lite-preview occasionally
+  // 503s with "This model is currently experiencing high demand" —
+  // the case that triggered adding fallback here).
   const startedAt = Date.now();
-  let result: Awaited<ReturnType<typeof consumeStream>>;
+  let result: Awaited<ReturnType<typeof consumeStreamWithFallback>>;
   try {
-    result = await consumeStream(model, FETCH_PROMPT, apiKey, 8192);
+    result = await consumeStreamWithFallback(FETCH_PROMPT, apiKey, 8192);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    errors.push(`Gemini call failed: ${msg}`);
+    errors.push(`Gemini call failed (both tiers): ${msg}`);
     return { ok: false, inserted: 0, pruned: 0, rejectedNonOfficial: 0, rejectedUrls, pregenerated: 0, pregenerateFailed: 0, inputTokens: 0, outputTokens: 0, cost: 0, errors };
   }
+  const model = result.modelUsed;
   const durationMs = Date.now() - startedAt;
   const fetchCost = costForModel(model, result.inputTokens, result.outputTokens);
   // Token + cost totals will accumulate the pregeneration step too;
@@ -512,16 +552,23 @@ export async function generateNotificationDetail(
   const apiKey = pickApiKey();
   if (!apiKey) return { ok: false, detail: null, cached: false, inputTokens: 0, outputTokens: 0, cost: 0, error: 'No GEMINI_API_KEY configured' };
 
-  const model = GEMINI_CHAT_MODEL_T1;
+  // Tier-1 Gemini 3.1 Flash-Lite Preview with automatic tier-2
+  // fallback to Gemini 2.5 Flash-Lite on retryable upstream errors.
+  // The pregeneration loop in the daily refresh hits T1 for 10-20
+  // items in quick succession; if T1 is in a "high demand" 503
+  // window, fallback keeps the batch moving instead of failing every
+  // item (which is what the log line that prompted this change
+  // showed).
   const startedAt = Date.now();
   const prompt = DETAIL_PROMPT_TEMPLATE(heading, summary, sourceUrl);
   let result;
   try {
-    result = await consumeStream(model, prompt, apiKey, 4096);
+    result = await consumeStreamWithFallback(prompt, apiKey, 4096);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return { ok: false, detail: null, cached: false, inputTokens: 0, outputTokens: 0, cost: 0, error: msg };
   }
+  const model = result.modelUsed;
   const cost = costForModel(model, result.inputTokens, result.outputTokens);
   const durationMs = Date.now() - startedAt;
 

@@ -17,14 +17,14 @@
 import crypto from 'crypto';
 import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
-import { extractVisionWithFallback, ClaudePageLimitError } from '../lib/visionFallback.js';
+import { extractVisionWithFallback } from '../lib/visionFallback.js';
 import { safeParseJson } from '../lib/geminiJson.js';
 import { pickChatProvider } from '../lib/chatProvider.js';
 import { SseWriter } from '../lib/sseStream.js';
 import { gemini, GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, costForModel } from '../lib/gemini.js';
 import { creditsForPages, creditsForCsvRows, PAGES_PER_CREDIT, CSV_ROWS_PER_CREDIT } from '../lib/creditPolicy.js';
 import { enforceTokenQuota } from '../lib/tokenQuota.js';
-import { estimateLedgerText, estimateClaudeVision, estimateFromChars, estimateLedgerScrutinyOnly } from '../lib/tokenEstimate.js';
+import { estimateLedgerText, estimateGeminiVision, estimateFromChars, estimateLedgerScrutinyOnly } from '../lib/tokenEstimate.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import {
   LEDGER_EXTRACT_PROMPT,
@@ -1594,7 +1594,7 @@ router.post(
     // Suresh Sethi free account, which logged a 351K ledger_scrutiny
     // call on a 250K budget).
     const ledgerPreflightEstimate = (() => {
-      if (req.file) return estimateClaudeVision(req.file.size);
+      if (req.file) return estimateGeminiVision(req.file.size);
       if (typeof req.body?.pdfText === 'string') return estimateLedgerText(req.body.pdfText.length);
       if (isPreExtracted && typeof req.body?.preExtracted === 'string') {
         // Pre-extracted skips the extract pass; estimate scrutiny only.
@@ -1893,28 +1893,13 @@ router.post(
         // on long ledgers — the frontend should prefer the pdfText path.
         console.log(`[ledger-scrutiny] vision path: scanned PDF, no text layer`);
         ledgerScrutinyRepo.setStatus(job.id, req.user.id, 'extracting');
-        // Two-tier Gemini vision (3.1 → 2.5 fallback). Used to be
-        // Claude Sonnet 4.5, but production servers commonly don't
-        // have ANTHROPIC_API_KEY provisioned (Sonnet vision was
-        // pulled from the chain in visionFallback.ts pending that)
-        // so the call would 401 on every Finsys-style PDF. Gemini
+        // Two-tier Gemini vision (3.1 → 2.5 fallback). The Anthropic
+        // provider was removed from the project entirely; Gemini
         // already powers bank-statement vision and ledger TSV
-        // extraction so its key is reliably configured. The 100-
-        // page guard is preserved (re-exported as
-        // ClaudePageLimitError) so when Sonnet is reintroduced
-        // the existing 400-with-CSV-hint behaviour still works.
-        let result;
-        try {
-          result = await extractVisionWithFallback<ExtractedLedger>(req.file!.buffer, mimeType, LEDGER_EXTRACT_PROMPT, {
-            maxTokens: 16_384,
-          });
-        } catch (err) {
-          if (err instanceof ClaudePageLimitError) {
-            res.status(400).json({ error: err.message });
-            return;
-          }
-          throw err;
-        }
+        // extraction so its key is reliably configured.
+        const result = await extractVisionWithFallback<ExtractedLedger>(req.file!.buffer, mimeType, LEDGER_EXTRACT_PROMPT, {
+          maxTokens: 16_384,
+        });
         extracted = normalizeExtraction(result.data);
         rawJson = JSON.stringify(extracted);
 

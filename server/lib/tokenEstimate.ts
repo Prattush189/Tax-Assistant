@@ -7,9 +7,10 @@
  * Returns are in WEIGHTED tokens (input × wIn + output × wOut for
  * the target model) so they can be compared directly against
  * weighted_tokens summed from api_usage. All callers below assume
- * the cheapest active path (Gemini T2: wIn=1, wOut=4); routes that
- * specifically target Sonnet vision should use estimateClaudeVision()
- * instead.
+ * the cheapest active path (Gemini T2: wIn=1, wOut=4). Vision paths
+ * (estimateGeminiVision / estimateBankStatementVision / etc.) use
+ * the same Gemini weights — the Anthropic / Sonnet provider was
+ * removed from the project entirely.
  *
  * Heuristics, not measurements. Goals:
  *   - Cheap (no model round-trip).
@@ -74,28 +75,36 @@ const ROW_OUTPUT_FRAC = 0.70;
 const T2_W_IN = 1.0;
 const T2_W_OUT = 4.0;
 
-// Sonnet 4.5 weights — used by estimateClaudeVision() for the
-// scanned-PDF path. ~30× per input token vs T2, ~37× per output.
-const SONNET_W_IN = 30.0;
-const SONNET_W_OUT = 150.0;
-const SONNET_PDF_PAGE_LIMIT = 100;
-const SONNET_TOKENS_PER_PAGE_INPUT = 1500;   // PDF document blocks bill ~1.5K in tokens per page
-const SONNET_TOKENS_PER_PAGE_OUTPUT = 800;   // typical structured-extract output
+// Gemini vision weights (T2 anchor) — used by estimateGeminiVision()
+// for the scanned-PDF and image vision paths. Gemini bills image /
+// PDF document blocks at ~260 input tokens per page and emits the
+// structured JSON output at the T2 output rate. The whole vision
+// chain (extractVisionWithFallback: T1 → T2) is anchored to T2
+// weights for the estimator since T2 is the floor of what the
+// caller will actually be charged.
+const GEMINI_VISION_TOKENS_PER_PAGE_INPUT = 260;
+const GEMINI_VISION_TOKENS_PER_PAGE_OUTPUT = 800;
 
 /**
- * Weighted-token estimate for a Sonnet 4.5 vision call. Used by
- * the scanned-PDF / image vision paths after the Sonnet swap.
- * Capped at 100 pages because Anthropic refuses larger PDFs anyway
- * (see ClaudePageLimitError).
+ * Weighted-token estimate for a Gemini vision call (scanned-PDF /
+ * image path). The vision chain runs T1 (Gemini 3.1 Flash-Lite
+ * Preview) with T2 fallback; cost is anchored to T2 weights for
+ * pre-flight quoting because that's the floor — the gate stays
+ * generous on the actual T1 happy path.
+ *
+ * Previously named `estimateClaudeVision` and used Sonnet's 30×/150×
+ * weights for the same routes. The Anthropic provider was removed
+ * from the project (the 2026-05 prod key went inactive); recalibrated
+ * to Gemini weights so the pre-flight quota gate no longer over-
+ * quotes vision uploads by ~25–40×.
  */
-export function estimateClaudeVision(fileSizeBytes: number, opts: { pageCount?: number } = {}): number {
+export function estimateGeminiVision(fileSizeBytes: number, opts: { pageCount?: number } = {}): number {
   if (fileSizeBytes <= 0) return 0;
   const KB_PER_PAGE = 200;
   const pages = opts.pageCount ?? Math.max(1, Math.ceil(fileSizeBytes / 1024 / KB_PER_PAGE));
-  const cappedPages = Math.min(SONNET_PDF_PAGE_LIMIT, pages);
-  const inputTokens = cappedPages * SONNET_TOKENS_PER_PAGE_INPUT + 500; // + prompt overhead
-  const outputTokens = cappedPages * SONNET_TOKENS_PER_PAGE_OUTPUT;
-  return Math.ceil((inputTokens * SONNET_W_IN + outputTokens * SONNET_W_OUT) * SAFETY_MARGIN);
+  const inputTokens = pages * GEMINI_VISION_TOKENS_PER_PAGE_INPUT + 500; // + prompt overhead
+  const outputTokens = pages * GEMINI_VISION_TOKENS_PER_PAGE_OUTPUT;
+  return Math.ceil((inputTokens * T2_W_IN + outputTokens * T2_W_OUT) * SAFETY_MARGIN);
 }
 
 /** Weighted tokens for a chunk of plain text input (prompt + payload).
@@ -151,11 +160,10 @@ export function estimateBankStatementVision(fileSizeBytes: number): number {
   const batches = pages <= 4 ? 1 : Math.ceil(pages / PAGES_PER_BATCH);
   const inputTokens = pages * TOKENS_PER_PAGE + batches * 800;
   const outputTokens = Math.min(16_384 * batches, pages * 600);
-  // Vision currently runs on Gemini T2 (chunked). The next commit
-  // swaps this path to Sonnet 4.5 — at that point the caller should
-  // switch to estimateClaudeVision() (30×/150× weights vs T2's 1×/4×).
-  // For now the estimator stays anchored at T2 weights, which mirrors
-  // the actual model running today.
+  // Vision runs on Gemini (T1 with T2 fallback). Anchored to T2
+  // weights here since that's the floor — the T1 happy path costs
+  // marginally more per token but the gate already includes a 1.5×
+  // retry margin that covers the difference.
   return Math.ceil((inputTokens * T2_W_IN + outputTokens * T2_W_OUT) * RETRY_HEAVY_MARGIN);
 }
 

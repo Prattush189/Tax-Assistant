@@ -2,12 +2,9 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
 // Form 16 extraction runs through extractVisionWithFallback (Gemini 3.1
-// Flash-Lite Preview → Gemini 2.5 Flash-Lite). Originally wired through
-// extractClaudeVision; swapped after the Anthropic key on prod was
-// inactive (notices.ts hit the same 401 cascade). visionFallback is
-// signature-compatible; ClaudePageLimitError is re-exported for the
-// 100-page guard.
-import { extractVisionWithFallback, ClaudePageLimitError } from '../lib/visionFallback.js';
+// Flash-Lite Preview → Gemini 2.5 Flash-Lite). The Anthropic provider
+// was removed from the project; Gemini handles all vision now.
+import { extractVisionWithFallback } from '../lib/visionFallback.js';
 import { GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST } from '../lib/gemini.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
@@ -95,20 +92,10 @@ router.post(
     try {
       // Form 16 always goes through vision (no client-side text path).
       // Gemini handles both PDF and image attachments natively via the
-      // native generateContent endpoint. PDFs >100 pages are blocked at
-      // the helper level; Form 16s are typically 3-5 pages so this is
-      // rarely relevant.
-      let result;
+      // native generateContent endpoint. Form 16s are typically 3-5
+      // pages — well within Gemini's input limits.
       const callStartMs = Date.now();
-      try {
-        result = await extractVisionWithFallback(req.file.buffer, mimetype, FORM16_EXTRACTION_PROMPT);
-      } catch (err) {
-        if (err instanceof ClaudePageLimitError) {
-          res.status(400).json({ error: err.message });
-          return;
-        }
-        throw err;
-      }
+      const result = await extractVisionWithFallback(req.file.buffer, mimetype, FORM16_EXTRACTION_PROMPT);
 
       // Log AI cost so Form 16 imports show up in the admin API-cost
       // dashboard alongside chat / notice / document extractions.

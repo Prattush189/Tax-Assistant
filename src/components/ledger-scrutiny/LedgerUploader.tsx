@@ -196,10 +196,11 @@ export function LedgerUploader({ manager }: Props) {
     }
 
     // Digital PDF → extract grid + run column-mapping wizard.
-    // Scanned PDFs route to AI vision (Sonnet 4.5) with a cost
-    // warning; the audit pipeline can still produce useful signal
-    // on a vision-extracted ledger, just less crisp than from a
-    // wizard-mapped grid. PDFs over 100 pages block (Anthropic limit).
+    // Scanned PDFs route to AI vision (Gemini 3.1 Flash-Lite Preview
+    // → 2.5 Flash-Lite fallback) with a cost warning; the audit
+    // pipeline can still produce useful signal on a vision-extracted
+    // ledger, just less crisp than from a wizard-mapped grid. PDFs
+    // over 100 pages block as a UX cost guard.
     setIsReadingPdf(true);
     try {
       const grid = await extractPdfGrid(file);

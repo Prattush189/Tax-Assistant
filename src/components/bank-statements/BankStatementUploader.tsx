@@ -119,9 +119,9 @@ export function BankStatementUploader({ manager }: Props) {
   // OR when we route to the analyze pipeline.
   const [isReadingPdf, setIsReadingPdf] = useState(false);
   // Scanned-PDF warning + over-100-page block dialogs. Shown when the
-  // PDF has no text layer and we'd route to Sonnet vision — at which
-  // point the cost difference vs digital PDFs is large enough to
-  // warrant a confirmation step.
+  // PDF has no text layer and we'd route to AI vision — at which point
+  // the cost difference vs digital PDFs is large enough to warrant a
+  // confirmation step.
   const [pendingScannedPdf, setPendingScannedPdf] = useState<File | null>(null);
   const [pdfTooLarge, setPdfTooLarge] = useState<{ file: File; pageCount: number } | null>(null);
 
@@ -327,10 +327,11 @@ export function BankStatementUploader({ manager }: Props) {
           console.log(`[BankStatementUploader] only ${grid.columnCount} columns detected — routing to vision`);
         }
         // Either no text layer or grid is too sparse — route through
-        // vision. 100-page block (Anthropic limit kept in case
-        // Sonnet fallback re-enters the chain later). The scanned-PDF
-        // confirm dialog explains the cost trade-off so dense
-        // statements don't surprise the user.
+        // vision. 100-page block kept as a UX cost guard — Gemini
+        // handles longer PDFs technically but vision over a 100+
+        // page scan is slow and expensive enough that users deserve
+        // a confirm step. The scanned-PDF confirm dialog explains
+        // the cost trade-off so dense statements don't surprise.
         const pageCount = await countPdfPagesClient(file) ?? 0;
         setIsReadingPdf(false);
         if (pageCount > 100) {

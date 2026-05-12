@@ -155,8 +155,6 @@ export function RecentApiCallsDashboard() {
             <span><span className="font-semibold text-gray-700 dark:text-gray-300">Gemini 2.5 Flash-Lite:</span> $0.10 in / $0.40 out per 1M (weight 1× / 4×)</span>
             <span className="text-gray-300 dark:text-gray-700">·</span>
             <span><span className="font-semibold text-gray-700 dark:text-gray-300">Gemini 3.1 Flash-Lite:</span> $0.25 in / $1.50 out per 1M (weight 2.5× / 15×)</span>
-            <span className="text-gray-300 dark:text-gray-700">·</span>
-            <span><span className="font-semibold text-gray-700 dark:text-gray-300">Claude Sonnet 4.5:</span> $3.00 in / $15.00 out per 1M (weight 30× / 150×)</span>
           </div>
         </div>
         <div className="flex items-center gap-2">
