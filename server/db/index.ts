@@ -237,6 +237,17 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_bank_rules_user_id ON bank_statement_rul
   if (!names.includes('provider_fallback')) {
     db.exec("ALTER TABLE bank_statements ADD COLUMN provider_fallback INTEGER NOT NULL DEFAULT 0");
   }
+  // accountKind — 'asset' (savings/current) vs 'liability' (CC / OD /
+  // Loan). Set during analysis from the AI-extracted accountKind
+  // field. NULL on rows analysed before this column existed; the
+  // reconcile pass treats NULL as 'asset' (the default convention).
+  // Stored so admin / reports can filter; the runtime delta-sign
+  // decision in deriveAmountsFromBalance / reconcileBalances /
+  // verifyClosingBalance was already taken at analysis time and is
+  // baked into the persisted signed amounts.
+  if (!names.includes('account_kind')) {
+    db.exec("ALTER TABLE bank_statements ADD COLUMN account_kind TEXT");
+  }
 }
 
 // Credit accounting for ledger_scrutiny_jobs (10 pages = 1 credit).

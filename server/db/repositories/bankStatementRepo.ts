@@ -36,6 +36,12 @@ export interface BankStatementCreateInput {
   sourceFilename: string | null;
   sourceMime: string | null;
   rawExtracted: string | null;
+  /** 'asset' (savings/current) vs 'liability' (CC / OD / Loan).
+   *  Drives the balance-delta sign convention used by
+   *  deriveAmountsFromBalance / reconcileBalances. Null means
+   *  unknown — runtime treats it as 'asset' (the default and
+   *  safest assumption for new uploads). */
+  accountKind?: 'asset' | 'liability' | null;
 }
 
 export interface BankStatementPlaceholderInput {
@@ -100,6 +106,7 @@ const stmts = {
     `UPDATE bank_statements
        SET name = ?, bank_name = ?, account_number_masked = ?,
            period_from = ?, period_to = ?, raw_extracted = ?,
+           account_kind = ?,
            status = 'done', error_message = NULL,
            updated_at = datetime('now', '+5 hours', '+30 minutes')
      WHERE id = ? AND user_id = ?`
@@ -225,6 +232,7 @@ export const bankStatementRepo = {
       input.periodFrom,
       input.periodTo,
       input.rawExtracted,
+      input.accountKind ?? null,
       id,
       userId,
     ).changes > 0;

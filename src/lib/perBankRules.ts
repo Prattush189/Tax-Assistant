@@ -30,6 +30,19 @@ interface BankRule {
    *  them to sit next to the "IFSC Code:" label which only the
    *  owning bank's banner has. */
   fingerprints: Array<string | RegExp>;
+  /** Optional grid-reshape hook. Runs AFTER the fingerprint matches
+   *  but BEFORE headerRules / positional are applied. Use this when
+   *  a bank's compact PDF layout merges two logical columns into one
+   *  grid cell (Kotak's "31 Mar 2025 PCI/9710/..." cell that fuses
+   *  date and description is the canonical case). Return a new
+   *  PdfGrid with the split applied; the caller treats the returned
+   *  value as the working grid for the rest of detection. Return
+   *  the input grid unchanged to skip preprocessing.
+   *
+   *  Keep these LOCAL to the per-bank rule — do NOT generalise into
+   *  pdfGrid because the heuristic for which cell to split is bank-
+   *  specific and a wrong split would corrupt other banks' grids. */
+  preprocess?: (grid: PdfGrid) => PdfGrid;
   /** Header → role table. Iterated in order for each grid column;
    *  first matching pattern wins. List the more specific patterns
    *  first ("Value Dt" before plain "Date", "Closing Balance" before
@@ -70,6 +83,14 @@ const HDFC: BankRule = {
     'hdfc bank ltd',
     'hdfc bank house',
     'we understand your world',
+    // HDFC's "Virtual Imperia" statement variant doesn't include any
+    // of the bank-name strings in the first 30 grid rows — only the
+    // IFSC line ("rtgs/neft ifsc : hdfc0000138") surfaces. Match the
+    // IFSC anchored to the "IFSC" label. Uses `.{0,30}` between
+    // because the printed label is sometimes "IFSC Code:" /
+    // "IFSC :" / "RTGS/NEFT IFSC:" — letters between, which would
+    // defeat a `[^a-z]` character class.
+    /\bifsc\b.{0,30}\bhdfc0\d{4,}/i,
   ],
   headerRules: [
     { pattern: /value\s*(?:date|dt)/i, role: 'valueDate' },
@@ -97,10 +118,12 @@ const ICICI: BankRule = {
     // the title "Detailed Statement" and the IFSC prefix "ICIC0".
     // Both are unique to ICICI and safe to add.
     'detailed statement',
-    // IFSC prefix fingerprint, anchored to the "IFSC Code:" label so
-    // it doesn't false-fire on RTGS narrations like "...PAYTM-ICIC00..."
-    // that quote a beneficiary's IFSC.
-    /ifsc[^a-z]{0,8}icic0/i,
+    // IFSC prefix fingerprint, anchored to the "IFSC" label so it
+    // doesn't false-fire on RTGS narrations like "...PAYTM-ICIC00..."
+    // that quote a beneficiary's IFSC. Uses `.{0,30}` between
+    // because the printed label is sometimes "IFSC Code:" /
+    // "IFSC :" — letters between would defeat a `[^a-z]` class.
+    /\bifsc\b.{0,30}\bicic0\d{4,}/i,
   ],
   headerRules: [
     { pattern: /balance/i, role: 'balance' },
@@ -125,7 +148,11 @@ const CANARA: BankRule = {
   fingerprints: [
     'canara bank',
     'syndicate bank',
-    /ifsc[^a-z]{0,8}cnrb0/i,
+    // IFSC anchor — see note on HDFC's regex. Canara's epassbook
+    // export ("statement for a/c xxx between … ifsc code cnrb0…")
+    // is the realistic case where the bank-name strings DON'T
+    // appear in the first 30 rows but the IFSC line does.
+    /\bifsc\b.{0,30}\bcnrb0\d{4,}/i,
   ],
   headerRules: [
     { pattern: /^balance$|closing\s*bal/i, role: 'balance' },
@@ -148,7 +175,8 @@ const PNB: BankRule = {
     // numbers and the "CKYC No.:" label that PNB uses (other banks
     // write it as "cKYC Id" / "CKYC NO."). Account number prefix
     // 31xx is also a PNB tell but too narrow to fingerprint on.
-    /ifsc[^a-z]{0,8}punb0/i,
+    // IFSC anchor — see note on HDFC's regex.
+    /\bifsc\b.{0,30}\bpunb0\d{4,}/i,
     'punjab national bank',
     '1800 1800/1800 2021',
   ],
@@ -175,7 +203,8 @@ const YES_BANK: BankRule = {
     // alone is unambiguous (no other bank uses "yes bank").
     'yes bank ltd',
     'yes bank limited',
-    /ifsc[^a-z]{0,8}yesb0/i,
+    // IFSC anchor — see note on HDFC's regex.
+    /\bifsc\b.{0,30}\byesb0\d{4,}/i,
   ],
   headerRules: [
     { pattern: /balance/i, role: 'balance' },
@@ -185,6 +214,153 @@ const YES_BANK: BankRule = {
     { pattern: /reference|utr|chq|cheque|ref\.?\s*no/i, role: 'reference' },
     { pattern: /description|narration|particulars|remarks/i, role: 'narration' },
     { pattern: /^txn\s*date|^transaction\s*date|^tran\s*date|^date$/i, role: 'date' },
+  ],
+  required: ['date', 'narration', 'debit', 'credit', 'balance'],
+};
+
+// Kotak Mahindra's modern e-statement uses a 7-column table:
+//   # | Date | Description | Chq/Ref. No. | Withdrawal (Dr.) | Deposit (Cr.) | Balance
+// "#" is a row-number column with no header word that matches any
+// role pattern, so it falls through to 'skip' — that's the right
+// outcome. The other six map cleanly via the standard balance /
+// withdraw / deposit / chq.ref / description / date patterns.
+//
+// Fingerprint: empirically, the bank name doesn't make it into the
+// first 30 grid rows — the Kotak logo is a vector image (not
+// extracted as text) and "Kotak Mahindra Bank Ltd." only appears in
+// the legal footer on page 9-10, far past the 30-row scan window.
+// The dependable signal is the IFSC code on the metadata line
+// ("MICR 180485002 IFSC Code KKBK0004446"). KKBK0 followed by ≥4
+// digits is the Kotak IFSC format and is unique to Kotak — false-
+// firing on a counterparty's KKBK IFSC quoted inside an RTGS
+// narration would still mean the transaction goes to/from a Kotak
+// account, so even that edge case isn't actually a misroute. Earlier
+// attempt used `/ifsc[^a-z]{0,8}kkbk0/i` to require an "IFSC" label
+// adjacent — but " Code " between "IFSC" and "KKBK0" in the printed
+// label contains alphabetic chars that `[^a-z]` excludes, so the
+// regex never fired.
+//
+// KNOWN LIMITATION (2026-05): on Kotak's compact savings layout the
+// pdfGrid extractor merges the Date and Description columns into
+// one cell because they share an x-coordinate range in the PDF
+// ("31 Mar 2025 PCI/9710/Segpay.com..." lands in column 1 together;
+// column 0 ends up holding only the row number "1", "2", "3", …).
+// The fingerprint + headerRules below DO match, but the rule's
+// downstream date-column verification then sees row numbers in
+// column 0 and bails — caller falls back to the column-mapping
+// wizard, same as if no rule existed. Until pdfGrid learns to split
+// leading-date-prefix cells, this rule is forward-looking: the
+// detection is correct and the rule will automatically activate
+// once grid extraction improves. The wizard path still works for
+// these PDFs today (user maps col 1 → narration and accepts that
+// the date prefix is part of the narration field, which the
+// downstream parser strips).
+//
+// Date format is "31 Mar 2025" (dd MMM yyyy) — already handled by
+// parseDate's named-month regex, no extra work needed here.
+// Kotak's compact layout merges Date and Description into one grid
+// cell because they share an x-coordinate range in the PDF. Without
+// preprocessing we'd see col 1 = "31 Mar 2025 PCI/9710/Segpay.co"
+// and col 0 = the row-number "#" column. The split preprocess below
+// detects rows whose col 1 starts with a `dd MMM yyyy` prefix and
+// extracts that prefix into a new column inserted between col 0 and
+// the description remainder. Result: 7-column input becomes
+// 8-column output with Date and Description as distinct cells.
+//
+// Heuristic gate: only split when at least 5 of the first 50 col-1
+// cells match the leading-date pattern. This protects other banks'
+// grids from accidental damage if they somehow share Kotak's
+// fingerprint (they don't today — KKBK0 is unique — but the gate is
+// cheap defence in depth).
+function kotakSplitDateFromDescription(grid: PdfGrid): PdfGrid {
+  // `dd MMM yyyy` (with month name) at the START of the cell. Kotak's
+  // statement date format. The pattern requires a trailing space so we
+  // only match prefixes followed by actual description text — a bare
+  // "31 Mar 2025" cell (no description) would still split into Date +
+  // empty Description, which is correct for header rows.
+  const leadingDate = /^(\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)(?:[a-z]*\.?)\s+\d{4})\b\s*(.*)$/i;
+  // Need a column to split. Look at the first ~50 rows for col-1 cells
+  // matching the leading-date pattern. If we don't find enough, the
+  // grid isn't the merged layout we expect — return unchanged.
+  const sample = grid.rows.slice(0, 50);
+  const hits = sample.filter(r => leadingDate.test((r[1] ?? '').trim())).length;
+  if (hits < 5) return grid;
+
+  // Reshape: insert a new column at index 1, shifting everything ≥1
+  // right by one. Header row gets "Date" / "Description" split too.
+  const newColumnCount = grid.columnCount + 1;
+  const newRows: string[][] = grid.rows.map(r => {
+    const out: string[] = new Array(newColumnCount).fill('');
+    out[0] = r[0] ?? '';
+    const cellOne = (r[1] ?? '').trim();
+    const m = leadingDate.exec(cellOne);
+    if (m) {
+      out[1] = m[1];   // extracted date prefix
+      out[2] = m[2];   // remainder = description
+    } else {
+      // Row whose col 1 isn't a date-prefixed description (header
+      // row, banner, opening-balance row). Keep its content in the
+      // description position; date column stays empty for this row.
+      out[1] = '';
+      out[2] = cellOne;
+    }
+    // Everything from col 2 onwards in the original grid shifts to
+    // col 3 onwards.
+    for (let i = 2; i < grid.columnCount; i++) {
+      out[i + 1] = r[i] ?? '';
+    }
+    return out;
+  });
+
+  // Synthesize new column headers. The grid extractor mislabels
+  // col 0 as "Date" (the column header text floats above the
+  // data-column boundary in Kotak's layout) — copying that header
+  // through would re-attach the 'date' role to col 0 where row
+  // numbers live, then verification fails. Force col 0's header
+  // empty so no role matches it, and use canonical names for the
+  // newly-split Date + Description columns regardless of what the
+  // grid extractor reported.
+  const oldHeaders = grid.columnHeaders ?? [];
+  const newHeaders: Array<string | null> = new Array(newColumnCount).fill('');
+  newHeaders[0] = '';            // row-number column, no role
+  newHeaders[1] = 'Date';        // extracted leading-date prefix
+  newHeaders[2] = 'Description'; // remainder after the date prefix
+  for (let i = 2; i < oldHeaders.length; i++) {
+    newHeaders[i + 1] = oldHeaders[i] ?? '';
+  }
+
+  return {
+    ...grid,
+    rows: newRows,
+    columnCount: newColumnCount,
+    columnHeaders: newHeaders,
+  };
+}
+
+const KOTAK: BankRule = {
+  name: 'Kotak Mahindra Bank',
+  fingerprints: [
+    /\bkkbk0\d{4,}\b/i,
+    // Bank-name strings kept as additional signals — they DON'T
+    // appear in the metadata header zone but DO surface in some
+    // Kotak corporate / NRI statement variants whose layout puts
+    // the bank header text right next to the table. Cost is zero
+    // if they never match.
+    'kotak mahindra bank',
+    'kotak.bank.in',
+  ],
+  // Split the merged Date+Description column before role assignment.
+  // See kotakSplitDateFromDescription for the rationale.
+  preprocess: kotakSplitDateFromDescription,
+  headerRules: [
+    { pattern: /balance/i, role: 'balance' },
+    // Kotak prints "Withdrawal (Dr.)" / "Deposit (Cr.)" — the
+    // /withdraw/ and /deposit/ substrings still match cleanly.
+    { pattern: /withdraw/i, role: 'debit' },
+    { pattern: /deposit/i, role: 'credit' },
+    { pattern: /chq.?\s*ref|chq\.?\s*no|cheque\s*no|ref\.?\s*no|reference|utr/i, role: 'reference' },
+    { pattern: /description|narration|particulars|remarks/i, role: 'narration' },
+    { pattern: /^date$|transaction\s*date|^txn\s*date|^tran\s*date/i, role: 'date' },
   ],
   required: ['date', 'narration', 'debit', 'credit', 'balance'],
 };
@@ -201,7 +377,8 @@ const JK_BANK: BankRule = {
     // without "Account" — different string, no collision).
     'jammu and kashmir bank',
     'j&k bank',
-    /ifsc[^a-z]{0,8}jaka0/i,
+    // IFSC anchor — see note on HDFC's regex.
+    /\bifsc\b.{0,30}\bjaka0\w{4,}/i,
     'detailed account statement',
   ],
   headerRules: [
@@ -227,33 +404,58 @@ const JK_BANK: BankRule = {
   required: ['date', 'narration', 'debit', 'credit', 'balance'],
 };
 
-// J&K Bank's legacy DCR / CASH CREDIT SCHEME export (FORMAT-1) prints
-// a metadata banner ("JAMMU AND KASHMIR BANK LTD" / "TYPE: CASH CREDIT
-// SCHEME" / customer address) and then jumps straight into transaction
-// rows with NO column-header row. The grid extractor's header-detection
-// heuristic latches onto the metadata banner ("TYPE:", "DATE:", "CREDIT"
-// inside "CASH CREDIT SCHEME") and produces a degenerate column layout —
-// the JK_BANK header rule then bails because none of withdraw/deposit/
-// balance words appear as a header. Fall through to wizard was the
-// previous behaviour and the wizard preview also shows metadata rows
-// rather than transactions, leaving the user no usable mapping.
+// J&K Bank's legacy DCR / Cash Credit-style export prints a metadata
+// banner ("JAMMU AND KASHMIR BANK LTD" / "TYPE: CASH CREDIT SCHEME" or
+// "TYPE: CC MORTG TRADE/SERVICE" / customer address) and then jumps
+// straight into transaction rows with NO column-header row. The grid
+// extractor's header-detection heuristic latches onto the metadata
+// banner ("TYPE:", "DATE:", "CREDIT" inside "CASH CREDIT SCHEME") and
+// produces a degenerate column layout — the JK_BANK header rule then
+// bails because none of withdraw/deposit/balance words appear as a
+// header. Fall through to wizard was the previous behaviour and the
+// wizard preview also shows metadata rows rather than transactions,
+// leaving the user no usable mapping.
 //
 // Layout, by column index (six columns, fixed positions):
 //   0 — date (dd-mm-yyyy)
 //   1 — narration (spans two grid rows per transaction)
 //   2 — empty (spacer)
-//   3 — debit (withdrawal)
-//   4 — credit (deposit, repayment)
+//   3 — debit (withdrawal — RTGS-out, cheque clearing, etc.)
+//   4 — credit (deposit, repayment — "By Cash: N" rows land here)
 //   5 — running balance with "Dr" / "Cr" suffix (e.g. "510239.27Dr")
 //
-// The unique fingerprint is "CASH CREDIT SCHEME" (the literal string
-// printed in the TYPE field). Verification confirms the column layout
-// before we commit to the positional mapping — col 0 must hold dates
-// and col 5 must hold Dr/Cr-suffixed balances.
+// Critical for AI-vision correctness: the Dr/Cr suffix on the balance
+// column tripped up vision OCR on a "CC MORTG" variant we hit in May
+// 2026 — the model saw "Dr" + "By Cash" narrations and inferred each
+// row was an outgoing cash payment (debit/expense), swapping the
+// debit and credit columns. Positional mapping eliminates the
+// ambiguity: col 4 is always the credit-side, col 3 is always the
+// debit-side, regardless of how the narrations read.
+//
+// Fingerprints cover the J&K Bank Cash Credit family. We can't anchor
+// purely on "type: cc" because that's too generic (could appear in
+// other banks' narrations). Instead we list the known TYPE strings
+// explicitly. Add new ones here as they're discovered.
+//
+// Verification confirms the column layout before we commit to the
+// positional mapping — col 0 must hold dates and col 5 must hold
+// Dr/Cr-suffixed balances. Two structural checks that any J&K Bank
+// CC statement must satisfy.
 const JK_BANK_DCR: BankRule = {
-  name: 'J&K Bank (Cash Credit Scheme)',
+  name: 'J&K Bank (Cash Credit)',
   fingerprints: [
+    // Legacy DCR / CASH CREDIT SCHEME (FORMAT-1 in our fixture set).
     'cash credit scheme',
+    // CC MORTG TRADE/SERVICE variant — same layout, different TYPE
+    // string. "CC MORTG" is unique to J&K Bank's CC mortgage line;
+    // including the space prevents false-fire on standalone "ccmortg"
+    // in URLs / narrations.
+    'cc mortg',
+    // CC TRADE / CC SERVICE / CC PLUS — same family. Listed
+    // separately so future variants can be added or removed without
+    // touching the legacy DCR fingerprint above.
+    'cc trade',
+    'cc service',
   ],
   positional: {
     columnCount: 6,
@@ -284,7 +486,11 @@ const JK_BANK_DCR: BankRule = {
 // stolen by a different rule's broader fingerprint.
 // JK_BANK_DCR sits BEFORE JK_BANK because its "cash credit scheme"
 // fingerprint is more specific and only matches FORMAT-1.
-const RULES: BankRule[] = [HDFC, ICICI, CANARA, PNB, YES_BANK, JK_BANK_DCR, JK_BANK];
+// KOTAK fingerprints ("kotak mahindra bank", "kotak.bank.in",
+// "KKBK0" IFSC) are unique to Kotak and don't overlap with any
+// existing rule, so its position in the list is purely cosmetic
+// (grouped with the other major private banks).
+const RULES: BankRule[] = [HDFC, ICICI, CANARA, PNB, YES_BANK, KOTAK, JK_BANK_DCR, JK_BANK];
 
 export interface DetectedBankMapping {
   bank: string;
@@ -329,7 +535,22 @@ export function detectAndMapBank(grid: PdfGrid | null): DetectedBankMapping | nu
   return null;
 }
 
-function tryRule(rule: BankRule, grid: PdfGrid): DetectedBankMapping | null {
+function tryRule(rule: BankRule, gridIn: PdfGrid): DetectedBankMapping | null {
+  // Run the per-bank preprocess hook (if any) BEFORE structural
+  // checks. Lets a rule reshape the grid — e.g. split a merged
+  // Date+Description cell into two columns — so the downstream
+  // header / positional logic sees the corrected layout. Defaults
+  // to the input grid when the rule doesn't define a preprocess.
+  let grid = gridIn;
+  if (rule.preprocess) {
+    try {
+      grid = rule.preprocess(gridIn);
+    } catch (err) {
+      console.warn(`[perBankRules] ${rule.name} preprocess threw, falling back to raw grid: ${(err as Error).message}`);
+      grid = gridIn;
+    }
+  }
+
   // Positional mode — used for legacy formats with no header row
   // (JKBANK FORMAT-1 / CASH CREDIT SCHEME). Column count must match
   // exactly, then the verify callback confirms the data shape before

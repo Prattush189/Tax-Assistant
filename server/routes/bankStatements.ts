@@ -58,6 +58,25 @@ type ExtractedStatement = {
   // falls back gracefully when null.
   openingBalance?: number | null;
   closingBalance?: number | null;
+  // Account-side classification. 'asset' = customer's money sits in
+  // the account (Savings / Current — balance is a CREDIT balance,
+  // deposit ↑ balance, withdrawal ↓ balance — the default convention
+  // every reconciler in this file historically assumed). 'liability'
+  // = the bank's money sits in the account (Cash Credit / Overdraft /
+  // Loan — balance is a DEBIT balance, withdrawal ↑ balance, deposit
+  // ↓ balance — opposite sign on the delta).
+  //
+  // When set to 'liability', reconcileBalances inverts the sign of
+  // every `balance[i] - balance[i-1]` delta before using it as the
+  // signed transaction amount. Without this flag a CC account's
+  // "By Cash" deposits got mis-classified as business expenses
+  // (the 2026-05 J&K CC MORTG case): every deposit reduced the Dr
+  // balance, producing a negative delta, which the server then
+  // recorded as an outflow.
+  //
+  // Optional + defaults to 'asset' on the server when null/undefined —
+  // back-compat with statements parsed before this field existed.
+  accountKind?: 'asset' | 'liability' | null;
   transactions: unknown[];
 };
 
@@ -77,6 +96,11 @@ interface TsvExtractResult {
    *  digital-PDF path too — same row-level diagnostic as vision. */
   openingBalance: number | null;
   closingBalance: number | null;
+  /** See ExtractedStatement.accountKind — same semantics. TSV chunks
+   *  inherit this from the first chunk that reports it; merging in
+   *  mergeExtractions favours non-null over null so a single positive
+   *  identification on any chunk wins. */
+  accountKind: 'asset' | 'liability' | null;
   transactions: unknown[];
   inputTokens: number;
   outputTokens: number;
@@ -102,6 +126,7 @@ function parseTsvResponse(raw: string): Omit<TsvExtractResult, 'inputTokens' | '
   let periodTo: string | null = null;
   let openingBalance: number | null = null;
   let closingBalance: number | null = null;
+  let accountKind: 'asset' | 'liability' | null = null;
   const rows: unknown[] = [];
   const droppedReasons: string[] = [];
   let declaredCount = -1;
@@ -124,6 +149,11 @@ function parseTsvResponse(raw: string): Omit<TsvExtractResult, 'inputTokens' | '
       const closeNum = closeStr === '' ? NaN : Number(closeStr.replace(/[,\s]/g, ''));
       openingBalance = Number.isFinite(openNum) ? openNum : null;
       closingBalance = Number.isFinite(closeNum) ? closeNum : null;
+      // accountKind is field 7 — also new. Accept the strings the
+      // prompt emits ('asset' / 'liability'); anything else collapses
+      // to null and the server treats it as 'asset' downstream.
+      const kindStr = cleanTsvCell(h[7] ?? '').toLowerCase();
+      accountKind = kindStr === 'liability' ? 'liability' : kindStr === 'asset' ? 'asset' : null;
       continue;
     }
     const endMatch = /^---END:(\d+)---$/.exec(line.trim());
@@ -219,6 +249,7 @@ function parseTsvResponse(raw: string): Omit<TsvExtractResult, 'inputTokens' | '
     periodTo,
     openingBalance,
     closingBalance,
+    accountKind,
     transactions: rows,
     declaredCount,
     actualCount: rows.length,
@@ -646,6 +677,11 @@ function computeTotals(txs: BankTransactionInput[]): { inflow: number; outflow: 
 function deriveAmountsFromBalance(
   txs: BankTransactionInput[],
   openingBalance: number | null,
+  /** 'asset' (default) = savings/current — balance ↑ = inflow (credit).
+   *  'liability' = CC / OD / Loan — balance ↑ = withdrawal (debit),
+   *  so we invert the sign of every delta before treating it as a
+   *  signed amount. Null treated as 'asset' for back-compat. */
+  accountKind: 'asset' | 'liability' | null = 'asset',
 ): {
   amountOverridden: number;
   phantomDropped: number;
@@ -653,13 +689,14 @@ function deriveAmountsFromBalance(
   let amountOverridden = 0;
   let phantomDropped = 0;
   const kept: BankTransactionInput[] = [];
+  const deltaSign = accountKind === 'liability' ? -1 : 1;
 
   for (let i = 0; i < txs.length; i++) {
     const cur = txs[i];
     const prevBalance = i === 0 ? openingBalance : txs[i - 1].balance;
 
     if (prevBalance != null && cur.balance != null) {
-      const delta = cur.balance - prevBalance;
+      const delta = deltaSign * (cur.balance - prevBalance);
       // Phantom row detection: identical balance to the previous row
       // means no money moved on this line. UPI narrations on dense
       // statements sometimes wrap onto two visual lines and the AI
@@ -718,10 +755,18 @@ function verifyClosingBalance(
   txs: BankTransactionInput[],
   openingBalance: number | null,
   closingBalance: number | null,
+  /** See deriveAmountsFromBalance — same sign-inversion logic.
+   *  For a liability account a NET REPAYMENT of X reduces the Dr
+   *  balance by X (so closing − opening = −X), but the signed
+   *  transaction amounts sum to +X (net positive inflow = repayment
+   *  inflows minus draws). Inverting the expected delta lines those
+   *  up. Default 'asset' for back-compat. */
+  accountKind: 'asset' | 'liability' | null = 'asset',
 ): string | null {
   if (openingBalance == null || closingBalance == null) return null;
   const sum = txs.reduce((s, t) => s + t.amount, 0);
-  const expected = closingBalance - openingBalance;
+  const deltaSign = accountKind === 'liability' ? -1 : 1;
+  const expected = deltaSign * (closingBalance - openingBalance);
   const tol = Math.max(1, Math.abs(expected) * 0.005);
   if (Math.abs(sum - expected) <= tol) return null;
   const drift = sum - expected;
@@ -874,17 +919,22 @@ interface BalanceMismatch {
  * Mutates txs in-place. Skips rows where either balance is null
  * (page boundaries, banks that don't print a per-row balance).
  */
-function reconcileBalances(txs: BankTransactionInput[]): {
+function reconcileBalances(
+  txs: BankTransactionInput[],
+  /** See deriveAmountsFromBalance — same sign-inversion logic. */
+  accountKind: 'asset' | 'liability' | null = 'asset',
+): {
   autoCorrected: number;
   mismatches: BalanceMismatch[];
 } {
   let autoCorrected = 0;
   const mismatches: BalanceMismatch[] = [];
+  const deltaSign = accountKind === 'liability' ? -1 : 1;
   for (let i = 1; i < txs.length; i++) {
     const prev = txs[i - 1];
     const cur = txs[i];
     if (prev.balance == null || cur.balance == null) continue;
-    const expectedDelta = cur.balance - prev.balance;
+    const expectedDelta = deltaSign * (cur.balance - prev.balance);
     const actualDelta = cur.amount;
     // Tolerance: ₹1 absolute or 0.5% of the larger value (covers
     // rounding in printed balances).
@@ -989,26 +1039,32 @@ function persistStatement(
   }
   const inlineDatePhantomsDropped = phantomResult.dropped;
 
+  // accountKind = 'liability' for CC / OD / Loan accounts where the
+  // balance is a debit balance and the delta sign is inverted.
+  // Defaults to 'asset' on null/undefined so existing savings /
+  // current statements behave exactly as before.
+  const accountKind: 'asset' | 'liability' = data.accountKind === 'liability' ? 'liability' : 'asset';
+
   // Phase 1: derive each amount from the printed running balance
   // delta. The AI's amount field is treated as a fallback (used only
   // for rows where balance is null on either side). Zero-delta rows
   // (a balance unchanged from prev row) drop out here as a second
   // layer of phantom defence.
   const opening = typeof data.openingBalance === 'number' ? data.openingBalance : null;
-  const { amountOverridden, phantomDropped } = deriveAmountsFromBalance(txs, opening);
+  const { amountOverridden, phantomDropped } = deriveAmountsFromBalance(txs, opening, accountKind);
   const totalPhantomDropped = phantomDropped + inlineDatePhantomsDropped;
 
   // Phase 2: legacy sign-flip / column-swap reconciliation. After
   // deriveAmountsFromBalance most rows already have authoritative
   // amounts; this catches the residual cases where balance was null
   // on one side and we fell back to the AI's value. Cheap to keep.
-  const { autoCorrected, mismatches } = reconcileBalances(txs);
+  const { autoCorrected, mismatches } = reconcileBalances(txs, accountKind);
 
   // Phase 3: integrity check — opening + sum should equal closing.
   // If not, the printed-balance chain itself has a misread somewhere
   // and our derived totals are still suspect. Surface as a warning.
   const closing = typeof data.closingBalance === 'number' ? data.closingBalance : null;
-  const closingMismatch = verifyClosingBalance(txs, opening, closing);
+  const closingMismatch = verifyClosingBalance(txs, opening, closing, accountKind);
 
   const { inflow, outflow } = computeTotals(txs);
   const periodLabel = data.periodFrom && data.periodTo
@@ -1025,6 +1081,7 @@ function persistStatement(
     sourceFilename: null,  // already set on placeholder
     sourceMime: null,
     rawExtracted: JSON.stringify(data),
+    accountKind: accountKind,
   });
   bankTransactionRepo.bulkInsert(statementId, txs);
   bankStatementRepo.updateTotals(statementId, inflow, outflow, txs.length);
@@ -1390,9 +1447,38 @@ router.post(
             // truncate to page 1. visionFallback now throws on
             // MAX_TOKENS so any remaining truncation surfaces as an
             // explicit failure rather than corrupt totals.
-            { maxTokens: 65_536 },
+            //
+            // looksValid: tier-1 (Gemini 3.1 Flash-Lite Preview)
+            // sometimes returns syntactically-valid JSON with an
+            // EMPTY transactions array on huge / dense PDFs (15 MB
+            // 21-page ICICI statement was the trigger). Without this
+            // check the empty result was accepted and tier 2 never
+            // fired — user saw a "successful" extraction with 0 rows.
+            // Requiring at least one transaction in the parse forces
+            // the fallback to Gemini 2.5 Flash-Lite, which handles
+            // long PDFs more reliably.
+            {
+              maxTokens: 65_536,
+              looksValid: (data) => {
+                const txns = (data as { transactions?: unknown })?.transactions;
+                return Array.isArray(txns) && txns.length > 0;
+              },
+            },
           );
           extracted = visionResult.data;
+          // Defence in depth: if BOTH tiers returned an empty
+          // transactions array, we'd silently persist a blank
+          // statement. Treat that as an extraction failure so the
+          // UI shows a useful error instead of a 0-row table the
+          // user has to puzzle over. The caller already handles
+          // errors with retry / "split the PDF" guidance.
+          if (!extracted || !Array.isArray(extracted.transactions) || extracted.transactions.length === 0) {
+            console.warn(`[bank-statements] vision returned 0 transactions for ${filename} (${req.file.size} bytes, mime=${mimeType}). Both tiers ran. Likely too large/dense — recommend the text path or splitting the PDF.`);
+            res.status(422).json({
+              error: 'AI vision could not extract any transactions from this PDF. The file may be too large or dense for vision OCR — try the column-mapping flow (the PDF has selectable text) or split it into smaller chunks.',
+            });
+            return;
+          }
           (res.locals as Record<string, unknown>).geminiUsages = [{
             inputTokens: visionResult.inputTokens,
             outputTokens: visionResult.outputTokens,
@@ -1593,6 +1679,13 @@ router.post(
         // surfacing the same first-divergence diagnostic as vision.
         const firstOpening = chunkResults.find(r => typeof r.openingBalance === 'number')?.openingBalance ?? null;
         const lastClosing = [...chunkResults].reverse().find(r => typeof r.closingBalance === 'number')?.closingBalance ?? null;
+        // accountKind: keep the first NON-NULL value across chunks.
+        // Most chunks of a typical multi-page statement repeat the
+        // same metadata, so any single chunk identifying it as
+        // 'liability' is sufficient — and avoids the worst-case
+        // where chunks 2..N drop the field and a 'liability'
+        // statement reverts to 'asset'.
+        const kind = chunkResults.find(r => r.accountKind === 'liability' || r.accountKind === 'asset')?.accountKind ?? null;
         extracted = {
           bankName: chunkResults.map(r => r.bankName).find(v => !!v) ?? null,
           accountNumberMasked: chunkResults.map(r => r.accountNumberMasked).find(v => !!v) ?? null,
@@ -1601,6 +1694,7 @@ router.post(
           currency: 'INR',
           openingBalance: firstOpening,
           closingBalance: lastClosing,
+          accountKind: kind,
           transactions: merged,
         };
 

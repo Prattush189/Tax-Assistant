@@ -135,8 +135,8 @@ After the last transaction row, emit exactly one trailer line:
 ---END:<N>---
 where <N> is the total count of transaction rows you just emitted. This is required — we verify it to detect truncation.
 
-BEFORE the first transaction row, emit exactly one header line with the statement metadata, tab-separated with 7 fields:
-HEADER<TAB>bankName<TAB>accountNumberMasked<TAB>periodFrom<TAB>periodTo<TAB>openingBalance<TAB>closingBalance
+BEFORE the first transaction row, emit exactly one header line with the statement metadata, tab-separated with 8 fields:
+HEADER<TAB>bankName<TAB>accountNumberMasked<TAB>periodFrom<TAB>periodTo<TAB>openingBalance<TAB>closingBalance<TAB>accountKind
 
 CRITICAL — periodFrom and periodTo:
 - Read these from the EXPLICIT statement period line in the header (printed by the bank as "Statement Period: 01-Apr-2024 to 31-Mar-2025" / "Period: From 01/04/2024 To 31/03/2025" / similar).
@@ -148,8 +148,18 @@ CRITICAL — openingBalance and closingBalance:
 - closingBalance = the bank's printed closing / carried-forward / "C/F" balance at the very end of the statement.
 - Use the literal string "null" if the chunk doesn't contain that anchor (e.g., a middle chunk that has neither the B/F nor the C/F line).
 
-Use null (the literal string "null") for any field you can't determine. Example:
-HEADER\tHDFC Bank\tXXXX1234\t2024-04-01\t2024-04-30\t152340.50\t187652.30
+CRITICAL — accountKind:
+- Classifies the ACCOUNT itself, not any individual row. One of: "asset", "liability", or the literal string "null".
+- "asset" = SAVINGS / CURRENT / NRE / NRO / salary / wallet. Balance is a CREDIT balance, deposits ↑ balance, withdrawals ↓ balance. This is the default — use "asset" when in doubt.
+- "liability" = CASH CREDIT (CC) / OVERDRAFT (OD) / LOAN / KCC / MORTGAGE — i.e. the BANK's money is in the account. Balance is a DEBIT balance, withdrawals ↑ balance, repayments / deposits ↓ balance. Tells:
+    * Every running balance carries a "Dr" / "DR" / "Dr." suffix (e.g. "510239.27Dr") — never just a bare number.
+    * The printed account TYPE / SCHEME line contains "Cash Credit", "CC", "Overdraft", "OD", "Loan", "Mortgage", "KCC", "Term Loan", "Working Capital".
+    * Narrations like "By Cash: N" represent the customer DEPOSITING cash into the credit line — these decrease the Dr balance.
+- Setting the wrong value flips every transaction's debit/credit classification downstream. When unsure, emit "null" — the server defaults to "asset" then.
+
+Use null (the literal string "null") for any field you can't determine. Examples:
+HEADER\tHDFC Bank\tXXXX1234\t2024-04-01\t2024-04-30\t152340.50\t187652.30\tasset
+HEADER\tJ&K Bank\tXXXX0002\t2025-04-01\t2026-03-31\t6061112.76\t216252.13\tliability
 
 CRITICAL — debit and credit fidelity:
 - Read each digit of the amount column directly from the statement; do NOT recompute, round, or guess.
@@ -182,6 +192,7 @@ Schema (all fields required, use null where unknown):
   "currency": "INR",
   "openingBalance": number or null,
   "closingBalance": number or null,
+  "accountKind": "asset" | "liability" | null,
   "transactions": [
     {
       "date": "YYYY-MM-DD",
@@ -202,6 +213,16 @@ CRITICAL — balance fidelity:
 - "openingBalance" is the bank's printed opening / brought-forward balance for the statement period (usually the first balance line, often labelled "B/F" / "Opening Balance" / "Previous Balance").
 - "closingBalance" is the bank's printed closing / carried-forward balance at the end of the statement.
 - If a row genuinely has no printed balance (mid-statement page break, summary row), set "balance" to null and we'll fall back to your "type" field for that row.
+
+CRITICAL — account-kind detection (asset vs liability):
+- "accountKind" classifies the account itself, not any individual transaction.
+- Set "accountKind": "asset" when the account is a SAVINGS, CURRENT, NRE / NRO, salary, or wallet account — i.e. customer's money sits in the account, balance is a CREDIT balance, deposits INCREASE the balance, withdrawals DECREASE it. This is the default — when in doubt, use "asset".
+- Set "accountKind": "liability" when the account is a CASH CREDIT (CC), OVERDRAFT (OD), LOAN, KCC, MORTGAGE, or any working-capital credit line — i.e. the BANK's money is sitting in the account, balance is a DEBIT balance, withdrawals INCREASE the outstanding balance, repayments / deposits DECREASE it. Tells:
+    * Every running balance carries a "Dr" / "DR" / "Dr." suffix (e.g. "510239.27Dr") — never just a bare number.
+    * The printed account TYPE / SCHEME line contains words like "Cash Credit", "CC", "Overdraft", "OD", "Loan", "Mortgage", "KCC", "Term Loan", "Working Capital".
+    * Narrations like "By Cash: N" represent the customer DEPOSITING cash into the credit line (reduces what's owed) — these decrease the Dr balance.
+- Why this matters: the server derives every signed transaction amount as balance[i] - balance[i-1]. For an "asset" account, +delta = inflow / credit. For a "liability" account the convention INVERTS — +delta (Dr balance going up) means the customer drew more from the line, which is a debit / outflow. Reporting the wrong kind flips every transaction's debit/credit classification and turns deposits into expenses (the 2026-05 J&K CC MORTG case).
+- Set "accountKind": null only if the document is so unusual you genuinely can't tell. The server then defaults to "asset", which is correct ~95% of the time.
 
 CRITICAL — wrapped narration rows:
 - UPI / NEFT narrations on dense statements often wrap onto a second visual line. The continuation line ("68-1@ok", "REF/12345" tail, etc.) is NOT a new transaction. Merge it into the previous row's narration.
