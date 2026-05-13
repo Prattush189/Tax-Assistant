@@ -1480,8 +1480,23 @@ export function applyMapping(
     // Skip when amount came from the balance-delta fallback above —
     // by construction that path already satisfies the equation, and
     // re-checking would just compare floating point against itself.
+    //
+    // Bank-only. The check assumes a savings-account convention where
+    // balance is signed (overdraft negative, credit positive) and
+    // amount = balance(N) − balance(N-1) holds. Tally ledger balances
+    // are UNSIGNED magnitudes printed with a separate "Dr" / "Cr"
+    // suffix (parseNumber strips the suffix → balance is always
+    // positive), AND the Dr/Cr orientation is account-type-specific
+    // (Dr-side accounts grow with debits, Cr-side accounts grow with
+    // credits). Applying the bank-convention check to a Dr-side
+    // ledger account flips the sign of every transaction past the
+    // first — exactly the Accounting Fee / Adm. Charges symptom where
+    // "amt=-1500 then +1500 +1500 +1500…" surfaced even though every
+    // source row was structurally identical "To (as per details) Dr"
+    // entry.
     if (
-      amount != null && Number.isFinite(amount)
+      kind === 'bank'
+      && amount != null && Number.isFinite(amount)
       && lastBalance != null && pending.balance != null
       // The balance-delta fallback path produces an exact match by
       // construction; only sanity-check rows where amount came from
@@ -1760,6 +1775,69 @@ export function applyMapping(
         kind === 'ledger' &&
         (SUFFIX_DR_CR_NUMERIC.test(rawDebitCell) || SUFFIX_DR_CR_NUMERIC.test(rawCreditCell));
 
+      // New-voucher-same-date detection. Tally elides the date on a
+      // row when it matches the previous row's date — so a second
+      // journal entry on the same day comes through as a date-less
+      // row with its own Vch No and its own debit/credit. Without
+      // the check below, this gets folded into the previous voucher's
+      // pending block: the two amounts merge, hasBoth fires in
+      // flushPending, and the result is a phantom "two transactions
+      // sharing the prior row's narration with opposite signs"
+      // (Aagman r11+r13: By Repair Cr 538 / To Cash Dr 538 both
+      // appeared at 2024-10-22 with the merged narration).
+      //
+      // Signal: the row has a fresh reference (Vch No) that differs
+      // from pending.reference AND a real amount (debit/credit set).
+      // Contra-detail rows don't have their own Vch No (Tally
+      // suppresses it on the breakdown lines), so this only fires
+      // on legitimate new vouchers. Inherit the date and account
+      // from pending so the new voucher gets attributed to the right
+      // day and ledger account.
+      const isNewVoucherSameDate =
+        kind === 'ledger' &&
+        !isContraDetail &&
+        !!reference &&
+        !!pending.reference &&
+        reference !== pending.reference &&
+        (debit != null && debit !== 0 || credit != null && credit !== 0);
+
+      // Closing-Balance pseudo-row. Tally writes "By Closing Balance"
+      // / "To Closing Balance" at the END of each account to zero it
+      // out for FY rollover — it's NOT a real transaction, it's the
+      // contra-entry that closes the running balance. Like a new
+      // voucher, it has its own narration + amount but no Vch No
+      // (Tally suppresses the reference on closing rows). Without
+      // the check below, it merges into the previous transaction's
+      // pending block (Bug 3's new-voucher check doesn't fire
+      // because there's no fresh reference), then hasBoth in
+      // flushPending splits it into a duplicate pair.
+      //
+      // Emit it as its own pseudo-transaction so
+      // mappedRowsToExtractedLedger can pull it out and use its
+      // amount as the account's closing balance.
+      const isClosingBalanceRow =
+        kind === 'ledger' &&
+        /^(?:to\s+|by\s+)?closing\s+balance\b/i.test(narr ?? '');
+
+      if (isNewVoucherSameDate || isClosingBalanceRow) {
+        const inheritedDate = pending.date;
+        const inheritedAccount = pending.account;
+        flushPending();
+        pending = {
+          date: inheritedDate,
+          narration: narr,
+          voucher: isClosingBalanceRow ? null : voucher,
+          reference: isClosingBalanceRow ? null : reference,
+          debit,
+          credit,
+          amountSingle,
+          drCrMarker,
+          balance,
+          account: inheritedAccount,
+        };
+        continue;
+      }
+
       if (narr) {
         // For contra-detail rows, fold the breakdown row into the
         // narration in a parseable form so downstream audits / GST
@@ -1857,19 +1935,53 @@ export function mappedRowsToExtractedLedger(
     // Tally prints opening as a row whose narration is literally
     // "Opening Balance" (matching is case-insensitive, allows
     // optional dash prefix). The amount can be on the debit OR
-    // credit side; the running balance column on that row gives
-    // the signed opening (the t.balance field carries it). We
-    // prefer t.balance when it's set (most reliable since Tally
-    // prints "<amount> Dr." / "<amount> Cr." in that column),
-    // and fall back to t.amount otherwise.
+    // credit side; we derive the SIGNED opening from t.amount.
+    //
+    // Sign convention: applyMapping emits amount = -|debit| for a
+    // Dr row, +|credit| for a Cr row. The audit's "opening + debits
+    // − credits = closing" formula expects opening to be POSITIVE
+    // for a Dr-side opening (asset / expense balance carried
+    // forward) and NEGATIVE for a Cr-side opening (liability /
+    // income balance). Those are the opposite of applyMapping's
+    // convention — so we negate.
+    //
+    // We don't fall back to t.balance: parseNumber strips Tally's
+    // "Dr" / "Cr" suffix, leaving an unsigned magnitude that
+    // can't distinguish a Dr balance from a Cr balance. t.amount
+    // carries the Dr/Cr orientation correctly via its sign, so it's
+    // the more reliable source.
     let opening = 0;
     let openingIdx = -1;
-    if (txs.length > 0 && /^\s*(?:-\s*)?opening\s+balance\s*$/i.test(txs[0].narration ?? '')) {
+    if (txs.length > 0 && /^\s*(?:-\s*)?(?:to\s+|by\s+)?opening\s+balance\s*$/i.test(txs[0].narration ?? '')) {
       const t = txs[0];
-      opening = t.balance != null ? t.balance : t.amount;
+      opening = -t.amount;
       openingIdx = 0;
     }
-    const realTxs = openingIdx === 0 ? txs.slice(1) : txs;
+    // Tally also emits a "To Closing Balance" / "By Closing Balance"
+    // row at the END of each account to zero it out for FY rollover.
+    // It's not a real transaction — it's the journal entry that
+    // closes the account. Recognise it the same way as the opening:
+    // pull it out of the txn list, and use the audit-convention
+    // signed value as the closing balance.
+    //
+    // "By Closing Balance" Cr X (closes a Dr-side acct holding Dr X)
+    //   → applyMapping amount = +X, audit closing = +X (Dr positive)
+    // "To Closing Balance" Dr X (closes a Cr-side acct holding Cr X)
+    //   → applyMapping amount = -X, audit closing = -X (Cr negative)
+    // In both cases closing = t.amount (NO negation — opposite of
+    // opening, because closing rows are the contra-entry that
+    // matches the account's standing side, not the new-year carry).
+    let closingFromMarker: number | null = null;
+    const afterOpening = openingIdx === 0 ? txs.slice(1) : txs;
+    if (afterOpening.length > 0) {
+      const last = afterOpening[afterOpening.length - 1];
+      if (/^\s*(?:to\s+|by\s+)?closing\s+balance\s*$/i.test(last.narration ?? '')) {
+        closingFromMarker = last.amount;
+      }
+    }
+    const realTxs = closingFromMarker != null
+      ? afterOpening.slice(0, -1)
+      : afterOpening;
 
     let totalDebit = 0;
     let totalCredit = 0;
@@ -1877,9 +1989,11 @@ export function mappedRowsToExtractedLedger(
       if (t.amount < 0) totalDebit += Math.abs(t.amount);
       else totalCredit += t.amount;
     }
-    const closing = realTxs.length > 0
-      ? (realTxs[realTxs.length - 1].balance ?? 0)
-      : opening;
+    const closing = closingFromMarker != null
+      ? closingFromMarker
+      : realTxs.length > 0
+        ? (realTxs[realTxs.length - 1].balance ?? 0)
+        : opening;
     return {
       name,
       accountType: null,

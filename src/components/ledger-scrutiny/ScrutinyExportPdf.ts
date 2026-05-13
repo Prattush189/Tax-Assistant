@@ -33,8 +33,27 @@ function severityColor(sev: 'high' | 'warn' | 'info'): [number, number, number] 
   return [3, 105, 161];
 }
 
+/** jsPDF's default font (Helvetica) is WinAnsi-encoded and only
+ *  renders Latin-1 / Windows-1252 glyphs. Common typographic Unicode
+ *  characters (Unicode minus sign U+2212, em/en dashes U+2013/U+2014,
+ *  curly quotes U+2018/2019/201C/201D, bullets U+2022) substitute
+ *  silently to whatever Latin-1 code-point happens to share the byte
+ *  position — the symptom the user saw was a "−" between
+ *  "Debits Rs. X" and "Credits Rs. Y" rendering as a curly close-
+ *  quote "”". Map them to ASCII equivalents BEFORE handing text to
+ *  doc.splitTextToSize / doc.text. */
+function sanitizeForPdf(text: string): string {
+  return text
+    .replace(/[−–—]/g, '-')   // − – —  →  -
+    .replace(/[‘’‚′]/g, "'") // ' ' ‚ ′  →  '
+    .replace(/[“”„″]/g, '"') // " " „ ″  →  "
+    .replace(/[•·]/g, '*')          // • ·  →  *
+    .replace(/…/g, '...')                // …    →  ...
+    .replace(/ /g, ' ');                 // NBSP →  space
+}
+
 function wrapText(doc: jsPDF, text: string, width: number): string[] {
-  return doc.splitTextToSize(text, width) as string[];
+  return doc.splitTextToSize(sanitizeForPdf(text), width) as string[];
 }
 
 function renderHeader(doc: jsPDF, detail: LedgerScrutinyDetail): number {
@@ -57,9 +76,9 @@ function renderHeader(doc: jsPDF, detail: LedgerScrutinyDetail): number {
   doc.setTextColor(40, 40, 40);
 
   const lines = [
-    `Assessee: ${job.partyName ?? job.name ?? '—'}`,
+    `Assessee: ${job.partyName ?? job.name ?? '-'}`,
     job.gstin ? `GSTIN: ${job.gstin}` : null,
-    `Period: ${job.periodFrom ?? '—'} to ${job.periodTo ?? '—'}`,
+    `Period: ${job.periodFrom ?? '-'} to ${job.periodTo ?? '-'}`,
     `Accounts: ${accounts.length} · Transactions: ${accounts.reduce((s, a) => s + a.txCount, 0).toLocaleString('en-IN')}`,
     `Generated: ${new Date().toISOString().slice(0, 10)}`,
   ].filter((l): l is string => !!l);

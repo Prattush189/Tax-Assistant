@@ -557,8 +557,15 @@ export function flagReconBreak(ledger: DetLedger): DetObservation[] {
       severity: 'info',
       amount: gap,
       dateRef: null,
+      // ASCII hyphen-minus (U+002D), NOT the Unicode minus sign
+      // (U+2212). The PDF generator's default font (Helvetica) lacks
+      // a glyph for U+2212 and falls back to a smart-quote glyph
+      // (U+201D right-double-quote), so the user saw
+      // "Debits Rs. 6,000 " Credits Rs. 33,000" instead of
+      // "Debits Rs. 6,000 - Credits Rs. 33,000". ASCII chars render
+      // in every PDF font.
       message:
-        `Opening Rs. ${formatINR(acct.opening)} + Debits Rs. ${formatINR(acct.totalDebit)} − Credits Rs. ${formatINR(acct.totalCredit)} = Rs. ${formatINR(computed)}; ledger reports closing Rs. ${formatINR(acct.closing)}. Gap Rs. ${formatINR(gap)}.`,
+        `Opening Rs. ${formatINR(acct.opening)} + Debits Rs. ${formatINR(acct.totalDebit)} - Credits Rs. ${formatINR(acct.totalCredit)} = Rs. ${formatINR(computed)}; ledger reports closing Rs. ${formatINR(acct.closing)}. Gap Rs. ${formatINR(gap)}.`,
       suggestedAction: 'Re-extract from source ledger; the gap usually reflects a brought-forward opening that was missed or a transaction the parser dropped.',
       source: 'deterministic',
     });
