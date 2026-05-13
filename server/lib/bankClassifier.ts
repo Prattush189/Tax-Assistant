@@ -117,7 +117,13 @@ const RULES: Rule[] = [
   { name: 'inspection', pattern: /\binspc charges\b|inspection charges/i, category: 'Bank Charges', subcategory: 'Inspection' },
 
   // Cheque return / rejection
-  { name: 'rejection', pattern: /(?:outward|inward) rejection charges/i, category: 'Bank Charges', subcategory: 'Rejection' },
+  // Rejection / cheque-return charges. Banks word this several ways:
+  // "Outward Rejection Charges" / "Inward Rejection Charges" (J&K Bank
+  // / PNB style) and "INWARD CHQ RETURN CHRGS" / "Cheque Return Chg"
+  // (YES Bank / HDFC style). Both variants are the same fee — bank
+  // charged you for a bounced cheque, inward (someone gave you a
+  // cheque that bounced) or outward (your cheque bounced).
+  { name: 'rejection', pattern: /(?:outward|inward)\s+(?:rejection|chq\s*return|cheque\s*return)\s+ch(?:gs?|arges?|rgs)?|chq\s*return\s+ch(?:gs?|arges?|rgs)?/i, category: 'Bank Charges', subcategory: 'Rejection' },
 
   // Card fees
   { name: 'card-annual-fee', pattern: /debit card annual fee/i, category: 'Bank Charges', subcategory: 'Card Fee' },
@@ -664,4 +670,127 @@ function patternKey(narration: string): string {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 60);
+}
+
+/**
+ * Normalise a counterparty string so trivial UPI-handle variants
+ * collapse onto a single identity. The same person commonly appears
+ * across rows with different bank suffixes ("@okicici" / "@okaxis" /
+ * "@oksbi") and version digits ("boyaairtel.123-1" / "-2" / "-3");
+ * those are mechanically equivalent and should not split the
+ * consistency-vote bucket.
+ *
+ * Normalisation steps:
+ *   - Lowercase.
+ *   - Strip the @bank-suffix (everything from "@" onwards).
+ *   - Strip a trailing "-N" version segment (single-digit variants only).
+ *   - Strip trailing whitespace / punctuation.
+ *
+ * Non-VPA counterparties (POS merchants, NEFT names) pass through
+ * lowercase-and-trim only.
+ */
+export function normalizeCounterpartyKey(counterparty: string | null): string {
+  if (!counterparty) return '';
+  return counterparty
+    .toLowerCase()
+    .replace(/@.*$/, '')
+    .replace(/-\d{1,2}$/, '')
+    .replace(/[\s.,'-]+$/, '')
+    .trim();
+}
+
+/**
+ * Same-counterparty consistency pass — applied AFTER the classifier
+ * pre-pass AND the AI enrichment, BEFORE persisting transactions.
+ *
+ * Problem this solves: when a row falls through to the AI fallback
+ * (counterparty isn't a recognized merchant or anchor), the model
+ * can give different category answers across batches for what's
+ * obviously the same payee. A 25-transaction account with a single
+ * recurring vendor (the BOYAAIRTEL.123 case from a real YES Bank
+ * upload) ended up tagged Business Expenses ×15, Personal/Shopping
+ * ×7, Transfers ×1, Business Income ×1, Transfers ×1 — same VPA.
+ *
+ * Fix: group rows by (normalised counterparty, direction), find the
+ * majority (category, subcategory) tuple, back-fill any minority row
+ * to that tuple. Direction-split prevents flattening payments-to-vendor
+ * (Business Expenses) with refunds-from-vendor (Business Income) into
+ * one bucket.
+ *
+ * Skipped cases:
+ *   - Empty / null counterparty (too noisy — would group every cash
+ *     deposit / cheque / unidentified row together).
+ *   - Groups smaller than 3 rows (one-off transactions; the AI's call
+ *     is the best we have).
+ *   - Groups already consistent (1 distinct tuple — nothing to do).
+ *   - Groups with no clear majority — keep the AI's per-row calls
+ *     rather than apply a tiebreaker that could spread wrong tags.
+ *
+ * Returns the number of rows whose category/subcategory was changed.
+ */
+export function unifyAmbiguousCounterparties<T extends {
+  counterparty: string | null;
+  type: 'credit' | 'debit';
+  category: string;
+  subcategory: string | null;
+}>(rows: T[]): number {
+  type Key = string;
+  const buckets = new Map<Key, T[]>();
+  for (const r of rows) {
+    const key = normalizeCounterpartyKey(r.counterparty);
+    if (!key) continue;
+    const groupKey = `${key}::${r.type}`;
+    if (!buckets.has(groupKey)) buckets.set(groupKey, []);
+    buckets.get(groupKey)!.push(r);
+  }
+
+  let totalChanged = 0;
+  for (const [groupKey, group] of buckets) {
+    if (group.length < 3) continue;
+
+    // Count (category, subcategory) tuples.
+    const tally = new Map<string, number>();
+    for (const r of group) {
+      const tup = `${r.category}::${r.subcategory ?? ''}`;
+      tally.set(tup, (tally.get(tup) ?? 0) + 1);
+    }
+    if (tally.size < 2) continue; // already unanimous
+
+    // Find the most-common tuple. Require strict plurality with at
+    // least half the group OR ≥3 occurrences — avoids unifying a
+    // 4-way split (1/1/1/1) where the "winner" is arbitrary.
+    let bestTuple = '';
+    let bestCount = 0;
+    let runnerUpCount = 0;
+    for (const [t, c] of tally) {
+      if (c > bestCount) {
+        runnerUpCount = bestCount;
+        bestCount = c;
+        bestTuple = t;
+      } else if (c > runnerUpCount) {
+        runnerUpCount = c;
+      }
+    }
+    const requiredCount = Math.max(3, Math.ceil(group.length / 2));
+    if (bestCount < requiredCount) continue;
+    if (bestCount === runnerUpCount) continue; // tied — no clear majority
+
+    const [bestCategory, bestSubRaw] = bestTuple.split('::');
+    const bestSubcategory = bestSubRaw === '' ? null : bestSubRaw;
+
+    let changed = 0;
+    for (const r of group) {
+      const currentTuple = `${r.category}::${r.subcategory ?? ''}`;
+      if (currentTuple === bestTuple) continue;
+      r.category = bestCategory;
+      r.subcategory = bestSubcategory;
+      changed++;
+    }
+    if (changed > 0) {
+      totalChanged += changed;
+      const cpDisplay = group[0].counterparty?.slice(0, 60) ?? '(unknown)';
+      console.log(`[bank-classifier] counterparty consistency: '${cpDisplay}' (${groupKey.split('::')[1]}, ${group.length} rows, ${tally.size} variants) → unified ${changed} row(s) to ${bestTuple}`);
+    }
+  }
+  return totalChanged;
 }

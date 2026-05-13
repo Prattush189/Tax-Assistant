@@ -134,7 +134,7 @@ CRITICAL — read every page:
 
 This prompt deliberately does NOT ask for transaction amounts. The bank's printed running balance column is the most legible, deterministic data on the page (bold, right-aligned, full-magnitude numbers in their own column). The server derives every signed amount as balance[i] - balance[i-1] from your output, which means you only have to read each balance correctly once. You will NOT be asked to extract the debit/credit column at all — focus all attention on reading dates, narrations, and balances precisely.
 
-Schema (all fields required, use null where unknown):
+Schema (all fields required, use null where unknown). The output is intentionally MINIMAL — category / subcategory / counterparty / reference / isRecurring are computed server-side from your output by a deterministic narration-anchor classifier + small AI fallback. You ONLY need to read date / narration / type / balance off the statement; do not emit any other per-row fields:
 {
   "bankName": "string or null",
   "accountNumberMasked": "XXXXNNNN (last 4 only) or null",
@@ -149,12 +149,7 @@ Schema (all fields required, use null where unknown):
       "date": "YYYY-MM-DD",
       "narration": "string (raw bank narration, max 120 chars — trim trailing padding/timestamps; merge wrapped continuation lines into ONE narration — do NOT emit a second row for the wrap)",
       "type": "credit" | "debit",
-      "balance": number or null,
-      "category": one of ${BANK_STATEMENT_CATEGORIES.map(c => `"${c}"`).join(' | ')},
-      "subcategory": string or null,
-      "counterparty": "string or null (merchant name, UPI handle, payee/payer — see rules)",
-      "reference": "string or null (UTR / transaction ref / cheque number if present)",
-      "isRecurring": boolean
+      "balance": number or null
     }
   ]
 }
@@ -175,6 +170,28 @@ CRITICAL — account-kind detection (asset vs liability):
 - Why this matters: the server derives every signed transaction amount as balance[i] - balance[i-1]. For an "asset" account, +delta = inflow / credit. For a "liability" account the convention INVERTS — +delta (Dr balance going up) means the customer drew more from the line, which is a debit / outflow. Reporting the wrong kind flips every transaction's debit/credit classification and turns deposits into expenses (the 2026-05 J&K CC MORTG case).
 - Set "accountKind": null only if the document is so unusual you genuinely can't tell. The server then defaults to "asset", which is correct ~95% of the time.
 
+CRITICAL — loan / CC / OD opening balance traps:
+- On liability accounts the opening balance is the SINGLE most error-prone read. If you anchor it to the wrong field, every row's signed amount comes out wrong.
+- WHEN "accountKind" is "liability":
+    * The opening balance MUST come from one of: an explicit "B/F" / "Opening Balance" / "Previous Balance" / "Balance Brought Forward" line, OR the running balance printed on the FIRST transaction row.
+    * The opening balance is NOT the "Limit" / "Sanctioned Amount" / "Sanctioned Limit" / "Drawing Power" / "DP" / "Credit Limit" field. Those are CAPS on how much the customer can draw — they're displayed in the account-info header alongside totals but they are NOT a running-balance anchor.
+    * For a newly-disbursed loan with no prior statement, the opening balance is ZERO. The first transaction is then a debit equal to the disbursement amount (the customer now owes that much).
+    * If you cannot find an explicit B/F line AND the statement looks like the first month of a new loan (small transaction count, "Sanction Date" matches the statement period, first row is a large drawdown), set "openingBalance": 0 and "openingBalanceSource": "new_loan".
+- WHEN explicit Debit AND Credit columns are present in the table header (e.g. SBI's "Debit | Credit | Balance" layout, the J&K Bank loan statement "WITHDRAWALS | DEPOSITS | BALANCE" layout):
+    * Read the per-row amount DIRECTLY from whichever of the two columns is populated. That is the source of truth, not balance arithmetic. Use the balance-delta only as a cross-check.
+    * If the row's Debit column has a number → "type": "debit", amount = that number.
+    * If the row's Credit column has a number → "type": "credit", amount = that number.
+    * If both are populated, emit two separate transactions (contra entry).
+    * If neither is populated AND the balance column has a value → fall back to balance-delta, but flag suspicious by setting "balance": null so the server skips that row's amount derivation.
+- WORKED EXAMPLE (SBI EB-TL-SGY term loan, statement period 31-10-2025 to 10-11-2025):
+    Account info: "Limit : 4,98,900.00", "Sanction Date : 31/10/2025", "Cleared Balance : 3,49,308.00 DR"
+    Transactions:
+      Row 1: Debit 3,49,230 / Credit (empty) / Balance 3,49,230 DR — narration "DEBIT TRANSFER TFR TO 43000661256"
+      Row 2: Debit 78       / Credit (empty) / Balance 3,49,308 DR — narration "PART PERIOD INTEREST"
+    Correct read: accountKind="liability", openingBalance=0 (sanction date matches period start, first row is the disbursement). Row 1 type="debit" amount=349230. Row 2 type="debit" amount=78. Both DEBIT — confirmed by the "Statement Summary: Dr Count 2, Cr Count 0" footer.
+    WRONG (the failure mode this section exists to prevent): anchor opening balance to Limit (498,900). Then row 1 delta = 349,230 - 498,900 = -149,670, classify as credit (DR balance went DOWN). Result: row 1 reported as Credit 149,670 — wrong sign AND wrong amount. Two bugs from one bad anchor.
+- Cross-check using the Statement Summary footer if present ("Dr Count: N / Cr Count: M / Debits: X / Credits: Y"). The number of debits and credits in your transactions array should match these counts exactly. If they don't, you've inverted some rows — re-read with the column rule above.
+
 CRITICAL — wrapped narration rows:
 - UPI / NEFT narrations on dense statements often wrap onto a second visual line. The continuation line ("68-1@ok", "REF/12345" tail, etc.) is NOT a new transaction. Merge it into the previous row's narration.
 - Phantom rows from un-merged wraps will be detected by the server (zero balance change) and dropped, but it's cleaner if you don't emit them in the first place.
@@ -183,81 +200,12 @@ CRITICAL — wrapped narration rows:
 - "credit" for inflow / deposit / Cr-marker rows.
 - "debit" for outflow / withdrawal / Dr-marker rows.
 
-Counterparty extraction rules (populate counterparty with the cleanest human-readable label):
-- UPI pattern "UPI/<refno>/<note>/<vpa>/..." → use the VPA (e.g. "merchant@okhdfcbank") OR the payee name if clearly after the VPA.
-- NEFT / IMPS / RTGS "NEFT-<IFSC>-<NAME>-<REF>" → use the NAME segment.
-- Cheque / cash / self — use "Cheque", "Cash deposit", "Self transfer" accordingly.
-- POS / merchant payments → use the merchant name (e.g. "SWIGGY", "AMAZON", "ZOMATO").
-- Bank-initiated charges/interest ("SB INT", "ATM WDL CHG") → use the charge type as the label.
-- If nothing identifiable, leave as null. Never copy the entire narration verbatim.
-
-CRITICAL — wrapped names across lines:
-Many statements wrap a single name across two lines so it shows up in
-the narration as e.g. "FD THROUGH DIGITALFD-...:SURE\nSH KUMAR" or
-"...SANI\nL SETHI...". Reading naively yields phantom counterparties
-"SURE", "SANI", "SH KUMAR", "L SETHI" — each gets its own row in the
-counterparty list and totals split across them.
-- ALWAYS join wrapped continuation lines into ONE counterparty before
-  emitting. "SURE" + "SH KUMAR" → "SURESH KUMAR". "SANI" + "L SETHI"
-  → "SANIL SETHI". "SURE" + "SH SETHI AND ASSOCIATES" → "SURESH SETHI
-  AND ASSOCIATES".
-- A short ALL-CAPS word (≤4 chars) at the END of a narration whose next
-  line begins with another ALL-CAPS fragment is almost always a wrap.
-  Concatenate the two fragments (no separator) and emit the joined
-  string as the counterparty.
-- Apply the same merge to the narration field itself — the wrapped
-  name should appear as one word, not two.
-
-Reference extraction: pull UTR / cheque number / reference number (usually a 10–16 digit alphanumeric token) into the reference field. If none, null.
-
-Categorization rules (apply the FIRST match):
-- Narration contains "SALARY" / "SAL CREDIT" → Salary
-- Narration contains "RENT" as a credit → Rent Received
-- Narration contains "INT.", "INTEREST PAID", "SB INT", "FD INT" → Interest Income
-- Narration contains "DIV", "DIVIDEND" → Dividends
-- Narration contains "GSTN", "GSTIN", "GST PMT" → GST Payments
-- Narration contains "TDS", "26Q", "26QB" → TDS
-- Narration contains "ADV TAX", "SELF ASMNT", "CHALLAN 280" → Taxes Paid
-- Narration contains "EMI", "LOAN", "HDFC HL", "HOUSING LOAN", "LOAN RECOVERY" → Loan EMI
-- Narration contains "SIP", "MUTUAL FUND", "MF ", "ZERODHA", "GROWW", "UPSTOX" → Investments
-- Narration contains "NEFT", "IMPS", "UPI", "RTGS" with a personal counterparty (not GSTIN) → Transfers
-- Narration starts with "By Cash", "BY CASH", "BY CSH", "CASH DEP", "CASH DEPOSIT" on a CREDIT row, OR contains "CAM/.../CASH DEP" / "CDM" on a credit → Cash Deposit (NOT Business Income — the customer paying cash into their own account is not a sale). Subcategory: "Counter" for over-the-counter / CC repayment, "CDM / ATM" for cash-deposit-machine, "Cheque" for self-cheque cash withdrawal/deposit pairs, "Other" otherwise.
-- Debits to vendors (rent, utilities, office supplies, travel, ads) → Business Expenses with appropriate subcategory
-- Credits to a business account from customers → Business Income
-- Grocery, shopping, restaurants, personal consumption → Personal
-- Anything that doesn't match → Other
-
-Bank-fee narration anchors — apply BEFORE the generic NEFT/UPI/Transfers rule above. Each match also sets the listed subcategory:
-- "ATM CHARGES" / "ATM ANN.CHRG" / "ATM WDR" / "ATM WDL CHG" / "DEBIT ATM CARD" → Bank Charges / ATM
-- "CHRGS/NEFT" / "NEFT CHGS" / "CHRGS/IMPS" / "IMPS CHARGES" / "RTGS CHGS" / "RTGS-GST-COMMISSION" → Bank Charges / NEFT/IMPS/RTGS
-- "SMS CHARGES" / "SMS CHRG" → Bank Charges / SMS
-- "Min Bal Chrg" / "MAB CHRG" / "Avg bal Chgs" / "MINIMUM BALANCE CHARGES" → Bank Charges / Min Balance
-- "LOAN_PROC" / "Loan Processing Fee" → Bank Charges / Loan Processing
-- "CHEQUE BOOK CHGS" / "CHEQUE BOOK CHARGES" / "CHEQUE BOOK CHAREGS" → Bank Charges / Cheque
-- "Cash Deposit Charges" / "CashDep Chgs" / "Cash Txn Chgs-Branch" → Bank Charges / Cash Txn
-- "POS Rental" → Bank Charges / POS Rental
-- "SoundBox Rent" → Bank Charges / SoundBox Rent
-- "CIBIL" → Bank Charges / CIBIL
-- "Penal Charges" / "Penal Cha" → Bank Charges / Penal
-- "INSPC CHARGES" / "INSPECTION CHARGES" → Bank Charges / Inspection (note: INSPC is bank inspection charge, NOT insurance)
-- "Reject Insufficient Balance" / "Outward Rejection Charges" / "Inward Rejection Charges" → Bank Charges / Rejection
-- "DEBIT CARD ANNUAL FEE" → Bank Charges / Card Fee
-- "ADHOC STMT CHGS" / "ACCT MAIN CHARGES" / "INCIDENTAL CHARGES" / "LOW DENOMINATION CHARGE" → Bank Charges / Other
-- "Int.Coll" → Bank Interest (Dr) / Loan Interest
-- "Int.Pd:" / "CREDIT INTEREST" → Bank Interest (Cr)
-- "INS-" / "INS_" / "Insurance" / "_PROPERTY_INS_" / "_INS_RENEWAL_" → Insurance / Premium
-- "BIL/BPAY/BSNL" / "PAYTMBSNL" → Mobile Charges / BSNL
-- "BIL/BPAY/AIRTEL" / "PAYTMAIRTEL" → Mobile Charges / Airtel
-- "BIL/BPAY/JIO" / "PAYTMJIO" → Mobile Charges / Jio
-- "BILL DK POWER" / "BILL DKP" / DISCOM names → Electricity Charges / DISCOM
-- "WATER BILL" → Water Charges / Municipal
-
-isRecurring = true when the same narration pattern appears at least twice with similar amounts (monthly salary, EMI, SIP, rent).
+CRITICAL — wrapped narrations across lines:
+Many statements wrap long narrations onto a second visual line (e.g. a UPI handle or counterparty name continues on the next line). Read them as ONE logical narration, not two transactions. Concatenate the wrapped fragments into a single string (with a space between them where the wrap is between separate tokens, no separator when it's mid-word). Examples: "UPI/.../SURE\nSH KUMAR" → "UPI/.../SURESH KUMAR" (mid-word wrap, joined). "NEFT-HDFC-RAMESH\nKUMAR" → "NEFT-HDFC-RAMESH KUMAR" (between tokens).
 
 STRICT RULES:
 - Output MUST be valid JSON. No commentary, no code fences.
 - Escape quotes in strings. No literal newlines — use \\n.
 - Include EVERY transaction you can read. Do NOT summarize or group.
 - Dates must be YYYY-MM-DD. If the statement shows DD/MM/YYYY, convert.
-- subcategory may be null when none of the listed subcategories fit.
-- DO NOT include an "amount" field on transactions. The server derives it from the balance column.`;
+- DO NOT emit an "amount", "category", "subcategory", "counterparty", "reference", or "isRecurring" field. Server-side post-processing fills those — emitting them just costs output tokens.`;

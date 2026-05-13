@@ -10,7 +10,7 @@
  *   npx tsx scripts/smoke-test-bank-classifier.ts
  */
 
-import { classifyRow, extractCounterparty, extractReference, markRecurring } from '../server/lib/bankClassifier';
+import { classifyRow, extractCounterparty, extractReference, markRecurring, unifyAmbiguousCounterparties, normalizeCounterpartyKey } from '../server/lib/bankClassifier';
 
 interface Case {
   narration: string;
@@ -56,6 +56,11 @@ const CASES: Case[] = [
   { narration: 'INSPC CHARGES', type: 'debit', expect: { category: 'Bank Charges', subcategory: 'Inspection' } },
   { narration: 'Outward Rejection Charges', type: 'debit', expect: { category: 'Bank Charges', subcategory: 'Rejection' } },
   { narration: 'Inward Rejection Charges', type: 'debit', expect: { category: 'Bank Charges', subcategory: 'Rejection' } },
+  // YES Bank / HDFC wording — "INWARD CHQ RETURN CHRGS FOR 04-OCT-2025"
+  // was tagged Other previously because the rule only matched the
+  // "rejection" wording. Now both variants land in the same bucket.
+  { narration: 'INWARD CHQ RETURN CHRGS FOR 04-OCT-2025', type: 'debit', expect: { category: 'Bank Charges', subcategory: 'Rejection' } },
+  { narration: 'OUTWARD CHEQUE RETURN CHARGES', type: 'debit', expect: { category: 'Bank Charges', subcategory: 'Rejection' } },
   { narration: 'DEBIT CARD ANNUAL FEE', type: 'debit', expect: { category: 'Bank Charges', subcategory: 'Card Fee' } },
   { narration: 'ADHOC STMT CHGS INCL GST', type: 'debit', expect: { category: 'Bank Charges', subcategory: 'Other' } },
   { narration: 'ACCT MAIN CHARGES', type: 'debit', expect: { category: 'Bank Charges', subcategory: 'Other' } },
@@ -344,6 +349,102 @@ function run(): void {
   } else if (recurringFlags[3]) {
     fail++;
     failures.push(`recurring detection: row 3 should be false, got true`);
+  } else {
+    pass++;
+  }
+
+  // ─── normalizeCounterpartyKey ───────────────────────────────
+  const normCases: Array<[string | null, string]> = [
+    ['BOYAAIRTEL.123-1@OKICICI', 'boyaairtel.123'],
+    ['BOYAAIRTEL.123-2@OKAXIS', 'boyaairtel.123'],
+    ['BOYAAIRTEL.123-3@OKSBI', 'boyaairtel.123'],
+    ['rajabilalmatta.rb@okicici', 'rajabilalmatta.rb'],
+    ['AMAZON', 'amazon'],
+    ['SWIGGY', 'swiggy'],
+    [null, ''],
+    ['', ''],
+  ];
+  for (const [input, expected] of normCases) {
+    const got = normalizeCounterpartyKey(input);
+    if (got === expected) {
+      pass++;
+    } else {
+      fail++;
+      failures.push(`normalizeCounterpartyKey('${input}'): expected '${expected}', got '${got}'`);
+    }
+  }
+
+  // ─── unifyAmbiguousCounterparties: BOYAAIRTEL case ──────────
+  // 5 rows, same person (different VPA suffixes), all DEBIT. AI gave
+  // 3 different category tags. Expected: majority (Business Expenses,
+  // 3 rows) wins; the 2 minority rows back-fill to that.
+  const consistencyRows = [
+    { counterparty: 'BOYAAIRTEL.123-1@OKICICI', type: 'debit' as const, category: 'Business Expenses', subcategory: null as string | null },
+    { counterparty: 'BOYAAIRTEL.123-2@OKAXIS',  type: 'debit' as const, category: 'Business Expenses', subcategory: null as string | null },
+    { counterparty: 'BOYAAIRTEL.123-2@OKAXIS',  type: 'debit' as const, category: 'Business Expenses', subcategory: null as string | null },
+    { counterparty: 'BOYAAIRTEL.123-2@OKAXIS',  type: 'debit' as const, category: 'Personal',          subcategory: 'Shopping' },
+    { counterparty: 'BOYAAIRTEL.123-3@OKSBI',   type: 'debit' as const, category: 'Transfers',         subcategory: null as string | null },
+  ];
+  const changed = unifyAmbiguousCounterparties(consistencyRows);
+  if (changed !== 2) {
+    fail++;
+    failures.push(`unifyAmbiguousCounterparties BOYAAIRTEL: expected 2 changes, got ${changed}`);
+  } else if (!consistencyRows.every(r => r.category === 'Business Expenses' && r.subcategory === null)) {
+    fail++;
+    failures.push(`unifyAmbiguousCounterparties BOYAAIRTEL: rows not unified — ${JSON.stringify(consistencyRows.map(r => `${r.category}/${r.subcategory ?? ''}`))}`);
+  } else {
+    pass++;
+  }
+
+  // ─── unifyAmbiguousCounterparties: direction-split safety ───
+  // Same counterparty, opposite directions → should NOT merge.
+  // The "vendor" pattern: 3 debits (Business Expenses) + 1 credit
+  // (refund from vendor → Business Income). Direction-split should
+  // preserve both categories.
+  const directionRows = [
+    { counterparty: 'vendor@upi', type: 'debit' as const,  category: 'Business Expenses', subcategory: null as string | null },
+    { counterparty: 'vendor@upi', type: 'debit' as const,  category: 'Business Expenses', subcategory: null as string | null },
+    { counterparty: 'vendor@upi', type: 'debit' as const,  category: 'Business Expenses', subcategory: null as string | null },
+    { counterparty: 'vendor@upi', type: 'credit' as const, category: 'Business Income',   subcategory: null as string | null },
+  ];
+  const dChanged = unifyAmbiguousCounterparties(directionRows);
+  if (dChanged !== 0) {
+    fail++;
+    failures.push(`unifyAmbiguousCounterparties direction-split: expected 0 changes (debit group consistent, credit group too small), got ${dChanged}`);
+  } else if (directionRows[3].category !== 'Business Income') {
+    fail++;
+    failures.push(`unifyAmbiguousCounterparties direction-split: credit row got overwritten`);
+  } else {
+    pass++;
+  }
+
+  // ─── unifyAmbiguousCounterparties: group too small → skip ───
+  // 2 rows = below the minimum-group-size threshold (3). Should leave
+  // them alone even if they disagree.
+  const smallRows = [
+    { counterparty: 'oneoff@upi', type: 'debit' as const, category: 'Personal',          subcategory: 'Shopping' as string | null },
+    { counterparty: 'oneoff@upi', type: 'debit' as const, category: 'Business Expenses', subcategory: null as string | null },
+  ];
+  const sChanged = unifyAmbiguousCounterparties(smallRows);
+  if (sChanged !== 0) {
+    fail++;
+    failures.push(`unifyAmbiguousCounterparties small-group: expected 0 changes, got ${sChanged}`);
+  } else {
+    pass++;
+  }
+
+  // ─── unifyAmbiguousCounterparties: tied majority → skip ─────
+  // 4 rows in 2 buckets of 2 each. No clear majority → leave as-is.
+  const tiedRows = [
+    { counterparty: 'tie@upi', type: 'debit' as const, category: 'Personal',          subcategory: 'Shopping' as string | null },
+    { counterparty: 'tie@upi', type: 'debit' as const, category: 'Personal',          subcategory: 'Shopping' as string | null },
+    { counterparty: 'tie@upi', type: 'debit' as const, category: 'Business Expenses', subcategory: null as string | null },
+    { counterparty: 'tie@upi', type: 'debit' as const, category: 'Business Expenses', subcategory: null as string | null },
+  ];
+  const tChanged = unifyAmbiguousCounterparties(tiedRows);
+  if (tChanged !== 0) {
+    fail++;
+    failures.push(`unifyAmbiguousCounterparties tied: expected 0 changes (2-2 tie has no clear majority), got ${tChanged}`);
   } else {
     pass++;
   }

@@ -6,7 +6,7 @@ import Papa from 'papaparse';
 import { extractVisionWithFallback } from '../lib/visionFallback.js';
 import { callGeminiJson, type GeminiJsonResult } from '../lib/geminiJson.js';
 import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_CATEGORIES, buildConditionsBlock, countWords, MAX_CONDITION_WORDS } from '../lib/bankStatementPrompt.js';
-import { classifyRow, extractCounterpartyAndReference, markRecurring } from '../lib/bankClassifier.js';
+import { classifyRow, extractCounterpartyAndReference, markRecurring, unifyAmbiguousCounterparties } from '../lib/bankClassifier.js';
 import { costForModel } from '../lib/gemini.js';
 import { creditsForPages, creditsForCsvRows, PAGES_PER_CREDIT, CSV_ROWS_PER_CREDIT } from '../lib/creditPolicy.js';
 import { enforceTokenQuota } from '../lib/tokenQuota.js';
@@ -1094,6 +1094,68 @@ router.post(
             outputTokens: visionResult.outputTokens,
             modelUsed: visionResult.modelUsed,
           }];
+          // Vision returns SLIM rows: { date, narration, type, balance }
+          // only. The categorization fields (category / subcategory /
+          // counterparty / reference) are emitted by the server-side
+          // narration-anchor classifier here, mirroring what the CSV
+          // path does. This is the single biggest vision token win:
+          // the prompt no longer asks the model to produce 5 extra
+          // fields per row, and the JSON output collapses from ~250
+          // chars/row to ~80 chars/row.
+          //
+          // Rows that match a classifier rule (~70% on typical Indian
+          // statements) get their category / subcategory / counterparty
+          // / reference set deterministically. Rows that don't match
+          // default to category="Other" with regex-extracted counterparty
+          // / reference. We deliberately do NOT run a second AI batch
+          // for vision-extracted rows — the vision path is already the
+          // expensive path; the user accepts "Other" as the floor for
+          // ambiguous rows on image-only PDFs and can re-tag via UI.
+          if (Array.isArray(extracted.transactions)) {
+            type VisionRow = {
+              narration: string;
+              type: 'credit' | 'debit';
+              amount?: number;
+              category?: string;
+              subcategory?: string | null;
+              counterparty?: string | null;
+              reference?: string | null;
+            };
+            for (const row of extracted.transactions as VisionRow[]) {
+              if (!row || typeof row.narration !== 'string') continue;
+              const classified = classifyRow({
+                narration: row.narration,
+                type: row.type,
+                amount: typeof row.amount === 'number' ? row.amount : 0,
+              });
+              if (classified) {
+                row.category = classified.category;
+                row.subcategory = classified.subcategory;
+                row.counterparty = classified.counterparty;
+                row.reference = classified.reference;
+              } else {
+                const extr = extractCounterpartyAndReference(row.narration);
+                row.category = 'Other';
+                row.subcategory = null;
+                row.counterparty = extr.counterparty;
+                row.reference = extr.reference;
+              }
+            }
+            // Now that category / subcategory are set, the consistency
+            // pass can back-fill any obvious cross-row inconsistency
+            // (same counterparty appearing with different categories).
+            unifyAmbiguousCounterparties(extracted.transactions as Array<{
+              counterparty: string | null;
+              type: 'credit' | 'debit';
+              category: string;
+              subcategory: string | null;
+            }>);
+            // markRecurring needs `amount`, which is derived from
+            // balance deltas in persistStatement. So it can't run here
+            // for vision rows — would be a no-op with undefined amounts.
+            // Acceptable for the vision path: recurring detection is a
+            // dashboard nicety, not a correctness signal.
+          }
         }
       } else {
         // CSV path: client posted parsed CSV text; we already know the
@@ -1388,6 +1450,17 @@ ${JSON.stringify(batch)}`;
           };
         });
         markRecurring(mergedTransactions);
+        // Same-counterparty consistency pass — the AI is noisy on
+        // unfamiliar counterparties (a YES Bank upload had the same
+        // BOYAAIRTEL.123 VPA tagged across 5 different category/
+        // subcategory tuples). Group by normalized counterparty +
+        // direction, find the majority, back-fill minority rows.
+        unifyAmbiguousCounterparties(mergedTransactions as Array<{
+          counterparty: string | null;
+          type: 'credit' | 'debit';
+          category: string;
+          subcategory: string | null;
+        }>);
 
         extracted = {
           bankName: bankMeta.bankName ?? null,
