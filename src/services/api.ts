@@ -1883,31 +1883,26 @@ export interface BankStatementAnalyzeProgress {
 
 export async function analyzeBankStatementFile(
   file: File,
-  onProgress?: (p: BankStatementAnalyzeProgress) => void,
+  _onProgress?: (p: BankStatementAnalyzeProgress) => void,
 ): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[]; alreadyAnalyzed?: boolean }> {
-  // Fast path: if this is a digitally-generated PDF, extract the text layer
-  // in the browser and send text-only to the server. The server skips the
-  // Gemini vision pass and completes in ~10-15s instead of 30-60s. Scanned
-  // PDFs (no text layer) fall through to the multipart/vision path below.
-  if (file.type === 'application/pdf') {
-    try {
-      const { extractPdfTextClient } = await import('../lib/pdfText');
-      const text = await extractPdfTextClient(file);
-      if (text) {
-        return analyzeBankStatementPdfText(text, file.name, onProgress);
-      }
-    } catch (err) {
-      // Text extraction is best-effort — fall back to vision on any failure.
-      console.warn('[analyzeBankStatementFile] text extract failed, falling back to vision:', err);
-    }
-  }
-
+  // Vision-only fallback path. The "TSV via Gemini text extraction"
+  // path used to live here — when the client could pull a text layer
+  // out of the PDF, we'd send raw text to the server and have Gemini
+  // extract + classify every row. That path averaged ~3× the per-row
+  // cost of the wizard → CSV path and ~3× the cost of vision on the
+  // primary tier; once the per-bank rules + relaxed wizard threshold
+  // landed, the only uploads still hitting this entry point are PDFs
+  // whose grid extraction returned <3 columns OR threw outright. Those
+  // genuinely need vision — the wizard has nothing to work with.
+  //
+  // Sequence is unchanged from the legacy multipart branch: the server
+  // accepts the file, runs vision extraction, persists, and returns the
+  // analysis. Progress callback is unused on this path (vision is a
+  // single call with no SSE chunks) — kept in the signature so callers
+  // don't need to change.
   const formData = new FormData();
   formData.append('file', file);
   const controller = new AbortController();
-  // Long statements (50+ pages) on the chunked TSV pipeline can run close to
-  // 5 minutes end-to-end. The vision fallback (image PDFs) is single-call
-  // but still benefits from headroom on slow Gemini bursts.
   const timer = setTimeout(() => controller.abort(), 360_000);
   const doFetch = () => fetch('/api/bank-statements/analyze', {
     method: 'POST',
@@ -1944,151 +1939,10 @@ export async function analyzeBankStatementFile(
   }
 }
 
-async function analyzeBankStatementPdfText(
-  pdfText: string,
-  filename: string,
-  onProgress?: (p: BankStatementAnalyzeProgress) => void,
-): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[]; warning?: string; reconciliationWarning?: string; alreadyAnalyzed?: boolean }> {
-  // Large multi-chunk statements (50+ pages) can take 4-5 minutes of parallel
-  // Gemini calls. Cap at 6 min so a slow-but-progressing run completes rather
-  // than the client killing it just before the server returns.
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 360_000);
-  // Stream mode only when a progress sink is provided — otherwise use the
-  // simpler JSON response so callers that don't care about progress stay on
-  // the single code path.
-  const wantsStream = typeof onProgress === 'function';
-  const doFetch = () => fetch('/api/bank-statements/analyze', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(wantsStream ? { Accept: 'text/event-stream' } : {}),
-      ...getAuthHeaders(),
-    },
-    body: JSON.stringify({ pdfText, filename, ...(wantsStream ? { stream: true } : {}) }),
-    signal: controller.signal,
-  });
-  try {
-    let res = await doFetch();
-    if (res.status === 401) {
-      const refreshed = await tryRefreshToken();
-      if (refreshed) res = await doFetch();
-    }
-
-    if (wantsStream && res.ok && res.body) {
-      return await consumeAnalyzeStream(res.body, onProgress!);
-    }
-
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      // Server returns `{error, detail?, hint?}` — fold them into one message
-      // so the user actually sees what went wrong and how to recover.
-      const parts = [data.error ?? 'Failed to analyze statement'];
-      if (data.hint) parts.push(data.hint);
-      if (data.detail) parts.push(`(${data.detail})`);
-      throw new Error(parts.join(' — '));
-    }
-    return data;
-  } catch (err) {
-    if (err instanceof Error && err.name === 'AbortError') {
-      // Same shape as the multipart path — server keeps running on
-      // disconnect, so don't surface this as a terminal failure.
-      throw new Error('Analysis is still running server-side — reload the page in a few minutes to see the result. (Or, for very large statements over 150 pages, try a CSV export.)');
-    }
-    throw err;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/**
- * Parse an SSE stream from /api/bank-statements/analyze.
- *
- * Protocol (matches server):
- *   { type: 'start',    totalChunks, pages }
- *   { type: 'progress', completed, total, pages: [from,to], txInChunk }  (one per chunk)
- *   { type: 'done',     statement, transactions, txCount, warning? }
- *   { type: 'error',    error, detail?, hint? }
- *
- * We can't change HTTP status after SSE headers flush, so errors arrive as a
- * payload, not a non-200 response — translate them back into a thrown Error
- * whose message matches the JSON path so callers show the same toast.
- */
-async function consumeAnalyzeStream(
-  body: ReadableStream<Uint8Array>,
-  onProgress: (p: BankStatementAnalyzeProgress) => void,
-): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[]; warning?: string; reconciliationWarning?: string; alreadyAnalyzed?: boolean }> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let finalPayload: { statement: BankStatementSummary; transactions: BankTransaction[]; warning?: string; reconciliationWarning?: string } | null = null;
-  let errorPayload: { error?: string; detail?: string; hint?: string } | null = null;
-
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    // SSE event boundary is a blank line (\n\n). Keep the trailing partial
-    // event in the buffer for the next read.
-    let sep: number;
-    while ((sep = buffer.indexOf('\n\n')) !== -1) {
-      const block = buffer.slice(0, sep);
-      buffer = buffer.slice(sep + 2);
-      const dataLine = block.split('\n').find((l) => l.startsWith('data:'));
-      if (!dataLine) continue;
-      const json = dataLine.slice(5).trim();
-      if (!json) continue;
-      try {
-        const evt = JSON.parse(json) as {
-          type: string;
-          totalChunks?: number;
-          total?: number;
-          completed?: number;
-          pages?: [number, number] | number;
-          [k: string]: unknown;
-        };
-        if (evt.type === 'start') {
-          onProgress({
-            completed: 0,
-            total: evt.totalChunks ?? 0,
-          });
-        } else if (evt.type === 'progress') {
-          onProgress({
-            completed: evt.completed ?? 0,
-            total: evt.total ?? 0,
-            pages: Array.isArray(evt.pages) ? (evt.pages as [number, number]) : undefined,
-          });
-        } else if (evt.type === 'done') {
-          finalPayload = {
-            statement: evt.statement as BankStatementSummary,
-            transactions: evt.transactions as BankTransaction[],
-            warning: evt.warning as string | undefined,
-            reconciliationWarning: evt.reconciliationWarning as string | undefined,
-          };
-        } else if (evt.type === 'error') {
-          errorPayload = {
-            error: evt.error as string | undefined,
-            detail: evt.detail as string | undefined,
-            hint: evt.hint as string | undefined,
-          };
-        }
-      } catch {
-        // Malformed event — skip. Stream continues on the next boundary.
-      }
-    }
-  }
-
-  if (errorPayload) {
-    const parts = [errorPayload.error ?? 'Failed to analyze statement'];
-    if (errorPayload.hint) parts.push(errorPayload.hint);
-    if (errorPayload.detail) parts.push(`(${errorPayload.detail})`);
-    throw new Error(parts.join(' — '));
-  }
-  if (!finalPayload) {
-    throw new Error('Analysis stream ended without a final result.');
-  }
-  return finalPayload;
-}
+// analyzeBankStatementPdfText / consumeAnalyzeStream removed when the TSV
+// extraction path was killed. The remaining bank-statement entry points are:
+//   - analyzeBankStatementFile : vision multipart for un-grid-able PDFs
+//   - analyzeBankStatementCsv  : wizard-mapped uploads (the cheap path)
 
 export async function analyzeBankStatementCsv(csvText: string, filename?: string): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[]; alreadyAnalyzed?: boolean }> {
   const controller = new AbortController();

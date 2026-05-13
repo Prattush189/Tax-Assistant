@@ -327,18 +327,23 @@ export function BankStatementUploader({ manager }: Props) {
           return;
         }
 
-        // Heuristic: if the grid extractor finds <5 columns, the
-        // wizard is going to merge important columns (Date+Narration,
-        // Withdrawal+Deposit collapsed, etc.). Auto-route to AI
-        // vision instead — Gemini 3.1 Flash-Lite handles the layout
-        // reliably and the cost stays modest.
-        if (grid && grid.rows.length >= 3 && (grid.columnCount ?? 0) >= 5) {
+        // Wizard threshold: ≥3 cols is enough to map date + narration +
+        // (amount OR debit OR credit), which is the minimum applyMapping
+        // requires. The threshold was ≥5 historically — that flagged
+        // sparse grids as "broken" and routed them through the AI
+        // extraction path (TSV via Gemini), but TSV cost averaged ~3×
+        // higher than running the same upload through the wizard with
+        // user-confirmed sparse mapping. With TSV killed entirely, the
+        // wizard handles every grid it can; only completely-empty grids
+        // fall to vision. Wizard's downstream `required` check still
+        // refuses uploads that genuinely can't be mapped.
+        if (grid && grid.rows.length >= 3 && (grid.columnCount ?? 0) >= 3) {
           setIsReadingPdf(false);
           setPendingGrid({ grid, filename: file.name, file });
           return;
         }
-        if (grid && (grid.columnCount ?? 0) < 5) {
-          console.log(`[BankStatementUploader] only ${grid.columnCount} columns detected — routing to vision`);
+        if (grid && (grid.columnCount ?? 0) < 3) {
+          console.log(`[BankStatementUploader] only ${grid.columnCount} columns detected — routing to vision (genuinely sparse)`);
         }
         // Either no text layer or grid is too sparse — route through
         // vision. 100-page block kept as a UX cost guard — Gemini

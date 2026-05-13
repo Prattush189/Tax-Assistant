@@ -1679,7 +1679,32 @@ export function applyMapping(
     const credit = parseNumber(cell('credit'));
     const amountSingle = parseNumber(cell('amount'));
     const drCrMarker = cell('drCrMarker');
-    const balance = parseNumber(cell('balance'));
+    // Tally prints the running balance as an unsigned magnitude with
+    // a "Dr" or "Cr" suffix, e.g. "1,08,560.00 Cr" or "19,500.00 Dr".
+    // parseNumber strips the suffix and returns just the magnitude
+    // — which loses the direction. For a Cr-side account (liability,
+    // income, payable) that means the closing fallback in
+    // mappedRowsToExtractedLedger reads `+24,46,194` when the
+    // running balance is "24,46,194.00 Cr" (audit convention is
+    // negative for a Cr balance). Result: 20+ phantom RECON_BREAK
+    // observations on the user's 196-account ledger, every one with
+    // a "magnitudes match but signs opposite" gap (Make My Trip,
+    // Virendra Kesar, ANK HOTEL, Trishul Traders, etc.).
+    //
+    // Sign the balance using the suffix on the raw cell text. Bank
+    // statements don't use this convention (they emit signed amounts
+    // or rely on a separate drCrMarker column), so gate to ledgers.
+    const balanceRaw = cell('balance');
+    let balance = parseNumber(balanceRaw);
+    if (kind === 'ledger' && balance != null) {
+      if (/\bcr\.?\s*$/i.test(balanceRaw)) balance = -Math.abs(balance);
+      else if (/\bdr\.?\s*$/i.test(balanceRaw)) balance = Math.abs(balance);
+      // No suffix → keep parseNumber's value as-is. Edge case for
+      // Tally exports where the suffix didn't render; rare enough
+      // not to matter, and the closing-balance marker path
+      // (closingFromMarker in mappedRowsToExtractedLedger) is the
+      // authoritative source when an explicit closing row exists.
+    }
     const voucher = cell('voucher') || null;
     const reference = cell('reference') || null;
 
