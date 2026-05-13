@@ -1236,7 +1236,7 @@ function detectAccountHeader(
  *  separate, broader marker (SUBTOTAL_MARKER inside applyMapping)
  *  that DOES include opening/closing because banks don't use those
  *  rows the same way. */
-const LEDGER_SUBTOTAL_MARKER = /\b(?:totals?\s*[bc]\s*\/\s*f|^totals?\s*$|page\s+total|carried\s+over|brought\s+forward|carried\s+forward|balance\s+[bc]\s*\/\s*f|continued\.\.|^[bc]\s*\/\s*f$)/i;
+const LEDGER_SUBTOTAL_MARKER = /\b(?:totals?\s*[bc]\s*\/\s*f|^totals?\s*$|totals?\s*&\s*balance|page\s+total|carried\s+over|brought\s+forward|carried\s+forward|balance\s+[bc]\s*\/\s*f|continued\.\.|^[bc]\s*\/\s*f$)/i;
 
 /**
  * Apply a column mapping to a raw grid → array of normalized rows.
@@ -1916,14 +1916,19 @@ export function applyMapping(
       // has 250+; recon gap of crores.
       //
       // Signal: pending has a non-zero debit OR credit AND this
-      // row has a same-side non-zero amount. Bug 3 (new voucher)
-      // handles the case with reference numbers; this handles the
-      // narration-only case. Contra-detail rows are excluded — they
-      // carry Dr/Cr suffix on the amount cell, isContraDetail catches
-      // them before this.
+      // row has a same-side non-zero amount AND its own narration.
+      // The narration requirement is the key disambiguator from
+      // Tally Hotel Holiday Inn-style debit-side subtotal rows that
+      // print just a number with no narration / voucher / reference
+      // (e.g. the bare "19,500.00" total row that sits between
+      // r120 "To Accounting Fee Payable" and r124 "By Closing
+      // Balance"). Bills always have a description; pure subtotal
+      // rows never do, so requiring `narr` to be set keeps both
+      // formats happy.
       const isConflictingAmount =
         kind === 'ledger' &&
         !isContraDetail &&
+        !!narr &&
         (
           (debit != null && debit !== 0 && pending.debit != null && pending.debit !== 0) ||
           (credit != null && credit !== 0 && pending.credit != null && pending.credit !== 0)
