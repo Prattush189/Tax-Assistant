@@ -106,20 +106,62 @@ const BUSY: ErpRule = {
 const TALLY: ErpRule = {
   name: 'Tally',
   fingerprints: [
-    // Page footer + inter-page marker. "Continued..N" with the
-    // double dot is a Tally idiom; "Carried Over" is the page-bottom
-    // total label.
+    // Page footer + inter-page marker. "Continued..N" (double-dot)
+    // is one Tally export style; "continued ..." (three dots with
+    // a leading space) is the alternative Tally produces from the
+    // print-to-PDF path. "Carried Over" is the page-bottom total
+    // label common to both styles. Listing all three substrings so
+    // either variant triggers detection.
     'carried over',
     'continued..',
+    'continued ...',
+    'continued...',
+    // "(as per details)" is Tally's lowercase parenthetical phrase
+    // for voucher entries that have a contra-account breakdown
+    // listed below them — appears on the parent row of every
+    // multi-leg journal. Unique to Tally (Marg uses "as per
+    // details", Busy doesn't use the phrase, Finsys doesn't either).
+    // Appears on page 1 of the export so this matches early even
+    // when "carried over" lives past the row-window.
+    '(as per details)',
+    // The "Vch Type" / "Vch No." column headers are a Tally idiom —
+    // Marg uses "Type / V.No.", Busy uses just a single "B" column,
+    // Finsys uses "Type" alone. Substring match.
+    'vch type',
+    'vch no.',
   ],
+  // headerRules ordering is intentional — 'reference' (Vch No) is
+  // listed BEFORE 'debit' / 'credit' so the Tally "Vch No. Debit"
+  // merged-header case (the grid extractor sometimes squashes two
+  // adjacent header cells when their tokens have less horizontal
+  // gap than the column anchor threshold) matches as 'reference'
+  // not 'debit'. The Hotel Holiday Inn 2024-25 export produces
+  // col 5 header = "Vch No. Debit" with bare-integer Vch No data
+  // underneath; matching that as 'debit' caused the row's Vch No
+  // ("60", "2840") to be read as the debit amount, doubling every
+  // transaction (one phantom debit + one real credit).
+  //
+  // The header patterns are anchored to '^' so they only match
+  // when the token leads — "Vch No. Debit" leads with "Vch No.",
+  // matches 'reference' first, and the role-taken set prevents the
+  // generic /^debit/ pattern from grabbing it.
   headerRules: [
     { pattern: /balance/i, role: 'balance' },
-    { pattern: /debit/i, role: 'debit' },
-    { pattern: /credit/i, role: 'credit' },
+    { pattern: /^(?:vch\.?\s*)?no\.?\b/i, role: 'reference' },
+    { pattern: /^(?:vch\.?\s*)?type\b|voucher\s*type/i, role: 'voucher' },
+    { pattern: /^debit/i, role: 'debit' },
+    { pattern: /^credit/i, role: 'credit' },
     { pattern: /particulars|narration/i, role: 'narration' },
     { pattern: /^date/i, role: 'date' },
   ],
-  required: ['date', 'narration', 'debit', 'credit', 'balance'],
+  // 'debit' dropped from required — Tally's multi-column variant has
+  // a quirk where the "Vch No." and "Debit" headers can merge and
+  // the actual debit value either lives in col 5 (squashed with Vch
+  // No on "To" rows like "2841 538.00") or is absent entirely (pure
+  // credit rows). Requiring 'debit' would make this rule self-veto
+  // on otherwise clean Tally exports. The downstream parser handles
+  // a missing 'debit' role gracefully (treats it as 0).
+  required: ['date', 'narration', 'credit', 'balance'],
 };
 
 const FINSYS: ErpRule = {
@@ -187,7 +229,16 @@ export function detectAndMapLedgerErp(grid: PdfGrid | null): DetectedErpMapping 
   // be the safer path anyway.
   if (grid.columnCount < 5) return null;
 
-  const fingerprint = grid.rows.slice(0, 100).flat().join(' ').toLowerCase();
+  // Scan a generous window — 200 rows. Bumped from 100 because Tally's
+  // single-account-per-page exports (Hotel Holiday Inn style — one
+  // account per PDF page, ~20 rows each) push the page-bottom
+  // "Carried Over" marker past row 100 when the first few accounts
+  // are short. Still cheap (string concatenation over a few thousand
+  // chars). The whole-document fallback is implicit — if 200 rows
+  // doesn't cover it, the explicit Tally-specific tells we added
+  // ("(as per details)", "vch type", "vch no.") catch the early
+  // rows on page 1.
+  const fingerprint = grid.rows.slice(0, 200).flat().join(' ').toLowerCase();
   const rule = RULES.find(r => r.fingerprints.some(fp => fingerprint.includes(fp)));
   if (!rule) return null;
 
@@ -234,17 +285,97 @@ export function detectAndMapLedgerErp(grid: PdfGrid | null): DetectedErpMapping 
       .filter(r => parseDate((r[dateColForShift] ?? '').trim(), defaultYearForShift))
       .slice(0, 10);
     if (datedRows.length >= 3) {
+      // Any-digit and currency-shape counters. Currency-shape means
+      // the cell contains a decimal point or an Indian comma group
+      // ("1,08,560.00" or "538.00" — both qualify). Bare integers
+      // ("60", "2840") have digits but no currency shape; those are
+      // typically Vch No fields the grid extractor mis-aligned into
+      // the Debit column anchor on Tally exports where the "Vch Type"
+      // header tokenized into two anchors and shifted everything to
+      // its right by one. The Hotel Holiday Inn Tally PDF (2026-05)
+      // surfaces this exactly: 100% of dated rows had a number in
+      // col 5 (every Vch No), defeating the "col is mostly empty"
+      // shift heuristic. Currency-shape pins it.
       const numAt = (i: number) => datedRows.filter(r => /\d/.test((r[i] ?? '').trim())).length;
+      const currencyAt = (i: number) => datedRows.filter(r => {
+        const s = (r[i] ?? '').trim();
+        return /\d/.test(s) && /[.,]/.test(s);
+      }).length;
       for (const numericRole of ['debit', 'credit', 'amount', 'balance'] as const) {
         const col = roles.indexOf(numericRole);
         if (col < 0 || col >= roles.length - 1) continue;
         if (roles[col + 1] !== 'skip') continue;
         const cur = numAt(col);
         const next = numAt(col + 1);
-        if (cur < datedRows.length / 4 && next >= Math.ceil(datedRows.length / 2)) {
-          console.log(`[perLedgerErpRules] ${rule.name} shifting ${numericRole} from col ${col} → col ${col + 1} (${cur}/${datedRows.length} numeric vs ${next}/${datedRows.length} in next column)`);
+        const curCurrency = currencyAt(col);
+        const nextCurrency = currencyAt(col + 1);
+        // Case A (original) — col is mostly empty, next is mostly numeric.
+        const emptyAndFull = cur < datedRows.length / 4 && next >= Math.ceil(datedRows.length / 2);
+        // Case B (new) — col is full of BARE-INTEGER numbers (no
+        // decimals/commas) while next is full of CURRENCY-SHAPE
+        // numbers. Pins the Tally header-shift case.
+        const integerThenCurrency =
+          cur >= Math.ceil(datedRows.length / 2) &&
+          curCurrency < datedRows.length / 4 &&
+          nextCurrency >= Math.ceil(datedRows.length / 2);
+        if (emptyAndFull || integerThenCurrency) {
+          console.log(`[perLedgerErpRules] ${rule.name} shifting ${numericRole} from col ${col} → col ${col + 1} (${cur}/${datedRows.length} numeric, ${curCurrency} currency-shape vs ${next}/${datedRows.length} numeric, ${nextCurrency} currency-shape in next column)`);
           roles[col] = 'skip';
           roles[col + 1] = numericRole;
+        }
+      }
+    }
+  }
+
+  // Voucher-number-column demotion. A column mapped to 'debit' /
+  // 'credit' / 'amount' / 'balance' must contain currency-shape data
+  // (decimals or Indian comma groups). If its FIRST TOKEN on most
+  // rows is a bare integer (no decimal, no comma), it's almost
+  // certainly a Vch No column that the grid extractor mis-anchored
+  // under the wrong header. The Hotel Holiday Inn Tally export
+  // merged "Vch No." and "Debit" headers in the source PDF, so the
+  // columnHeaders synthesis placed "Debit" on the Vch No data
+  // column — making the headerRules' /^debit/ pattern match the
+  // wrong column.
+  //
+  // First-token check (not whole-cell check): on some Tally exports
+  // the "To" rows have the Vch No and the debit amount squashed
+  // into one cell as "2841 538.00". The first token "2841" is still
+  // a bare integer voucher number; the suffix is the amount that
+  // would have lived in a separate column. Examining the first
+  // token distinguishes "voucher number is the leading value" from
+  // "this column is a real amount column" — covers both "By" rows
+  // (col = "60") and "To" rows (col = "2841 538.00") uniformly.
+  //
+  // Demote: 'reference' if the role isn't already taken, otherwise
+  // 'skip'. The required check below then evaluates with the
+  // corrected mapping — if 'debit' was demoted and isn't in the
+  // rule's required set, the rule still fires cleanly.
+  if (dateColForShift >= 0) {
+    const datedRowsForDemote = grid.rows
+      .slice(1)
+      .filter(r => parseDate((r[dateColForShift] ?? '').trim(), inferFiscalYearStart(grid.rows) ?? undefined))
+      .slice(0, 10);
+    if (datedRowsForDemote.length >= 3) {
+      for (const numericRole of ['debit', 'credit', 'amount', 'balance'] as const) {
+        const col = roles.indexOf(numericRole);
+        if (col < 0) continue;
+        // Cells where first token is a bare integer (no decimal, no
+        // comma, no Dr/Cr suffix). Captures both pure-Vch-No cells
+        // and Vch-No-plus-amount merged cells.
+        const bareIntFirstToken = datedRowsForDemote.filter(r => {
+          const s = (r[col] ?? '').trim();
+          return /^\d+(?:\s|$)/.test(s);
+        }).length;
+        const populated = datedRowsForDemote.filter(r => (r[col] ?? '').trim().length > 0).length;
+        // Demote condition: most populated cells have a bare-integer
+        // first token. >50% bare-int-first AND populated covers ≥50%
+        // of rows.
+        if (populated >= Math.ceil(datedRowsForDemote.length / 2) && bareIntFirstToken > populated / 2) {
+          const refTaken = roles.includes('reference');
+          const newRole: ColumnRole = refTaken ? 'skip' : 'reference';
+          console.log(`[perLedgerErpRules] ${rule.name} demoting col ${col} ${numericRole} → ${newRole} (${bareIntFirstToken}/${populated} cells have bare-integer first token — likely Vch No, not an amount)`);
+          roles[col] = newRole;
         }
       }
     }

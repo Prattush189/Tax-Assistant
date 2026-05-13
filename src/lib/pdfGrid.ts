@@ -1675,19 +1675,66 @@ export function applyMapping(
       // take the first non-null/non-zero value (so a separately-
       // rendered amount row supplies the amount the date row was
       // missing).
+      //
+      // CONTRA-DETAIL guard (Tally-style multi-row vouchers).
+      // Some Tally exports list each voucher's contra-account
+      // breakdown on the lines immediately below the parent row:
+      //   10-Jun-24  By (as per details)  Purchase  60        1,08,560.00  1,08,560.00 Cr
+      //              Furniture & Fixtures                     92,000.00 Dr
+      //              IGST INPUT                               16,560.00 Dr
+      //              Metal Frames purchased for…
+      // Rows 2-3 are NOT separate transactions — they're the
+      // contra-account split of the same voucher, shown for
+      // information only. The amounts there carry a "Dr" / "Cr"
+      // suffix to indicate which side of the contra account they
+      // posted to. The legit transaction amount on the parent row
+      // does NOT carry a suffix in debit/credit columns (only the
+      // balance column does — that's a separate Tally convention).
+      //
+      // Without this guard, parseNumber strips the "Dr" suffix and
+      // hands the continuation merge below "92,000.00", which then
+      // overwrites the parent voucher's debit field — corrupting a
+      // pure-credit purchase entry into a credit+debit pair. The
+      // user described this as "balance is being considered in
+      // rows": the contra-detail amounts were polluting the
+      // pending block.
+      //
+      // Detection: the RAW cell text of debit or credit (NOT the
+      // parsed number) ends with "Dr" / "Cr" — that's the contra-
+      // detail suffix. When matched, fold the breakdown into the
+      // narration (so the audit still sees "Furniture & Fixtures
+      // 92,000.00 Dr") but do NOT update pending.debit / credit /
+      // balance. Bank statements never produce this pattern, so
+      // this is ledger-only.
+      const rawDebitCell = cell('debit');
+      const rawCreditCell = cell('credit');
+      const SUFFIX_DR_CR_NUMERIC = /[\d.,]\s*(?:dr|cr)\.?$/i;
+      const isContraDetail =
+        kind === 'ledger' &&
+        (SUFFIX_DR_CR_NUMERIC.test(rawDebitCell) || SUFFIX_DR_CR_NUMERIC.test(rawCreditCell));
+
       if (narr) {
-        pending.narration = pending.narration ? `${pending.narration} ${narr}`.trim() : narr;
+        // For contra-detail rows, fold the breakdown row into the
+        // narration in a parseable form so downstream audits / GST
+        // recon can read the contra split if they need to. The
+        // suffix is preserved.
+        const tail = isContraDetail
+          ? [narr, rawDebitCell, rawCreditCell].filter(Boolean).join(' ').trim()
+          : narr;
+        pending.narration = pending.narration ? `${pending.narration} ${tail}`.trim() : tail;
         stats.mergedContinuations += 1;
       }
-      if ((pending.debit == null || pending.debit === 0) && debit != null && debit !== 0) {
-        pending.debit = debit;
+      if (!isContraDetail) {
+        if ((pending.debit == null || pending.debit === 0) && debit != null && debit !== 0) {
+          pending.debit = debit;
+        }
+        if ((pending.credit == null || pending.credit === 0) && credit != null && credit !== 0) {
+          pending.credit = credit;
+        }
+        if (pending.amountSingle == null && amountSingle != null) pending.amountSingle = amountSingle;
+        if (!pending.drCrMarker && drCrMarker) pending.drCrMarker = drCrMarker;
+        if (pending.balance == null && balance != null) pending.balance = balance;
       }
-      if ((pending.credit == null || pending.credit === 0) && credit != null && credit !== 0) {
-        pending.credit = credit;
-      }
-      if (pending.amountSingle == null && amountSingle != null) pending.amountSingle = amountSingle;
-      if (!pending.drCrMarker && drCrMarker) pending.drCrMarker = drCrMarker;
-      if (pending.balance == null && balance != null) pending.balance = balance;
       if (!pending.voucher && voucher) pending.voucher = voucher;
       if (!pending.reference && reference) pending.reference = reference;
     } else if (narr || debit != null || credit != null) {
