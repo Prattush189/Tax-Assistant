@@ -294,6 +294,85 @@ const TALLY: ErpRule = {
   required: ['date', 'narration', 'debit', 'credit', 'balance'],
 };
 
+// Finsys's wider exports (Statement of Account / Customer ledger
+// variant — OSPL Future Energy is the canonical case) collapse the
+// "Date | Vch.No. | Particulars" header trio into a single column at
+// extraction time. Each transaction line lands in col 0 as
+// "DD/MM/YYYY <narration>" with the Particulars column (col 1) empty
+// across every data row. The trust-but-verify narration check then
+// rejects the rule because col 1 looks unmapped, and the file falls
+// through to the wizard — losing the deterministic extraction we
+// already know how to do.
+//
+// Split col 0 on the leading "DD/MM/YYYY " prefix: keep the date in
+// col 0, push the rest into col 1 (which is empty anyway). Voucher
+// continuation rows in the same export carry "<vch-no> <bill-detail>"
+// in col 0 — those get their col-0 cleared so the row is treated as
+// a date-less continuation, and the bill detail goes into the
+// narration column for continuation-merge to fold in.
+//
+// Gate: only fire when col 0 looks like a merged date+narration
+// column AND col 1 is mostly empty. Two checks so this is a no-op on
+// already-clean Finsys exports where Particulars sits in its own
+// column.
+function finsysSplitDateNarrationColumn(grid: PdfGrid): PdfGrid {
+  const datePrefix = /^(\d{1,2}\/\d{1,2}\/\d{2,4})\s+(.+)$/;
+  const vchPrefix = /^(\d{4,8})\s+(.+)$/;
+  const sample = grid.rows.slice(0, 80);
+  const dateMatches = sample.filter(r => datePrefix.test((r[0] ?? '').trim())).length;
+  if (dateMatches < 5) return grid;
+  // If col 1 has its own content, the export is already separated.
+  // Don't risk overwriting genuine narration data.
+  const col1Populated = sample.filter(r => (r[1] ?? '').trim().length > 0).length;
+  if (col1Populated > 5) return grid;
+
+  console.log(`[perLedgerErpRules] Finsys ERP splitting merged Date+Narration column 0 (${dateMatches}/${sample.length} rows have date prefix, col 1 empty in ${sample.length - col1Populated}/${sample.length})`);
+
+  // "Balance B/f" is the per-page opening-balance carry-forward
+  // Finsys prints at the top of every page. The first occurrence
+  // (page 1) is the account's actual opening balance; subsequent
+  // ones are visual page-break repeats. Both land with col 0 =
+  // "Balance B/f" and col 1 empty, so the downstream opening
+  // detection (which keys on `narration === "Opening Balance"`)
+  // misses them entirely — opening reads as 0 and recon math is
+  // off by the carry-forward value. Rewrite col 0 / col 1 so the
+  // first row's narration matches the opening regex; later
+  // occurrences contribute amount=0 placeholders (harmless to
+  // totals — see opening-balance rescue in flushPending).
+  const balanceBf = /^balance\s+b\s*\/?\s*f\b/i;
+  const newRows: string[][] = grid.rows.map(r => {
+    const out = [...r];
+    while (out.length < grid.columnCount) out.push('');
+    const cell0 = (r[0] ?? '').trim();
+    const dateMatch = datePrefix.exec(cell0);
+    if (dateMatch) {
+      out[0] = dateMatch[1];
+      out[1] = dateMatch[2];
+      return out;
+    }
+    const vchMatch = vchPrefix.exec(cell0);
+    if (vchMatch) {
+      // Continuation row: vch no + bill-detail text. Clear col 0 so
+      // parseDate fails (correct — this row has no date), put the
+      // bill-detail in col 1 so the continuation-merge in
+      // applyMapping folds it into the parent transaction's narration.
+      out[0] = '';
+      out[1] = vchMatch[2];
+      return out;
+    }
+    if (balanceBf.test(cell0)) {
+      // Translate to the canonical "Opening Balance" narration so
+      // the downstream opening pickup matches it. Clear col 0 so
+      // parseDate fails (it's not a transaction date).
+      out[0] = '';
+      out[1] = 'Opening Balance';
+      return out;
+    }
+    return out;
+  });
+  return { ...grid, rows: newRows };
+}
+
 const FINSYS: ErpRule = {
   name: 'Finsys ERP',
   fingerprints: [
@@ -306,6 +385,7 @@ const FINSYS: ErpRule = {
     'ledger code :',
     'totals & balance',
   ],
+  preprocess: finsysSplitDateNarrationColumn,
   headerRules: [
     // Finsys voucher column is literally "Type" — single word, often
     // a single character ('J', 'P', 'R') in data cells. Anchor on

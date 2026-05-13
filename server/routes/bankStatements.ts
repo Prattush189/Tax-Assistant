@@ -5,13 +5,12 @@ import multer, { MulterError } from 'multer';
 import Papa from 'papaparse';
 import { extractVisionWithFallback } from '../lib/visionFallback.js';
 import { callGeminiJson, type GeminiJsonResult } from '../lib/geminiJson.js';
-import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_TSV_PROMPT, BANK_STATEMENT_CATEGORIES, buildConditionsBlock, countWords, MAX_CONDITION_WORDS } from '../lib/bankStatementPrompt.js';
+import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_CATEGORIES, buildConditionsBlock, countWords, MAX_CONDITION_WORDS } from '../lib/bankStatementPrompt.js';
 import { classifyRow, extractCounterpartyAndReference, markRecurring } from '../lib/bankClassifier.js';
-import { gemini, GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, costForModel } from '../lib/gemini.js';
+import { costForModel } from '../lib/gemini.js';
 import { creditsForPages, creditsForCsvRows, PAGES_PER_CREDIT, CSV_ROWS_PER_CREDIT } from '../lib/creditPolicy.js';
 import { enforceTokenQuota } from '../lib/tokenQuota.js';
-import { estimateBankStatementText, estimateGeminiVision, estimateFromChars } from '../lib/tokenEstimate.js';
-import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
+import { estimateGeminiVision, estimateFromChars } from '../lib/tokenEstimate.js';
 import { bankStatementRepo } from '../db/repositories/bankStatementRepo.js';
 import { bankTransactionRepo, BankTransactionInput } from '../db/repositories/bankTransactionRepo.js';
 import { bankStatementRuleRepo, BankStatementRuleRow } from '../db/repositories/bankStatementRuleRepo.js';
@@ -80,373 +79,6 @@ type ExtractedStatement = {
   transactions: unknown[];
 };
 
-// ── TSV extraction helper for pre-extracted PDF text ──────────────────────
-// See BANK_STATEMENT_TSV_PROMPT. We send one raw text chunk per call, get
-// back a header line + N transaction lines + trailer `---END:<N>---`, and
-// verify the trailer count matches the parsed row count so we never
-// silently drop transactions.
-
-interface TsvExtractResult {
-  bankName: string | null;
-  accountNumberMasked: string | null;
-  periodFrom: string | null;
-  periodTo: string | null;
-  /** Bank's printed opening / closing balance for the chunk. The TSV
-   *  prompt now asks for these so verifyClosingBalance fires on the
-   *  digital-PDF path too — same row-level diagnostic as vision. */
-  openingBalance: number | null;
-  closingBalance: number | null;
-  /** See ExtractedStatement.accountKind — same semantics. TSV chunks
-   *  inherit this from the first chunk that reports it; merging in
-   *  mergeExtractions favours non-null over null so a single positive
-   *  identification on any chunk wins. */
-  accountKind: 'asset' | 'liability' | null;
-  transactions: unknown[];
-  inputTokens: number;
-  outputTokens: number;
-  modelUsed: string;
-  declaredCount: number;
-  actualCount: number;
-}
-
-function cleanTsvCell(s: string): string {
-  const t = s.trim();
-  if (t === '' || t.toLowerCase() === 'null') return '';
-  return t;
-}
-
-function parseTsvResponse(raw: string): Omit<TsvExtractResult, 'inputTokens' | 'outputTokens' | 'modelUsed'> & { droppedReasons: string[] } {
-  // Strip accidental code fences — the prompt forbids them but models slip.
-  const text = raw.replace(/^```[a-z]*\n?/im, '').replace(/\n?```\s*$/m, '').trim();
-  const lines = text.split(/\r?\n/);
-
-  let bankName: string | null = null;
-  let accountNumberMasked: string | null = null;
-  let periodFrom: string | null = null;
-  let periodTo: string | null = null;
-  let openingBalance: number | null = null;
-  let closingBalance: number | null = null;
-  let accountKind: 'asset' | 'liability' | null = null;
-  const rows: unknown[] = [];
-  const droppedReasons: string[] = [];
-  let declaredCount = -1;
-
-  for (const line of lines) {
-    if (!line.trim()) continue;
-    if (line.startsWith('HEADER\t')) {
-      const h = line.split('\t');
-      bankName = cleanTsvCell(h[1] ?? '') || null;
-      accountNumberMasked = cleanTsvCell(h[2] ?? '') || null;
-      periodFrom = cleanTsvCell(h[3] ?? '') || null;
-      periodTo = cleanTsvCell(h[4] ?? '') || null;
-      // openingBalance / closingBalance are new — fields 5 and 6.
-      // Older chunks that pre-date the prompt update emit only 5
-      // fields and these fall through as null, which is fine
-      // (verifyClosingBalance just no-ops in that case).
-      const openStr = cleanTsvCell(h[5] ?? '');
-      const closeStr = cleanTsvCell(h[6] ?? '');
-      const openNum = openStr === '' ? NaN : Number(openStr.replace(/[,\s]/g, ''));
-      const closeNum = closeStr === '' ? NaN : Number(closeStr.replace(/[,\s]/g, ''));
-      openingBalance = Number.isFinite(openNum) ? openNum : null;
-      closingBalance = Number.isFinite(closeNum) ? closeNum : null;
-      // accountKind is field 7 — also new. Accept the strings the
-      // prompt emits ('asset' / 'liability'); anything else collapses
-      // to null and the server treats it as 'asset' downstream.
-      const kindStr = cleanTsvCell(h[7] ?? '').toLowerCase();
-      accountKind = kindStr === 'liability' ? 'liability' : kindStr === 'asset' ? 'asset' : null;
-      continue;
-    }
-    const endMatch = /^---END:(\d+)---$/.exec(line.trim());
-    if (endMatch) {
-      declaredCount = parseInt(endMatch[1], 10);
-      break; // trailer — ignore anything after
-    }
-    const parts = line.split('\t');
-    // Required: date + narration + (debit OR credit) + balance — five
-    // structural fields, no categorization columns (those are derived
-    // server-side now). Gemini occasionally trims trailing empty cells,
-    // so we tolerate down to 4 fields (missing balance) and treat the
-    // last as empty.
-    if (parts.length < 4) {
-      droppedReasons.push(`fields=${parts.length}`);
-      continue;
-    }
-    // debit & credit are separate columns so the model never has to decide
-    // sign — it just copies the numbers it sees. Exactly one should be
-    // populated per row; we compute signed amount server-side.
-    const debitStr = cleanTsvCell(parts[2] ?? '');
-    const creditStr = cleanTsvCell(parts[3] ?? '');
-    const debit = debitStr === '' ? 0 : Number(debitStr.replace(/[,\s]/g, ''));
-    const credit = creditStr === '' ? 0 : Number(creditStr.replace(/[,\s]/g, ''));
-    if (!Number.isFinite(debit) || !Number.isFinite(credit)) {
-      droppedReasons.push('NaN-amount');
-      continue;
-    }
-    // If both populated, take the larger one as the actual amount (the
-    // other is almost always a misplaced balance/reference). Drops were
-    // accumulating fast enough on Tally-style exports to fail entire
-    // chunks; salvaging is far cheaper than retrying.
-    let signedAmount: number;
-    if (debit > 0 && credit > 0) {
-      droppedReasons.push('both-debit-and-credit-salvaged');
-      signedAmount = debit >= credit ? -debit : credit;
-    } else if (debit === 0 && credit === 0) {
-      droppedReasons.push('no-amount');
-      continue;
-    } else {
-      signedAmount = credit - debit; // positive = inflow, negative = outflow
-    }
-    const balanceStr = cleanTsvCell(parts[4] ?? '');
-    const balance = balanceStr === '' ? null : Number(balanceStr.replace(/[,\s]/g, ''));
-    const narration = cleanTsvCell(parts[1] ?? '');
-    const type: 'credit' | 'debit' = signedAmount >= 0 ? 'credit' : 'debit';
-    // Server-side classifier pre-pass. The TSV prompt no longer asks
-    // for category / subcategory / counterparty / reference (Phase A
-    // token-cost cut). For rows the classifier hits, we fill the
-    // fields here. For rows it doesn't, we fall back to category=Other
-    // with regex-extracted counterparty/reference. The TSV path
-    // doesn't currently send unclassified rows to a second AI call —
-    // it's accepted that a chunk-extracted statement on an exotic
-    // narration may end up in "Other" rather than the perfect
-    // category. Users can re-tag from the UI; this is a deliberate
-    // cost / accuracy tradeoff for the raw-text path that the CSV
-    // path (rule-matched banks) doesn't share.
-    const classified = classifyRow({ narration, type, amount: signedAmount });
-    let category: string;
-    let subcategory: string | null;
-    let counterparty: string | null;
-    let reference: string | null;
-    if (classified) {
-      category = classified.category;
-      subcategory = classified.subcategory;
-      counterparty = classified.counterparty;
-      reference = classified.reference;
-    } else {
-      const extracted = extractCounterpartyAndReference(narration);
-      category = 'Other';
-      subcategory = null;
-      counterparty = extracted.counterparty;
-      reference = extracted.reference;
-    }
-    rows.push({
-      date: cleanTsvCell(parts[0] ?? ''),
-      narration,
-      amount: signedAmount,
-      type,
-      balance: Number.isFinite(balance as number) ? balance : null,
-      category,
-      subcategory,
-      counterparty,
-      reference,
-      isRecurring: false, // markRecurring runs once after all chunks merge
-    });
-  }
-
-  return {
-    bankName,
-    accountNumberMasked,
-    periodFrom,
-    periodTo,
-    openingBalance,
-    closingBalance,
-    accountKind,
-    transactions: rows,
-    declaredCount,
-    actualCount: rows.length,
-    droppedReasons,
-  };
-}
-
-type BankRecordAttempt = (input: { failed: boolean; inputTokens: number; outputTokens: number; model: string }) => void;
-const BANK_NOOP_RECORD: BankRecordAttempt = () => {};
-
-async function extractBankStatementTsvOnce(
-  chunkText: string,
-  model: string,
-  maxTokens: number,
-  reasoningEffort: 'none' | 'low' | 'medium' | 'high',
-  conditionsBlock: string,
-  recordAttempt: BankRecordAttempt = BANK_NOOP_RECORD,
-): Promise<TsvExtractResult> {
-  const messages: ChatCompletionMessageParam[] = [{
-    role: 'user',
-    content: `${conditionsBlock}${BANK_STATEMENT_TSV_PROMPT}\n\nINPUT_TEXT:\n${chunkText}`,
-  }];
-  // `reasoning_effort` is the OpenAI-compat knob for Gemini's
-  // thinking budget. Always 'none' on this path — transcribing rows
-  // from already-extracted text has no creative component, so any
-  // thinking tokens just eat into max_tokens and produce truncated
-  // TSV. Both active models (T2, T1) accept 'none'.
-  //
-  // `temperature: 0` makes the extraction deterministic — without it, the
-  // same statement run twice produced different categorizations, amount
-  // signs, and counterparty strings (total inflow varied by ~₹30K across
-  // runs). Transcription + rule-based categorization has no creative
-  // component; sampling just adds noise.
-  const response = await gemini.chat.completions.create({
-    model,
-    max_tokens: maxTokens,
-    messages,
-    stream: false,
-    reasoning_effort: reasoningEffort,
-    temperature: 0,
-  });
-  const raw = response.choices[0]?.message?.content ?? '';
-  const finishReason = response.choices[0]?.finish_reason ?? 'unknown';
-  const inputTokens = response.usage?.prompt_tokens ?? 0;
-  const outputTokens = response.usage?.completion_tokens ?? 0;
-  // Capture usage immediately so a parse-failure throw still reports
-  // wasted spend via recordAttempt. Without this, retries / truncations
-  // / trailer mismatches burned billable tokens that never landed in
-  // usageRepo (the same blind spot as ledger extract).
-  let succeeded = false;
-  try {
-    const parsed = parseTsvResponse(raw);
-
-    // Integrity check #1: trailer MUST be present. Its absence means either
-    // the model's output was truncated mid-stream (hit max_tokens) OR the
-    // model returned a short prose reply / refusal that happens to contain
-    // a couple of tab-separated lines. Log the raw preview + finish_reason
-    // so the logs tell us which case it is on the next occurrence.
-    if (parsed.declaredCount < 0) {
-      const preview = raw.slice(0, 300).replace(/\n/g, '\\n');
-      console.warn(`[bank-statements] ${model} truncated (finish_reason=${finishReason}, got ${parsed.actualCount} rows). Raw preview: ${preview}`);
-      throw new Error(`TSV response was truncated: missing ---END:N--- trailer (got ${parsed.actualCount} rows, finish_reason=${finishReason})`);
-    }
-
-    // Integrity check #2: parsed rows MUST NOT be fewer than the trailer count.
-    // If we parsed fewer rows than the model says it emitted, we silently dropped
-    // some (malformed lines, wrong field count) — fail loudly. If we parsed MORE
-    // than declared, the model miscounted its own trailer (an empirically common
-    // Gemini quirk on dense statements); the rows themselves are fine so accept
-    // the parsed count. The statement-level countLikelyDates cross-check still
-    // catches wholesale row loss.
-    if (parsed.actualCount < parsed.declaredCount) {
-      const reasonCounts = parsed.droppedReasons.reduce<Record<string, number>>((acc, r) => {
-        acc[r] = (acc[r] ?? 0) + 1;
-        return acc;
-      }, {});
-      const reasonStr = Object.entries(reasonCounts).map(([k, v]) => `${k}=${v}`).join(',') || 'unknown';
-      // Tolerate small drops — up to 2 rows AND under 10% — and accept
-      // the parsed batch with a warning instead of failing the whole
-      // chunk. The statement-level countLikelyDates cross-check still
-      // catches wholesale row loss; this just stops a 31/32 off-by-one
-      // from cascading T2 → T1 → user-facing error.
-      const dropped = parsed.declaredCount - parsed.actualCount;
-      const dropFrac = parsed.declaredCount > 0 ? dropped / parsed.declaredCount : 1;
-      if (dropped <= 2 && dropFrac < 0.10) {
-        console.warn(`[bank-statements] ${model} minor row loss: claimed ${parsed.declaredCount}, parsed ${parsed.actualCount} (${reasonStr}) — accepting`);
-      } else {
-        throw new Error(`TSV row-count mismatch: trailer claims ${parsed.declaredCount}, parsed ${parsed.actualCount} (dropped: ${reasonStr})`);
-      }
-    }
-    if (parsed.actualCount > parsed.declaredCount) {
-      console.warn(`[bank-statements] ${model} trailer undercount: claimed ${parsed.declaredCount}, parsed ${parsed.actualCount} — accepting parsed count`);
-    }
-
-    succeeded = true;
-    return {
-      ...parsed,
-      inputTokens,
-      outputTokens,
-      modelUsed: model,
-    };
-  } finally {
-    recordAttempt({ failed: !succeeded, inputTokens, outputTokens, model });
-  }
-}
-
-/**
- * Retry + fallback wrapper around the TSV extraction.
- *
- * Two-tier Gemini cascade:
- *   - Primary : T2 (gemini-2.5-flash-lite) — fast, cheap, thinking off.
- *   - Fallback: T1 (gemini-3.1-flash-lite-preview) — different model
- *                                                   family, independent
- *                                                   capacity. Doubled
- *                                                   output ceiling
- *                                                   absorbs truncation
- *                                                   on dense chunks.
- *
- * Retry shape:
- *   - Primary  × 4 attempts, exp backoff 2s/5s/12s with jitter, on 429/5xx.
- *   - Fallback × 3 attempts, flat backoff ~3s with jitter, on 429/5xx.
- *   - 400 from either tier: skip the rest of that tier's retries (retrying
- *     a 400 doesn't help) and escalate. Most 400s from Gemini's OpenAI-
- *     compatible endpoint come from preview-model quirks, which the other
- *     model usually doesn't share.
- *   - Validation failures (truncation / trailer mismatch) break out
- *     immediately at each tier — the fallback's doubled output ceiling is
- *     exactly what resolves truncation, so we don't waste another 30-50s
- *     retrying the same params on the same model.
- */
-async function extractBankStatementTsv(chunkText: string, maxTokens: number, conditionsBlock: string, recordAttempt: BankRecordAttempt = BANK_NOOP_RECORD): Promise<TsvExtractResult> {
-  const MAX_PRIMARY_ATTEMPTS = 4;
-  const MAX_FALLBACK_ATTEMPTS = 3;
-  let lastErr: unknown;
-
-  // Jitter on retries: when multiple chunks land on the same upstream blip,
-  // lock-stepped backoffs all reawake in the same window and slam Gemini
-  // together. 300-900ms of noise desynchronises them.
-  const jitter = () => 300 + Math.floor(Math.random() * 600);
-  const isRetryableStatus = (s: number) =>
-    s === 429 || s === 500 || s === 502 || s === 503 || s === 504;
-  const tierDone = (err: unknown): boolean => {
-    const msg = (err as Error).message ?? '';
-    const status = (err as { status?: number })?.status ?? 0;
-    if (/trailer|mismatch|truncated/i.test(msg)) return true;   // retry won't help
-    if (status === 400) return true;                            // 400 = client error, escalate
-    if (!isRetryableStatus(status) && status !== 0) return true; // unknown non-retryable
-    return false;
-  };
-
-  // Exponential backoff tuned for 503 recovery: Gemini usually recovers in
-  // 5-30s, so waiting 2s / 5s / 12s before giving up on the primary is more
-  // productive than 3 quick retries that all land during the same blip.
-  const PRIMARY_BACKOFFS_MS = [2_000, 5_000, 12_000];
-  for (let attempt = 0; attempt < MAX_PRIMARY_ATTEMPTS; attempt++) {
-    try {
-      // T2 (gemini-2.5-flash-lite) supports thinking_budget=0 — no overhead.
-      return await extractBankStatementTsvOnce(chunkText, GEMINI_CHAT_MODEL_T2, maxTokens, 'none', conditionsBlock, recordAttempt);
-    } catch (err) {
-      lastErr = err;
-      const status = (err as { status?: number })?.status ?? 0;
-      const msg = (err as Error).message?.slice(0, 140) ?? '';
-      if (tierDone(err)) {
-        console.warn(`[bank-statements] primary ${GEMINI_CHAT_MODEL_T2} giving up after attempt ${attempt + 1}: ${status || 'no status'} — ${msg}`);
-        break;
-      }
-      if (attempt < MAX_PRIMARY_ATTEMPTS - 1) {
-        const wait = (PRIMARY_BACKOFFS_MS[attempt] ?? 12_000) + jitter();
-        console.warn(`[bank-statements] primary attempt ${attempt + 1}/${MAX_PRIMARY_ATTEMPTS} failed (${status || 'no status'}); retrying in ${wait}ms`);
-        await new Promise(r => setTimeout(r, wait));
-      }
-    }
-  }
-
-  // Fallback: T1 (gemini-3.1-flash-lite-preview) — different model
-  // family, independent capacity. Doubles the output ceiling to absorb
-  // the truncation case the primary can't escape on dense chunks.
-  for (let attempt = 0; attempt < MAX_FALLBACK_ATTEMPTS; attempt++) {
-    try {
-      return await extractBankStatementTsvOnce(chunkText, GEMINI_CHAT_MODEL_T1, maxTokens * 2, 'none', conditionsBlock, recordAttempt);
-    } catch (err) {
-      lastErr = err;
-      const status = (err as { status?: number })?.status ?? 0;
-      const msg = (err as Error).message?.slice(0, 140) ?? '';
-      if (tierDone(err)) {
-        console.warn(`[bank-statements] fallback ${GEMINI_CHAT_MODEL_T1} giving up after attempt ${attempt + 1}: ${status || 'no status'} — ${msg}`);
-        break;
-      }
-      if (attempt < MAX_FALLBACK_ATTEMPTS - 1) {
-        const wait = 3_000 + jitter();
-        console.warn(`[bank-statements] fallback attempt ${attempt + 1}/${MAX_FALLBACK_ATTEMPTS} failed (${status || 'no status'}); retrying in ${wait}ms`);
-        await new Promise(r => setTimeout(r, wait));
-      }
-    }
-  }
-  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
-}
 
 /** Run async tasks in bounded-concurrency batches. Lets us parallelize chunk
  *  extraction without hammering Gemini with 6+ concurrent requests per key,
@@ -469,23 +101,6 @@ async function mapWithConcurrency<T, U>(
   return results;
 }
 
-/** Rough lower-bound on transaction count by counting dates in the raw text.
- *  Used as a cross-check to catch cases where the model skipped rows despite
- *  a valid trailer. Conservative — we only fail if the delta is large. */
-function countLikelyDates(text: string): number {
-  const patterns = [
-    /\b\d{2}\/\d{2}\/\d{4}\b/g,
-    /\b\d{2}-\d{2}-\d{4}\b/g,
-    /\b\d{4}-\d{2}-\d{2}\b/g,
-    /\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+\d{2,4}\b/gi,
-  ];
-  const seen = new Set<string>();
-  for (const re of patterns) {
-    const matches = text.match(re);
-    if (matches) for (const m of matches) seen.add(m.toLowerCase() + '@' + (text.indexOf(m)));
-  }
-  return seen.size;
-}
 
 function toNumber(v: unknown): number {
   if (typeof v === 'number' && Number.isFinite(v)) return v;
@@ -1276,7 +891,10 @@ router.post(
     // budget and collectively bust the cap.
     const preflightEstimate = (() => {
       if (req.file) return estimateGeminiVision(req.file.size);
-      if (typeof req.body?.pdfText === 'string') return estimateBankStatementText(req.body.pdfText.length);
+      // The pdfText / TSV path used to live here too — killed after the
+      // wizard's column threshold loosened to 3, which routed every
+      // grid-extractable PDF through the cheap CSV path and left only
+      // genuinely-un-grid-able uploads to the vision path above.
       if (typeof req.body?.csvText === 'string') return estimateFromChars(req.body.csvText.length + 800);
       return 0;
     })();
@@ -1296,35 +914,34 @@ router.post(
     const userConditions = bankStatementConditionRepo.listByUser(req.user.id);
     const conditionsBlock = buildConditionsBlock(userConditions);
 
-    const isPdfText = !req.file && typeof req.body?.pdfText === 'string' && req.body.pdfText.length > 0;
-    const isCsv = !req.file && !isPdfText && typeof req.body?.csvText === 'string';
+    const isCsv = !req.file && typeof req.body?.csvText === 'string';
 
-    if (!req.file && !isPdfText && !isCsv) {
-      res.status(400).json({ error: 'Provide a PDF/image file, pdfText body, or csvText body.' });
+    if (!req.file && !isCsv) {
+      // The legacy `pdfText` body shape used to land here and dispatch
+      // to the chunked TSV extraction path. That path was retired —
+      // every digital PDF now goes through the wizard → CSV path
+      // (cheap deterministic classifier + a small ambiguous-rows AI
+      // call), and un-grid-able PDFs land on the vision multipart
+      // path above. Reject `pdfText` bodies explicitly so old clients
+      // don't silently fail with a generic 400.
+      if (typeof req.body?.pdfText === 'string') {
+        res.status(410).json({
+          error: 'The pdfText / TSV extraction endpoint was retired. Re-run the upload — the client extracts the grid in the browser and posts a CSV instead.',
+        });
+        return;
+      }
+      res.status(400).json({ error: 'Provide a PDF/image file or csvText body.' });
       return;
     }
 
-    // Opt-in SSE progress stream — only meaningful for the pdfText path
-    // because that's the one with visible multi-chunk work. Image/vision and
-    // CSV complete in a single call and just use the JSON response.
-    const wantsStream = isPdfText && req.body?.stream === true;
+    // SSE progress stream — kept for the CSV path's multi-batch
+    // enrichment work (each ambiguous-row batch fires a progress
+    // event). Vision is single-call and uses the JSON response.
     let sseOpen = false;
     const sendSse = (obj: unknown) => {
       if (!sseOpen) return;
       try { res.write(`data: ${JSON.stringify(obj)}\n\n`); } catch { /* client disconnected */ }
     };
-    if (wantsStream) {
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream; charset=utf-8',
-        'Cache-Control': 'no-cache, no-transform',
-        'Connection': 'keep-alive',
-        // Tell any upstream nginx/proxy not to buffer — otherwise chunk
-        // completions don't reach the browser until the whole response ends,
-        // defeating the progress bar.
-        'X-Accel-Buffering': 'no',
-      });
-      sseOpen = true;
-    }
 
     // Compute a fingerprint of the input so we can:
     //   1. Refuse a duplicate analysis if one's already running for this
@@ -1336,8 +953,6 @@ router.post(
     let fileHash: string | null = null;
     if (req.file) {
       fileHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
-    } else if (isPdfText) {
-      fileHash = crypto.createHash('sha256').update(String(req.body.pdfText)).digest('hex');
     } else if (isCsv) {
       fileHash = crypto.createHash('sha256').update(String(req.body.csvText)).digest('hex');
     }
@@ -1382,11 +997,7 @@ router.post(
     let pagesTotal = 0;
     let creditsNeeded = 0;
     let pagesUnit: 'pages' | 'rows' = 'pages';
-    if (isPdfText) {
-      const pages = String(req.body.pdfText).split(/\n?---\s*PAGE BREAK\s*---\n?/).filter(p => p.trim()).length;
-      pagesTotal = Math.max(1, pages);
-      creditsNeeded = creditsForPages('bank_statement', pagesTotal);
-    } else if (isCsv) {
+    if (isCsv) {
       // Rough count without re-parsing the whole CSV — header + non-empty
       // lines. The full Papa.parse runs later in the CSV branch; close
       // enough for the pre-flight gate.
@@ -1484,229 +1095,6 @@ router.post(
             modelUsed: visionResult.modelUsed,
           }];
         }
-      } else if (isPdfText) {
-        // Fast path: the frontend extracted the PDF text layer via pdfjs-dist
-        // and sent it here. Gemini parses plain text ~3-5× faster than vision
-        // because there's no OCR / layout analysis phase.
-        //
-        // Strategy (correctness > speed, but both matter):
-        //   1. Compact TSV output — each tx is one tab-separated line (~70
-        //      chars) instead of JSON (~250 chars). Fits ~3-4× more rows per
-        //      response.
-        //   2. max_tokens = 8192 with ~20K-char input chunks — sized to sit
-        //      well inside flash-lite's practical reliable output ceiling so
-        //      chunks don't truncate. On truncation we escalate to flash
-        //      (16K tokens) rather than retry flash-lite with the same params.
-        //   3. Chunks run with bounded concurrency (4 in flight) to avoid
-        //      tripping per-key rate limits — unbounded parallelism on 6+
-        //      chunks was producing 429s that compounded with retries.
-        //   4. Every response carries a `---END:N---` trailer. We verify the
-        //      trailer count matches the parsed row count — if it doesn't,
-        //      the output was truncated or malformed and we FAIL LOUDLY
-        //      rather than persist a silently-incomplete extraction.
-        //   5. A cross-check against the raw input's date count catches the
-        //      rare case where Gemini emits a valid trailer but skipped rows.
-        filename = typeof req.body?.filename === 'string' ? req.body.filename : 'statement.pdf';
-        mimeType = 'application/pdf';
-        const rawText = String(req.body.pdfText);
-        const pages = rawText.split(/\n?---\s*PAGE BREAK\s*---\n?/).map(p => p.trim()).filter(Boolean);
-        // Sizing: aim for chunks that reliably finish on flash-lite within
-        // its practical output ceiling (~8K tokens / ~400 TSV rows). 40K char
-        // chunks with 16K max_tokens routinely truncated — each failure cost
-        // ~50s and then we'd retry identical params. Halving the input and
-        // the output budget means a chunk takes 10-15s typical, leaves
-        // headroom against truncation, and the concurrency cap below keeps
-        // per-key rate limits from turning parallel calls into 429s.
-        //
-        //   ~20K chars ≈ 6-8 typical pages ≈ 180-250 transactions.
-        //   20 chunks covers statements up to ~150 pages. Going past the cap
-        //   silently drops pages, which is unacceptable for a tax feature —
-        //   the explicit ceiling still bounds worst-case cost per request.
-        // Sizing: aim for chunks that reliably finish on gemini-2.5-flash.
-        // 20K char chunks with 8K max_tokens were producing short/truncated
-        // responses (1-9 rows for a 17-page chunk) — the model was bailing
-        // early on dense input, not running out of tokens. Halving to 12K
-        // gives the model a clearer task per call. Each chunk is now
-        // ~4 typical pages / ~120 transactions, well inside what even a
-        // noisy flash response can handle.
-        //
-        //   ~12K chars ≈ 4 typical pages ≈ 120 transactions.
-        //   35 chunks covers statements up to ~140 pages. The explicit
-        //   ceiling bounds worst-case cost per request.
-        // Sizing for dense-narration statements (e.g. Canara Bank UPI, where
-        // a single row can run 200-250 chars). 12K-char chunks with 8K output
-        // tokens were producing finish_reason=length at ~61-70 rows on dense
-        // chunks even after disabling thinking-token consumption. Shrinking to
-        // 8K-char input / 16K-token output gives ~4× the headroom: each chunk
-        // now holds ~60-80 rows and fits comfortably inside 16K output tokens
-        // of pure TSV (no thinking), which is ~500+ rows of budget.
-        //
-        //   ~8K chars ≈ 2-3 typical pages ≈ 60-80 transactions.
-        //   50 chunks covers statements up to ~150 pages.
-        const MAX_CHARS_PER_CHUNK = 8_000;
-        const MAX_OUTPUT_TOKENS = 16_384;
-        const MAX_CHUNKS = 50;
-        // Concurrency 4: with thinking disabled on the primary and the larger
-        // output budget, individual chunks are more reliable, so we can push
-        // parallelism back up without tripping the retry ladder. A 46-page
-        // statement now completes in 2 waves (~50s) instead of 4 (~80s). If
-        // we start seeing sustained 429/503 bursts, drop back to 2.
-        const CHUNK_CONCURRENCY = 4;
-
-        // Build chunks by packing pages until we approach the char budget.
-        // This means a 10-page statement is ONE call; 46 pages → 3 calls.
-        const chunks: string[] = [];
-        const chunkPageRanges: Array<[number, number]> = [];
-        {
-          let buf: string[] = [];
-          let bufLen = 0;
-          let firstPage = 1;
-          for (let i = 0; i < pages.length; i++) {
-            const p = pages[i];
-            if (buf.length > 0 && bufLen + p.length > MAX_CHARS_PER_CHUNK) {
-              chunks.push(buf.join('\n\n'));
-              chunkPageRanges.push([firstPage, i]);
-              buf = [];
-              bufLen = 0;
-              firstPage = i + 1;
-              if (chunks.length >= MAX_CHUNKS) break;
-            }
-            buf.push(p);
-            bufLen += p.length + 2;
-          }
-          if (buf.length > 0 && chunks.length < MAX_CHUNKS) {
-            chunks.push(buf.join('\n\n'));
-            chunkPageRanges.push([firstPage, pages.length]);
-          }
-          if (chunks.length === 0) {
-            chunks.push(rawText.slice(0, MAX_CHARS_PER_CHUNK));
-            chunkPageRanges.push([1, 1]);
-          }
-        }
-        const dateCount = countLikelyDates(rawText);
-        console.log(`[bank-statements] pdfText: ${pages.length} pages → ${chunks.length} chunk(s), ~${dateCount} candidate dates`);
-
-        sendSse({ type: 'start', totalChunks: chunks.length, pages: pages.length });
-
-        // Failed-attempt cost logging closure. Production logs across the
-        // chunked TSV pipeline showed retries / truncations / trailer
-        // mismatches burning Gemini tokens that never landed in
-        // usageRepo. This makes wasted spend visible in the admin
-        // dashboard under category `bank_statement_failed`.
-        const bankClientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
-        const recordBankAttempt: BankRecordAttempt = ({ failed, inputTokens, outputTokens, model }) => {
-          if (!failed) return;
-          if (inputTokens === 0 && outputTokens === 0) return;
-          try {
-            const cost = costForModel(model, inputTokens, outputTokens);
-            // status='failed' so this attempt is excluded from the
-            // user's token budget (the user shouldn't pay for our
-            // retries). Still logged with full token counts so admin
-            // dashboard sees the wasted spend.
-            usageRepo.logWithBilling(
-              bankClientIp,
-              req.user!.id,
-              quota.billingUserId,
-              inputTokens,
-              outputTokens,
-              cost,
-              false,
-              model,
-              false,
-              'bank_statement',
-              0,
-              'failed',
-            );
-          } catch (e) {
-            console.error('[bank-statements] failed-attempt cost log error', e);
-          }
-        };
-
-        // Bounded-concurrency: we still need every chunk to succeed (silently
-        // dropping transactions is unacceptable for a tax feature) but firing
-        // all chunks at Gemini simultaneously produces 429s on a single
-        // API key. Four concurrent calls keeps us well under the per-key RPM
-        // cap while still completing a 10-chunk statement in roughly 3 waves.
-        let completedCount = 0;
-        const chunkResults = await mapWithConcurrency(
-          chunks,
-          CHUNK_CONCURRENCY,
-          async (chunk, idx) => {
-            const t0 = Date.now();
-            try {
-              const r = await extractBankStatementTsv(chunk, MAX_OUTPUT_TOKENS, conditionsBlock, recordBankAttempt);
-              console.log(`[bank-statements] chunk ${idx + 1}/${chunks.length} (pages ${chunkPageRanges[idx][0]}-${chunkPageRanges[idx][1]}) ✓ ${r.actualCount} tx in ${Date.now() - t0}ms`);
-              // Tick pages_processed so a cancel debits credits
-              // proportional to the work actually done.
-              const chunkPages = chunkPageRanges[idx][1] - chunkPageRanges[idx][0] + 1;
-              bankStatementRepo.bumpPagesProcessed(placeholder.id, req.user!.id, chunkPages);
-              completedCount += 1;
-              sendSse({
-                type: 'progress',
-                completed: completedCount,
-                total: chunks.length,
-                pages: chunkPageRanges[idx],
-                txInChunk: r.actualCount,
-              });
-              return r;
-            } catch (e) {
-              const msg = (e as Error).message ?? String(e);
-              console.error(`[bank-statements] chunk ${idx + 1}/${chunks.length} (pages ${chunkPageRanges[idx][0]}-${chunkPageRanges[idx][1]}) ✗ ${msg}`);
-              throw new Error(`Section ${idx + 1}/${chunks.length} (pages ${chunkPageRanges[idx][0]}-${chunkPageRanges[idx][1]}): ${msg}`);
-            }
-          },
-        );
-
-        const merged = chunkResults.flatMap(r => r.transactions);
-        // markRecurring sees the full statement in one pass (recurring
-        // detection needs at least 2 occurrences of the same narration
-        // pattern, which can sit in different chunks). Each chunk
-        // already classified its rows; this pass just sets the
-        // isRecurring flag where appropriate. Cast through the row
-        // shape since merged[] is unknown[] at this point.
-        markRecurring(merged as Array<{ narration: string; amount: number; isRecurring?: boolean }>);
-        // openingBalance from the FIRST chunk that reported one (chunk 0
-        // covers page 1 where the bank prints the B/F line). closingBalance
-        // from the LAST chunk that reported one (final page's C/F line).
-        // Lets verifyClosingBalance fire on the digital-PDF path too,
-        // surfacing the same first-divergence diagnostic as vision.
-        const firstOpening = chunkResults.find(r => typeof r.openingBalance === 'number')?.openingBalance ?? null;
-        const lastClosing = [...chunkResults].reverse().find(r => typeof r.closingBalance === 'number')?.closingBalance ?? null;
-        // accountKind: keep the first NON-NULL value across chunks.
-        // Most chunks of a typical multi-page statement repeat the
-        // same metadata, so any single chunk identifying it as
-        // 'liability' is sufficient — and avoids the worst-case
-        // where chunks 2..N drop the field and a 'liability'
-        // statement reverts to 'asset'.
-        const kind = chunkResults.find(r => r.accountKind === 'liability' || r.accountKind === 'asset')?.accountKind ?? null;
-        extracted = {
-          bankName: chunkResults.map(r => r.bankName).find(v => !!v) ?? null,
-          accountNumberMasked: chunkResults.map(r => r.accountNumberMasked).find(v => !!v) ?? null,
-          periodFrom: chunkResults.map(r => r.periodFrom).find(v => !!v) ?? null,
-          periodTo: chunkResults.map(r => r.periodTo).find(v => !!v) ?? null,
-          currency: 'INR',
-          openingBalance: firstOpening,
-          closingBalance: lastClosing,
-          accountKind: kind,
-          transactions: merged,
-        };
-
-        // Cross-check: candidate-date count vs extracted transaction count.
-        // dateCount is noisy — repeated period headers on every page, "As on"
-        // footers, summary rows and running-balance headers all look like
-        // dates to a regex. Anchor the floor at 50% so we catch genuinely
-        // broken extractions (a whole chunk's worth dropped) without false-
-        // failing on legitimate statements that happen to repeat dates.
-        if (dateCount > 0 && merged.length < dateCount * 0.5) {
-          throw new Error(
-            `Transaction count sanity check failed: extracted ${merged.length} rows but found ~${dateCount} date-like markers in the PDF text. ` +
-            `Rather than persist a likely-incomplete analysis, we're bailing. Retry, or use a CSV export if available.`,
-          );
-        }
-
-        (res.locals as Record<string, unknown>).geminiUsages = chunkResults.map(r => ({
-          inputTokens: r.inputTokens, outputTokens: r.outputTokens, modelUsed: r.modelUsed,
-        }));
       } else {
         // CSV path: client posted parsed CSV text; we already know the
         // structure (date / narration / debit / credit / balance), so the
@@ -1825,11 +1213,18 @@ ${isFirst
 
 category MUST be one of: ${BANK_STATEMENT_CATEGORIES.map(c => `"${c}"`).join(' | ')}.
 
-Categorisation rules (apply the FIRST match):
-- NEFT / IMPS / RTGS / UPI to a clearly-identifiable BUSINESS counterparty (ENTERPRISES / TRADERS / PVT LTD / corporate name / GSTIN-shaped 15-digit ref) → Business Expenses (debit) or Business Income (credit)
-- POS / merchant payments (SWIGGY, AMAZON, ZOMATO, FLIPKART, BIGBASKET, BLINKIT, etc.) → Personal
-- Grocery / restaurants / shopping / fuel / personal-consumption merchants → Personal
-- Anything else that isn't clearly business OR personal → Other
+You are seeing ONLY the rows the upstream classifier could not auto-tag. Common buckets (bank charges, interest, EMI, salary, GST, TDS, UPI/NEFT to personal counterparties, well-known merchants like Amazon / Swiggy / Ola / Netflix / IRCTC / Apollo / Byju's / MakeMyTrip etc.) are already handled — DO NOT re-examine the row for those patterns.
+
+What these rows actually contain (one of):
+- NEFT / IMPS / RTGS / UPI to a counterparty whose business-vs-personal nature isn't obvious from the name alone (e.g. "RAMESH SHARMA AND SONS", "BHAT TRADERS", "ABC ENTERPRISES")
+- Cheque deposits / withdrawals with no merchant hint
+- Cash narrations that didn't match any of the standard "BY CASH" / "CASH DEP" prefixes
+- POS transactions to a local merchant we don't have an anchor for
+
+Decide between:
+- ENTERPRISES / TRADERS / PVT LTD / LIMITED / LLP / 15-digit GSTIN → Business Expenses (debit) / Business Income (credit)
+- Clear personal name OR grocery/local-shop pattern → Personal · Shopping (use that subcategory when category is Personal)
+- Genuinely ambiguous → Other (leave subcategory null)
 
 INPUT_ROWS (${batch.length} rows):
 ${JSON.stringify(batch)}`;

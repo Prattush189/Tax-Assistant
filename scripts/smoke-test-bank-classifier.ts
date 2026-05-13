@@ -107,9 +107,147 @@ const CASES: Case[] = [
   { narration: 'RTGS-PAYTM PAYMENTS SERVICES LIMIT-YESB0000001', type: 'credit', expect: null },
   { narration: 'NEFT-HDFC-ABC ENTERPRISES PVT LTD-N987654', type: 'debit', expect: null },
 
-  // ─── Genuinely ambiguous → null ──────────────────────────
+  // ─── Cloud / SaaS (Business Expenses · Software) ──────────
+  { narration: 'POS AWS *EC2 INSTANCES', type: 'debit', expect: { category: 'Business Expenses', subcategory: 'Software' } },
+  { narration: 'AMAZON WEB SERVICES INDIA PVT LTD', type: 'debit', expect: { category: 'Business Expenses', subcategory: 'Software' } },
+  { narration: 'GOOGLE CLOUD PLATFORM', type: 'debit', expect: { category: 'Business Expenses', subcategory: 'Software' } },
+  { narration: 'GOOGLE WORKSPACE SUBSCRIPTION', type: 'debit', expect: { category: 'Business Expenses', subcategory: 'Software' } },
+  { narration: 'MICROSOFT AZURE BILLING', type: 'debit', expect: { category: 'Business Expenses', subcategory: 'Software' } },
+  { narration: 'GITHUB INC', type: 'debit', expect: { category: 'Business Expenses', subcategory: 'Software' } },
+  { narration: 'FIGMA INC', type: 'debit', expect: { category: 'Business Expenses', subcategory: 'Software' } },
+  { narration: 'SLACK TECHNOLOGIES', type: 'debit', expect: { category: 'Business Expenses', subcategory: 'Software' } },
+  { narration: 'ZOHO CORPORATION', type: 'debit', expect: { category: 'Business Expenses', subcategory: 'Software' } },
+  { narration: 'NOTION LABS', type: 'debit', expect: { category: 'Business Expenses', subcategory: 'Software' } },
+  { narration: 'SHOPIFY INC', type: 'debit', expect: { category: 'Business Expenses', subcategory: 'Software' } },
+  { narration: 'ADOBE SYSTEMS', type: 'debit', expect: { category: 'Business Expenses', subcategory: 'Software' } },
+
+  // ─── Marketing / Ads (Business Expenses · Marketing) ────────
+  { narration: 'GOOGLE ADS BILLING', type: 'debit', expect: { category: 'Business Expenses', subcategory: 'Marketing' } },
+  { narration: 'META PLATFORMS IRELAND', type: 'debit', expect: { category: 'Business Expenses', subcategory: 'Marketing' } },
+  { narration: 'LINKEDIN PREMIUM SALES NAV', type: 'debit', expect: { category: 'Business Expenses', subcategory: 'Marketing' } },
+
+  // ─── E-commerce (Personal · E-commerce) ─────────────────────
+  { narration: 'POS AMAZON.IN', type: 'debit', expect: { category: 'Personal', subcategory: 'E-commerce' } },
+  { narration: 'UPI/123456/PAYMENT TO AMAZON/amazon@apl/UPI', type: 'debit', expect: { category: 'Personal', subcategory: 'E-commerce' } },
+  { narration: 'POS FLIPKART INTERNET', type: 'debit', expect: { category: 'Personal', subcategory: 'E-commerce' } },
+  { narration: 'MYNTRA DESIGNS', type: 'debit', expect: { category: 'Personal', subcategory: 'E-commerce' } },
+  { narration: 'MEESHO ORDER', type: 'debit', expect: { category: 'Personal', subcategory: 'E-commerce' } },
+  { narration: 'AJIO RELIANCE RETAIL', type: 'debit', expect: { category: 'Personal', subcategory: 'E-commerce' } },
+  { narration: 'NYKAA ECOM', type: 'debit', expect: { category: 'Personal', subcategory: 'E-commerce' } },
+  { narration: 'TATACLIQ PURCHASE', type: 'debit', expect: { category: 'Personal', subcategory: 'E-commerce' } },
+
+  // ─── Food Delivery (Personal · Food Delivery) ───────────────
+  { narration: 'POS SWIGGY', type: 'debit', expect: { category: 'Personal', subcategory: 'Food Delivery' } },
+  { narration: 'UPI/SWIGGY/swiggy@axisbank/...', type: 'debit', expect: { category: 'Personal', subcategory: 'Food Delivery' } },
+  { narration: 'ZOMATO ONLINE ORDER', type: 'debit', expect: { category: 'Personal', subcategory: 'Food Delivery' } },
+  { narration: 'EATFIT BLR', type: 'debit', expect: { category: 'Personal', subcategory: 'Food Delivery' } },
+
+  // ─── Swiggy Instamart routes to Quick Commerce, not Food Delivery
+  { narration: 'POS SWIGGY INSTAMART', type: 'debit', expect: { category: 'Personal', subcategory: 'Quick Commerce' } },
+  { narration: 'SWIGGY STORE', type: 'debit', expect: { category: 'Personal', subcategory: 'Quick Commerce' } },
+
+  // ─── Quick Commerce (Personal · Quick Commerce) ─────────────
+  { narration: 'POS BLINKIT', type: 'debit', expect: { category: 'Personal', subcategory: 'Quick Commerce' } },
+  { narration: 'ZEPTO MARKETPLACE', type: 'debit', expect: { category: 'Personal', subcategory: 'Quick Commerce' } },
+  { narration: 'BIGBASKET ORDER', type: 'debit', expect: { category: 'Personal', subcategory: 'Quick Commerce' } },
+  { narration: 'JIOMART BILL', type: 'debit', expect: { category: 'Personal', subcategory: 'Quick Commerce' } },
+
+  // ─── Cabs (Personal · Cabs) ─────────────────────────────────
+  { narration: 'POS OLA CABS', type: 'debit', expect: { category: 'Personal', subcategory: 'Cabs' } },
+  { narration: 'UPI/OLA/ola@ybl/...', type: 'debit', expect: { category: 'Personal', subcategory: 'Cabs' } },
+  { narration: 'UBER INDIA SYSTEMS', type: 'debit', expect: { category: 'Personal', subcategory: 'Cabs' } },
+  { narration: 'RAPIDO BIKE TAXI', type: 'debit', expect: { category: 'Personal', subcategory: 'Cabs' } },
+  { narration: 'REDBUS BOOKING', type: 'debit', expect: { category: 'Personal', subcategory: 'Cabs' } },
+
+  // ─── Subscriptions (Personal · Subscriptions) ───────────────
+  { narration: 'AMAZON PRIME', type: 'debit', expect: { category: 'Personal', subcategory: 'Subscriptions' } },
+  { narration: 'POS AMAZON PRIME VIDEO', type: 'debit', expect: { category: 'Personal', subcategory: 'Subscriptions' } },
+  { narration: 'NETFLIX.COM', type: 'debit', expect: { category: 'Personal', subcategory: 'Subscriptions' } },
+  { narration: 'SPOTIFY P25 RECURRING', type: 'debit', expect: { category: 'Personal', subcategory: 'Subscriptions' } },
+  { narration: 'HOTSTAR SUBSCRIPTION', type: 'debit', expect: { category: 'Personal', subcategory: 'Subscriptions' } },
+  { narration: 'YOUTUBE PREMIUM RENEWAL', type: 'debit', expect: { category: 'Personal', subcategory: 'Subscriptions' } },
+  { narration: 'ZEE5 PREMIUM', type: 'debit', expect: { category: 'Personal', subcategory: 'Subscriptions' } },
+  { narration: 'SONY LIV ANNUAL', type: 'debit', expect: { category: 'Personal', subcategory: 'Subscriptions' } },
+
+  // ─── Fuel (Personal · Fuel) ─────────────────────────────────
+  { narration: 'POS INDIAN OIL CORP', type: 'debit', expect: { category: 'Personal', subcategory: 'Fuel' } },
+  { narration: 'INDIANOIL PETROL PUMP', type: 'debit', expect: { category: 'Personal', subcategory: 'Fuel' } },
+  { narration: 'HPCL OUTLET MUMBAI', type: 'debit', expect: { category: 'Personal', subcategory: 'Fuel' } },
+  { narration: 'BPCL FUEL', type: 'debit', expect: { category: 'Personal', subcategory: 'Fuel' } },
+  { narration: 'BHARAT PETROLEUM', type: 'debit', expect: { category: 'Personal', subcategory: 'Fuel' } },
+  { narration: 'RELIANCE PETROLEUM RETAIL', type: 'debit', expect: { category: 'Personal', subcategory: 'Fuel' } },
+  { narration: 'SHELL FUEL STATION', type: 'debit', expect: { category: 'Personal', subcategory: 'Fuel' } },
+  { narration: 'NAYARA ENERGY', type: 'debit', expect: { category: 'Personal', subcategory: 'Fuel' } },
+
+  // ─── Telecom (Personal · Telecom) ───────────────────────────
+  { narration: 'AIRTEL POSTPAID BILL', type: 'debit', expect: { category: 'Personal', subcategory: 'Telecom' } },
+  { narration: 'JIO RECHARGE 4G', type: 'debit', expect: { category: 'Personal', subcategory: 'Telecom' } },
+  { narration: 'BSNL LANDLINE BILL', type: 'debit', expect: { category: 'Personal', subcategory: 'Telecom' } },
+  // Confirm BIL/BPAY pattern still goes to Mobile Charges (not Telecom)
+  { narration: 'BIL/BPAY/JIO RECHARGE', type: 'debit', expect: { category: 'Mobile Charges', subcategory: 'Jio' } },
+
+  // ─── Restaurants (Personal · Restaurants) ───────────────────
+  { narration: "POS DOMINO'S PIZZA", type: 'debit', expect: { category: 'Personal', subcategory: 'Restaurants' } },
+  { narration: 'PIZZA HUT INDIA', type: 'debit', expect: { category: 'Personal', subcategory: 'Restaurants' } },
+  { narration: "POS MCDONALD'S BLR", type: 'debit', expect: { category: 'Personal', subcategory: 'Restaurants' } },
+  { narration: 'KFC INDIA', type: 'debit', expect: { category: 'Personal', subcategory: 'Restaurants' } },
+  { narration: 'BURGER KING INDIA', type: 'debit', expect: { category: 'Personal', subcategory: 'Restaurants' } },
+  { narration: 'BARBEQUE NATION HOSPITALITY', type: 'debit', expect: { category: 'Personal', subcategory: 'Restaurants' } },
+  { narration: 'STARBUCKS COFFEE', type: 'debit', expect: { category: 'Personal', subcategory: 'Restaurants' } },
+
+  // ─── Healthcare (Personal · Healthcare) ─────────────────────
+  { narration: 'TATA 1MG', type: 'debit', expect: { category: 'Personal', subcategory: 'Healthcare' } },
+  { narration: 'PHARMEASY ORDER', type: 'debit', expect: { category: 'Personal', subcategory: 'Healthcare' } },
+  { narration: 'NETMEDS INDIA', type: 'debit', expect: { category: 'Personal', subcategory: 'Healthcare' } },
+  { narration: 'APOLLO PHARMACY MEDS', type: 'debit', expect: { category: 'Personal', subcategory: 'Healthcare' } },
+  { narration: 'PRACTO TECHNOLOGIES', type: 'debit', expect: { category: 'Personal', subcategory: 'Healthcare' } },
+
+  // ─── Education (Personal · Education) ───────────────────────
+  { narration: "BYJU'S LEARNING", type: 'debit', expect: { category: 'Personal', subcategory: 'Education' } },
+  { narration: 'UNACADEMY PLUS', type: 'debit', expect: { category: 'Personal', subcategory: 'Education' } },
+  { narration: 'COURSERA INC', type: 'debit', expect: { category: 'Personal', subcategory: 'Education' } },
+  { narration: 'UDEMY COURSE', type: 'debit', expect: { category: 'Personal', subcategory: 'Education' } },
+
+  // ─── Travel (Personal · Travel) ─────────────────────────────
+  { narration: 'MAKEMYTRIP HOTELS', type: 'debit', expect: { category: 'Personal', subcategory: 'Travel' } },
+  { narration: 'YATRA ONLINE TRIP', type: 'debit', expect: { category: 'Personal', subcategory: 'Travel' } },
+  { narration: 'CLEARTRIP FLIGHT', type: 'debit', expect: { category: 'Personal', subcategory: 'Travel' } },
+  { narration: 'GOIBIBO HOTEL', type: 'debit', expect: { category: 'Personal', subcategory: 'Travel' } },
+  { narration: 'IRCTC ECOMM BOOKING', type: 'debit', expect: { category: 'Personal', subcategory: 'Travel' } },
+  { narration: 'OYO ROOMS', type: 'debit', expect: { category: 'Personal', subcategory: 'Travel' } },
+  { narration: 'BOOKING.COM RESERVATION', type: 'debit', expect: { category: 'Personal', subcategory: 'Travel' } },
+  { narration: 'AIRBNB IRELAND', type: 'debit', expect: { category: 'Personal', subcategory: 'Travel' } },
+
+  // ─── Entertainment (Personal · Entertainment) ───────────────
+  { narration: 'BOOKMYSHOW TICKETS', type: 'debit', expect: { category: 'Personal', subcategory: 'Entertainment' } },
+  { narration: 'POS PVR CINEMAS', type: 'debit', expect: { category: 'Personal', subcategory: 'Entertainment' } },
+  { narration: 'INOX MOVIES', type: 'debit', expect: { category: 'Personal', subcategory: 'Entertainment' } },
+  { narration: 'STEAMPOWERED.COM', type: 'debit', expect: { category: 'Personal', subcategory: 'Entertainment' } },
+
+  // ─── Investments (Investments) — new platforms ───────────────
+  { narration: 'KUVERA SIP', type: 'debit', expect: { category: 'Investments' } },
+  { narration: 'PAYTM MONEY', type: 'debit', expect: { category: 'Investments' } },
+  { narration: 'ANGEL ONE TRADING', type: 'debit', expect: { category: 'Investments' } },
+  { narration: 'ICICIDIRECT EQUITY', type: 'debit', expect: { category: 'Investments' } },
+
+  // ─── Insurance (Insurance) — new aggregators ─────────────────
+  { narration: 'POLICYBAZAAR INSURANCE', type: 'debit', expect: { category: 'Insurance' } },
+  { narration: 'ACKO INSURANCE PREMIUM', type: 'debit', expect: { category: 'Insurance' } },
+  { narration: 'HDFC ERGO HEALTH', type: 'debit', expect: { category: 'Insurance' } },
+  { narration: 'ICICI LOMBARD MOTOR', type: 'debit', expect: { category: 'Insurance' } },
+
+  // ─── Negative cases — confirm word boundaries hold ──────────
+  // "VISA" should NOT match the VI rule (the \bvi\b lookahead requires
+  // a non-word char after VI, but VISA's S is a word char). Falls
+  // through to AI.
+  { narration: 'VISA INTERNATIONAL', type: 'debit', expect: null },
+  // "BANGALORE" contains "ola" but no word boundary inside.
+  { narration: 'NEFT-HDFC-BANGALORE BRANCH-N9876543210123', type: 'debit', expect: null },
+
+  // ─── Genuinely ambiguous → null (AI fallback target) ────────
   { narration: 'BHAT GROCERIES', type: 'debit', expect: null },
-  { narration: 'AMAZON SHOPPING', type: 'debit', expect: null },
+  { narration: 'AMAZON SHOPPING', type: 'debit', expect: { category: 'Personal', subcategory: 'E-commerce' } }, // changed: now classified
+  { narration: 'RAMESH SHARMA AND SONS', type: 'debit', expect: null },
 
   // ─── Counterparty extraction tests ────────────────────────
   {

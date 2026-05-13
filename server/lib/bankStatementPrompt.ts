@@ -69,8 +69,29 @@ export const BANK_STATEMENT_SUBCATEGORIES: Record<BankStatementCategory, string[
   Dividends: [],
   'GST Payments': ['CGST', 'SGST', 'IGST'],
   TDS: [],
-  'Business Expenses': ['Rent', 'Utilities', 'Travel', 'Office', 'Marketing', 'Professional Fees', 'Software'],
-  Personal: [],
+  'Business Expenses': ['Rent', 'Utilities', 'Travel', 'Office', 'Marketing', 'Professional Fees', 'Software', 'Other'],
+  // Personal subcategories surface merchant-class drilldowns on the
+  // dashboard. The classifier (bankClassifier.ts) sets these
+  // deterministically based on narration patterns for ~50 well-known
+  // Indian merchants; rows that don't match a pattern fall to AI for
+  // a category-only judgement (no subcategory inferred there — kept
+  // null until the user re-tags from the UI).
+  Personal: [
+    'E-commerce',     // Amazon, Flipkart, Myntra, Meesho, Ajio, Nykaa, Tata CLiQ, Snapdeal
+    'Food Delivery',  // Swiggy, Zomato, EatFit, Dunzo (restaurant pickup)
+    'Quick Commerce', // Blinkit, Zepto, BigBasket, Swiggy Instamart, Dunzo
+    'Cabs',           // Ola, Uber, Rapido
+    'Subscriptions',  // Netflix, Spotify, Hotstar, YouTube Premium, Amazon Prime, ZEE5, Sony LIV
+    'Fuel',           // Indian Oil, HPCL, BPCL, Shell, Nayara, Reliance Petroleum
+    'Telecom',        // Standalone Airtel/Jio/Vi/BSNL recharges (BIL/BPAY pattern → Mobile Charges instead)
+    'Restaurants',    // Domino's, Pizza Hut, McDonald's, KFC, Burger King, Barbeque Nation
+    'Healthcare',     // 1mg, PharmEasy, Netmeds, Apollo Pharmacy, Practo
+    'Education',      // Byju's, Unacademy, Coursera, Udemy
+    'Travel',         // MakeMyTrip, Yatra, Cleartrip, IRCTC, Goibibo, EaseMyTrip, OYO, Booking.com
+    'Entertainment',  // BookMyShow, PVR, INOX, gaming (Steam, PlayStation, Xbox)
+    'Shopping',       // Other retail merchants the AI tags as Personal but doesn't fit the above
+    'Other',
+  ],
   Transfers: [],
   // Cash Deposit covers cash INFLOWS to the account: counter deposits
   // ("By Cash:", "BY CASH"), cash-deposit-machine drops (CDM/CAM
@@ -100,84 +121,6 @@ export const BANK_STATEMENT_SUBCATEGORIES: Record<BankStatementCategory, string[
   'Water Charges': ['Municipal', 'Other'],
   Other: [],
 };
-
-/**
- * Compact TSV prompt used for pre-extracted PDF text.
- *
- * The JSON-object prompt below is perfect for vision/image inputs but has two
- * problems for the 46-page-text path: (a) JSON output uses ~3× more tokens
- * per transaction than TSV, which means either many chunks or truncation and
- * (b) mid-JSON truncation is invisible — the parser just gives up silently.
- *
- * With TSV:
- *   - One row per line. Each row ends with a newline. Truncation is trivially
- *     detectable because the trailer `---END:<N>---` won't appear.
- *   - Tabs as separators: bank narrations almost never contain tabs (pdfjs
- *     strips them to spaces), so the format is collision-free in practice.
- *   - ~60-80 chars per tx vs ~200-250 for JSON → 3-4× more transactions fit
- *     in a single 16K-token Gemini response.
- *   - An explicit trailer count lets us verify the model didn't silently
- *     drop rows. If the trailer count mismatches the parsed row count, we
- *     fail loudly rather than persisting a partial result.
- */
-export const BANK_STATEMENT_TSV_PROMPT = `You are parsing an Indian bank statement. The input below is the raw text layer from a digitally-generated PDF (already extracted by pdfjs — no OCR needed). Extract EVERY transaction.
-
-Output format — STRICT. No JSON, no prose, no code fences. Emit ONE transaction per line. Fields separated by a single TAB character. Exactly 5 fields per row:
-
-date<TAB>narration<TAB>debit<TAB>credit<TAB>balance
-
-Field rules:
-- date: YYYY-MM-DD (convert from DD/MM/YYYY if the statement uses that). Required.
-- narration: raw bank narration, max 200 chars. Replace any TAB or NEWLINE inside with a single space. Required.
-- debit: the debit / withdrawal / outflow amount EXACTLY as shown in the statement's Debit column — positive number with decimals, no commas. EMPTY STRING if this row is a credit. Never negative.
-- credit: the credit / deposit / inflow amount EXACTLY as shown in the statement's Credit column — positive number with decimals, no commas. EMPTY STRING if this row is a debit. Never negative.
-- EXACTLY ONE of debit/credit MUST be populated per row. Never both. Never neither. Copy directly from the statement's Debit/Credit columns (or from the DR/CR marker). DO NOT infer, flip signs, or swap columns.
-- balance: number with decimals, no commas. Empty string if the statement doesn't show one.
-
-Concrete example — EXACTLY this tab pattern, with two consecutive tabs where a column is empty:
-2025-02-28\tUPI/DR/100732291255/THE MUSCL\t500.00\t\t6152.58
-2025-03-01\tNEFT-HDFC-SALARY MAR\t\t85000.00\t91152.58
-Notice row 1 has an EMPTY credit column (two consecutive tabs between 500.00 and 6152.58) and row 2 has an EMPTY debit column (two consecutive tabs between the narration and 85000.00). ALWAYS emit 5 fields per row = 4 tabs per row, including empty ones.
-
-After the last transaction row, emit exactly one trailer line:
----END:<N>---
-where <N> is the total count of transaction rows you just emitted. This is required — we verify it to detect truncation.
-
-BEFORE the first transaction row, emit exactly one header line with the statement metadata, tab-separated with 8 fields:
-HEADER<TAB>bankName<TAB>accountNumberMasked<TAB>periodFrom<TAB>periodTo<TAB>openingBalance<TAB>closingBalance<TAB>accountKind
-
-CRITICAL — periodFrom and periodTo:
-- Read these from the EXPLICIT statement period line in the header (printed by the bank as "Statement Period: 01-Apr-2024 to 31-Mar-2025" / "Period: From 01/04/2024 To 31/03/2025" / similar).
-- Do NOT use the date of the first transaction or last transaction. The statement's printed period is often wider (e.g., it includes a closing balance line dated after the last transaction, or starts a day before the first).
-- Convert DD/MM/YYYY → YYYY-MM-DD. Use the literal string "null" only if no period header exists in this chunk.
-
-CRITICAL — openingBalance and closingBalance:
-- openingBalance = the bank's printed opening / brought-forward / "B/F" / "Previous Balance" line at the very start of the statement (often dated as of the day before periodFrom). Number with decimals, no commas, no currency symbol.
-- closingBalance = the bank's printed closing / carried-forward / "C/F" balance at the very end of the statement.
-- Use the literal string "null" if the chunk doesn't contain that anchor (e.g., a middle chunk that has neither the B/F nor the C/F line).
-
-CRITICAL — accountKind:
-- Classifies the ACCOUNT itself, not any individual row. One of: "asset", "liability", or the literal string "null".
-- "asset" = SAVINGS / CURRENT / NRE / NRO / salary / wallet. Balance is a CREDIT balance, deposits ↑ balance, withdrawals ↓ balance. This is the default — use "asset" when in doubt.
-- "liability" = CASH CREDIT (CC) / OVERDRAFT (OD) / LOAN / KCC / MORTGAGE — i.e. the BANK's money is in the account. Balance is a DEBIT balance, withdrawals ↑ balance, repayments / deposits ↓ balance. Tells:
-    * Every running balance carries a "Dr" / "DR" / "Dr." suffix (e.g. "510239.27Dr") — never just a bare number.
-    * The printed account TYPE / SCHEME line contains "Cash Credit", "CC", "Overdraft", "OD", "Loan", "Mortgage", "KCC", "Term Loan", "Working Capital".
-    * Narrations like "By Cash: N" represent the customer DEPOSITING cash into the credit line — these decrease the Dr balance.
-- Setting the wrong value flips every transaction's debit/credit classification downstream. When unsure, emit "null" — the server defaults to "asset" then.
-
-Use null (the literal string "null") for any field you can't determine. Examples:
-HEADER\tHDFC Bank\tXXXX1234\t2024-04-01\t2024-04-30\t152340.50\t187652.30\tasset
-HEADER\tJ&K Bank\tXXXX0002\t2025-04-01\t2026-03-31\t6061112.76\t216252.13\tliability
-
-CRITICAL — debit and credit fidelity:
-- Read each digit of the amount column directly from the statement; do NOT recompute, round, or guess.
-- The DEBIT column on Indian bank statements lives in either a "Withdrawal" / "Dr" / left-most amount slot. The CREDIT column lives in "Deposit" / "Cr" / right-most amount slot. Check the column header before assigning.
-- If a single row shows both a debit AND a credit (typical for contra entries or bank-charge-and-tax pairs), emit them as TWO separate rows in the order they appear, NOT one row with both populated.
-- If the row has a single amount with a "Dr" / "Cr" suffix or marker, route to the matching column.
-
-You do NOT classify category / subcategory / counterparty / reference / isRecurring. Those fields are derived server-side from your output by a deterministic narration-anchor classifier — your job here is purely to read date / narration / debit / credit / balance off the statement accurately.
-
-DO NOT invent, summarize, or group transactions. Every row in the input text that shows a date + amount must appear. The trailer count MUST match the rows you emit.`;
 
 export const BANK_STATEMENT_PROMPT = `You are parsing an Indian bank statement (PDF or image). Return ONLY a JSON object. No markdown fences. No prose.
 

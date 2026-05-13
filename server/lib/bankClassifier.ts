@@ -239,6 +239,200 @@ const RULES: Rule[] = [
     direction: 'credit',
   },
 
+  // ─── Cloud / SaaS (Business Expenses · Software) ──────────────
+  // Match BEFORE the generic e-commerce / AMAZON rules so AWS doesn't
+  // get tagged as Personal · E-commerce. All direction-anchored to
+  // debit — these are always outflows on an Indian operating account.
+  // Patterns use word boundaries to avoid false-positives on common
+  // English substrings (e.g. `\bgithub\b` matches "GITHUB" but not
+  // "GITHUBARI"; `\bslack\b` matches "SLACK" but not "SLACKEN").
+  { name: 'aws', pattern: /\baws\b|amazon\s+web\s+services|amazonaws/i, category: 'Business Expenses', subcategory: 'Software', direction: 'debit' },
+  { name: 'google-cloud', pattern: /google\s+cloud|\bgcp\b/i, category: 'Business Expenses', subcategory: 'Software', direction: 'debit' },
+  { name: 'google-workspace', pattern: /google\s+workspace|g[\s-]?suite/i, category: 'Business Expenses', subcategory: 'Software', direction: 'debit' },
+  { name: 'azure', pattern: /microsoft\s+azure|\bazure\s+/i, category: 'Business Expenses', subcategory: 'Software', direction: 'debit' },
+  { name: 'microsoft-365', pattern: /microsoft\s*365|office\s*365|ms[\s-]?office/i, category: 'Business Expenses', subcategory: 'Software', direction: 'debit' },
+  { name: 'github', pattern: /\bgithub\b/i, category: 'Business Expenses', subcategory: 'Software', direction: 'debit' },
+  { name: 'gitlab', pattern: /\bgitlab\b/i, category: 'Business Expenses', subcategory: 'Software', direction: 'debit' },
+  { name: 'figma', pattern: /\bfigma\b/i, category: 'Business Expenses', subcategory: 'Software', direction: 'debit' },
+  { name: 'slack', pattern: /\bslack\b/i, category: 'Business Expenses', subcategory: 'Software', direction: 'debit' },
+  { name: 'notion', pattern: /\bnotion\b(?!\s+of)/i, category: 'Business Expenses', subcategory: 'Software', direction: 'debit' },
+  { name: 'zoho', pattern: /\bzoho\b/i, category: 'Business Expenses', subcategory: 'Software', direction: 'debit' },
+  { name: 'salesforce', pattern: /salesforce/i, category: 'Business Expenses', subcategory: 'Software', direction: 'debit' },
+  { name: 'shopify', pattern: /\bshopify\b/i, category: 'Business Expenses', subcategory: 'Software', direction: 'debit' },
+  { name: 'razorpay', pattern: /razorpay/i, category: 'Business Expenses', subcategory: 'Software', direction: 'debit' },
+  { name: 'cashfree', pattern: /cashfree/i, category: 'Business Expenses', subcategory: 'Software', direction: 'debit' },
+  { name: 'stripe', pattern: /\bstripe\b/i, category: 'Business Expenses', subcategory: 'Software', direction: 'debit' },
+  { name: 'adobe', pattern: /\badobe\b/i, category: 'Business Expenses', subcategory: 'Software', direction: 'debit' },
+  { name: 'atlassian', pattern: /atlassian|\bjira\b|confluence/i, category: 'Business Expenses', subcategory: 'Software', direction: 'debit' },
+
+  // ─── Marketing / Ads (Business Expenses · Marketing) ──────────
+  { name: 'google-ads', pattern: /google\s+ads|google\s+adwords|\badwords\b/i, category: 'Business Expenses', subcategory: 'Marketing', direction: 'debit' },
+  { name: 'meta-ads', pattern: /meta\s+(?:ads|platforms)|facebook\s+ads|instagram\s+ads/i, category: 'Business Expenses', subcategory: 'Marketing', direction: 'debit' },
+  { name: 'linkedin-ads', pattern: /linkedin\s+(?:ads|premium|sales)/i, category: 'Business Expenses', subcategory: 'Marketing', direction: 'debit' },
+
+  // ─── E-commerce (Personal · E-commerce) ───────────────────────
+  // Amazon comes AFTER the AWS rule above and excludes the PRIME /
+  // PRIME VIDEO subscription variant via lookahead — Prime Video is
+  // tagged Subscriptions, not E-commerce. The lookahead is belt-and-
+  // braces: the Subscriptions block below has an `amazon-prime` rule
+  // that would catch it anyway, but the lookahead means we don't
+  // depend on rule-order discipline for the right answer.
+  { name: 'amazon', pattern: /\bamazon(?!\s+(?:web|aws|prime))/i, category: 'Personal', subcategory: 'E-commerce', direction: 'debit' },
+  { name: 'flipkart', pattern: /\bflipkart\b/i, category: 'Personal', subcategory: 'E-commerce', direction: 'debit' },
+  { name: 'myntra', pattern: /\bmyntra\b/i, category: 'Personal', subcategory: 'E-commerce', direction: 'debit' },
+  { name: 'meesho', pattern: /\bmeesho\b/i, category: 'Personal', subcategory: 'E-commerce', direction: 'debit' },
+  { name: 'ajio', pattern: /\bajio\b/i, category: 'Personal', subcategory: 'E-commerce', direction: 'debit' },
+  { name: 'nykaa', pattern: /\bnykaa\b/i, category: 'Personal', subcategory: 'E-commerce', direction: 'debit' },
+  { name: 'tatacliq', pattern: /tata\s*cliq|tatacliq/i, category: 'Personal', subcategory: 'E-commerce', direction: 'debit' },
+  { name: 'snapdeal', pattern: /snapdeal/i, category: 'Personal', subcategory: 'E-commerce', direction: 'debit' },
+  { name: 'firstcry', pattern: /firstcry/i, category: 'Personal', subcategory: 'E-commerce', direction: 'debit' },
+  { name: 'pepperfry', pattern: /pepperfry/i, category: 'Personal', subcategory: 'E-commerce', direction: 'debit' },
+
+  // ─── Food Delivery (Personal · Food Delivery) ─────────────────
+  // Swiggy Instamart is quick-commerce, not food delivery — match
+  // that variant FIRST so it goes to the right subcategory. Same for
+  // "swiggy genie" (errands) which we lump under Food Delivery for
+  // simplicity.
+  { name: 'swiggy-instamart', pattern: /swiggy\s*instamart|swiggy\s*store/i, category: 'Personal', subcategory: 'Quick Commerce', direction: 'debit' },
+  { name: 'swiggy', pattern: /\bswiggy\b/i, category: 'Personal', subcategory: 'Food Delivery', direction: 'debit' },
+  { name: 'zomato', pattern: /\bzomato\b/i, category: 'Personal', subcategory: 'Food Delivery', direction: 'debit' },
+  { name: 'eatfit', pattern: /eat\.?fit|\beatfit\b/i, category: 'Personal', subcategory: 'Food Delivery', direction: 'debit' },
+  { name: 'dunzo', pattern: /\bdunzo\b/i, category: 'Personal', subcategory: 'Food Delivery', direction: 'debit' },
+
+  // ─── Quick Commerce / Grocery (Personal · Quick Commerce) ─────
+  { name: 'blinkit', pattern: /\bblinkit\b|grofers/i, category: 'Personal', subcategory: 'Quick Commerce', direction: 'debit' },
+  { name: 'zepto', pattern: /\bzepto\b/i, category: 'Personal', subcategory: 'Quick Commerce', direction: 'debit' },
+  { name: 'bigbasket', pattern: /big\s*basket|bigbasket/i, category: 'Personal', subcategory: 'Quick Commerce', direction: 'debit' },
+  { name: 'jiomart', pattern: /\bjiomart\b|jio\s*mart/i, category: 'Personal', subcategory: 'Quick Commerce', direction: 'debit' },
+
+  // ─── Cabs / Transport (Personal · Cabs) ───────────────────────
+  // `\bola\b` is safe — word-boundary on both sides means "OLAMONEY"
+  // (one word) and "BANGALORE" (no boundary inside) don't match.
+  // Standalone "OLA" tokens in narrations (POS OLA, UPI/.../ola@ybl)
+  // do match.
+  { name: 'olamoney', pattern: /olamoney|ola\s*money|ola\s*postpaid/i, category: 'Personal', subcategory: 'Cabs', direction: 'debit' },
+  { name: 'ola', pattern: /\bola\b/i, category: 'Personal', subcategory: 'Cabs', direction: 'debit' },
+  { name: 'uber', pattern: /\buber\b/i, category: 'Personal', subcategory: 'Cabs', direction: 'debit' },
+  { name: 'rapido', pattern: /\brapido\b/i, category: 'Personal', subcategory: 'Cabs', direction: 'debit' },
+  { name: 'redbus', pattern: /\bredbus\b/i, category: 'Personal', subcategory: 'Cabs', direction: 'debit' },
+
+  // ─── Subscriptions / OTT (Personal · Subscriptions) ──────────
+  // Amazon Prime Video appears as "AMAZON PRIME" / "AMAZON PRIME VIDEO"
+  // in POS narrations. The generic amazon E-commerce rule above
+  // explicitly excludes the PRIME variant via lookahead, so this rule
+  // fires correctly for prime-video subscriptions.
+  { name: 'amazon-prime', pattern: /amazon\s*prime|prime\s*video/i, category: 'Personal', subcategory: 'Subscriptions', direction: 'debit' },
+  { name: 'netflix', pattern: /\bnetflix\b/i, category: 'Personal', subcategory: 'Subscriptions', direction: 'debit' },
+  { name: 'spotify', pattern: /\bspotify\b/i, category: 'Personal', subcategory: 'Subscriptions', direction: 'debit' },
+  { name: 'hotstar', pattern: /\bhotstar\b|disney\+|disney\s*plus/i, category: 'Personal', subcategory: 'Subscriptions', direction: 'debit' },
+  { name: 'youtube', pattern: /youtube\s*premium|google\s*\*?\s*youtube/i, category: 'Personal', subcategory: 'Subscriptions', direction: 'debit' },
+  { name: 'zee5', pattern: /\bzee5\b|zee\s*5/i, category: 'Personal', subcategory: 'Subscriptions', direction: 'debit' },
+  { name: 'sonyliv', pattern: /sonyliv|sony\s*liv/i, category: 'Personal', subcategory: 'Subscriptions', direction: 'debit' },
+  { name: 'appletv', pattern: /apple\.com\/?bill|apple\s*tv|itunes/i, category: 'Personal', subcategory: 'Subscriptions', direction: 'debit' },
+  { name: 'google-play', pattern: /google\s*\*?\s*play|playstore/i, category: 'Personal', subcategory: 'Subscriptions', direction: 'debit' },
+  { name: 'altbalaji', pattern: /alt\s*balaji|altbalaji/i, category: 'Personal', subcategory: 'Subscriptions', direction: 'debit' },
+
+  // ─── Fuel (Personal · Fuel) ──────────────────────────────────
+  // Tight patterns — "IOC" alone is too short / generic; require
+  // the longer "INDIAN OIL" / "INDIANOIL" string. "HPCL" / "HP RETAIL"
+  // is safe (no overlap with HP Inc. hardware). "SHELL" alone is
+  // risky (shell company), so require fuel-context tokens.
+  { name: 'indian-oil', pattern: /indian\s*oil|indianoil|\biocl\b/i, category: 'Personal', subcategory: 'Fuel', direction: 'debit' },
+  { name: 'hpcl', pattern: /\bhpcl\b|hp\s*retail|hp\s*petrol/i, category: 'Personal', subcategory: 'Fuel', direction: 'debit' },
+  { name: 'bpcl', pattern: /\bbpcl\b|bharat\s*petroleum/i, category: 'Personal', subcategory: 'Fuel', direction: 'debit' },
+  { name: 'reliance-petroleum', pattern: /reliance\s*petro|ril\s*petrol/i, category: 'Personal', subcategory: 'Fuel', direction: 'debit' },
+  { name: 'shell-petrol', pattern: /shell\s*(?:petrol|fuel|outlet|retail)/i, category: 'Personal', subcategory: 'Fuel', direction: 'debit' },
+  { name: 'nayara', pattern: /\bnayara\b/i, category: 'Personal', subcategory: 'Fuel', direction: 'debit' },
+
+  // ─── Telecom standalone recharge (Personal · Telecom) ─────────
+  // The earlier "Mobile Charges" rules catch the bank's BIL/BPAY
+  // bill-pay format (Bharat BillPay infrastructure). This block
+  // catches direct recharges (UPI / POS to a telco merchant) which
+  // appear with telco brand alone, no BIL/BPAY prefix.
+  //
+  // `\bjio\b` safe (3 letters, no English collision). `\bairtel\b`
+  // safe. `\bvi\b` is risky in theory but word boundaries make it
+  // safe in practice (VISA / VIDEO / VIBRANT all fail the \b...\b
+  // check). `\bbsnl\b` safe.
+  { name: 'airtel-recharge', pattern: /\bairtel\b/i, category: 'Personal', subcategory: 'Telecom', direction: 'debit' },
+  { name: 'jio-recharge', pattern: /\bjio\b(?!mart)|reliance\s+jio/i, category: 'Personal', subcategory: 'Telecom', direction: 'debit' },
+  { name: 'vi-recharge', pattern: /vodafone\s+idea|\bvi\b\s+(?:india|postpaid|prepaid|recharge)|vodafone/i, category: 'Personal', subcategory: 'Telecom', direction: 'debit' },
+  { name: 'bsnl-recharge', pattern: /\bbsnl\b/i, category: 'Personal', subcategory: 'Telecom', direction: 'debit' },
+
+  // ─── Restaurants (Personal · Restaurants) ─────────────────────
+  // Chain restaurants only — long tail of mom-and-pop restaurants
+  // falls to AI fallback. Patterns require word boundaries so
+  // "DOMINO'S" matches but a string containing "domino" inside
+  // another word doesn't.
+  { name: 'dominos', pattern: /domino'?s/i, category: 'Personal', subcategory: 'Restaurants', direction: 'debit' },
+  { name: 'pizzahut', pattern: /pizza\s*hut|pizzahut/i, category: 'Personal', subcategory: 'Restaurants', direction: 'debit' },
+  { name: 'mcdonalds', pattern: /mcdonald'?s|\bmcd\b/i, category: 'Personal', subcategory: 'Restaurants', direction: 'debit' },
+  { name: 'kfc', pattern: /\bkfc\b/i, category: 'Personal', subcategory: 'Restaurants', direction: 'debit' },
+  { name: 'burgerking', pattern: /burger\s*king|burgerking/i, category: 'Personal', subcategory: 'Restaurants', direction: 'debit' },
+  { name: 'barbeque-nation', pattern: /barbeque\s*nation|bbq\s*nation/i, category: 'Personal', subcategory: 'Restaurants', direction: 'debit' },
+  { name: 'starbucks', pattern: /starbucks/i, category: 'Personal', subcategory: 'Restaurants', direction: 'debit' },
+  { name: 'subway', pattern: /\bsubway\b/i, category: 'Personal', subcategory: 'Restaurants', direction: 'debit' },
+  { name: 'haldirams', pattern: /haldiram'?s/i, category: 'Personal', subcategory: 'Restaurants', direction: 'debit' },
+
+  // ─── Healthcare (Personal · Healthcare) ──────────────────────
+  { name: '1mg', pattern: /\b1mg\b|tata\s*1mg/i, category: 'Personal', subcategory: 'Healthcare', direction: 'debit' },
+  { name: 'pharmeasy', pattern: /pharmeasy|pharm\s*easy/i, category: 'Personal', subcategory: 'Healthcare', direction: 'debit' },
+  { name: 'netmeds', pattern: /netmeds/i, category: 'Personal', subcategory: 'Healthcare', direction: 'debit' },
+  { name: 'apollo-pharmacy', pattern: /apollo\s*pharmacy|apollo\s*hospitals?/i, category: 'Personal', subcategory: 'Healthcare', direction: 'debit' },
+  { name: 'practo', pattern: /\bpracto\b/i, category: 'Personal', subcategory: 'Healthcare', direction: 'debit' },
+  { name: 'medplus', pattern: /\bmedplus\b/i, category: 'Personal', subcategory: 'Healthcare', direction: 'debit' },
+
+  // ─── Education (Personal · Education) ────────────────────────
+  { name: 'byjus', pattern: /byju'?s|byjus/i, category: 'Personal', subcategory: 'Education', direction: 'debit' },
+  { name: 'unacademy', pattern: /unacademy/i, category: 'Personal', subcategory: 'Education', direction: 'debit' },
+  { name: 'coursera', pattern: /coursera/i, category: 'Personal', subcategory: 'Education', direction: 'debit' },
+  { name: 'udemy', pattern: /\budemy\b/i, category: 'Personal', subcategory: 'Education', direction: 'debit' },
+  { name: 'vedantu', pattern: /vedantu/i, category: 'Personal', subcategory: 'Education', direction: 'debit' },
+  { name: 'whitehat', pattern: /whitehat\s*jr/i, category: 'Personal', subcategory: 'Education', direction: 'debit' },
+
+  // ─── Travel (Personal · Travel) ──────────────────────────────
+  // Booking platforms + hotel chains. IRCTC ticket booking shows up
+  // as "IRCTC" or "IRCTC ECOMM" in narrations — capture both.
+  { name: 'makemytrip', pattern: /makemytrip|\bmmt\b\s+(?:online|hotels?)|\bmmtonline\b/i, category: 'Personal', subcategory: 'Travel', direction: 'debit' },
+  { name: 'yatra', pattern: /\byatra\b\s*(?:online|trips?)?/i, category: 'Personal', subcategory: 'Travel', direction: 'debit' },
+  { name: 'cleartrip', pattern: /cleartrip/i, category: 'Personal', subcategory: 'Travel', direction: 'debit' },
+  { name: 'goibibo', pattern: /goibibo/i, category: 'Personal', subcategory: 'Travel', direction: 'debit' },
+  { name: 'easemytrip', pattern: /easemytrip|ease\s*my\s*trip/i, category: 'Personal', subcategory: 'Travel', direction: 'debit' },
+  { name: 'irctc', pattern: /\birctc\b/i, category: 'Personal', subcategory: 'Travel', direction: 'debit' },
+  { name: 'oyo', pattern: /\boyo\b/i, category: 'Personal', subcategory: 'Travel', direction: 'debit' },
+  { name: 'booking', pattern: /booking\.com|booking\.holdings/i, category: 'Personal', subcategory: 'Travel', direction: 'debit' },
+  { name: 'agoda', pattern: /\bagoda\b/i, category: 'Personal', subcategory: 'Travel', direction: 'debit' },
+  { name: 'airbnb', pattern: /airbnb/i, category: 'Personal', subcategory: 'Travel', direction: 'debit' },
+
+  // ─── Entertainment (Personal · Entertainment) ────────────────
+  { name: 'bookmyshow', pattern: /bookmyshow|book\s*my\s*show/i, category: 'Personal', subcategory: 'Entertainment', direction: 'debit' },
+  { name: 'pvr', pattern: /\bpvr\b|pvr\s*cinemas?/i, category: 'Personal', subcategory: 'Entertainment', direction: 'debit' },
+  { name: 'inox', pattern: /\binox\b/i, category: 'Personal', subcategory: 'Entertainment', direction: 'debit' },
+  { name: 'steam', pattern: /steampowered|steam\s*games/i, category: 'Personal', subcategory: 'Entertainment', direction: 'debit' },
+  { name: 'playstation', pattern: /playstation|\bpsn\b/i, category: 'Personal', subcategory: 'Entertainment', direction: 'debit' },
+
+  // ─── Investments — platform anchors (Investments) ─────────────
+  // Existing 'investments' rule above catches SIP / MF / Zerodha /
+  // Groww / Upstox. Add the rest of the major Indian brokerage and
+  // direct-MF platforms so they don't need AI judgment.
+  { name: 'kuvera', pattern: /\bkuvera\b/i, category: 'Investments', subcategory: 'MF', direction: 'debit' },
+  { name: 'coin-by-zerodha', pattern: /coin\s*by\s*zerodha|kuvera\s*coin/i, category: 'Investments', subcategory: 'MF', direction: 'debit' },
+  { name: 'paytm-money', pattern: /paytm\s*money/i, category: 'Investments', subcategory: 'MF', direction: 'debit' },
+  { name: 'angel-one', pattern: /angel\s*one|angel\s*broking/i, category: 'Investments', subcategory: 'Stocks', direction: 'debit' },
+  { name: 'icicidirect', pattern: /icici\s*direct|icicidirect/i, category: 'Investments', subcategory: 'Stocks', direction: 'debit' },
+  { name: 'hdfc-securities', pattern: /hdfc\s*sec(?:urities)?/i, category: 'Investments', subcategory: 'Stocks', direction: 'debit' },
+  { name: 'kotak-securities', pattern: /kotak\s*sec(?:urities)?/i, category: 'Investments', subcategory: 'Stocks', direction: 'debit' },
+  { name: 'cdsl-nsdl', pattern: /\bcdsl\b|\bnsdl\b/i, category: 'Investments', subcategory: 'Other', direction: 'debit' },
+
+  // ─── Insurance — known aggregator platforms (Insurance · Premium)
+  // The earlier 'insurance' anchor catches generic "INS-" / "INS_" /
+  // "_PROPERTY_INS_" tells. Aggregators have brand-recognizable names.
+  { name: 'policybazaar', pattern: /policy\s*bazaar|policybazaar/i, category: 'Insurance', subcategory: 'Premium', direction: 'debit' },
+  { name: 'acko', pattern: /\backo\b/i, category: 'Insurance', subcategory: 'Premium', direction: 'debit' },
+  { name: 'digit-insurance', pattern: /go\s*digit|\bdigit\s+insurance/i, category: 'Insurance', subcategory: 'Premium', direction: 'debit' },
+  { name: 'hdfc-ergo', pattern: /hdfc\s*ergo/i, category: 'Insurance', subcategory: 'Premium', direction: 'debit' },
+  { name: 'icici-lombard', pattern: /icici\s*lombard/i, category: 'Insurance', subcategory: 'Premium', direction: 'debit' },
+
   // ─── Transfers (UPI / NEFT / IMPS / RTGS / mTFR) ──────────────
   // Generic transfer rule fires LAST in this group so all the
   // specific charge / EMI / GST / salary anchors above win first.

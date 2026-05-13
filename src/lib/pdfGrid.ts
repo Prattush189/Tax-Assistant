@@ -1465,6 +1465,28 @@ export function applyMapping(
       }
     }
 
+    // Opening / closing balance marker rows. Some Tally exports (OSPL
+    // Future Energy variant) put the opening balance ONLY in the
+    // balance column with a Dr/Cr suffix — debit/credit are empty.
+    // Without rescuing this row, flushPending skips it (amount=null),
+    // and mappedRowsToExtractedLedger never sees the opening balance
+    // so it defaults to 0 — every audit then reports an opening of 0
+    // and a recon gap equal to the actual carried-forward balance.
+    //
+    // Emit as a placeholder transaction with amount=0; the downstream
+    // opening-detection in mappedRowsToExtractedLedger keys off
+    // narration AND consults t.balance when t.amount is 0 to pick up
+    // the signed opening directly. Same trick covers closing-balance
+    // rows that lack a debit/credit value.
+    if (
+      amount == null
+      && kind === 'ledger'
+      && pending.balance != null
+      && /(?:^|\s)(?:opening|closing)\s+balance\b/i.test(pending.narration ?? '')
+    ) {
+      amount = 0;
+    }
+
     // Sanity-check amount/balance against the bank's running balance.
     // For narrow-text rows pdfjs sometimes drops the amount value at
     // a column boundary and ends up putting the *running balance* into
@@ -1741,6 +1763,43 @@ export function applyMapping(
       }
     }
 
+    // Date-less Opening / Closing Balance row with no prior pending.
+    // Finsys exports print "Balance B/f" at the top of each page with
+    // no date column populated and only the running balance in col 5.
+    // After the Finsys preprocess these come through as
+    //   date='', narration='Opening Balance', balance=<signed>,
+    //   debit=null, credit=null
+    // and the "date && pending" branches both fall through, dropping
+    // the row silently. Synthesise a FY-start date so it becomes a
+    // proper transaction; flushPending's opening-balance rescue then
+    // emits it with amount=0 and mappedRowsToExtractedLedger picks
+    // it up as the account's opening via balance.
+    if (
+      !date
+      && !pending
+      && kind === 'ledger'
+      && balance != null
+      && /^\s*(?:-\s*)?(?:to\s+|by\s+)?(?:opening|closing)\s+balance\s*$/i.test(narr ?? '')
+      && inferredYear != null
+    ) {
+      pending = {
+        // Indian FY runs Apr → Mar. Opening Balance lands on day 1
+        // of the FY start year; closing on day 1 of FY+1. The exact
+        // day doesn't affect totals, only date sorting.
+        date: /closing/i.test(narr) ? `${inferredYear + 1}-03-31` : `${inferredYear}-04-01`,
+        narration: narr,
+        voucher,
+        reference,
+        debit,
+        credit,
+        amountSingle,
+        drCrMarker,
+        balance,
+        account: lastAccount,
+      };
+      continue;
+    }
+
     if (date) {
       // New transaction starts. Flush whatever was pending.
       flushPending();
@@ -1844,7 +1903,33 @@ export function applyMapping(
         kind === 'ledger' &&
         /^(?:to\s+|by\s+)?closing\s+balance\b/i.test(narr ?? '');
 
-      if (isNewVoucherSameDate || isClosingBalanceRow) {
+      // Conflicting-amount detection — covers Tally exports that
+      // present multiple bills on the same date with NO Vch No.
+      // column (OSPL Future Energy / Customer ledger variant). Each
+      // "Bill No. xxx" row in the Jun 24 block has its own credit
+      // amount but no Vch No. for Bug 3 to compare. Without this
+      // check, the continuation-merge below silently drops every
+      // bill after the first (because `pending.credit` is already
+      // set, the `(pending.credit == null || === 0)` gate skips the
+      // assignment), losing ~9 out of every 10 transactions on dense
+      // days. Symptom: applyMapping reports 74 txns when the source
+      // has 250+; recon gap of crores.
+      //
+      // Signal: pending has a non-zero debit OR credit AND this
+      // row has a same-side non-zero amount. Bug 3 (new voucher)
+      // handles the case with reference numbers; this handles the
+      // narration-only case. Contra-detail rows are excluded — they
+      // carry Dr/Cr suffix on the amount cell, isContraDetail catches
+      // them before this.
+      const isConflictingAmount =
+        kind === 'ledger' &&
+        !isContraDetail &&
+        (
+          (debit != null && debit !== 0 && pending.debit != null && pending.debit !== 0) ||
+          (credit != null && credit !== 0 && pending.credit != null && pending.credit !== 0)
+        );
+
+      if (isNewVoucherSameDate || isClosingBalanceRow || isConflictingAmount) {
         const inheritedDate = pending.date;
         const inheritedAccount = pending.account;
         flushPending();
@@ -1977,9 +2062,27 @@ export function mappedRowsToExtractedLedger(
     // the more reliable source.
     let opening = 0;
     let openingIdx = -1;
+    // Anchored to "Opening Balance" exactly (no B/F suffix). The
+    // Busy export uses "Opening Balance B/F" as a real Dr transaction
+    // (double-entered with an offsetting "O/Bal TRF TO CAPITAL" Cr on
+    // the same day) — pulling it out as the account's opening would
+    // create a phantom Cr-only side that breaks recon. Tally writes
+    // "Opening Balance" exactly, so the narrow regex catches the
+    // Tally case without disturbing Busy.
     if (txs.length > 0 && /^\s*(?:-\s*)?(?:to\s+|by\s+)?opening\s+balance\s*$/i.test(txs[0].narration ?? '')) {
       const t = txs[0];
-      opening = -t.amount;
+      // Two Tally source shapes:
+      //   - Hotel Holiday Inn: opening as a Dr or Cr row.
+      //     t.amount carries the value, signed as `credit - debit`
+      //     in applyMapping's convention. Audit wants Dr-positive,
+      //     so negate.
+      //   - OSPL Future Energy: opening only in the balance column
+      //     with a Dr/Cr suffix. applyMapping emits this with
+      //     amount=0 (rescued from the null-amount skip), so we
+      //     fall back to t.balance which carries the signed opening
+      //     directly (Dr positive, Cr negative — see the Dr/Cr
+      //     suffix preservation in applyMapping).
+      opening = t.amount !== 0 ? -t.amount : (t.balance ?? 0);
       openingIdx = 0;
     }
     // Tally also emits a "To Closing Balance" / "By Closing Balance"
