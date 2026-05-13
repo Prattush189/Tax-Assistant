@@ -324,6 +324,29 @@ export function detectAndMapLedgerErp(grid: PdfGrid | null): DetectedErpMapping 
           roles[col + 1] = numericRole;
         }
       }
+
+      // Same empty→full shift for NON-numeric roles (voucher,
+      // reference, account). The Tally "Hotel Holiday Inn 2024-25"
+      // PDF surfaces this with the voucher column: columnHeaders
+      // placed "Type" at col 3, but actual "Purchase" / "Journal"
+      // values sit at col 4. Without this pass the wizard preview
+      // shows "Voucher / Type" mapped to an empty column while the
+      // real Vch Type data sits in a "Skip" column next to it.
+      // Symmetric to the numeric pass above — only fires when col
+      // is empty and col+1 has text.
+      const nonEmptyAt = (i: number) => datedRows.filter(r => (r[i] ?? '').trim().length > 0).length;
+      for (const nonNumericRole of ['voucher', 'reference', 'account'] as const) {
+        const col = roles.indexOf(nonNumericRole);
+        if (col < 0 || col >= roles.length - 1) continue;
+        if (roles[col + 1] !== 'skip') continue;
+        const cur = nonEmptyAt(col);
+        const next = nonEmptyAt(col + 1);
+        if (cur < datedRows.length / 4 && next >= Math.ceil(datedRows.length / 2)) {
+          console.log(`[perLedgerErpRules] ${rule.name} shifting ${nonNumericRole} from col ${col} → col ${col + 1} (${cur}/${datedRows.length} populated vs ${next}/${datedRows.length} in next column)`);
+          roles[col] = 'skip';
+          roles[col + 1] = nonNumericRole;
+        }
+      }
     }
   }
 
