@@ -259,7 +259,17 @@ async function authFetch(url: string, options: RequestInit = {}) {
 
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
-    throw new Error(data.error || `Request failed (${res.status})`);
+    // Surface server-provided `detail` when present. The bare `error`
+    // is usually a UX-friendly headline ("Comparison failed. Try
+    // again or contact support."), and `detail` carries the actual
+    // exception slice the route appended (token-quota name, JSON
+    // truncation reason, LLM-provider 5xx code). Without joining
+    // the two the user got a one-liner with no diagnostic — and
+    // worse, the developer couldn't tell from the toast whether the
+    // comparison hit MAX_TOKENS, lost auth, or the LLM timed out.
+    const headline = data.error || `Request failed (${res.status})`;
+    const msg = data.detail ? `${headline} — ${data.detail}` : headline;
+    throw new Error(msg);
   }
   // Surface provider-fallback so the UI can toast "Server busy, retrying…".
   // Set by routes whose LLM call fell from the primary to a backup model

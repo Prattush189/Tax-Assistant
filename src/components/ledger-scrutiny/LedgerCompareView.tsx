@@ -5,7 +5,7 @@
  * mappedRowsToExtractedLedger), then once both are extracted we POST to
  * /api/ledger-scrutiny/compare which returns a reconciliation report.
  */
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Loader2, Scale, Upload, FileCheck2, X } from 'lucide-react';
 import Papa from 'papaparse';
 import toast from 'react-hot-toast';
@@ -22,9 +22,73 @@ import {
 import { detectAndMapLedgerErp } from '../../lib/perLedgerErpRules';
 import {
   createLedgerComparison,
+  fetchLedgerComparison,
+  fetchLedgerComparisons,
   type LedgerComparisonReport,
 } from '../../services/api';
 import { cn } from '../../lib/utils';
+
+// ── Tab-survival state persistence ─────────────────────────────────────
+//
+// LedgerCompareView lives under a `mode === 'compare'` conditional in
+// LedgerScrutinyView, so flipping the in-app tab from "Compare" to
+// "Single ledger" unmounts the component and torches every useState.
+// Two failure modes the user hit:
+//
+//   1. Upload both sides, click Compare, switch tab to check something,
+//      come back — Entity A/B fields blank, filename gone, no spinner,
+//      no result. Looks like the click never registered.
+//   2. Compare POST is still in-flight server-side when the component
+//      unmounts; the fetch promise eventually resolves onto a stale
+//      closure (silent no-op in React 18+). Server marked the row
+//      `completed` with a full report, but the user never sees it.
+//
+// Persist sideA / sideB / usedLabels / report to sessionStorage so the
+// form survives an unmount. When a compare is in-flight, write a
+// timestamp to sessionStorage too; on remount, look up the user's
+// comparison list and recover the result by matching `created_at`
+// against the saved timestamp (±30s skew tolerance).
+//
+// sessionStorage (not localStorage) so a fresh browser tab gets a
+// clean slate; you'd never want yesterday's half-finished compare to
+// silently reappear.
+const STORAGE_PREFIX = 'ledgerCompare:';
+const STORAGE_KEYS = {
+  sideA: `${STORAGE_PREFIX}sideA`,
+  sideB: `${STORAGE_PREFIX}sideB`,
+  usedLabels: `${STORAGE_PREFIX}usedLabels`,
+  report: `${STORAGE_PREFIX}report`,
+  inFlightAt: `${STORAGE_PREFIX}inFlightAt`,
+} as const;
+
+interface StoredSideState {
+  label: string;
+  filename: string | null;
+  extracted: ExtractedLedger | null;
+}
+
+function loadStored<T>(key: string): T | null {
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
+function saveStored(key: string, value: unknown): void {
+  try {
+    if (value === null || value === undefined) {
+      sessionStorage.removeItem(key);
+    } else {
+      sessionStorage.setItem(key, JSON.stringify(value));
+    }
+  } catch {
+    // sessionStorage quota or disabled (private window) — silently
+    // skip. Persistence is a UX nicety, not a correctness requirement.
+  }
+}
 
 type Side = 'A' | 'B';
 
@@ -179,8 +243,27 @@ function ReportTable<T>({
 export function LedgerCompareView() {
   const inputRefA = useRef<HTMLInputElement>(null);
   const inputRefB = useRef<HTMLInputElement>(null);
-  const [sideA, setSideA] = useState<SideState>({ label: '', filename: null, extracted: null, processing: false });
-  const [sideB, setSideB] = useState<SideState>({ label: '', filename: null, extracted: null, processing: false });
+  // Initial state is rehydrated from sessionStorage so an in-app tab
+  // flip (Compare → Single → Compare) preserves the uploaded ledgers
+  // and any completed report.
+  const [sideA, setSideA] = useState<SideState>(() => {
+    const stored = loadStored<StoredSideState>(STORAGE_KEYS.sideA);
+    return {
+      label: stored?.label ?? '',
+      filename: stored?.filename ?? null,
+      extracted: stored?.extracted ?? null,
+      processing: false,
+    };
+  });
+  const [sideB, setSideB] = useState<SideState>(() => {
+    const stored = loadStored<StoredSideState>(STORAGE_KEYS.sideB);
+    return {
+      label: stored?.label ?? '',
+      filename: stored?.filename ?? null,
+      extracted: stored?.extracted ?? null,
+      processing: false,
+    };
+  });
   const [pendingGrid, setPendingGrid] = useState<{
     side: Side;
     grid: PdfGrid;
@@ -193,8 +276,113 @@ export function LedgerCompareView() {
     detectedErp?: string;
   } | null>(null);
   const [comparing, setComparing] = useState(false);
-  const [report, setReport] = useState<LedgerComparisonReport | null>(null);
-  const [usedLabels, setUsedLabels] = useState<{ A: string; B: string } | null>(null);
+  const [report, setReport] = useState<LedgerComparisonReport | null>(
+    () => loadStored<LedgerComparisonReport>(STORAGE_KEYS.report),
+  );
+  const [usedLabels, setUsedLabels] = useState<{ A: string; B: string } | null>(
+    () => loadStored<{ A: string; B: string }>(STORAGE_KEYS.usedLabels),
+  );
+
+  // Persist state to sessionStorage on every change. Bound to the
+  // serialisable fields only — `processing` is transient UI state and
+  // `pendingGrid` carries an unserialisable File ref.
+  useEffect(() => {
+    saveStored(STORAGE_KEYS.sideA, {
+      label: sideA.label,
+      filename: sideA.filename,
+      extracted: sideA.extracted,
+    });
+  }, [sideA.label, sideA.filename, sideA.extracted]);
+  useEffect(() => {
+    saveStored(STORAGE_KEYS.sideB, {
+      label: sideB.label,
+      filename: sideB.filename,
+      extracted: sideB.extracted,
+    });
+  }, [sideB.label, sideB.filename, sideB.extracted]);
+  useEffect(() => {
+    saveStored(STORAGE_KEYS.usedLabels, usedLabels);
+  }, [usedLabels]);
+  useEffect(() => {
+    saveStored(STORAGE_KEYS.report, report);
+  }, [report]);
+
+  // In-flight recovery on mount. If the previous mount started a
+  // compare that hadn't completed when the component unmounted, the
+  // POST kept running server-side and persisted a row. Recover the
+  // result by looking up the user's comparison list and matching by
+  // creation time.
+  useEffect(() => {
+    const inFlightAt = loadStored<number>(STORAGE_KEYS.inFlightAt);
+    if (!inFlightAt) return;
+    // Skip if the report was already restored from sessionStorage —
+    // means the previous mount got the response in time and saved it.
+    if (report) {
+      saveStored(STORAGE_KEYS.inFlightAt, null);
+      return;
+    }
+
+    let cancelled = false;
+    let pollTimer: ReturnType<typeof setTimeout> | null = null;
+    const poll = async () => {
+      try {
+        const { comparisons } = await fetchLedgerComparisons();
+        if (cancelled) return;
+        // Match by created_at proximity to our recorded inFlightAt
+        // (the server creates the row at request entry — usually
+        // within ~1s of our timestamp). Allow 30s of skew for slow
+        // networks and Date.now() vs. server-clock drift.
+        const candidate = comparisons.find(c => {
+          const createdMs = new Date(c.created_at).getTime();
+          return Number.isFinite(createdMs) && Math.abs(createdMs - inFlightAt) < 30_000;
+        });
+        if (!candidate) {
+          // Nothing matches — either the server never recorded it
+          // (auth dropped before the route ran) or the user cleared
+          // their history. Either way, stop watching.
+          saveStored(STORAGE_KEYS.inFlightAt, null);
+          setComparing(false);
+          return;
+        }
+        if (candidate.status === 'completed') {
+          const detail = await fetchLedgerComparison(candidate.id);
+          if (cancelled) return;
+          if (detail.report) {
+            setReport(detail.report);
+            setUsedLabels({ A: detail.labelA, B: detail.labelB });
+            toast.success('Reconciliation completed in the background — result restored.', { duration: 6000 });
+          }
+          saveStored(STORAGE_KEYS.inFlightAt, null);
+          setComparing(false);
+        } else if (candidate.status === 'failed' || candidate.status === 'cancelled') {
+          toast.error(
+            `Background reconciliation ${candidate.status}: ${candidate.error_message ?? 'no detail returned'}`,
+            { duration: 9000 },
+          );
+          saveStored(STORAGE_KEYS.inFlightAt, null);
+          setComparing(false);
+        } else {
+          // Still pending / comparing — keep the spinner up and
+          // re-check every 3s.
+          setComparing(true);
+          pollTimer = setTimeout(() => { void poll(); }, 3000);
+        }
+      } catch (err) {
+        if (cancelled) return;
+        console.error('[ledger-compare] in-flight recovery poll failed:', err);
+        // Leave the watch token in place — next mount can retry.
+      }
+    };
+    setComparing(true);
+    void poll();
+    return () => {
+      cancelled = true;
+      if (pollTimer) clearTimeout(pollTimer);
+    };
+    // Run once on mount only — the recovery loop manages its own
+    // teardown via the cancelled flag.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleFile = async (side: Side, files: FileList | null) => {
     const file = files?.[0];
@@ -355,6 +543,12 @@ export function LedgerCompareView() {
     if (!sideA.extracted || !sideB.extracted) return;
     setComparing(true);
     setReport(null);
+    // Watch-token timestamp: the server creates its ledger_comparisons
+    // row at request entry, so its `created_at` lands within ~1s of
+    // this value. If the component unmounts mid-flight, the in-flight
+    // recovery effect on the next mount uses this timestamp to find
+    // the matching row and re-hydrate the result.
+    saveStored(STORAGE_KEYS.inFlightAt, Date.now());
     const labelA = sideA.label.trim() || 'Entity A';
     const labelB = sideB.label.trim() || 'Entity B';
     try {
@@ -369,8 +563,15 @@ export function LedgerCompareView() {
       setUsedLabels({ A: labelA, B: labelB });
       toast.success('Reconciliation complete.');
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Comparison failed');
+      // authFetch now surfaces the server's `detail` field appended
+      // to the headline (e.g. "Comparison failed. Try again or
+      // contact support. — MAX_TOKENS exceeded at output position…").
+      // Show the full message and log the raw error for debugging.
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[ledger-compare] failed:', err);
+      toast.error(message, { duration: 9000 });
     } finally {
+      saveStored(STORAGE_KEYS.inFlightAt, null);
       setComparing(false);
     }
   };
@@ -380,6 +581,13 @@ export function LedgerCompareView() {
     setSideB({ label: '', filename: null, extracted: null, processing: false });
     setReport(null);
     setUsedLabels(null);
+    // Clear persisted state too — Reset means "start over", the
+    // user shouldn't get yesterday's upload back on next mount.
+    saveStored(STORAGE_KEYS.sideA, null);
+    saveStored(STORAGE_KEYS.sideB, null);
+    saveStored(STORAGE_KEYS.usedLabels, null);
+    saveStored(STORAGE_KEYS.report, null);
+    saveStored(STORAGE_KEYS.inFlightAt, null);
   };
 
   const labelA = usedLabels?.A ?? (sideA.label.trim() || 'Entity A');

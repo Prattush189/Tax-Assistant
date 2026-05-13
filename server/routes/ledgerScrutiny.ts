@@ -1453,8 +1453,19 @@ Return the JSON object per the schema. Date-sort every array ascending.`;
     ];
 
     const compareStartMs = Date.now();
+    // 16k output budget. Each matched-transaction entry in the schema
+    // carries date + amount + two narrations + two voucher numbers —
+    // ~200 tokens per match, plus the four mismatch/only-in arrays
+    // and the balance-check object. For a year-long ledger with 40+
+    // transactions per account times 8-10 accounts the schema can
+    // easily exceed 8k tokens of output JSON. When the LLM hits
+    // MAX_TOKENS mid-emit the JSON truncates, JSON.parse fails, the
+    // route throws, and the client previously saw a generic
+    // "Comparison failed" with no clue why — bump headroom so the
+    // schema can complete cleanly. (16k stays well under the
+    // 32k Gemini Flash output ceiling and keeps cost predictable.)
     const result = await callGeminiJson(messages, {
-      maxTokens: 8192,
+      maxTokens: 16384,
       responseFormat: { type: 'json_object' },
       retryParseFailures: true,
       onFallback: () => res.setHeader('X-Provider-Fallback', '1'),
