@@ -37,8 +37,14 @@ async function smoke(p: string) {
   }
   console.log(`  RULE: ${detected.erp}`);
   console.log(`  roles: ${detected.mapping.roles.map((r, i) => `${i}:${r}`).join(' ')}`);
+  if (detected.grid !== grid) {
+    console.log(`  preprocess reshaped grid: cols ${grid.columnCount} → ${detected.grid.columnCount}`);
+    console.log(`  new headers: ${(detected.grid.columnHeaders ?? []).map(h => `"${h ?? ''}"`).join(', ')}`);
+  }
 
-  const { rows, stats } = applyMapping(grid, detected.mapping, 'ledger');
+  // applyMapping MUST consume detected.grid (post-preprocess) — the
+  // mapping role array is indexed against it, not the original grid.
+  const { rows, stats } = applyMapping(detected.grid, detected.mapping, 'ledger');
   console.log(`  applyMapping stats: transactions=${stats.transactions} mergedContinuations=${stats.mergedContinuations} skippedNoAmount=${stats.skippedNoAmount}`);
 
   // Spot-check: the FIRST transaction on page 1 of Hotel Holiday Inn

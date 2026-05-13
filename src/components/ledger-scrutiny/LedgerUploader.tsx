@@ -231,8 +231,15 @@ export function LedgerUploader({ manager }: Props) {
       if (detected && grid) {
         console.log(`[LedgerUploader] auto-detected ${detected.erp} — pre-filling wizard for review`);
         setIsReadingPdf(false);
+        // Use detected.grid (post-preprocess) — when the Tally rule
+        // splits a merged "Vch No. Debit" column the mapping indices
+        // align with the new column count, not the raw extractPdfGrid
+        // output. Feeding the wizard the raw grid would render an
+        // off-by-one preview. For ERPs without preprocess
+        // (Marg / Busy / Finsys) detected.grid === grid so this is
+        // a no-op.
         setPendingGrid({
-          grid,
+          grid: detected.grid,
           filename: file.name,
           file,
           presetMapping: detected.mapping,
