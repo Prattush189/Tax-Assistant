@@ -1139,7 +1139,24 @@ function detectAccountHeader(
     .filter(c => c.length > 0);
   if (nonEmpty.length === 0) return null;
 
-  const candidate = nonEmpty.sort((a, b) => b.length - a.length)[0];
+  // Pre-filter cells that obviously aren't account names BEFORE
+  // picking the longest. The Tally Hotel Holiday Inn 2024-25 export
+  // surfaces multi-cell banner rows on continuation pages where the
+  // cells are { "Accounting Fee", "Ledger Account",
+  // ": 1-Apr-24 to 31-Mar-25", "Page 6" }. Plain longest-cell picks
+  // the date-range string and turns it into a phantom account.
+  // Reject:
+  //   - Tally page-rollover footers ("continued..N" / "continued...")
+  //   - Date-range strings (": 1-Apr-24 to 31-Mar-25" or
+  //     "1-Apr-24 to 31-Mar-25")
+  //   - "Page N" / "Page No. N" cells
+  //   - "Ledger Account" label
+  //   - Bare "Carried Over" / "Brought Forward" markers
+  const NON_ACCOUNT_CELL = /^(?:continued\b|carried\s+over|brought\s+forward|page\s+\S+|ledger(?:\s+account)?$|[:\s]*\d{1,2}[-/.][a-z]{3,9}[-/.]\d{2,4}\s+to\s+)/i;
+  const filtered = nonEmpty.filter(c => !NON_ACCOUNT_CELL.test(c));
+  if (filtered.length === 0) return null;
+
+  const candidate = filtered.sort((a, b) => b.length - a.length)[0];
 
   // Reject column-header rows defensively (findTableStart already
   // skips these but this function might be called on the raw grid).
@@ -1548,8 +1565,38 @@ export function applyMapping(
         continue;
       }
 
+      // Tally page-total rows: date-less, narration-less, voucher-less
+      // rows where debit AND credit (or amount) are both populated
+      // with currency-shape values. These are the per-page subtotal
+      // rows printed at the bottom of every Tally account-page (e.g.
+      // r15 = "debit=1,09,098.00 credit=1,09,098.00" everything else
+      // empty). LEDGER_SUBTOTAL_MARKER doesn't catch them because the
+      // marker word ("Totals" / "Carried Over") sits in cells that
+      // the columnHeaders didn't classify as narration/voucher/ref —
+      // these rows have NO marker word at all, just the totals.
+      //
+      // Without this guard the continuation-merge below absorbs the
+      // page-total numbers into the previous transaction's pending,
+      // and worse, the row stays date-less so the account-header gate
+      // (pending===null below) never fires on the NEXT page's banner
+      // — every account after the first ends up swallowed under the
+      // running lastAccount or the next phantom name detected (Tally's
+      // "continued ..." page footer).
+      const dateParsedForPageTotal = parseDate(cell('date'), inferredYear ?? undefined);
+      if (!dateParsedForPageTotal && !cell('narration') && !cell('voucher') && !cell('reference')) {
+        const pageDebit = parseNumber(cell('debit'));
+        const pageCredit = parseNumber(cell('credit'));
+        if (pageDebit && pageCredit) {
+          flushPending();
+          prevRowWasAccountHeader = false;
+          stats.skippedNoAmount += 1;
+          continue;
+        }
+      }
+
       // Page-continuation marker detection. When we see a date-less
-      // row containing "( Contd. )" anywhere in its text, set the
+      // row containing "( Contd. )" OR Tally's "continued..N" /
+      // "continued ..." footer anywhere in its text, set the
       // continuation flag — every subsequent date-less row is part
       // of the same page-continuation block (city, banner, repeated
       // column header, Totals B/F) and must NOT create a new
@@ -1559,7 +1606,7 @@ export function applyMapping(
       const dateRawForContd = cell('date');
       const dateParsedForContd = parseDate(dateRawForContd, inferredYear ?? undefined);
       const allRowText = row.map(c => (c ?? '').trim()).filter(Boolean).join(' ');
-      if (!dateParsedForContd && /\(\s*contd\.?\s*\)/i.test(allRowText)) {
+      if (!dateParsedForContd && (/\(\s*contd\.?\s*\)/i.test(allRowText) || /\bcontinued\s*(?:\.{2,}|\d+)/i.test(allRowText))) {
         flushPending();
         inContinuationBlock = true;
         prevRowWasAccountHeader = false;
