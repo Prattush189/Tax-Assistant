@@ -518,10 +518,15 @@ export function detectAndMapLedgerErp(gridIn: PdfGrid | null): DetectedErpMappin
   const dateColForShift = roles.indexOf('date');
   if (dateColForShift >= 0) {
     const defaultYearForShift = inferFiscalYearStart(grid.rows) ?? undefined;
+    // Sample 50 dated rows (was 10) — single-direction streaks in the
+    // first batch (e.g. an all-debit opening month on a credit account)
+    // produced incorrect non-shifts on the smaller sample. 50 rows
+    // almost always contains both directions on a typical account; the
+    // few that don't get rescued by the companion-shift pass below.
     const datedRows = grid.rows
       .slice(1)
       .filter(r => parseDate((r[dateColForShift] ?? '').trim(), defaultYearForShift))
-      .slice(0, 10);
+      .slice(0, 50);
     if (datedRows.length >= 3) {
       // Any-digit and currency-shape counters. Currency-shape means
       // the cell contains a decimal point or an Indian comma group
@@ -539,6 +544,7 @@ export function detectAndMapLedgerErp(gridIn: PdfGrid | null): DetectedErpMappin
         const s = (r[i] ?? '').trim();
         return /\d/.test(s) && /[.,]/.test(s);
       }).length;
+      let anyNumericShift = false;
       for (const numericRole of ['debit', 'credit', 'amount', 'balance'] as const) {
         const col = roles.indexOf(numericRole);
         if (col < 0 || col >= roles.length - 1) continue;
@@ -558,6 +564,28 @@ export function detectAndMapLedgerErp(gridIn: PdfGrid | null): DetectedErpMappin
           nextCurrency >= Math.ceil(datedRows.length / 2);
         if (emptyAndFull || integerThenCurrency) {
           console.log(`[perLedgerErpRules] ${rule.name} shifting ${numericRole} from col ${col} → col ${col + 1} (${cur}/${datedRows.length} numeric, ${curCurrency} currency-shape vs ${next}/${datedRows.length} numeric, ${nextCurrency} currency-shape in next column)`);
+          roles[col] = 'skip';
+          roles[col + 1] = numericRole;
+          anyNumericShift = true;
+        }
+      }
+      // Companion-shift: if any numeric role just shifted, the layout
+      // is a confirmed header-text / data-column split. For any other
+      // numeric role whose current column has 0 numeric data AND the
+      // next column is 'skip' with an empty header (signature of the
+      // split layout), shift on faith even without per-column numeric
+      // evidence. Catches the streak case where a single-direction
+      // ledger period leaves the opposing-sign column with no data
+      // in the sample, so the direct-shift pass can't fire on it.
+      if (anyNumericShift) {
+        for (const numericRole of ['debit', 'credit', 'amount'] as const) {
+          const col = roles.indexOf(numericRole);
+          if (col < 0 || col >= roles.length - 1) continue;
+          if (roles[col + 1] !== 'skip') continue;
+          if (numAt(col) > 0) continue;
+          const nextHeader = (headers[col + 1] ?? '').trim();
+          if (nextHeader !== '') continue;
+          console.log(`[perLedgerErpRules] ${rule.name} companion-shifting ${numericRole} from col ${col} → col ${col + 1} (sibling shift confirmed split-header layout; no data evidence in sampled rows but next col is unmapped + headerless)`);
           roles[col] = 'skip';
           roles[col + 1] = numericRole;
         }

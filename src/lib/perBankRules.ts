@@ -622,18 +622,38 @@ function tryRule(rule: BankRule, gridIn: PdfGrid): DetectedBankMapping | null {
   // header text ("Withdrawal" / "Deposit" / "Balance") and a right-
   // aligned data column for the actual numbers. The header→role
   // mapping anchors on the header column, but the data lives one
-  // column to the right with an empty header. For each numeric
-  // role, if the assigned column is empty for most dated rows but
-  // the next column is rich with numbers AND currently mapped to
-  // 'skip', shift the role over by one.
+  // column to the right with an empty header. Two-pass logic:
+  //
+  //   Pass 1 — direct shift: if the role's current column has ≤25%
+  //   numeric data AND the next column is 'skip' AND has ≥50%
+  //   numeric data, shift the role to the next column.
+  //
+  //   Pass 2 — companion shift: if Pass 1 fired for ANY role, the
+  //   layout is confirmed to be a header-text/data-column split.
+  //   For any remaining numeric role whose current column has 0
+  //   numeric data AND the next column is 'skip' AND ALSO has 0
+  //   numeric data AND the next column's HEADER is empty — shift
+  //   anyway. This catches the streak case: a Canara statement
+  //   where the first 50 dated rows are all withdrawals leaves the
+  //   "Deposits" header column with zero data evidence in both Pass
+  //   1's signal columns, so Pass 1 can't fire on the credit role.
+  //   The Withdrawal column DID shift (proving the split layout),
+  //   so we shift Credit on faith.
+  //
+  // Sample size: 50 dated rows (was 10). With 10 rows, single-
+  // direction streaks (all credits or all debits in the first batch)
+  // produced incorrect non-shifts. 50 rows almost always contains
+  // both directions on a typical account; the few that don't get
+  // rescued by Pass 2.
   const dateColForShift = roles.indexOf('date');
   if (dateColForShift >= 0) {
     const datedRows = grid.rows
       .slice(1)
       .filter(r => parseDate((r[dateColForShift] ?? '').trim()))
-      .slice(0, 10);
+      .slice(0, 50);
     if (datedRows.length >= 3) {
       const numAt = (i: number) => datedRows.filter(r => /\d/.test((r[i] ?? '').trim())).length;
+      let anyShift = false;
       for (const numericRole of ['debit', 'credit', 'amount', 'balance'] as const) {
         const col = roles.indexOf(numericRole);
         if (col < 0 || col >= roles.length - 1) continue;
@@ -642,6 +662,20 @@ function tryRule(rule: BankRule, gridIn: PdfGrid): DetectedBankMapping | null {
         const next = numAt(col + 1);
         if (cur < datedRows.length / 4 && next >= Math.ceil(datedRows.length / 2)) {
           console.log(`[perBankRules] ${rule.name} shifting ${numericRole} from col ${col} → col ${col + 1} (${cur}/${datedRows.length} numeric vs ${next}/${datedRows.length} in next column)`);
+          roles[col] = 'skip';
+          roles[col + 1] = numericRole;
+          anyShift = true;
+        }
+      }
+      if (anyShift) {
+        for (const numericRole of ['debit', 'credit', 'amount'] as const) {
+          const col = roles.indexOf(numericRole);
+          if (col < 0 || col >= roles.length - 1) continue;
+          if (roles[col + 1] !== 'skip') continue;
+          if (numAt(col) > 0) continue; // role's current column has some data — don't blindly shift
+          const nextHeader = (headers[col + 1] ?? '').trim();
+          if (nextHeader !== '') continue; // next column has its own header — not part of the split layout
+          console.log(`[perBankRules] ${rule.name} companion-shifting ${numericRole} from col ${col} → col ${col + 1} (sibling shift confirmed split-header layout; no data evidence in sampled rows but next col is unmapped + headerless)`);
           roles[col] = 'skip';
           roles[col + 1] = numericRole;
         }
