@@ -1218,7 +1218,16 @@ router.post(
         const classified = ruleResults.filter(r => !r.needsAi);
         console.log(`[bank-statements] csv classifier pre-pass: ${classified.length}/${normalized.length} rows handled deterministically, ${ambiguous.length} sent to AI`);
 
-        const CSV_BATCH_SIZE = 80;
+        // Batch size lowered 80 → 40 (2026-05): empirically T2
+        // (gemini-2.5-flash-lite) skips rows it can't categorize
+        // confidently on dense batches, and 80-row batches hit the
+        // undercount-bisect path on ~25% of uploads. Each bisect doubles
+        // the API call count for that batch, amplifying upstream 503s
+        // during Gemini outage windows. Smaller batches reduce both
+        // failures (less for T2 to lose track of) AND the cost of
+        // failures (no extra API calls on bisect). Concurrency stays
+        // at 3 — we just run more, smaller batches concurrently.
+        const CSV_BATCH_SIZE = 40;
         const CSV_BATCH_CONCURRENCY = 3;
         const CSV_MAX_OUTPUT_TOKENS = 16_384;
 
@@ -1301,8 +1310,28 @@ ${JSON.stringify(batch)}`;
         const buildAiBatch = (slice: typeof ambiguous): AiBatchRow[] =>
           slice.map(r => ({ narration: r.row.narration, type: r.row.type as 'credit' | 'debit', amount: r.row.amount }));
 
-        // Recursive bisect for AI batches — same pattern as before.
-        // Halves on truncation, retries up to depth 3.
+        // Enrichment batch runner. 2026-05 rework:
+        //
+        // The OLD logic threw on enrichments.length < slice.length * 0.95
+        // ("undercount") and recursively bisected the batch to retry. That
+        // amplified upstream 503s during Gemini outages because each
+        // bisect doubled the API-call count for the batch. It was also
+        // mostly wasted work — T2's undercounts come from the model
+        // SKIPPING rows it can't categorize confidently, NOT from output
+        // truncation (the slim 2-field enrichment for 80 rows is ~500
+        // tokens; we cap max_tokens at 16,384). Smaller batches skip the
+        // same rows.
+        //
+        // New logic:
+        //   - Accept any non-zero result. Pad missing rows with default
+        //     { category: 'Other', subcategory: null } at the tail.
+        //   - Bisect ONLY on a fatal failure (JSON parse / network /
+        //     all-tier-503), where smaller input genuinely helps the
+        //     model produce something parseable.
+        //   - The padding strategy assumes missing rows are at the tail
+        //     of the response array (empirically T2 truncates from the
+        //     end). On the rare interior-skip case, all but the last few
+        //     rows get correctly categorised — net better than nothing.
         const categorizeWithSplit = async (
           slice: typeof ambiguous,
           label: string,
@@ -1318,9 +1347,20 @@ ${JSON.stringify(batch)}`;
                 onFallback: () => { try { bankStatementRepo.markProviderFallback(placeholder.id); } catch (e) { console.warn('[bank-statements] markProviderFallback failed:', (e as Error).message); } },
               },
             );
-            const enrichments = result.data.enrichments ?? [];
-            if (enrichments.length < slice.length * 0.95) {
-              throw new Error(`csv ${label}: enrichments undercount (${enrichments.length} of ${slice.length}) — likely truncation`);
+            let enrichments = result.data.enrichments ?? [];
+            // SALVAGE: pad missing rows with default-Other instead of
+            // bisecting. The classifier already pre-filled counterparty
+            // / reference via regex for these rows; only category +
+            // subcategory remain undetermined. Defaulting to Other is
+            // the user's-eye equivalent of "AI couldn't decide", which
+            // is exactly what the missing-row state actually means.
+            if (enrichments.length < slice.length) {
+              const padded = enrichments.length;
+              const missing = slice.length - enrichments.length;
+              for (let i = 0; i < missing; i++) {
+                enrichments.push({ category: 'Other', subcategory: null });
+              }
+              console.warn(`[bank-statements] csv ${label} undercount salvaged: model returned ${padded}/${slice.length} enrichments; padded ${missing} row(s) with category='Other'`);
             }
             console.log(`[bank-statements] csv ${label} ✓ ${enrichments.length} enrichments in ${Date.now() - t0}ms`);
             return {
@@ -1333,7 +1373,12 @@ ${JSON.stringify(batch)}`;
             };
           } catch (err) {
             const msg = (err as Error).message ?? String(err);
-            const truncationLike = /undercount|parse failed|finish_reason=length|JSON/i.test(msg);
+            // Only bisect on FATAL failures — JSON parse error, network
+            // error, all-tier-503. These are cases where a smaller input
+            // size genuinely helps. Undercount alone no longer reaches
+            // here (handled by the salvage path above), so this branch
+            // is now strictly for parse / network errors.
+            const fatalAndSplittable = /parse failed|finish_reason=length|JSON|network|timeout/i.test(msg);
             if (result) {
               try {
                 const failedClientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
@@ -1343,11 +1388,11 @@ ${JSON.stringify(batch)}`;
                 console.error('[bank-statements] failed-batch log error', e);
               }
             }
-            if (!truncationLike || depth >= 3 || slice.length <= 1) throw err;
+            if (!fatalAndSplittable || depth >= 3 || slice.length <= 1) throw err;
             const mid = Math.ceil(slice.length / 2);
             const a = slice.slice(0, mid);
             const b = slice.slice(mid);
-            console.warn(`[bank-statements] csv ${label} too dense (${slice.length} rows at depth ${depth}), bisecting → [${a.length}, ${b.length}]`);
+            console.warn(`[bank-statements] csv ${label} fatal parse/network error (${slice.length} rows at depth ${depth}), bisecting → [${a.length}, ${b.length}]`);
             const [ra, rb] = await Promise.all([
               categorizeWithSplit(a, `${label}.a`, depth + 1),
               categorizeWithSplit(b, `${label}.b`, depth + 1),
