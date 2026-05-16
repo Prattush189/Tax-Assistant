@@ -88,7 +88,12 @@ const RULES: Rule[] = [
   // Min Balance — distinct subcategory because the user tracks it.
   // Cover both "Min Bal Chrg", "MAB CHRG" (Monthly Average Balance),
   // "Avg bal Chgs", "MINIMUM BALANCE CHARGES".
-  { name: 'min-balance', pattern: /\bmab chrg\b|min bal chrg|avg bal chgs|minimum balance charges/i, category: 'Bank Charges', subcategory: 'Min Balance' },
+  // "MAB" (Monthly Average Balance — used by most private banks) and
+  // "AMB" (Account Minimum Balance — J&K Bank's wording) both denote
+  // the same penalty: customer's average balance fell below the
+  // required floor. Group both into the same subcategory so the
+  // dashboard rolls them up cleanly.
+  { name: 'min-balance', pattern: /\bmab chrg\b|min bal chrg|avg bal chgs|minimum balance charges|\bamb\s+charges?\b/i, category: 'Bank Charges', subcategory: 'Min Balance' },
 
   // Loan processing
   { name: 'loan-processing', pattern: /loan_proc|loan processing fee/i, category: 'Bank Charges', subcategory: 'Loan Processing' },
@@ -139,6 +144,13 @@ const RULES: Rule[] = [
   // (always Cr). Direction-anchored so a misformatted line doesn't
   // get filed wrong.
   { name: 'int-collected', pattern: /int\.coll\b|loan interest|od interest/i, category: 'Bank Interest (Dr)', subcategory: 'Loan Interest', direction: 'debit' },
+  // J&K Bank narrations for loan-account interest charges. "MARGIN
+  // TERM LOAN" / standalone "MARGIN" / "PART PERIOD INTEREST" are all
+  // periodic interest debits on a Cash Credit / Term Loan account.
+  // Without these rules the AI tagged them Business Expenses, which
+  // is technically a debit but misses that it's interest, not vendor
+  // spend.
+  { name: 'jkbank-margin-loan', pattern: /^margin\s+term\s+loan\b|^margin$|part\s+period\s+interest/i, category: 'Bank Interest (Dr)', subcategory: 'Loan Interest', direction: 'debit' },
   { name: 'int-paid', pattern: /int\.pd:|credit interest/i, category: 'Bank Interest (Cr)', subcategory: 'Savings', direction: 'credit' },
 
   // ─── Insurance ─────────────────────────────────────────────────
@@ -793,4 +805,140 @@ export function unifyAmbiguousCounterparties<T extends {
     }
   }
   return totalChanged;
+}
+
+/**
+ * Direction-category sanity check. Some categories are direction-locked
+ * by definition:
+ *   - Inflow-only ("Business Income", "Cash Deposit", "Salary",
+ *     "Interest Income", "Bank Interest (Cr)", "Dividends",
+ *     "Rent Received") cannot be a debit.
+ *   - Outflow-only ("Business Expenses", "Loan EMI", "Bank Charges",
+ *     "Bank Interest (Dr)", "GST Payments", "TDS", "Taxes Paid",
+ *     "Investments", "Insurance", "Mobile Charges", "Electricity
+ *     Charges", "Water Charges") cannot be a credit.
+ *
+ * When the AI emits an impossible combination (e.g. "DEBIT row tagged
+ * Business Income") we don't try to flip it to a sensible alternative
+ * — guessing the right replacement category risks introducing a new
+ * error. Demote to "Other" with null subcategory; the row appears
+ * unclassified on the dashboard and the user can re-tag.
+ *
+ * Returns the number of rows changed.
+ */
+const INFLOW_ONLY_CATEGORIES = new Set<string>([
+  'Business Income', 'Cash Deposit', 'Salary', 'Interest Income',
+  'Bank Interest (Cr)', 'Dividends', 'Rent Received',
+]);
+const OUTFLOW_ONLY_CATEGORIES = new Set<string>([
+  'Business Expenses', 'Loan EMI', 'Bank Charges', 'Bank Interest (Dr)',
+  'GST Payments', 'TDS', 'Taxes Paid', 'Investments', 'Insurance',
+  'Mobile Charges', 'Electricity Charges', 'Water Charges',
+]);
+
+/**
+ * Detect the "retail business current account" pattern and promote
+ * matching credits to Business Income / Sales.
+ *
+ * Why this exists: the AI enrichment prompt sees one batch of rows
+ * at a time and has no access to account-level metadata (account
+ * type, holder's business). When the account holder runs a small
+ * retail business (food shop, kirana, salon, etc.), they receive
+ * many small UPI/IMPS credits from individual customers. The AI
+ * defaults those to "Personal / Shopping" because the counterparty
+ * is a personal name with no business marker — but on a CURRENT
+ * ACCOUNT receiving 30+ such credits from 20+ distinct payers,
+ * they are almost always Business Income.
+ *
+ * The 2026-05 J&K Bank FOOD HUT case made this stark: 708 of 832
+ * credits were tagged Personal/Shopping when they were ₹1–₹890
+ * customer payments to a food vendor. Net Business Income on the
+ * dashboard came out at ₹0 instead of ~₹4L.
+ *
+ * Heuristic: if the row set contains
+ *   - ≥ MIN_CREDIT_ROWS small credits (amount ≤ SMALL_AMOUNT_THRESHOLD)
+ *   - From ≥ MIN_DISTINCT_CPS distinct (normalised) counterparties
+ * then the statement looks like a retail business current account.
+ * Promote any small credit currently tagged Personal/Other/null
+ * category to Business Income / Sales.
+ *
+ * Tuning notes:
+ *   - SMALL_AMOUNT_THRESHOLD = 5000 catches typical retail purchases
+ *     (food, kirana, mobile recharge). Larger credits stay un-
+ *     promoted — those need AI judgment.
+ *   - MIN_DISTINCT_CPS = 20: a personal account receives money from
+ *     5-10 friends/family in a year; 20+ distinct senders is a
+ *     business signal.
+ *   - MIN_CREDIT_ROWS = 30: filters out tiny statements where the
+ *     pattern is noise. (Statements with <30 credits get whatever
+ *     the AI decided.)
+ *
+ * Returns { promoted, statementType } so the caller can log /
+ * surface the detection.
+ */
+const RETAIL_BUSINESS_SMALL_AMOUNT_THRESHOLD = 5000;
+const RETAIL_BUSINESS_MIN_DISTINCT_CPS = 20;
+const RETAIL_BUSINESS_MIN_CREDIT_ROWS = 30;
+
+export function applyRetailBusinessPromotion<T extends {
+  type: 'credit' | 'debit';
+  amount: number;
+  counterparty: string | null;
+  category: string;
+  subcategory: string | null;
+}>(rows: T[]): { promoted: number; statementType: string | null } {
+  const smallCredits = rows.filter(
+    r => r.type === 'credit' && Math.abs(r.amount) > 0 && Math.abs(r.amount) <= RETAIL_BUSINESS_SMALL_AMOUNT_THRESHOLD,
+  );
+  if (smallCredits.length < RETAIL_BUSINESS_MIN_CREDIT_ROWS) {
+    return { promoted: 0, statementType: null };
+  }
+  const cpSet = new Set<string>();
+  for (const r of smallCredits) {
+    const key = normalizeCounterpartyKey(r.counterparty);
+    if (key) cpSet.add(key);
+  }
+  if (cpSet.size < RETAIL_BUSINESS_MIN_DISTINCT_CPS) {
+    return { promoted: 0, statementType: null };
+  }
+
+  // Pattern matches. Promote small credits that are sitting in
+  // "Personal" / "Other" / empty category. Skip anything the
+  // classifier or AI already confidently tagged as something
+  // specific (Salary, Rent Received, Cash Deposit, Bank Interest
+  // (Cr), Business Income, Dividends, Interest Income, Transfers).
+  // Those are direction-correct credits with deliberate categories;
+  // we don't override them.
+  const PROMOTABLE_FROM = new Set<string>(['Personal', 'Other', '']);
+  let promoted = 0;
+  for (const r of rows) {
+    if (r.type !== 'credit') continue;
+    if (Math.abs(r.amount) > RETAIL_BUSINESS_SMALL_AMOUNT_THRESHOLD) continue;
+    if (!PROMOTABLE_FROM.has(r.category)) continue;
+    r.category = 'Business Income';
+    r.subcategory = 'Sales';
+    promoted++;
+  }
+  console.log(`[bank-classifier] retail-business detection: ${smallCredits.length} small credits from ${cpSet.size} distinct counterparties → promoted ${promoted} row(s) to Business Income / Sales`);
+  return { promoted, statementType: 'retail_business_current' };
+}
+
+export function validateDirectionCategory<T extends {
+  type: 'credit' | 'debit';
+  category: string;
+  subcategory: string | null;
+}>(rows: T[]): number {
+  let demoted = 0;
+  for (const r of rows) {
+    let bad = false;
+    if (r.type === 'debit' && INFLOW_ONLY_CATEGORIES.has(r.category)) bad = true;
+    if (r.type === 'credit' && OUTFLOW_ONLY_CATEGORIES.has(r.category)) bad = true;
+    if (bad) {
+      console.warn(`[bank-classifier] direction/category mismatch: ${r.type} row tagged "${r.category}" — demoted to Other`);
+      r.category = 'Other';
+      r.subcategory = null;
+      demoted++;
+    }
+  }
+  return demoted;
 }

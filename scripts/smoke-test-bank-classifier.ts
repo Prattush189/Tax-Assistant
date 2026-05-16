@@ -10,7 +10,7 @@
  *   npx tsx scripts/smoke-test-bank-classifier.ts
  */
 
-import { classifyRow, extractCounterparty, extractReference, markRecurring, unifyAmbiguousCounterparties, normalizeCounterpartyKey } from '../server/lib/bankClassifier';
+import { classifyRow, extractCounterparty, extractReference, markRecurring, unifyAmbiguousCounterparties, normalizeCounterpartyKey, validateDirectionCategory, applyRetailBusinessPromotion } from '../server/lib/bankClassifier';
 
 interface Case {
   narration: string;
@@ -69,6 +69,12 @@ const CASES: Case[] = [
 
   // ─── Bank Interest ─────────────────────────────────────────
   { narration: '0277020100000092:Int.Coll:01-03-2026 to 31-03-2026', type: 'debit', expect: { category: 'Bank Interest (Dr)', subcategory: 'Loan Interest' } },
+  // J&K Bank loan-interest narrations
+  { narration: 'MARGIN TERM LOAN', type: 'debit', expect: { category: 'Bank Interest (Dr)', subcategory: 'Loan Interest' } },
+  { narration: 'MARGIN', type: 'debit', expect: { category: 'Bank Interest (Dr)', subcategory: 'Loan Interest' } },
+  { narration: 'PART PERIOD INTEREST', type: 'debit', expect: { category: 'Bank Interest (Dr)', subcategory: 'Loan Interest' } },
+  // AMB CHARGES (J&K Bank's wording for Account Minimum Balance penalty)
+  { narration: 'AMB CHARGES : FROMAMB CHARGE TO 01 -', type: 'debit', expect: { category: 'Bank Charges', subcategory: 'Min Balance' } },
   { narration: 'Int.Pd:01-04-2024 to 30-06-2024', type: 'credit', expect: { category: 'Bank Interest (Cr)', subcategory: 'Savings' } },
   { narration: 'CREDIT INTEREST', type: 'credit', expect: { category: 'Bank Interest (Cr)', subcategory: 'Savings' } },
 
@@ -445,6 +451,94 @@ function run(): void {
   if (tChanged !== 0) {
     fail++;
     failures.push(`unifyAmbiguousCounterparties tied: expected 0 changes (2-2 tie has no clear majority), got ${tChanged}`);
+  } else {
+    pass++;
+  }
+
+  // ─── validateDirectionCategory: catches impossible combos ──
+  const directionValidationRows = [
+    { type: 'debit'  as const, category: 'Business Income',     subcategory: null as string | null },  // impossible
+    { type: 'credit' as const, category: 'Business Expenses',   subcategory: null as string | null },  // impossible
+    { type: 'debit'  as const, category: 'Cash Deposit',         subcategory: 'Counter' as string | null },  // impossible
+    { type: 'credit' as const, category: 'Loan EMI',             subcategory: null as string | null },  // impossible
+    { type: 'debit'  as const, category: 'Business Expenses',   subcategory: 'Software' as string | null },  // valid
+    { type: 'credit' as const, category: 'Business Income',     subcategory: null as string | null },  // valid
+    { type: 'debit'  as const, category: 'Personal',            subcategory: 'E-commerce' as string | null },  // valid
+  ];
+  const vDemoted = validateDirectionCategory(directionValidationRows);
+  if (vDemoted !== 4) {
+    fail++;
+    failures.push(`validateDirectionCategory: expected 4 demotions, got ${vDemoted}`);
+  } else if (
+    directionValidationRows[0].category !== 'Other' ||
+    directionValidationRows[1].category !== 'Other' ||
+    directionValidationRows[2].category !== 'Other' ||
+    directionValidationRows[3].category !== 'Other' ||
+    directionValidationRows[4].category !== 'Business Expenses' ||
+    directionValidationRows[5].category !== 'Business Income' ||
+    directionValidationRows[6].category !== 'Personal'
+  ) {
+    fail++;
+    failures.push(`validateDirectionCategory: row categories after pass: ${JSON.stringify(directionValidationRows.map(r => r.category))}`);
+  } else {
+    pass++;
+  }
+
+  // ─── applyRetailBusinessPromotion: detects FOOD HUT case ────
+  // Build 35 small UPI credits from 25 distinct counterparties — should fire.
+  const retailRows: Array<{ type: 'credit' | 'debit'; amount: number; counterparty: string | null; category: string; subcategory: string | null }> = [];
+  for (let i = 0; i < 35; i++) {
+    retailRows.push({
+      type: 'credit',
+      amount: 100 + i * 10,
+      counterparty: `customer${i % 25}@upi`,
+      category: 'Personal',
+      subcategory: 'Shopping',
+    });
+  }
+  // Mix in a few non-promotable rows
+  retailRows.push({ type: 'credit', amount: 50000, counterparty: 'big@upi', category: 'Personal', subcategory: 'Shopping' });  // too large
+  retailRows.push({ type: 'credit', amount: 500, counterparty: 'salary@corp', category: 'Salary', subcategory: null });  // already specific
+  retailRows.push({ type: 'debit', amount: 200, counterparty: 'food@upi', category: 'Personal', subcategory: 'Food Delivery' });  // debit, untouched
+  const retailResult = applyRetailBusinessPromotion(retailRows);
+  if (retailResult.statementType !== 'retail_business_current') {
+    fail++;
+    failures.push(`applyRetailBusinessPromotion: expected statementType retail_business_current, got ${retailResult.statementType}`);
+  } else if (retailResult.promoted !== 35) {
+    fail++;
+    failures.push(`applyRetailBusinessPromotion: expected 35 promoted, got ${retailResult.promoted}`);
+  } else if (retailRows[0].category !== 'Business Income' || retailRows[0].subcategory !== 'Sales') {
+    fail++;
+    failures.push(`applyRetailBusinessPromotion: row 0 not promoted; got ${retailRows[0].category}/${retailRows[0].subcategory}`);
+  } else if (retailRows[35].category !== 'Personal') {
+    // Large credit (50000) untouched
+    fail++;
+    failures.push(`applyRetailBusinessPromotion: row 35 (large credit) wrongly promoted`);
+  } else if (retailRows[36].category !== 'Salary') {
+    // Salary row stays
+    fail++;
+    failures.push(`applyRetailBusinessPromotion: row 36 (Salary) wrongly overridden`);
+  } else if (retailRows[37].category !== 'Personal') {
+    // Debit untouched
+    fail++;
+    failures.push(`applyRetailBusinessPromotion: row 37 (debit) wrongly overridden`);
+  } else {
+    pass++;
+  }
+
+  // ─── applyRetailBusinessPromotion: too few rows → no fire ───
+  const personalAccountRows = [
+    { type: 'credit' as const, amount: 500, counterparty: 'friend1@upi', category: 'Personal', subcategory: 'Shopping' as string | null },
+    { type: 'credit' as const, amount: 1000, counterparty: 'friend2@upi', category: 'Personal', subcategory: 'Shopping' as string | null },
+    { type: 'credit' as const, amount: 200, counterparty: 'friend3@upi', category: 'Personal', subcategory: 'Shopping' as string | null },
+  ];
+  const personalResult = applyRetailBusinessPromotion(personalAccountRows);
+  if (personalResult.statementType !== null) {
+    fail++;
+    failures.push(`applyRetailBusinessPromotion: 3-row personal account should NOT trigger, got ${personalResult.statementType}`);
+  } else if (personalAccountRows[0].category !== 'Personal') {
+    fail++;
+    failures.push(`applyRetailBusinessPromotion: personal-account row wrongly promoted`);
   } else {
     pass++;
   }

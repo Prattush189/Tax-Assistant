@@ -6,7 +6,7 @@ import Papa from 'papaparse';
 import { extractVisionWithFallback } from '../lib/visionFallback.js';
 import { callGeminiJson, type GeminiJsonResult } from '../lib/geminiJson.js';
 import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_CATEGORIES, buildConditionsBlock, countWords, MAX_CONDITION_WORDS } from '../lib/bankStatementPrompt.js';
-import { classifyRow, extractCounterpartyAndReference, markRecurring, unifyAmbiguousCounterparties } from '../lib/bankClassifier.js';
+import { classifyRow, extractCounterpartyAndReference, markRecurring, unifyAmbiguousCounterparties, validateDirectionCategory, applyRetailBusinessPromotion } from '../lib/bankClassifier.js';
 import { costForModel } from '../lib/gemini.js';
 import { creditsForPages, creditsForCsvRows, PAGES_PER_CREDIT, CSV_ROWS_PER_CREDIT } from '../lib/creditPolicy.js';
 import { enforceTokenQuota } from '../lib/tokenQuota.js';
@@ -1150,6 +1150,26 @@ router.post(
               category: string;
               subcategory: string | null;
             }>);
+            // Direction/category sanity check (see CSV-path comment).
+            validateDirectionCategory(extracted.transactions as Array<{
+              type: 'credit' | 'debit';
+              category: string;
+              subcategory: string | null;
+            }>);
+            // Retail-business promotion. Note: vision rows don't have
+            // `amount` set yet (derived from balance delta later in
+            // persistStatement), so we pass `Math.abs(balance delta)`
+            // as a fallback when amount is missing — but it's fine if
+            // we miss some rows here: the heuristic is approximate
+            // anyway. The CSV path is where this matters most; vision
+            // statements rarely have the 30+ small credits pattern.
+            applyRetailBusinessPromotion(extracted.transactions as Array<{
+              type: 'credit' | 'debit';
+              amount: number;
+              counterparty: string | null;
+              category: string;
+              subcategory: string | null;
+            }>);
             // markRecurring needs `amount`, which is derived from
             // balance deltas in persistStatement. So it can't run here
             // for vision rows — would be a no-op with undefined amounts.
@@ -1503,6 +1523,28 @@ ${JSON.stringify(batch)}`;
         unifyAmbiguousCounterparties(mergedTransactions as Array<{
           counterparty: string | null;
           type: 'credit' | 'debit';
+          category: string;
+          subcategory: string | null;
+        }>);
+        // Direction/category sanity check — catches AI emitting
+        // impossible combinations like "DEBIT row tagged Business
+        // Income". Demotes those to Other instead of letting them
+        // skew the dashboard's Inflow vs Outflow totals.
+        validateDirectionCategory(mergedTransactions as Array<{
+          type: 'credit' | 'debit';
+          category: string;
+          subcategory: string | null;
+        }>);
+        // Retail-business-current-account detection — promotes the
+        // many-small-credits-from-many-individuals pattern from
+        // "Personal / Shopping" (the AI's default) to "Business Income
+        // / Sales". The 2026-05 J&K Bank FOOD HUT upload had 708
+        // customer payments misclassified this way; this pass recovers
+        // them deterministically without an extra AI call.
+        applyRetailBusinessPromotion(mergedTransactions as Array<{
+          type: 'credit' | 'debit';
+          amount: number;
+          counterparty: string | null;
           category: string;
           subcategory: string | null;
         }>);
