@@ -18,7 +18,11 @@
 
 export class BreakerOpenError extends Error {
   constructor(readonly upstream: string, readonly retryAfterMs: number) {
-    super(`Upstream "${upstream}" is temporarily unavailable. Retry in ${Math.ceil(retryAfterMs / 1000)}s.`);
+    // User-facing message — must NOT name the AI provider (no
+    // "gemini" / "claude" / model names). The provider identity
+    // lives on `this.upstream` for internal telemetry / admin logs;
+    // the message string is what bubbles up to the UI toast.
+    super(`The AI service is temporarily unavailable. Retry in ${Math.ceil(retryAfterMs / 1000)}s.`);
     this.name = 'BreakerOpenError';
   }
 }

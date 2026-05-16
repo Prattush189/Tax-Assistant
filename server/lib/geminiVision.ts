@@ -78,7 +78,10 @@ export async function extractGeminiVision<T = unknown>(
         if (!res.ok) {
           const text = await res.text();
           const status = res.status;
-          const err = new Error(`Gemini ${model} vision error ${status}: ${text.slice(0, 300)}`);
+          // User-facing message — must NOT include "Gemini" or the
+          // model name. Internal log keeps the model for debugging.
+          console.warn(`[geminiVision] ${model} HTTP ${status}: ${text.slice(0, 300)}`);
+          const err = new Error(`AI vision service error ${status}: ${text.slice(0, 300)}`);
           (err as { status?: number }).status = status;
           throw err;
         }

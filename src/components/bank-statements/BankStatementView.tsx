@@ -11,6 +11,7 @@ import { TransactionTable } from './TransactionTable';
 import { BankStatementRules } from './BankStatementRules';
 import { BankStatementConditions } from './BankStatementConditions';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
+import { scrubProviderName } from '../../lib/utils';
 
 interface Props {
   manager: BankStatementManager;
@@ -198,17 +199,18 @@ export function BankStatementView({ manager }: Props) {
           // Friendly mapping for transient upstream errors. The raw
           // upstream messages ("503 status code (no body)") are
           // unhelpful for the end user — they imply something is
-          // broken in our app when actually Gemini just hiccuped.
+          // broken in our app when actually the AI service hiccuped.
           const isTransient = /\b50[234]\b|service unavailable|no body|temporarily unavailable|ECONNRESET|ETIMEDOUT/i.test(raw);
+          const scrubbedRaw = scrubProviderName(raw);
           const friendly = isTransient
             ? "The AI service was temporarily unavailable. This usually clears in a minute — re-upload the same file to try again. The credit hasn't been charged."
-            : (raw || 'Unknown error. Try uploading the statement again.');
+            : (scrubbedRaw || 'Unknown error. Try uploading the statement again.');
           return (
             <div className="rounded-2xl border border-rose-200 dark:border-rose-800/60 bg-rose-50/60 dark:bg-rose-900/15 p-5">
               <p className="font-semibold text-rose-800 dark:text-rose-200">Analysis failed</p>
               <p className="text-xs text-rose-700 dark:text-rose-300 mt-1">{friendly}</p>
-              {isTransient && raw && (
-                <p className="text-[10px] text-rose-600/70 dark:text-rose-400/70 mt-2 font-mono">{raw.slice(0, 200)}</p>
+              {isTransient && scrubbedRaw && (
+                <p className="text-[10px] text-rose-600/70 dark:text-rose-400/70 mt-2 font-mono">{scrubbedRaw.slice(0, 200)}</p>
               )}
             </div>
           );
