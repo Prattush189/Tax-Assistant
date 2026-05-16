@@ -252,28 +252,57 @@ export function BankStatementUploader({ manager }: Props) {
         // can't recover this layout (date is split into 5 separate
         // x-positions, transactions span 2 lines, narrations wrap
         // mid-word). The parser works on raw pdfjs text items and
-        // emits MappedRow directly — bypassing the wizard entirely
-        // and feeding the CSV path.
+        // emits MappedRow directly.
+        //
+        // UX choice: instead of submitting the parsed rows directly to
+        // the CSV endpoint, we round-trip them through the wizard so
+        // the user gets a preview + a chance to abort. The wizard
+        // shows the parsed Date / Narration / Debit / Credit / Balance
+        // columns with the mapping pre-applied and a green "Auto-
+        // detected as J&K Bank Report" banner, matching the existing
+        // HDFC / ICICI / Canara auto-detect flow. Clicking Continue
+        // re-applies the (already correct) mapping and submits to
+        // the analyze-CSV endpoint.
         try {
           const rptDetected = await detectJkbankRptFormat(file);
           if (rptDetected) {
             console.log('[BankStatementUploader] detected J&K Bank RPT/RPTNFS format — invoking dedicated parser');
             const rows = await extractJkbankRpt(file);
             if (rows && rows.length > 0) {
-              setIsReadingPdf(false);
-              const csv = mappedRowsToBankCsv(rows);
-              toast(`Auto-mapped J&K Bank report layout — ${rows.length.toLocaleString('en-IN')} transactions extracted.`, { duration: 5000 });
-              try {
-                const result = await manager.analyzeCsv(csv, file.name);
-                toast.success(result.alreadyAnalyzed
-                  ? `This statement was already analyzed earlier — opened the existing one (${result.transactions.length} transactions).`
-                  : `Analyzed ${result.transactions.length} transactions.`);
-              } catch (e) {
-                toast.error(e instanceof Error ? e.message : 'Analysis failed');
+              // Convert the parsed MappedRow[] back into a wizard-shaped
+              // grid: a header row + one row per transaction with five
+              // columns (Date, Narration, Debit, Credit, Balance). The
+              // wizard's preset mapping pins each column to its role,
+              // so applyMapping in submitMapping turns the grid right
+              // back into the same MappedRow[] we already had — but
+              // the round-trip lets the user see and confirm the data
+              // before any AI cost is incurred.
+              const fakeGridRows: string[][] = [
+                ['Date', 'Narration', 'Debit', 'Credit', 'Balance'],
+                ...rows.map(r => [
+                  r.date ?? '',
+                  r.narration,
+                  r.amount < 0 ? Math.abs(r.amount).toFixed(2) : '',
+                  r.amount > 0 ? r.amount.toFixed(2) : '',
+                  r.balance != null ? r.balance.toFixed(2) : '',
+                ]),
+              ];
+              const fakeGrid = rowsToFakeGrid(fakeGridRows);
+              if (fakeGrid) {
+                setIsReadingPdf(false);
+                setPendingGrid({
+                  grid: fakeGrid,
+                  filename: file.name,
+                  file,
+                  presetMapping: { roles: ['date', 'narration', 'debit', 'credit', 'balance'] },
+                  detectedBank: 'J&K Bank Report',
+                });
+                return;
               }
-              return;
+              console.warn('[BankStatementUploader] RPT parser produced rows but rowsToFakeGrid returned null; falling through');
+            } else {
+              console.warn('[BankStatementUploader] RPT detected but parser returned 0 rows; falling through to wizard / vision');
             }
-            console.warn('[BankStatementUploader] RPT detected but parser returned 0 rows; falling through to wizard / vision');
           }
         } catch (rptErr) {
           // Detection failure is non-fatal — fall through to the
