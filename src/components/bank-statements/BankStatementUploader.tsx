@@ -19,6 +19,7 @@ import {
   type PdfGrid,
 } from '../../lib/pdfGrid';
 import { detectAndMapBank } from '../../lib/perBankRules';
+import { detectJkbankRptFormat, extractJkbankRpt } from '../../lib/jkbankRptParser';
 import { PasswordPromptDialog } from '../shared/PasswordPromptDialog';
 
 function AnalyzeProgressBar({
@@ -244,6 +245,40 @@ export function BankStatementUploader({ manager }: Props) {
           setIsReadingPdf(false);
           toast.error(`This looks like ${ledgerHit.erp === 'a ledger' ? 'a ledger export' : `a ${ledgerHit.erp} ledger`}, not a bank statement. Open the Ledger Scrutiny page from the sidebar and upload it there — the ledger flow handles ERP-specific layouts (and routes Finsys exports to AI vision automatically).`, { duration: 9000 });
           return;
+        }
+
+        // J&K Bank "RPT" / "RPTNFS" / loan-recovery report format.
+        // Detected BEFORE the per-bank rule because the grid extractor
+        // can't recover this layout (date is split into 5 separate
+        // x-positions, transactions span 2 lines, narrations wrap
+        // mid-word). The parser works on raw pdfjs text items and
+        // emits MappedRow directly — bypassing the wizard entirely
+        // and feeding the CSV path.
+        try {
+          const rptDetected = await detectJkbankRptFormat(file);
+          if (rptDetected) {
+            console.log('[BankStatementUploader] detected J&K Bank RPT/RPTNFS format — invoking dedicated parser');
+            const rows = await extractJkbankRpt(file);
+            if (rows && rows.length > 0) {
+              setIsReadingPdf(false);
+              const csv = mappedRowsToBankCsv(rows);
+              toast(`Auto-mapped J&K Bank report layout — ${rows.length.toLocaleString('en-IN')} transactions extracted.`, { duration: 5000 });
+              try {
+                const result = await manager.analyzeCsv(csv, file.name);
+                toast.success(result.alreadyAnalyzed
+                  ? `This statement was already analyzed earlier — opened the existing one (${result.transactions.length} transactions).`
+                  : `Analyzed ${result.transactions.length} transactions.`);
+              } catch (e) {
+                toast.error(e instanceof Error ? e.message : 'Analysis failed');
+              }
+              return;
+            }
+            console.warn('[BankStatementUploader] RPT detected but parser returned 0 rows; falling through to wizard / vision');
+          }
+        } catch (rptErr) {
+          // Detection failure is non-fatal — fall through to the
+          // existing pipeline. Log so we can spot a recurring break.
+          console.warn('[BankStatementUploader] RPT detection threw:', rptErr);
         }
 
         // Per-bank deterministic column rule. HDFC / ICICI / Canara
