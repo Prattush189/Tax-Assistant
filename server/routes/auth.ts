@@ -260,7 +260,10 @@ router.post('/resend-verification', async (req: Request, res: Response) => {
 
   const code = generateOtpCode();
   const codeHash = await bcrypt.hash(code, 10);
-  verificationRepo.create(user.id, 'resend', codeHash, OTP_TTL_SECONDS);
+  // Use 'signup' purpose so verify-email's findActive(userId, 'signup') lookup
+  // picks this up. Resent codes serve the same goal as the original signup
+  // code — verifying email at account-creation time.
+  verificationRepo.create(user.id, 'signup', codeHash, OTP_TTL_SECONDS);
   const result = await sendOtpEmail(user.email, code);
   if (!result.ok) {
     res.status(503).json({ error: 'Failed to send verification email' });
@@ -293,11 +296,11 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
     return;
   }
 
-  // Google-only / plugin-only accounts don't have a password in our DB —
-  // password reset doesn't apply to them. We still return 200 to avoid
-  // signaling which accounts are SSO-only.
-  const isPasswordAccount = Boolean(user.password) && !user.email.endsWith('@phone.local');
-  if (!isPasswordAccount) {
+  // Phone-only users have a synthetic @phone.local placeholder, not a real
+  // inbox — nothing to send to. Everyone else (including Google / plugin SSO
+  // users with no password yet) gets a reset code; completing the reset gives
+  // them a password and a second way to log in alongside their SSO method.
+  if (user.email.endsWith('@phone.local')) {
     res.json({ ok: true });
     return;
   }
