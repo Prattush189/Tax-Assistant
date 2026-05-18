@@ -1,0 +1,184 @@
+/**
+ * Smoke test for server/lib/ledgerBillMatcher.ts.
+ *
+ * Builds two small ExtractedLedger snapshots (a sales vs purchase
+ * pair) with deliberate matches, amount mismatches, only-in-A,
+ * only-in-B, and no-bill rows; runs compareLedgersByBill; verifies
+ * every bucket lands in the right place.
+ */
+
+import { compareLedgersByBill, normalizeBillKey, extractBillKey } from '../server/lib/ledgerBillMatcher';
+
+let pass = 0;
+let fail = 0;
+const failures: string[] = [];
+
+function expect<T>(label: string, actual: T, expected: T) {
+  if (JSON.stringify(actual) === JSON.stringify(expected)) {
+    pass++;
+  } else {
+    fail++;
+    failures.push(`${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+  }
+}
+
+// ─── normalizeBillKey ─────────────────────────────────────────
+expect('normalize BS/123/2024-25', normalizeBillKey('BS/123/2024-25'), 'BS123');
+expect('normalize BS-123', normalizeBillKey('BS-123'), 'BS123');
+expect('normalize BS 123', normalizeBillKey('BS 123'), 'BS123');
+expect('normalize BS123', normalizeBillKey('BS123'), 'BS123');
+expect('normalize lowercase bs/123', normalizeBillKey('bs/123'), 'BS123');
+expect('normalize empty', normalizeBillKey(''), null);
+expect('normalize null', normalizeBillKey(null), null);
+expect('normalize whitespace only', normalizeBillKey('   '), null);
+expect('reject 12-digit UTR-shaped', normalizeBillKey('123456789012345'), null);
+expect('strip FY suffix', normalizeBillKey('BS/123 FY 24-25'), 'BS123');
+expect('strip leading NO.', normalizeBillKey('NO. 123/24-25'), '123');
+
+// ─── extractBillKey ──────────────────────────────────────────
+expect(
+  'extractBillKey from voucher',
+  extractBillKey({ voucher: 'BS/123/2024-25', narration: null }),
+  'BS123',
+);
+expect(
+  'extractBillKey from narration when voucher null',
+  extractBillKey({ voucher: null, narration: 'Sales bill BS-456 to Acme' }),
+  'BS456',
+);
+expect(
+  'extractBillKey returns null when nothing matches',
+  extractBillKey({ voucher: null, narration: 'Random payment description' }),
+  null,
+);
+expect(
+  'extractBillKey voucher takes precedence over narration',
+  extractBillKey({ voucher: 'BS/777', narration: 'mentions BS-888' }),
+  'BS777',
+);
+
+// ─── compareLedgersByBill — golden case ──────────────────────
+const ledgerA = {
+  accounts: [{
+    name: 'ACME TRADERS',
+    accountType: 'sundry_debtor',
+    opening: 0,
+    closing: 0,
+    totalDebit: 0,
+    totalCredit: 0,
+    transactions: [
+      { date: '2025-04-01', narration: 'Sale invoice', voucher: 'BS/001', debit: 10000, credit: 0, balance: null },
+      { date: '2025-04-15', narration: 'Sale invoice', voucher: 'BS/002', debit: 25000, credit: 0, balance: null },
+      { date: '2025-05-01', narration: 'Sale invoice', voucher: 'BS/003', debit: 7500, credit: 0, balance: null },
+      // No bill reference — should land in noBillA
+      { date: '2025-05-10', narration: 'Adjustment', voucher: null, debit: 100, credit: 0, balance: null },
+    ],
+  }],
+};
+const ledgerB = {
+  accounts: [{
+    name: 'ACME TRADERS',
+    accountType: 'sundry_creditor',
+    opening: 0,
+    closing: 0,
+    totalDebit: 0,
+    totalCredit: 0,
+    transactions: [
+      // BS/001 matches A exactly
+      { date: '2025-04-01', narration: 'Purchase bill', voucher: 'BS/001', debit: 0, credit: 10000, balance: null },
+      // BS/002 — amount differs (A says 25000, B says 24500)
+      { date: '2025-04-15', narration: 'Purchase bill', voucher: 'BS/002', debit: 0, credit: 24500, balance: null },
+      // BS/003 missing from B (= only in A)
+      // BS/004 present in B but not A (= only in B)
+      { date: '2025-05-20', narration: 'Purchase bill', voucher: 'BS/004', debit: 0, credit: 3300, balance: null },
+      // No bill reference
+      { date: '2025-05-25', narration: 'Bank charge', voucher: null, debit: 0, credit: 50, balance: null },
+    ],
+  }],
+};
+
+const report = compareLedgersByBill(ledgerA, 'sales', ledgerB, 'purchase');
+expect('matched count', report.summary.matchedCount, 1);
+expect('amount mismatch count', report.summary.amountMismatchCount, 1);
+expect('only in A count', report.summary.onlyInACount, 1);
+expect('only in B count', report.summary.onlyInBCount, 1);
+expect('no-bill A count', report.summary.noBillCountA, 1);
+expect('no-bill B count', report.summary.noBillCountB, 1);
+expect('typeA preserved', report.summary.typeA, 'sales');
+expect('typeB preserved', report.summary.typeB, 'purchase');
+
+expect('matched bill', report.matched[0]?.bill, 'BS001');
+expect('matched amount A', report.matched[0]?.amountA, 10000);
+expect('matched amount B', report.matched[0]?.amountB, 10000);
+
+expect('mismatch bill', report.amountMismatches[0]?.bill, 'BS002');
+expect('mismatch amount A', report.amountMismatches[0]?.amountA, 25000);
+expect('mismatch amount B', report.amountMismatches[0]?.amountB, 24500);
+expect('mismatch diff (A-B)', report.amountMismatches[0]?.diff, 500);
+
+expect('only in A bill', report.onlyInA[0]?.bill, 'BS003');
+expect('only in A amount', report.onlyInA[0]?.amount, 7500);
+
+expect('only in B bill', report.onlyInB[0]?.bill, 'BS004');
+expect('only in B amount', report.onlyInB[0]?.amount, 3300);
+
+expect('no-bill A row', report.noBillA[0]?.narration, 'Adjustment');
+expect('no-bill B row', report.noBillB[0]?.narration, 'Bank charge');
+
+// Headline reflects issues
+const headlineLooksRight = /amount mismatch|only on/i.test(report.summary.headline);
+expect('headline mentions issues', headlineLooksRight, true);
+
+// ─── perfect-match case ──────────────────────────────────────
+const perfectA = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      { date: '2025-04-01', narration: 'INV-100', voucher: 'INV-100', debit: 5000, credit: 0, balance: null },
+      { date: '2025-04-02', narration: 'INV-101', voucher: 'INV-101', debit: 6000, credit: 0, balance: null },
+    ],
+  }],
+};
+const perfectB = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      { date: '2025-04-01', narration: 'INV-100', voucher: 'INV-100', debit: 0, credit: 5000, balance: null },
+      { date: '2025-04-02', narration: 'INV-101', voucher: 'INV-101', debit: 0, credit: 6000, balance: null },
+    ],
+  }],
+};
+const perfectReport = compareLedgersByBill(perfectA, 'sales', perfectB, 'purchase');
+expect('perfect matched count', perfectReport.summary.matchedCount, 2);
+expect('perfect mismatch count', perfectReport.summary.amountMismatchCount, 0);
+expect('perfect onlyInA', perfectReport.summary.onlyInACount, 0);
+expect('perfect onlyInB', perfectReport.summary.onlyInBCount, 0);
+expect('perfect headline', /Books tie/.test(perfectReport.summary.headline), true);
+
+// ─── multi-line same-bill aggregation ────────────────────────
+// One invoice split across taxable + GST lines on the same side
+// should sum to a single bill total before matching.
+const splitA = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      { date: '2025-04-01', narration: 'Bill X-200 taxable', voucher: 'X-200', debit: 100000, credit: 0, balance: null },
+      { date: '2025-04-01', narration: 'Bill X-200 GST 18%',  voucher: 'X-200', debit: 18000, credit: 0, balance: null },
+    ],
+  }],
+};
+const splitB = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      { date: '2025-04-01', narration: 'Bill X-200 total', voucher: 'X-200', debit: 0, credit: 118000, balance: null },
+    ],
+  }],
+};
+const splitReport = compareLedgersByBill(splitA, 'sales', splitB, 'purchase');
+expect('split-bill matched', splitReport.summary.matchedCount, 1);
+expect('split-bill A summed', splitReport.matched[0]?.amountA, 118000);
+expect('split-bill B unchanged', splitReport.matched[0]?.amountB, 118000);
+
+console.log(`\n${pass} passed, ${fail} failed`);
+if (failures.length) {
+  console.log('\nFailures:');
+  for (const f of failures) console.log('  - ' + f);
+  process.exit(1);
+}

@@ -810,6 +810,22 @@ db.exec(`CREATE TABLE IF NOT EXISTS ledger_comparisons (
 db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_comparisons_user ON ledger_comparisons(user_id)");
 db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_comparisons_updated ON ledger_comparisons(updated_at DESC)");
 
+// 2026-05: ledger compare moved from date+amount AI matching to
+// deterministic bill-number matching. Each side has a "ledger type"
+// (sales / purchase / sundry_debtor / sundry_creditor / other) so
+// the matcher can apply the right inter-party sign convention.
+// Defaults sales/purchase to keep existing comparisons readable.
+try {
+  db.exec("ALTER TABLE ledger_comparisons ADD COLUMN type_a TEXT NOT NULL DEFAULT 'sales' CHECK (type_a IN ('sales', 'purchase', 'sundry_debtor', 'sundry_creditor', 'other'))");
+} catch (e) {
+  if (!/duplicate column/i.test((e as Error).message)) throw e;
+}
+try {
+  db.exec("ALTER TABLE ledger_comparisons ADD COLUMN type_b TEXT NOT NULL DEFAULT 'purchase' CHECK (type_b IN ('sales', 'purchase', 'sundry_debtor', 'sundry_creditor', 'other'))");
+} catch (e) {
+  if (!/duplicate column/i.test((e as Error).message)) throw e;
+}
+
 // tax_notifications — populated daily by server/jobs/notificationRefresh.ts.
 // Source list shown on the chat welcome screen instead of static prompt
 // cards. category captures GST / TDS / INCOME_TAX / OTHER buckets the UI

@@ -11,6 +11,7 @@ import crypto from 'crypto';
 import db from '../index.js';
 
 export type ComparisonStatus = 'pending' | 'comparing' | 'completed' | 'failed' | 'cancelled';
+export type LedgerType = 'sales' | 'purchase' | 'sundry_debtor' | 'sundry_creditor' | 'other';
 
 export interface ComparisonRow {
   id: string;
@@ -18,6 +19,8 @@ export interface ComparisonRow {
   billing_user_id: string;
   label_a: string;
   label_b: string;
+  type_a: LedgerType;
+  type_b: LedgerType;
   filename_a: string | null;
   filename_b: string | null;
   extracted_a: string;
@@ -32,12 +35,12 @@ export interface ComparisonRow {
 const stmts = {
   insert: db.prepare(`
     INSERT INTO ledger_comparisons
-      (id, user_id, billing_user_id, label_a, label_b, filename_a, filename_b, extracted_a, extracted_b, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'comparing')
+      (id, user_id, billing_user_id, label_a, label_b, type_a, type_b, filename_a, filename_b, extracted_a, extracted_b, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'comparing')
   `),
   findById: db.prepare(`SELECT * FROM ledger_comparisons WHERE id = ?`),
   listByUser: db.prepare(`
-    SELECT id, label_a, label_b, filename_a, filename_b, status, error_message, created_at, updated_at
+    SELECT id, label_a, label_b, type_a, type_b, filename_a, filename_b, status, error_message, created_at, updated_at
     FROM ledger_comparisons
     WHERE user_id = ?
     ORDER BY updated_at DESC
@@ -67,6 +70,8 @@ export const ledgerComparisonRepo = {
     billingUserId: string;
     labelA: string;
     labelB: string;
+    typeA: LedgerType;
+    typeB: LedgerType;
     filenameA: string | null;
     filenameB: string | null;
     extractedAJson: string;
@@ -79,6 +84,8 @@ export const ledgerComparisonRepo = {
       input.billingUserId,
       input.labelA,
       input.labelB,
+      input.typeA,
+      input.typeB,
       input.filenameA,
       input.filenameB,
       input.extractedAJson,
@@ -92,10 +99,10 @@ export const ledgerComparisonRepo = {
   },
 
   listByUser(userId: string): Array<Pick<ComparisonRow,
-    'id' | 'label_a' | 'label_b' | 'filename_a' | 'filename_b' | 'status' | 'error_message' | 'created_at' | 'updated_at'
+    'id' | 'label_a' | 'label_b' | 'type_a' | 'type_b' | 'filename_a' | 'filename_b' | 'status' | 'error_message' | 'created_at' | 'updated_at'
   >> {
     return stmts.listByUser.all(userId) as Array<Pick<ComparisonRow,
-      'id' | 'label_a' | 'label_b' | 'filename_a' | 'filename_b' | 'status' | 'error_message' | 'created_at' | 'updated_at'
+      'id' | 'label_a' | 'label_b' | 'type_a' | 'type_b' | 'filename_a' | 'filename_b' | 'status' | 'error_message' | 'created_at' | 'updated_at'
     >>;
   },
 

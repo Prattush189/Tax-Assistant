@@ -2403,10 +2403,22 @@ export async function updateLedgerObservationStatus(
 
 // ── Ledger comparison (Entity A vs Entity B reconciliation) ─────────────
 
+export type LedgerType = 'sales' | 'purchase' | 'sundry_debtor' | 'sundry_creditor' | 'other';
+
+export const LEDGER_TYPE_LABELS: Record<LedgerType, string> = {
+  sales: 'Sales',
+  purchase: 'Purchase',
+  sundry_debtor: 'Sundry Debtor',
+  sundry_creditor: 'Sundry Creditor',
+  other: 'Other',
+};
+
 export interface LedgerComparisonRow {
   id: string;
   label_a: string;
   label_b: string;
+  type_a: LedgerType;
+  type_b: LedgerType;
   filename_a: string | null;
   filename_b: string | null;
   status: 'pending' | 'comparing' | 'completed' | 'failed' | 'cancelled';
@@ -2415,22 +2427,37 @@ export interface LedgerComparisonRow {
   updated_at: string;
 }
 
+// 2026-05: schema changed from AI-based date+amount matching to
+// deterministic bill-by-bill matching. New buckets:
+//   - matched           : bill found on both sides, amounts agree
+//   - amountMismatches  : bill found on both sides, amounts diverge
+//   - onlyInA / onlyInB : bill on one side only
+//   - noBillA / noBillB : transactions without an extractable bill ref
 export interface LedgerComparisonReport {
   summary: {
+    typeA: LedgerType;
+    typeB: LedgerType;
+    totalA: number;
+    totalB: number;
     matchedCount: number;
     amountMismatchCount: number;
-    dateMismatchCount: number;
     onlyInACount: number;
     onlyInBCount: number;
-    openingGap: number;
-    closingGap: number;
+    noBillCountA: number;
+    noBillCountB: number;
+    grossA: number;
+    grossB: number;
+    netA: number;
+    netB: number;
+    netDifference: number;
     headline: string;
   };
-  matched: Array<{ date: string; amount: number; narrationA: string; narrationB: string; voucherA: string | null; voucherB: string | null }>;
-  amountMismatches: Array<{ date: string; amountA: number; amountB: number; diff: number; narrationA: string; narrationB: string }>;
-  dateMismatches: Array<{ amount: number; dateA: string; dateB: string; daysDiff: number; narrationA: string; narrationB: string }>;
-  onlyInA: Array<{ date: string; amount: number; narration: string; voucher: string | null }>;
-  onlyInB: Array<{ date: string; amount: number; narration: string; voucher: string | null }>;
+  matched: Array<{ bill: string; dateA: string | null; dateB: string | null; amountA: number; amountB: number; narrationA: string; narrationB: string }>;
+  amountMismatches: Array<{ bill: string; dateA: string | null; dateB: string | null; amountA: number; amountB: number; diff: number; narrationA: string; narrationB: string }>;
+  onlyInA: Array<{ bill: string; date: string | null; amount: number; narration: string }>;
+  onlyInB: Array<{ bill: string; date: string | null; amount: number; narration: string }>;
+  noBillA: Array<{ date: string | null; amount: number; narration: string }>;
+  noBillB: Array<{ date: string | null; amount: number; narration: string }>;
   balanceCheck: {
     openingA: number; openingB: number; openingGap: number;
     closingA: number; closingB: number; closingGap: number;
@@ -2442,6 +2469,8 @@ export interface LedgerComparisonDetail {
   id: string;
   labelA: string;
   labelB: string;
+  typeA: LedgerType;
+  typeB: LedgerType;
   filenameA: string | null;
   filenameB: string | null;
   extractedA: unknown;
@@ -2464,6 +2493,8 @@ export async function fetchLedgerComparison(id: string): Promise<LedgerCompariso
 export async function createLedgerComparison(input: {
   labelA: string;
   labelB: string;
+  typeA: LedgerType;
+  typeB: LedgerType;
   filenameA: string | null;
   filenameB: string | null;
   preExtractedA: unknown;

@@ -24,7 +24,9 @@ import {
   createLedgerComparison,
   fetchLedgerComparison,
   fetchLedgerComparisons,
+  LEDGER_TYPE_LABELS,
   type LedgerComparisonReport,
+  type LedgerType,
 } from '../../services/api';
 import { cn } from '../../lib/utils';
 
@@ -63,6 +65,7 @@ const STORAGE_KEYS = {
 
 interface StoredSideState {
   label: string;
+  ledgerType?: LedgerType;
   filename: string | null;
   extracted: ExtractedLedger | null;
 }
@@ -117,6 +120,11 @@ interface ExtractedLedger {
 
 interface SideState {
   label: string;
+  /** Ledger type for this side. Drives the matching headline and is
+   *  surfaced on the dashboard. Defaults to sales (A) / purchase (B)
+   *  for the most common workflow — confirming a sales-vs-purchase
+   *  pair between two parties of the same transaction set. */
+  ledgerType: LedgerType;
   filename: string | null;
   extracted: ExtractedLedger | null;
   /** True while a freshly-picked file is being parsed (browser-side
@@ -136,11 +144,12 @@ function fmtINR(n: number): string {
 }
 
 function SideUploader({
-  side, state, onLabelChange, onPickFile, onClear, busy,
+  side, state, onLabelChange, onTypeChange, onPickFile, onClear, busy,
 }: {
   side: Side;
   state: SideState;
   onLabelChange: (label: string) => void;
+  onTypeChange: (type: LedgerType) => void;
   onPickFile: () => void;
   onClear: () => void;
   busy: boolean;
@@ -149,6 +158,27 @@ function SideUploader({
   const txCount = state.extracted?.accounts.reduce((s, a) => s + a.transactions.length, 0) ?? 0;
   return (
     <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900/40 p-5 space-y-3">
+      {/* Ledger-type selector. The matcher uses this to phrase the
+        * reconciliation headline (e.g. "12 bills only on the sales
+        * side" reads correctly because we know A is sales). Defaults:
+        * A = Sales, B = Purchase — the dominant party-confirmation
+        * workflow. User can change either side to Sundry Debtor /
+        * Sundry Creditor / Other when reconciling a non-trading
+        * relationship. */}
+      <div className="flex items-center gap-2">
+        <label className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 shrink-0">
+          {`Side ${side} type`}
+        </label>
+        <select
+          value={state.ledgerType}
+          onChange={(e) => onTypeChange(e.target.value as LedgerType)}
+          className="flex-1 px-3 py-1.5 text-sm rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+        >
+          {(Object.entries(LEDGER_TYPE_LABELS) as Array<[LedgerType, string]>).map(([value, label]) => (
+            <option key={value} value={value}>{label}</option>
+          ))}
+        </select>
+      </div>
       <div className="flex items-center justify-between gap-3">
         <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 text-sm font-bold">
           {side}
@@ -250,6 +280,7 @@ export function LedgerCompareView() {
     const stored = loadStored<StoredSideState>(STORAGE_KEYS.sideA);
     return {
       label: stored?.label ?? '',
+      ledgerType: (stored?.ledgerType as LedgerType) ?? 'sales',
       filename: stored?.filename ?? null,
       extracted: stored?.extracted ?? null,
       processing: false,
@@ -259,6 +290,7 @@ export function LedgerCompareView() {
     const stored = loadStored<StoredSideState>(STORAGE_KEYS.sideB);
     return {
       label: stored?.label ?? '',
+      ledgerType: (stored?.ledgerType as LedgerType) ?? 'purchase',
       filename: stored?.filename ?? null,
       extracted: stored?.extracted ?? null,
       processing: false,
@@ -289,17 +321,19 @@ export function LedgerCompareView() {
   useEffect(() => {
     saveStored(STORAGE_KEYS.sideA, {
       label: sideA.label,
+      ledgerType: sideA.ledgerType,
       filename: sideA.filename,
       extracted: sideA.extracted,
     });
-  }, [sideA.label, sideA.filename, sideA.extracted]);
+  }, [sideA.label, sideA.ledgerType, sideA.filename, sideA.extracted]);
   useEffect(() => {
     saveStored(STORAGE_KEYS.sideB, {
       label: sideB.label,
+      ledgerType: sideB.ledgerType,
       filename: sideB.filename,
       extracted: sideB.extracted,
     });
-  }, [sideB.label, sideB.filename, sideB.extracted]);
+  }, [sideB.label, sideB.ledgerType, sideB.filename, sideB.extracted]);
   useEffect(() => {
     saveStored(STORAGE_KEYS.usedLabels, usedLabels);
   }, [usedLabels]);
@@ -554,6 +588,8 @@ export function LedgerCompareView() {
     try {
       const res = await createLedgerComparison({
         labelA, labelB,
+        typeA: sideA.ledgerType,
+        typeB: sideB.ledgerType,
         filenameA: sideA.filename,
         filenameB: sideB.filename,
         preExtractedA: sideA.extracted,
@@ -577,8 +613,8 @@ export function LedgerCompareView() {
   };
 
   const reset = () => {
-    setSideA({ label: '', filename: null, extracted: null, processing: false });
-    setSideB({ label: '', filename: null, extracted: null, processing: false });
+    setSideA({ label: '', ledgerType: 'sales', filename: null, extracted: null, processing: false });
+    setSideB({ label: '', ledgerType: 'purchase', filename: null, extracted: null, processing: false });
     setReport(null);
     setUsedLabels(null);
     // Clear persisted state too — Reset means "start over", the
@@ -612,16 +648,18 @@ export function LedgerCompareView() {
           side="A"
           state={sideA}
           onLabelChange={(l) => setSideA(prev => ({ ...prev, label: l }))}
+          onTypeChange={(t) => setSideA(prev => ({ ...prev, ledgerType: t }))}
           onPickFile={() => inputRefA.current?.click()}
-          onClear={() => setSideA({ label: sideA.label, filename: null, extracted: null, processing: false })}
+          onClear={() => setSideA({ label: sideA.label, ledgerType: sideA.ledgerType, filename: null, extracted: null, processing: false })}
           busy={comparing}
         />
         <SideUploader
           side="B"
           state={sideB}
           onLabelChange={(l) => setSideB(prev => ({ ...prev, label: l }))}
+          onTypeChange={(t) => setSideB(prev => ({ ...prev, ledgerType: t }))}
           onPickFile={() => inputRefB.current?.click()}
-          onClear={() => setSideB({ label: sideB.label, filename: null, extracted: null, processing: false })}
+          onClear={() => setSideB({ label: sideB.label, ledgerType: sideB.ledgerType, filename: null, extracted: null, processing: false })}
           busy={comparing}
         />
       </div>
@@ -667,12 +705,15 @@ export function LedgerCompareView() {
         <div className="space-y-4">
           <div className="rounded-2xl border border-emerald-200 dark:border-emerald-800/60 bg-emerald-50/60 dark:bg-emerald-900/15 p-5">
             <p className="font-semibold text-gray-900 dark:text-gray-100">{report.summary.headline}</p>
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              Side A ({LEDGER_TYPE_LABELS[report.summary.typeA]}) {report.summary.totalA.toLocaleString('en-IN')} txns · Side B ({LEDGER_TYPE_LABELS[report.summary.typeB]}) {report.summary.totalB.toLocaleString('en-IN')} txns
+            </p>
             <div className="mt-3 grid grid-cols-2 sm:grid-cols-5 gap-3 text-center">
-              <Stat label="Matched" value={report.summary.matchedCount} tone="ok" />
+              <Stat label="Bills matched" value={report.summary.matchedCount} tone="ok" />
               <Stat label="Amount mismatches" value={report.summary.amountMismatchCount} tone={report.summary.amountMismatchCount ? 'warn' : 'ok'} />
-              <Stat label="Date mismatches" value={report.summary.dateMismatchCount} tone={report.summary.dateMismatchCount ? 'warn' : 'ok'} />
               <Stat label={`Only in ${labelA}`} value={report.summary.onlyInACount} tone={report.summary.onlyInACount ? 'warn' : 'ok'} />
               <Stat label={`Only in ${labelB}`} value={report.summary.onlyInBCount} tone={report.summary.onlyInBCount ? 'warn' : 'ok'} />
+              <Stat label="Rows w/o bill" value={report.summary.noBillCountA + report.summary.noBillCountB} tone={(report.summary.noBillCountA + report.summary.noBillCountB) ? 'warn' : 'ok'} />
             </div>
           </div>
 
@@ -692,50 +733,39 @@ export function LedgerCompareView() {
           </div>
 
           <ReportTable
-            title="Amount mismatches"
+            title="Amount mismatches (same bill, different amounts)"
             rows={report.amountMismatches}
             columns={[
-              { header: 'Date', cell: (r) => r.date },
-              { header: `${labelA} narration`, cell: (r) => r.narrationA },
-              { header: `${labelB} narration`, cell: (r) => r.narrationB },
+              { header: 'Bill', cell: (r) => r.bill },
+              { header: `${labelA} date`, cell: (r) => r.dateA ?? '—' },
+              { header: `${labelB} date`, cell: (r) => r.dateB ?? '—' },
               { header: `${labelA} amount`, align: 'right', cell: (r) => fmtINR(r.amountA) },
               { header: `${labelB} amount`, align: 'right', cell: (r) => fmtINR(r.amountB) },
               { header: 'Diff', align: 'right', cell: (r) => fmtINR(r.diff) },
-            ]}
-          />
-
-          <ReportTable
-            title="Date mismatches"
-            rows={report.dateMismatches}
-            columns={[
-              { header: 'Amount', align: 'right', cell: (r) => fmtINR(r.amount) },
-              { header: `${labelA} date`, cell: (r) => r.dateA },
-              { header: `${labelB} date`, cell: (r) => r.dateB },
-              { header: 'Days apart', align: 'right', cell: (r) => r.daysDiff },
               { header: `${labelA} narration`, cell: (r) => r.narrationA },
               { header: `${labelB} narration`, cell: (r) => r.narrationB },
             ]}
           />
 
           <ReportTable
-            title={`Only in ${labelA}`}
+            title={`Only in ${labelA} (bill missing on ${labelB})`}
             rows={report.onlyInA}
             columns={[
-              { header: 'Date', cell: (r) => r.date },
+              { header: 'Bill', cell: (r) => r.bill },
+              { header: 'Date', cell: (r) => r.date ?? '—' },
               { header: 'Amount', align: 'right', cell: (r) => fmtINR(r.amount) },
               { header: 'Narration', cell: (r) => r.narration },
-              { header: 'Voucher', cell: (r) => r.voucher ?? '—' },
             ]}
           />
 
           <ReportTable
-            title={`Only in ${labelB}`}
+            title={`Only in ${labelB} (bill missing on ${labelA})`}
             rows={report.onlyInB}
             columns={[
-              { header: 'Date', cell: (r) => r.date },
+              { header: 'Bill', cell: (r) => r.bill },
+              { header: 'Date', cell: (r) => r.date ?? '—' },
               { header: 'Amount', align: 'right', cell: (r) => fmtINR(r.amount) },
               { header: 'Narration', cell: (r) => r.narration },
-              { header: 'Voucher', cell: (r) => r.voucher ?? '—' },
             ]}
           />
 
@@ -743,12 +773,37 @@ export function LedgerCompareView() {
             title="Matched"
             rows={report.matched}
             columns={[
-              { header: 'Date', cell: (r) => r.date },
-              { header: 'Amount', align: 'right', cell: (r) => fmtINR(r.amount) },
+              { header: 'Bill', cell: (r) => r.bill },
+              { header: `${labelA} date`, cell: (r) => r.dateA ?? '—' },
+              { header: `${labelB} date`, cell: (r) => r.dateB ?? '—' },
+              { header: 'Amount', align: 'right', cell: (r) => fmtINR(r.amountA) },
               { header: `${labelA} narration`, cell: (r) => r.narrationA },
               { header: `${labelB} narration`, cell: (r) => r.narrationB },
             ]}
           />
+
+          {(report.noBillA.length > 0 || report.noBillB.length > 0) && (
+            <>
+              <ReportTable
+                title={`${labelA} rows without a bill reference (couldn't match)`}
+                rows={report.noBillA}
+                columns={[
+                  { header: 'Date', cell: (r) => r.date ?? '—' },
+                  { header: 'Amount', align: 'right', cell: (r) => fmtINR(r.amount) },
+                  { header: 'Narration', cell: (r) => r.narration },
+                ]}
+              />
+              <ReportTable
+                title={`${labelB} rows without a bill reference (couldn't match)`}
+                rows={report.noBillB}
+                columns={[
+                  { header: 'Date', cell: (r) => r.date ?? '—' },
+                  { header: 'Amount', align: 'right', cell: (r) => fmtINR(r.amount) },
+                  { header: 'Narration', cell: (r) => r.narration },
+                ]}
+              />
+            </>
+          )}
         </div>
       )}
     </div>

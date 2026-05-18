@@ -47,7 +47,7 @@ import {
   LedgerObservationSeverity,
 } from '../db/repositories/ledgerScrutinyRepo.js';
 import { ledgerComparisonRepo } from '../db/repositories/ledgerComparisonRepo.js';
-import { LEDGER_COMPARE_SYSTEM_PROMPT } from '../lib/ledgerComparePrompt.js';
+import { compareLedgersByBill } from '../lib/ledgerBillMatcher.js';
 import { callGeminiJson } from '../lib/geminiJson.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
@@ -1342,15 +1342,24 @@ router.get('/', (req: AuthRequest, res: Response) => {
 // Registered ABOVE the /:id routes so the literal "compare" path doesn't
 // get captured as an :id parameter by Express's first-match routing.
 //
-// One-shot reconciliation: client pre-extracts both ledgers via the same
-// wizard the single flow uses, then POSTs both ExtractedLedger payloads.
-// We feed both into Gemini with the comparison rubric and persist the
-// report. No SSE — comparisons are usually one-account ledgers and the
-// LLM call returns within a few seconds.
+// One-shot reconciliation. Client pre-extracts both ledgers via the
+// same wizard the single flow uses, then POSTs both ExtractedLedger
+// payloads + the type of each ledger (sales / purchase / etc.).
+//
+// 2026-05: switched from AI-based date+amount fuzzy matching to a
+// deterministic bill-by-bill matcher. The reconciliation question on
+// a party confirmation is always "does our bill X.Y.Z appear on
+// their side?" — bill number is the source of truth. AI matching was
+// flaky on duplicate-amount-same-month cases AND incurred per-compare
+// token cost AND occasionally timed out on dense ledgers. The
+// deterministic matcher (ledgerBillMatcher.ts) returns in <100ms with
+// zero AI cost.
 
 interface CompareRequestBody {
   labelA?: unknown;
   labelB?: unknown;
+  typeA?: unknown;
+  typeB?: unknown;
   filenameA?: unknown;
   filenameB?: unknown;
   preExtractedA?: unknown;
@@ -1371,6 +1380,8 @@ router.get('/compare/:id', (req: AuthRequest, res: Response) => {
     id: row.id,
     labelA: row.label_a,
     labelB: row.label_b,
+    typeA: row.type_a,
+    typeB: row.type_b,
     filenameA: row.filename_a,
     filenameB: row.filename_b,
     extractedA: safeParseJson(row.extracted_a),
@@ -1390,6 +1401,9 @@ router.delete('/compare/:id', (req: AuthRequest, res: Response) => {
   res.json({ success: true });
 });
 
+const LEDGER_TYPES = new Set(['sales', 'purchase', 'sundry_debtor', 'sundry_creditor', 'other']);
+type LedgerType = 'sales' | 'purchase' | 'sundry_debtor' | 'sundry_creditor' | 'other';
+
 router.post('/compare', async (req: AuthRequest, res: Response) => {
   if (!req.user) { res.status(401).json({ error: 'Authentication required' }); return; }
   const body = (req.body ?? {}) as CompareRequestBody;
@@ -1398,6 +1412,8 @@ router.post('/compare', async (req: AuthRequest, res: Response) => {
   const labelB = typeof body.labelB === 'string' && body.labelB.trim() ? body.labelB.trim().slice(0, 80) : 'Entity B';
   const filenameA = typeof body.filenameA === 'string' ? body.filenameA.slice(0, 200) : null;
   const filenameB = typeof body.filenameB === 'string' ? body.filenameB.slice(0, 200) : null;
+  const typeA: LedgerType = (typeof body.typeA === 'string' && LEDGER_TYPES.has(body.typeA)) ? body.typeA as LedgerType : 'sales';
+  const typeB: LedgerType = (typeof body.typeB === 'string' && LEDGER_TYPES.has(body.typeB)) ? body.typeB as LedgerType : 'purchase';
 
   if (!body.preExtractedA || typeof body.preExtractedA !== 'object' ||
       !body.preExtractedB || typeof body.preExtractedB !== 'object') {
@@ -1419,78 +1435,36 @@ router.post('/compare', async (req: AuthRequest, res: Response) => {
   const billingUser = getBillingUser(actor);
   const aJson = JSON.stringify(extractedA);
   const bJson = JSON.stringify(extractedB);
-  // Compare uses the scrutiny-only estimator since both sides are
-  // already-extracted JSON; no extract pass runs. Includes the audit
-  // JSON output the bare estimateFromChars previously missed.
-  const estimatedTokens = estimateLedgerScrutinyOnly(aJson.length + bJson.length + LEDGER_COMPARE_SYSTEM_PROMPT.length);
-  const tokenQuota = enforceTokenQuota(req, res, estimatedTokens);
-  if (!tokenQuota.ok) return;
-  res.once('close', () => tokenQuota.release());
 
+  // Deterministic bill-by-bill matcher — zero AI cost, zero retry
+  // storms, instant turnaround even for very large ledgers. No
+  // pre-flight token gate needed (this is no longer an AI call).
   const row = ledgerComparisonRepo.create({
     userId: req.user.id,
     billingUserId: billingUser.id,
     labelA, labelB,
+    typeA, typeB,
     filenameA, filenameB,
     extractedAJson: aJson,
     extractedBJson: bJson,
   });
 
   try {
-    const userPrompt = `Reconcile these two ledgers.
-
-Entity A (${labelA}) — own books:
-${aJson}
-
-Entity B (${labelB}) — own books:
-${bJson}
-
-Return the JSON object per the schema. Date-sort every array ascending.`;
-
-    const messages: ChatCompletionMessageParam[] = [
-      { role: 'system', content: LEDGER_COMPARE_SYSTEM_PROMPT },
-      { role: 'user', content: userPrompt },
-    ];
-
     const compareStartMs = Date.now();
-    // 16k output budget. Each matched-transaction entry in the schema
-    // carries date + amount + two narrations + two voucher numbers —
-    // ~200 tokens per match, plus the four mismatch/only-in arrays
-    // and the balance-check object. For a year-long ledger with 40+
-    // transactions per account times 8-10 accounts the schema can
-    // easily exceed 8k tokens of output JSON. When the LLM hits
-    // MAX_TOKENS mid-emit the JSON truncates, JSON.parse fails, the
-    // route throws, and the client previously saw a generic
-    // "Comparison failed" with no clue why — bump headroom so the
-    // schema can complete cleanly. (16k stays well under the
-    // 32k Gemini Flash output ceiling and keeps cost predictable.)
-    const result = await callGeminiJson(messages, {
-      maxTokens: 16384,
-      responseFormat: { type: 'json_object' },
-      retryParseFailures: true,
-      onFallback: () => res.setHeader('X-Provider-Fallback', '1'),
-    });
-
-    const reportJson = JSON.stringify(result.data ?? {});
+    const report = compareLedgersByBill(
+      extractedA as Parameters<typeof compareLedgersByBill>[0],
+      typeA,
+      extractedB as Parameters<typeof compareLedgersByBill>[2],
+      typeB,
+    );
+    const reportJson = JSON.stringify(report);
     ledgerComparisonRepo.markCompleted(row.id, reportJson);
-
-    try {
-      const cost = costForModel(result.modelUsed, result.inputTokens, result.outputTokens);
-      const clientIp = (req.headers['x-forwarded-for'] as string ?? req.ip ?? '').toString().split(',')[0].trim();
-      usageRepo.logWithBilling(
-        clientIp, req.user.id, billingUser.id,
-        result.inputTokens, result.outputTokens, cost,
-        false, result.modelUsed, false, 'ledger_compare', 0, 'success', tokenQuota.estimatedTokens,
-        Date.now() - compareStartMs,
-      );
-    } catch (e) {
-      console.error('[ledger-compare] cost log failed', e);
-    }
+    console.log(`[ledger-compare] ${row.id} ${typeA} vs ${typeB}: ${report.summary.matchedCount}/${report.summary.matchedCount + report.summary.amountMismatchCount + report.summary.onlyInACount + report.summary.onlyInBCount} bills matched in ${Date.now() - compareStartMs}ms`);
 
     res.json({
       id: row.id,
       status: 'completed',
-      report: safeParseJson(reportJson),
+      report,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
