@@ -51,11 +51,52 @@ expect(
   extractBillKey({ voucher: null, narration: 'Random payment description' }),
   null,
 );
+// extractBillKey is narration-first now (was voucher-first before 2026-05).
+// When both fields carry a bill pattern, prefer the narration version
+// because cross-party reconciliation depends on the SUPPLIER-issued bill
+// number that both books print — that lives in narration. Voucher is
+// often an ERP-local entry ID that differs between the two parties'
+// books (the OSPL case where Marg's voucher is "P000142" and Finsys's
+// is "000216" but both narrations carry "OS64/25-26000216").
 expect(
-  'extractBillKey voucher takes precedence over narration',
+  'extractBillKey narration takes precedence over voucher',
   extractBillKey({ voucher: 'BS/777', narration: 'mentions BS-888' }),
+  'BS888',
+);
+// Voucher used as fallback when narration has no bill pattern.
+expect(
+  'extractBillKey falls back to voucher when narration is generic',
+  extractBillKey({ voucher: 'BS/777', narration: 'Sales A/c' }),
   'BS777',
 );
+
+// ─── OSPL case: Marg (Side A) vs Finsys (Side B) narrations ──
+// Real-world narrations from the user's OSPL FUTURE MARG.pdf and
+// OSPL Ledger_Future Energy_*.pdf. Both ledgers reference the same
+// cross-party bill OS64/25-26000216, but the voucher fields differ
+// (Marg = internal entry id P000142, Finsys = bill tail 000216).
+// extractBillKey must pull the bill from NARRATION on both sides
+// for the matcher to link them up.
+expect(
+  'OSPL Marg narration → cross-party bill',
+  extractBillKey({
+    voucher: 'P000142',
+    narration: 'Bill No. OS64/25-26000216 Dt. 31/05/2025 Entry No.P000142',
+  }),
+  'OS642526000216',
+);
+expect(
+  'OSPL Finsys narration → cross-party bill',
+  extractBillKey({
+    voucher: '000216',
+    narration: 'Sale Inv.No OS64/25-26000216 000216 U-02',
+  }),
+  'OS642526000216',
+);
+// Both sides resolve to the same key → they would land in `matched`
+// when amounts agree, or `amountMismatches` when they don't. The
+// previous voucher-first extraction returned P000142 vs 000216 —
+// different keys, would have wrongly landed in onlyInA / onlyInB.
 
 // ─── compareLedgersByBill — golden case ──────────────────────
 const ledgerA = {

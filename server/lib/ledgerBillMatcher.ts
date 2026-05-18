@@ -179,24 +179,76 @@ export function normalizeBillKey(raw: string | null | undefined): string | null 
  * Returns null when no reference can be extracted with confidence —
  * those rows land in the "noBill" bucket.
  */
-const NARRATION_BILL_PATTERNS: RegExp[] = [
-  // Common prefixes followed by a number and optional FY suffix.
-  /\b(?:BS|INV|BILL|VCH|VOUCH|VOU|VR|VR\.|RCT|RECEIPT|JV|JE|PRV|PUR|SAL)[\s\-/#:.]*([A-Z0-9][A-Z0-9\-/]{2,30})/i,
-  // "Bill No. 123" / "Invoice 456"
-  /\b(?:bill|invoice|voucher)\s*(?:no\.?|number|#)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-/]{2,30})/i,
+/**
+ * Bill-extraction patterns, tried in order. List the most specific
+ * (full-word "Bill No.", "Invoice No.", "Sale Inv.No") first so they
+ * win over the bare-prefix ones below.
+ *
+ * The OSPL case (Marg ledger vs Finsys ledger of the same business
+ * relationship) showed that:
+ *   - Marg writes "Bill No. OS64/25-26000216 Dt. 31/05/2025 …"
+ *   - Finsys writes "Sale Inv.No OS64/25-26000216 000216 U-02"
+ * Both narrations carry the same cross-party bill `OS64/25-26000216`,
+ * but Marg's voucher field is its INTERNAL entry id (P000142) and
+ * Finsys's voucher is the bill tail (000216). Extracting from
+ * voucher first misroutes both sides into different buckets.
+ *
+ * The patterns below explicitly handle:
+ *   - "Bill No. X" / "Bill No X"
+ *   - "Invoice No. X" / "Inv. No. X" / "Inv.No X"  (abbreviated)
+ *   - "Sale Inv.No X"  (Finsys's wrapping)
+ *   - "Voucher No. X" / "Vch.No. X"
+ *   - Bare prefix forms BS/123, INV-456, VCH 12, JV 100 (Tally)
+ *
+ * Capture group: the bill string (which may itself contain "/" and
+ * "-" — `OS64/25-26000216` is kept intact; normalizeBillKey will
+ * strip the separators and the FY suffix.
+ */
+/**
+ * Narration patterns + how to read the bill string out of each match.
+ *
+ *   - `'group'` : the keyword is a LABEL ("Bill No.", "Invoice No.").
+ *                 The bill itself sits in capture group 1.
+ *   - `'full'`  : the keyword IS PART of the bill number (e.g. "BS" in
+ *                 "BS/123", "VCH" in "VCH 100"). Take the full match
+ *                 so the bill series stays in the key — otherwise
+ *                 "BS-888" would normalise to "888" and miss the
+ *                 series prefix that distinguishes BS-888 from VR-888.
+ */
+const NARRATION_BILL_PATTERNS: Array<{ pattern: RegExp; capture: 'group' | 'full' }> = [
+  {
+    pattern: /\b(?:bill|invoice|inv\.?|voucher|vch\.?)\b\s*(?:no\.?|number|#)?[\s.:\-]*([A-Z][A-Z0-9\-/]{4,40})/i,
+    capture: 'group',
+  },
+  {
+    pattern: /\b(?:BS|INV|BILL|VCH|VOUCH|VOU|VR\.?|RCT|RECEIPT|JV|JE|PRV|PUR|SAL)\b[\s\-/#:.]*[A-Z0-9][A-Z0-9\-/]{2,30}/i,
+    capture: 'full',
+  },
 ];
 
+/**
+ * Try to extract a bill reference. We prefer NARRATION over voucher
+ * because cross-party reconciliation depends on the bill number that
+ * BOTH parties printed — almost always the supplier-issued invoice
+ * number sitting in the narration. The voucher field is ERP-local
+ * and frequently carries an internal entry id that differs between
+ * the two parties' books.
+ *
+ * Voucher is the fallback for cases where the narration is empty or
+ * generic (Tally's "Sales A/c" rows often have only the voucher set).
+ */
 export function extractBillKey(tx: { voucher: string | null; narration: string | null }): string | null {
-  const fromVoucher = normalizeBillKey(tx.voucher);
-  if (fromVoucher) return fromVoucher;
   const narr = tx.narration ?? '';
-  for (const p of NARRATION_BILL_PATTERNS) {
-    const m = p.exec(narr);
+  for (const { pattern, capture } of NARRATION_BILL_PATTERNS) {
+    const m = pattern.exec(narr);
     if (m) {
-      const key = normalizeBillKey(m[1] ?? m[0]);
+      const raw = capture === 'group' ? (m[1] ?? '') : m[0];
+      const key = normalizeBillKey(raw);
       if (key) return key;
     }
   }
+  const fromVoucher = normalizeBillKey(tx.voucher);
+  if (fromVoucher) return fromVoucher;
   return null;
 }
 
