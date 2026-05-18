@@ -136,6 +136,33 @@ export interface LedgerCompareReport {
 // ─── Bill-key extraction ────────────────────────────────────────────
 
 /**
+ * Strip a sequential financial-year pair (YY-YY+1) sitting INSIDE
+ * a longer digit run — e.g. the "2526" in "OS642526000042". Word-
+ * boundary FY-strip (the regex pass that runs before this in
+ * normalizeBillKey) misses these because there's no boundary
+ * between the FY end ("26") and the bill counter ("000042").
+ *
+ * Walks 4-digit windows left-to-right. A window is treated as an
+ * FY when parseInt(window[0:2]) + 1 === parseInt(window[2:4]).
+ * Strips at most ONE FY per call — the second-pass is a recovery
+ * for the common case where exactly one FY got embedded; we don't
+ * want to greedily strip multiple if a bill genuinely has digit
+ * patterns that coincide.
+ */
+function stripInlineFY(s: string): string {
+  for (let i = 0; i + 4 <= s.length; i++) {
+    const chunk = s.substring(i, i + 4);
+    if (!/^\d{4}$/.test(chunk)) continue;
+    const yy1 = parseInt(chunk.substring(0, 2), 10);
+    const yy2 = parseInt(chunk.substring(2, 4), 10);
+    if (yy2 === yy1 + 1) {
+      return s.substring(0, i) + s.substring(i + 4);
+    }
+  }
+  return s;
+}
+
+/**
  * Normalise a bill / voucher string into a comparison key.
  *
  * Indian businesses cite the same bill in many shapes:
@@ -154,12 +181,36 @@ export function normalizeBillKey(raw: string | null | undefined): string | null 
   if (!raw) return null;
   let s = String(raw).trim();
   if (!s) return null;
-  // Strip FY suffix tokens
+  // Reject Finsys voucher TYPE codes — "SALE(40)", "RECE(11)",
+  // "JOB(41)", "PURCH(7)", "PAYM(3)", etc. The Finsys ERP rule maps
+  // its "Type" column to the voucher role, but the value there is a
+  // voucher CLASS, not a bill number. Using it as a bill key
+  // mis-routes Finsys-side payments (RECE) into only-in-B as fake
+  // bills. The literal `(N)` syntax with all-caps prefix is unique
+  // to Finsys's report renderer.
+  if (/^[A-Z]+\(\d+\)$/i.test(s)) return null;
+  // Strip FY suffix tokens at word boundaries — catches "BS/123/24-25"
+  // / "BS-123 2024-25" / "FY 24-25" forms where the FY is bounded by
+  // non-word chars on both sides.
   s = s.replace(/\b(?:FY\s*)?(?:20)?\d{2}\s*[-/]\s*(?:20)?\d{2}\b/gi, '');
   // Common prefix decorations
   s = s.replace(/^(?:NO\.?|NUM\.?|#)\s*/i, '');
   // Strip non-alphanumeric.
   s = s.replace(/[^A-Z0-9]/gi, '');
+  if (!s) return null;
+  // Second-pass FY strip: catches FY-shaped substrings INSIDE long
+  // digit runs (no word boundary). Marg writes "OS64/25-26/00042" —
+  // the word-bounded strip above catches that. Finsys writes the
+  // same bill as "OS64/25-26000042" — after slash-strip the digits
+  // run together: "25-26000042" — no boundary between "26" and the
+  // bill counter "000042". Without this pass the two ledgers'
+  // versions of the same bill normalise to different keys
+  // ("OS6400042" vs "OS642526000042") and miss the match.
+  //
+  // Detection: scan 4-digit windows; strip when window[0:2] + 1 ==
+  // window[2:4] (sequential year pair). This is a strong signal —
+  // random digits rarely form sequential YY pairs.
+  s = stripInlineFY(s);
   if (!s) return null;
   // Reject tokens that are clearly not bills:
   //   - Pure dates that survived FY-strip ("01042025" — 8 digits leading 0)
@@ -217,7 +268,12 @@ export function normalizeBillKey(raw: string | null | undefined): string | null 
  */
 const NARRATION_BILL_PATTERNS: Array<{ pattern: RegExp; capture: 'group' | 'full' }> = [
   {
-    pattern: /\b(?:bill|invoice|inv\.?|voucher|vch\.?)\b\s*(?:no\.?|number|#)?[\s.:\-]*([A-Z][A-Z0-9\-/]{4,40})/i,
+    // Capture allows digit-start ([A-Z0-9]) and a 3-char minimum
+    // ({2,40} after the first char) so short numeric bills like
+    // "Bill No. 543" — Marg's bill-543-row in the OSPL ledger —
+    // are recognised. Earlier minimum was 5 chars + [A-Z] start,
+    // which excluded purely-numeric bills.
+    pattern: /\b(?:bill|invoice|inv\.?|voucher|vch\.?)\b\s*(?:no\.?|number|#)?[\s.:\-]*([A-Z0-9][A-Z0-9\-/]{2,40})/i,
     capture: 'group',
   },
   {
