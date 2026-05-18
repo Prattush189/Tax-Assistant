@@ -6,7 +6,7 @@
  * /api/ledger-scrutiny/compare which returns a reconciliation report.
  */
 import { useEffect, useRef, useState } from 'react';
-import { Loader2, Scale, Upload, FileCheck2, X } from 'lucide-react';
+import { Loader2, Scale, Upload, FileCheck2, X, Download } from 'lucide-react';
 import Papa from 'papaparse';
 import toast from 'react-hot-toast';
 import { ColumnMappingWizard } from '../shared/ColumnMappingWizard';
@@ -141,6 +141,78 @@ const MAX_BYTES = 10 * 1024 * 1024;
 function fmtINR(n: number): string {
   const sign = n < 0 ? '-' : '';
   return sign + '₹' + Math.abs(n).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+}
+
+/**
+ * Serialise the comparison report into a single flat CSV covering all
+ * buckets. Each row carries a `Status` column so the user can filter /
+ * pivot in Excel after download.
+ *
+ * Status values:
+ *   - matched          : same bill, amounts agree
+ *   - amount_mismatch  : same bill, amounts differ
+ *   - only_in_<labelA> : bill only in side A's ledger
+ *   - only_in_<labelB> : bill only in side B's ledger
+ *   - no_bill_<labelA> : side-A row without an extractable bill ref
+ *   - no_bill_<labelB> : side-B row without an extractable bill ref
+ *
+ * Amounts are plain numbers (no ₹ symbol, no Indian thousands grouping)
+ * so the file reopens cleanly in Excel / Google Sheets as numeric data.
+ * Strings containing comma, quote, or newline are wrapped in quotes
+ * with internal quotes doubled — RFC 4180 dialect.
+ */
+function buildCompareCsv(report: LedgerComparisonReport, labelA: string, labelB: string): string {
+  const safeLabel = (s: string) => s.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+  const escape = (s: string | number | null | undefined): string => {
+    if (s === null || s === undefined) return '';
+    const str = String(s);
+    if (/[",\n\r]/.test(str)) return '"' + str.replace(/"/g, '""') + '"';
+    return str;
+  };
+  const header = [
+    'Status', 'Bill',
+    `${labelA} Date`, `${labelB} Date`,
+    `${labelA} Amount`, `${labelB} Amount`, 'Diff',
+    `${labelA} Narration`, `${labelB} Narration`,
+  ];
+  const rows: string[][] = [];
+  for (const m of report.matched) {
+    rows.push(['matched', m.bill, m.dateA ?? '', m.dateB ?? '', String(m.amountA), String(m.amountB), '0', m.narrationA, m.narrationB]);
+  }
+  for (const m of report.amountMismatches) {
+    rows.push(['amount_mismatch', m.bill, m.dateA ?? '', m.dateB ?? '', String(m.amountA), String(m.amountB), String(m.diff), m.narrationA, m.narrationB]);
+  }
+  for (const m of report.onlyInA) {
+    rows.push([`only_in_${safeLabel(labelA)}`, m.bill, m.date ?? '', '', String(m.amount), '', '', m.narration, '']);
+  }
+  for (const m of report.onlyInB) {
+    rows.push([`only_in_${safeLabel(labelB)}`, m.bill, '', m.date ?? '', '', String(m.amount), '', '', m.narration]);
+  }
+  for (const m of report.noBillA) {
+    rows.push([`no_bill_${safeLabel(labelA)}`, '', m.date ?? '', '', String(m.amount), '', '', m.narration, '']);
+  }
+  for (const m of report.noBillB) {
+    rows.push([`no_bill_${safeLabel(labelB)}`, '', '', m.date ?? '', '', String(m.amount), '', '', m.narration]);
+  }
+  return [header, ...rows].map(r => r.map(escape).join(',')).join('\n');
+}
+
+function downloadCsv(filename: string, csv: string): void {
+  // BOM prefix tells Excel the file is UTF-8 so Indian-narration
+  // characters (rupee symbol in cell content — though we don't emit
+  // it, but narrations can contain special chars) render correctly
+  // without a per-cell encoding prompt.
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  // Defer revoking the URL — some browsers (Safari, older Firefox)
+  // need the URL alive past the click handler.
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
 function SideUploader({
@@ -703,11 +775,32 @@ export function LedgerCompareView() {
 
       {report && (
         <div className="space-y-4">
+          {/* Headline + counts + CSV export. Export button sits inline
+            * with the headline so it's the first thing the user sees
+            * when the report renders — typical workflow is "scan the
+            * counts → download the CSV → review in Excel". */}
           <div className="rounded-2xl border border-emerald-200 dark:border-emerald-800/60 bg-emerald-50/60 dark:bg-emerald-900/15 p-5">
-            <p className="font-semibold text-gray-900 dark:text-gray-100">{report.summary.headline}</p>
-            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              Side A ({LEDGER_TYPE_LABELS[report.summary.typeA]}) {report.summary.totalA.toLocaleString('en-IN')} txns · Side B ({LEDGER_TYPE_LABELS[report.summary.typeB]}) {report.summary.totalB.toLocaleString('en-IN')} txns
-            </p>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold text-gray-900 dark:text-gray-100">{report.summary.headline}</p>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Side A ({LEDGER_TYPE_LABELS[report.summary.typeA]}) {report.summary.totalA.toLocaleString('en-IN')} txns · Side B ({LEDGER_TYPE_LABELS[report.summary.typeB]}) {report.summary.totalB.toLocaleString('en-IN')} txns
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const csv = buildCompareCsv(report, labelA, labelB);
+                  const today = new Date().toISOString().slice(0, 10);
+                  downloadCsv(`ledger-compare-${labelA}-vs-${labelB}-${today}.csv`, csv);
+                }}
+                className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-lg bg-white dark:bg-gray-900/60 border border-gray-300 dark:border-gray-700 hover:border-emerald-400 dark:hover:border-emerald-600 text-gray-800 dark:text-gray-100 shrink-0"
+                title="Download every match, mismatch, and unmatched row as one CSV — Excel-friendly with status column."
+              >
+                <Download className="w-4 h-4" />
+                Export CSV
+              </button>
+            </div>
             <div className="mt-3 grid grid-cols-2 sm:grid-cols-5 gap-3 text-center">
               <Stat label="Bills matched" value={report.summary.matchedCount} tone="ok" />
               <Stat label="Amount mismatches" value={report.summary.amountMismatchCount} tone={report.summary.amountMismatchCount ? 'warn' : 'ok'} />
@@ -732,8 +825,30 @@ export function LedgerCompareView() {
             )}
           </div>
 
+          {/* Render order (per user request 2026-05-18):
+            *   1. Matched — bill AND amount agree (the clean case)
+            *   2. Amount mismatches — same bill, different amounts
+            *   3. Only in A
+            *   4. Only in B
+            *   5. No-bill A / B
+            * The clean case goes first so the user can scroll past the
+            * majority of rows quickly when looking for the exception
+            * buckets below. */}
           <ReportTable
-            title="Amount mismatches (same bill, different amounts)"
+            title="Matched (bill no. and amount both agree)"
+            rows={report.matched}
+            columns={[
+              { header: 'Bill', cell: (r) => r.bill },
+              { header: `${labelA} date`, cell: (r) => r.dateA ?? '—' },
+              { header: `${labelB} date`, cell: (r) => r.dateB ?? '—' },
+              { header: 'Amount', align: 'right', cell: (r) => fmtINR(r.amountA) },
+              { header: `${labelA} narration`, cell: (r) => r.narrationA },
+              { header: `${labelB} narration`, cell: (r) => r.narrationB },
+            ]}
+          />
+
+          <ReportTable
+            title="Amount mismatches (same bill no., different amounts)"
             rows={report.amountMismatches}
             columns={[
               { header: 'Bill', cell: (r) => r.bill },
@@ -766,19 +881,6 @@ export function LedgerCompareView() {
               { header: 'Date', cell: (r) => r.date ?? '—' },
               { header: 'Amount', align: 'right', cell: (r) => fmtINR(r.amount) },
               { header: 'Narration', cell: (r) => r.narration },
-            ]}
-          />
-
-          <ReportTable
-            title="Matched"
-            rows={report.matched}
-            columns={[
-              { header: 'Bill', cell: (r) => r.bill },
-              { header: `${labelA} date`, cell: (r) => r.dateA ?? '—' },
-              { header: `${labelB} date`, cell: (r) => r.dateB ?? '—' },
-              { header: 'Amount', align: 'right', cell: (r) => fmtINR(r.amountA) },
-              { header: `${labelA} narration`, cell: (r) => r.narrationA },
-              { header: `${labelB} narration`, cell: (r) => r.narrationB },
             ]}
           />
 
