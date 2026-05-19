@@ -1934,7 +1934,40 @@ export function applyMapping(
           (credit != null && credit !== 0 && pending.credit != null && pending.credit !== 0)
         );
 
-      if (isNewVoucherSameDate || isClosingBalanceRow || isConflictingAmount) {
+      // Opposite-side-amount detection — covers the OSPL Marg pattern
+      // where a bill row (Credit only) is immediately followed on the
+      // same date by a payment row (Debit only). Both rows have their
+      // own narrations and amounts; they're TWO separate transactions
+      // visually rendered without a date repeat on the payment row.
+      //
+      // Without this guard the continuation-merge below absorbs the
+      // payment's debit + balance into the bill's pending block, then
+      // `hasBoth` in flushPending splits the merged row into two
+      // transactions that BOTH carry the merged narration. The bill
+      // matcher then sees "OS64/25-26000708" in both narrations and
+      // sums the amounts — producing a fake ₹40,00,000 mismatch on
+      // every bill-followed-by-payment pair on the OSPL Marg ledger.
+      //
+      // Signal: pending has a Cr-only OR Dr-only amount AND the current
+      // row has a non-zero amount on the OPPOSITE side AND its own
+      // narration. The narration requirement disambiguates from
+      // legitimate contra-detail breakdown rows that don't carry their
+      // own description.
+      const pendingOnlyCr = pending.credit != null && pending.credit !== 0
+        && (pending.debit == null || pending.debit === 0);
+      const pendingOnlyDr = pending.debit != null && pending.debit !== 0
+        && (pending.credit == null || pending.credit === 0);
+      const currentOnlyDr = debit != null && debit !== 0
+        && (credit == null || credit === 0);
+      const currentOnlyCr = credit != null && credit !== 0
+        && (debit == null || debit === 0);
+      const isOppositeSideAmount =
+        kind === 'ledger' &&
+        !isContraDetail &&
+        !!narr &&
+        ((pendingOnlyCr && currentOnlyDr) || (pendingOnlyDr && currentOnlyCr));
+
+      if (isNewVoucherSameDate || isClosingBalanceRow || isConflictingAmount || isOppositeSideAmount) {
         const inheritedDate = pending.date;
         const inheritedAccount = pending.account;
         flushPending();
