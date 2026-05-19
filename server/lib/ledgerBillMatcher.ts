@@ -293,18 +293,59 @@ const NARRATION_BILL_PATTERNS: Array<{ pattern: RegExp; capture: 'group' | 'full
  * Voucher is the fallback for cases where the narration is empty or
  * generic (Tally's "Sales A/c" rows often have only the voucher set).
  */
+/**
+ * Detect whether the row is a credit-note / debit-note ADJUSTMENT
+ * that references an original bill, vs. the original sale/purchase
+ * itself.
+ *
+ * Why this matters: Finsys (OSPL's example) writes credit notes
+ * with narration like "Bill No.OS64/25-26000215 Dt. 31/05/2025
+ * BEING CREDIT NOTE … AGAINST BILL NO. OS64/25-26000215". Naive
+ * bill-key extraction sees the bill number and treats the row as
+ * the same key as the original sale — the matcher then SUMS the
+ * credit-note amount into the original-bill total, producing a
+ * fake amount-mismatch when actually both ledgers agree on the
+ * underlying sale.
+ *
+ * Returning 'cn' / 'dn' makes the caller prefix the bill key with
+ * `CN-` / `DN-` so credit-notes-against-bill-X live in their own
+ * bucket and the original bill X reconciles cleanly.
+ */
+function classifyAdjustmentType(narration: string): 'sale' | 'cn' | 'dn' {
+  const n = narration.toLowerCase();
+  // Order: check "credit note" before "debit note" — both phrases
+  // contain "note", but the leading word disambiguates.
+  if (/\bcredit\s+note\b|\bcr\s*\.?\s*note\b/.test(n)) return 'cn';
+  if (/\bdebit\s+note\b|\bdr\s*\.?\s*note\b/.test(n)) return 'dn';
+  return 'sale';
+}
+
 export function extractBillKey(tx: { voucher: string | null; narration: string | null }): string | null {
   const narr = tx.narration ?? '';
+  const adjustment = classifyAdjustmentType(narr);
   for (const { pattern, capture } of NARRATION_BILL_PATTERNS) {
     const m = pattern.exec(narr);
     if (m) {
       const raw = capture === 'group' ? (m[1] ?? '') : m[0];
       const key = normalizeBillKey(raw);
-      if (key) return key;
+      if (key) {
+        // Credit / debit notes referencing the underlying bill go
+        // into their own keyspace so they don't sum into the
+        // original-bill totals. Both sides' CN-X / DN-X entries
+        // will still match each other; original bill X reconciles
+        // unaffected.
+        if (adjustment === 'cn') return 'CN-' + key;
+        if (adjustment === 'dn') return 'DN-' + key;
+        return key;
+      }
     }
   }
   const fromVoucher = normalizeBillKey(tx.voucher);
-  if (fromVoucher) return fromVoucher;
+  if (fromVoucher) {
+    if (adjustment === 'cn') return 'CN-' + fromVoucher;
+    if (adjustment === 'dn') return 'DN-' + fromVoucher;
+    return fromVoucher;
+  }
   return null;
 }
 

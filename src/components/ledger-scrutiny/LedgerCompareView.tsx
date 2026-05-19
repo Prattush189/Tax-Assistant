@@ -28,7 +28,7 @@ import {
   type LedgerComparisonReport,
   type LedgerType,
 } from '../../services/api';
-import { cn } from '../../lib/utils';
+import { cn, formatDate } from '../../lib/utils';
 
 // ── Tab-survival state persistence ─────────────────────────────────────
 //
@@ -175,24 +175,28 @@ function buildCompareCsv(report: LedgerComparisonReport, labelA: string, labelB:
     `${labelA} Amount`, `${labelB} Amount`, 'Diff',
     `${labelA} Narration`, `${labelB} Narration`,
   ];
+  // Dates are stored as YYYY-MM-DD (the parser's canonical form);
+  // present them in CSV as dd/MM/yyyy to match Indian convention and
+  // the dashboard display. formatDate returns empty string for null/
+  // invalid, which is what we want in the CSV (empty cell).
   const rows: string[][] = [];
   for (const m of report.matched) {
-    rows.push(['matched', m.bill, m.dateA ?? '', m.dateB ?? '', String(m.amountA), String(m.amountB), '0', m.narrationA, m.narrationB]);
+    rows.push(['matched', m.bill, formatDate(m.dateA), formatDate(m.dateB), String(m.amountA), String(m.amountB), '0', m.narrationA, m.narrationB]);
   }
   for (const m of report.amountMismatches) {
-    rows.push(['amount_mismatch', m.bill, m.dateA ?? '', m.dateB ?? '', String(m.amountA), String(m.amountB), String(m.diff), m.narrationA, m.narrationB]);
+    rows.push(['amount_mismatch', m.bill, formatDate(m.dateA), formatDate(m.dateB), String(m.amountA), String(m.amountB), String(m.diff), m.narrationA, m.narrationB]);
   }
   for (const m of report.onlyInA) {
-    rows.push([`only_in_${safeLabel(labelA)}`, m.bill, m.date ?? '', '', String(m.amount), '', '', m.narration, '']);
+    rows.push([`only_in_${safeLabel(labelA)}`, m.bill, formatDate(m.date), '', String(m.amount), '', '', m.narration, '']);
   }
   for (const m of report.onlyInB) {
-    rows.push([`only_in_${safeLabel(labelB)}`, m.bill, '', m.date ?? '', '', String(m.amount), '', '', m.narration]);
+    rows.push([`only_in_${safeLabel(labelB)}`, m.bill, '', formatDate(m.date), '', String(m.amount), '', '', m.narration]);
   }
   for (const m of report.noBillA) {
-    rows.push([`no_bill_${safeLabel(labelA)}`, '', m.date ?? '', '', String(m.amount), '', '', m.narration, '']);
+    rows.push([`no_bill_${safeLabel(labelA)}`, '', formatDate(m.date), '', String(m.amount), '', '', m.narration, '']);
   }
   for (const m of report.noBillB) {
-    rows.push([`no_bill_${safeLabel(labelB)}`, '', '', m.date ?? '', '', String(m.amount), '', '', m.narration]);
+    rows.push([`no_bill_${safeLabel(labelB)}`, '', '', formatDate(m.date), '', String(m.amount), '', '', m.narration]);
   }
   return [header, ...rows].map(r => r.map(escape).join(',')).join('\n');
 }
@@ -839,8 +843,8 @@ export function LedgerCompareView() {
             rows={report.matched}
             columns={[
               { header: 'Bill', cell: (r) => r.bill },
-              { header: `${labelA} date`, cell: (r) => r.dateA ?? '—' },
-              { header: `${labelB} date`, cell: (r) => r.dateB ?? '—' },
+              { header: `${labelA} date`, cell: (r) => formatDate(r.dateA) || '—' },
+              { header: `${labelB} date`, cell: (r) => formatDate(r.dateB) || '—' },
               { header: 'Amount', align: 'right', cell: (r) => fmtINR(r.amountA) },
               { header: `${labelA} narration`, cell: (r) => r.narrationA },
               { header: `${labelB} narration`, cell: (r) => r.narrationB },
@@ -852,8 +856,8 @@ export function LedgerCompareView() {
             rows={report.amountMismatches}
             columns={[
               { header: 'Bill', cell: (r) => r.bill },
-              { header: `${labelA} date`, cell: (r) => r.dateA ?? '—' },
-              { header: `${labelB} date`, cell: (r) => r.dateB ?? '—' },
+              { header: `${labelA} date`, cell: (r) => formatDate(r.dateA) || '—' },
+              { header: `${labelB} date`, cell: (r) => formatDate(r.dateB) || '—' },
               { header: `${labelA} amount`, align: 'right', cell: (r) => fmtINR(r.amountA) },
               { header: `${labelB} amount`, align: 'right', cell: (r) => fmtINR(r.amountB) },
               { header: 'Diff', align: 'right', cell: (r) => fmtINR(r.diff) },
@@ -867,7 +871,7 @@ export function LedgerCompareView() {
             rows={report.onlyInA}
             columns={[
               { header: 'Bill', cell: (r) => r.bill },
-              { header: 'Date', cell: (r) => r.date ?? '—' },
+              { header: 'Date', cell: (r) => formatDate(r.date) || '—' },
               { header: 'Amount', align: 'right', cell: (r) => fmtINR(r.amount) },
               { header: 'Narration', cell: (r) => r.narration },
             ]}
@@ -878,7 +882,7 @@ export function LedgerCompareView() {
             rows={report.onlyInB}
             columns={[
               { header: 'Bill', cell: (r) => r.bill },
-              { header: 'Date', cell: (r) => r.date ?? '—' },
+              { header: 'Date', cell: (r) => formatDate(r.date) || '—' },
               { header: 'Amount', align: 'right', cell: (r) => fmtINR(r.amount) },
               { header: 'Narration', cell: (r) => r.narration },
             ]}
@@ -890,7 +894,7 @@ export function LedgerCompareView() {
                 title={`${labelA} rows without a bill reference (couldn't match)`}
                 rows={report.noBillA}
                 columns={[
-                  { header: 'Date', cell: (r) => r.date ?? '—' },
+                  { header: 'Date', cell: (r) => formatDate(r.date) || '—' },
                   { header: 'Amount', align: 'right', cell: (r) => fmtINR(r.amount) },
                   { header: 'Narration', cell: (r) => r.narration },
                 ]}
@@ -899,7 +903,7 @@ export function LedgerCompareView() {
                 title={`${labelB} rows without a bill reference (couldn't match)`}
                 rows={report.noBillB}
                 columns={[
-                  { header: 'Date', cell: (r) => r.date ?? '—' },
+                  { header: 'Date', cell: (r) => formatDate(r.date) || '—' },
                   { header: 'Amount', align: 'right', cell: (r) => fmtINR(r.amount) },
                   { header: 'Narration', cell: (r) => r.narration },
                 ]}

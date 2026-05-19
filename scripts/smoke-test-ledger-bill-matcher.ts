@@ -126,6 +126,48 @@ expect(
   true,
 );
 
+// ─── 2026-05-19 fix: credit/debit-note separation ───────────
+// OSPL Finsys ledger had a credit note row that referenced the
+// original bill OS64/25-26000215 in its narration. The matcher
+// summed the CN amount into the original bill's total, making
+// the bill look like a ₹110,100 mismatch when actually it tied
+// exactly. With the CN/DN classification, the credit note now
+// gets its own key "CN-OS64000215" and the original sale row
+// matches at ₹501,425 on both sides.
+expect(
+  'extractBillKey on CN narration → prefixed key',
+  extractBillKey({
+    voucher: '000104',
+    narration: 'Bill No.OS64/25-26000215 Dt. 31/05/2025 BEING CREDIT NOTE ISSUED FOR REIMBURSEMENT FOR MARKETING ACTIVITIES AGAINST BILL NO. OS64/25-26000215 DATED 31.05.2025',
+  }),
+  'CN-OS64000215',
+);
+expect(
+  'extractBillKey on plain sale → no prefix',
+  extractBillKey({
+    voucher: 'P000147',
+    narration: 'Bill No. OS64/25-26000215 Dt. 31/05/2025 Entry No.P000147',
+  }),
+  'OS64000215',
+);
+expect(
+  'extractBillKey on DN narration → DN- prefix',
+  extractBillKey({
+    voucher: null,
+    narration: 'Bill No. OS64/25-26000215 BEING DEBIT NOTE AGAINST BILL',
+  }),
+  'DN-OS64000215',
+);
+// Voucher-only fallback path also honours the CN/DN classification.
+expect(
+  'extractBillKey CN via voucher fallback',
+  extractBillKey({
+    voucher: 'BS/999',
+    narration: 'BEING CREDIT NOTE — reimbursement',
+  }),
+  'CN-BS999',
+);
+
 // ─── OSPL case: Marg (Side A) vs Finsys (Side B) narrations ──
 // Real-world narrations from the user's OSPL FUTURE MARG.pdf and
 // OSPL Ledger_Future Energy_*.pdf. Both ledgers reference the same
