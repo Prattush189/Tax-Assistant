@@ -2443,6 +2443,8 @@ export interface LedgerComparisonReport {
     amountMismatchCount: number;
     onlyInACount: number;
     onlyInBCount: number;
+    /** Pairs from the date+amount no-bill matcher. */
+    paymentMatchedCount: number;
     noBillCountA: number;
     noBillCountB: number;
     grossA: number;
@@ -2456,6 +2458,19 @@ export interface LedgerComparisonReport {
   amountMismatches: Array<{ bill: string; dateA: string | null; dateB: string | null; amountA: number; amountB: number; diff: number; narrationA: string; narrationB: string }>;
   onlyInA: Array<{ bill: string; date: string | null; amount: number; narration: string }>;
   onlyInB: Array<{ bill: string; date: string | null; amount: number; narration: string }>;
+  /** Date+amount pairs for rows without a bill reference. Typically
+   *  payments booked on both sides (A as a credit-note, B as a bank
+   *  receipt). bankRefA / bankRefB carry the cheque / UTR / NEFT
+   *  references extracted from each side's narration for confirmation
+   *  — they're informational, not used for matching. */
+  paymentMatches: Array<{
+    date: string;
+    amount: number;
+    narrationA: string;
+    narrationB: string;
+    bankRefA: string | null;
+    bankRefB: string | null;
+  }>;
   noBillA: Array<{ date: string | null; amount: number; narration: string }>;
   noBillB: Array<{ date: string | null; amount: number; narration: string }>;
   balanceCheck: {

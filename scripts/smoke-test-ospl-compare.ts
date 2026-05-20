@@ -84,6 +84,7 @@ async function main() {
   console.log(`  amount mismatches : ${report.summary.amountMismatchCount}`);
   console.log(`  only in A (sales)    : ${report.summary.onlyInACount}`);
   console.log(`  only in B (purchase) : ${report.summary.onlyInBCount}`);
+  console.log(`  payments matched  : ${report.summary.paymentMatchedCount}`);
   console.log(`  rows w/o bill A   : ${report.summary.noBillCountA}`);
   console.log(`  rows w/o bill B   : ${report.summary.noBillCountB}`);
 
@@ -103,6 +104,14 @@ async function main() {
   for (const m of report.onlyInB.slice(0, 5)) {
     console.log(`  ${m.bill}  ${m.date}  ₹${m.amount.toFixed(2)}  ${m.narration.slice(0, 50)}`);
   }
+  console.log('\nSample payment matches (first 5):');
+  for (const m of report.paymentMatches.slice(0, 5)) {
+    const refs = [m.bankRefA, m.bankRefB].filter(Boolean).join(' / ') || '—';
+    console.log(`  ${m.date}  ₹${m.amount.toFixed(2)}  ref:${refs}`);
+    console.log(`    A: ${m.narrationA.slice(0, 80)}`);
+    console.log(`    B: ${m.narrationB.slice(0, 80)}`);
+  }
+
   console.log('\nSample no-bill A (first 3):');
   for (const m of report.noBillA.slice(0, 3)) {
     console.log(`  ${m.date}  ₹${m.amount.toFixed(2)}  ${m.narration.slice(0, 70)}`);

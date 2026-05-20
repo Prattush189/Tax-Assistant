@@ -7,7 +7,7 @@
  * every bucket lands in the right place.
  */
 
-import { compareLedgersByBill, normalizeBillKey, extractBillKey } from '../server/lib/ledgerBillMatcher';
+import { compareLedgersByBill, normalizeBillKey, extractBillKey, extractBankRef } from '../server/lib/ledgerBillMatcher';
 
 let pass = 0;
 let fail = 0;
@@ -314,6 +314,105 @@ const splitReport = compareLedgersByBill(splitA, 'sales', splitB, 'purchase');
 expect('split-bill matched', splitReport.summary.matchedCount, 1);
 expect('split-bill A summed', splitReport.matched[0]?.amountA, 118000);
 expect('split-bill B unchanged', splitReport.matched[0]?.amountB, 118000);
+
+// ─── 2026-05-20 payment matcher: extractBankRef ──────────────
+// Bank reference extraction from narrations — used to surface
+// cheque / UTR / NEFT / IMPS / RTGS numbers on the payment-
+// matches table. Informational only (not used for matching).
+expect('extractBankRef null on null', extractBankRef(null), null);
+expect('extractBankRef null on empty', extractBankRef(''), null);
+expect('extractBankRef cheque (chq)', extractBankRef('Chq No. 123456 deposit'), '123456');
+expect('extractBankRef cheque alt', extractBankRef('Cheque #987654 dt 01/04/2025'), '987654');
+expect('extractBankRef NEFT', extractBankRef('NEFT-N123456789012-ACME'), 'N123456789012');
+expect('extractBankRef IMPS', extractBankRef('IMPS/501234567890/PAYEE'), '501234567890');
+expect('extractBankRef RTGS', extractBankRef('RTGS UTR HDFCR52025040112345678'), 'HDFCR52025040112345678');
+expect('extractBankRef UTR keyword', extractBankRef('Payment received UTR: ABCD123456789012'), 'ABCD123456789012');
+expect('extractBankRef plain narration', extractBankRef('Cash deposit at branch'), null);
+
+// ─── 2026-05-20 payment matcher: date+amount pairing ─────────
+// When neither side has a bill ref but the date and amount agree,
+// the secondary matcher should pair them up. Each side's leftover
+// goes into noBillA/B; matched pairs surface in paymentMatches.
+const payA = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      // Payment from bank — no bill ref, will pair with B by date+amount.
+      // Avoid the word "receipt" because RECEIPT is one of the bill
+      // narration anchors (NARRATION_BILL_PATTERNS) — using it would
+      // make extractBillKey treat the row as bill-bearing.
+      { date: '2025-06-10', narration: 'BANK OF BARODA Chq.No.234567', voucher: null, debit: 0, credit: 50000, balance: null },
+      // Leftover — no counterpart in B on this date/amount
+      { date: '2025-06-12', narration: 'Adjustment', voucher: null, debit: 100, credit: 0, balance: null },
+    ],
+  }],
+};
+const payB = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      // Counterpart to the A receipt
+      { date: '2025-06-10', narration: 'NEFT-N123456789012 from acme', voucher: null, debit: 50000, credit: 0, balance: null },
+      // Leftover
+      { date: '2025-06-15', narration: 'Bank charge', voucher: null, debit: 50, credit: 0, balance: null },
+    ],
+  }],
+};
+const payReport = compareLedgersByBill(payA, 'sales', payB, 'purchase');
+expect('payment matched count', payReport.summary.paymentMatchedCount, 1);
+expect('payment matches length', payReport.paymentMatches.length, 1);
+expect('payment match date', payReport.paymentMatches[0]?.date, '2025-06-10');
+expect('payment match amount', payReport.paymentMatches[0]?.amount, 50000);
+expect('payment match bankRefA', payReport.paymentMatches[0]?.bankRefA, '234567');
+expect('payment match bankRefB', payReport.paymentMatches[0]?.bankRefB, 'N123456789012');
+// Leftover no-bill rows after pairing
+expect('no-bill A after pairing', payReport.noBillA.length, 1);
+expect('no-bill B after pairing', payReport.noBillB.length, 1);
+expect('headline mentions payments', /payment/i.test(payReport.summary.headline), true);
+
+// ─── payment matcher: amount alone is not enough ─────────────
+// If amounts agree but dates differ, do NOT pair — could be two
+// unrelated payments of the same value.
+const mismatchDateA = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      { date: '2025-06-10', narration: 'Receipt', voucher: null, debit: 0, credit: 50000, balance: null },
+    ],
+  }],
+};
+const mismatchDateB = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      { date: '2025-06-11', narration: 'Receipt', voucher: null, debit: 50000, credit: 0, balance: null },
+    ],
+  }],
+};
+const mismatchDateReport = compareLedgersByBill(mismatchDateA, 'sales', mismatchDateB, 'purchase');
+expect('no pairing on date mismatch', mismatchDateReport.summary.paymentMatchedCount, 0);
+expect('both go to no-bill', mismatchDateReport.noBillA.length + mismatchDateReport.noBillB.length, 2);
+
+// ─── payment matcher: first-come matching for duplicates ─────
+// If A has two rows for the same date+amount and B has only one,
+// pair the first A row with the B row; the second A row is left
+// over. (Greedy first-fit is good enough; not trying to be smart
+// about it because there's no narration signal to disambiguate.)
+const dupA = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      { date: '2025-06-10', narration: 'Receipt 1', voucher: null, debit: 0, credit: 25000, balance: null },
+      { date: '2025-06-10', narration: 'Receipt 2', voucher: null, debit: 0, credit: 25000, balance: null },
+    ],
+  }],
+};
+const dupB = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      { date: '2025-06-10', narration: 'NEFT', voucher: null, debit: 25000, credit: 0, balance: null },
+    ],
+  }],
+};
+const dupReport = compareLedgersByBill(dupA, 'sales', dupB, 'purchase');
+expect('dup: one pair', dupReport.summary.paymentMatchedCount, 1);
+expect('dup: one leftover A', dupReport.noBillA.length, 1);
+expect('dup: zero leftover B', dupReport.noBillB.length, 0);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (failures.length) {

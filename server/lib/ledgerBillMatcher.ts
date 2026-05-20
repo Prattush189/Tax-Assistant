@@ -92,6 +92,29 @@ export interface NoBillRow {
   narration: string;
 }
 
+/**
+ * A row pair matched by date + amount when neither side carried a
+ * bill reference. Typical case: a payment booked on both sides where
+ * A's books recorded it as a credit-note number ("CRN-0232-000655")
+ * and B's books recorded it as a bank receipt ("Chq. No.300625 BANK
+ * OF BARODA … BEING AMOUNT RECEIVED"). No shared bill number, but
+ * same date and same amount → same payment.
+ *
+ * `bankRefA` / `bankRefB` carry whatever the narration's bank-side
+ * reference looked like (cheque number, UTR, NEFT/IMPS/RTGS ref,
+ * TPT code). Surfaced for visual confirmation; not used for matching
+ * — many ledgers (Marg in particular) print one side without bank
+ * info, so gating on bank-ref would miss real pairs.
+ */
+export interface PaymentMatchRow {
+  date: string;
+  amount: number;
+  narrationA: string;
+  narrationB: string;
+  bankRefA: string | null;
+  bankRefB: string | null;
+}
+
 export interface LedgerCompareReport {
   summary: {
     typeA: LedgerType;
@@ -102,6 +125,10 @@ export interface LedgerCompareReport {
     amountMismatchCount: number;
     onlyInACount: number;
     onlyInBCount: number;
+    /** Pairs from the date+amount no-bill matcher (PaymentMatchRow[]). */
+    paymentMatchedCount: number;
+    /** Counts AFTER the payment matcher consumes pairs — i.e. rows
+     *  that remain genuinely one-sided with no bill reference. */
     noBillCountA: number;
     noBillCountB: number;
     /** Absolute total of A's transactions (sum of |amount|). Useful as
@@ -120,6 +147,7 @@ export interface LedgerCompareReport {
   amountMismatches: AmountMismatchRow[];
   onlyInA: OnlySideRow[];
   onlyInB: OnlySideRow[];
+  paymentMatches: PaymentMatchRow[];
   noBillA: NoBillRow[];
   noBillB: NoBillRow[];
   balanceCheck: {
@@ -349,6 +377,35 @@ export function extractBillKey(tx: { voucher: string | null; narration: string |
   return null;
 }
 
+/**
+ * Pull a bank-side reference token from a narration — cheque number,
+ * UTR, NEFT/IMPS/RTGS reference, or branch transfer code. Used purely
+ * for *display* on payment-match rows (so the user can confirm two
+ * sides booked the same payment). NOT a matching gate: A's ledger
+ * often records its own credit-note number (e.g. "CRN-0232-000655")
+ * with no bank info, while B's records the bank reference — gating
+ * on bank-ref would miss those legitimate pairs.
+ *
+ * Returns null when no recognisable bank ref is present.
+ */
+const BANK_REF_PATTERNS: RegExp[] = [
+  // Cheque number — most ledger reconciliations key on this.
+  /\b(?:chq\.?|cheque)\s*(?:no\.?|number|#)?\.?\s*(\d{4,16})\b/i,
+  // UTR / RRN bank reference.
+  /\b(?:UTR|RRN)[\s\-/.:#]*([A-Z0-9]{8,30})\b/i,
+  // NEFT / IMPS / RTGS payment ref tokens.
+  /\b(?:NEFT|IMPS|RTGS)[\s\-/.:#]*([A-Z0-9]{8,30})\b/i,
+];
+
+export function extractBankRef(narration: string | null): string | null {
+  if (!narration) return null;
+  for (const p of BANK_REF_PATTERNS) {
+    const m = p.exec(narration);
+    if (m) return m[1] ?? null;
+  }
+  return null;
+}
+
 // ─── Compare ────────────────────────────────────────────────────────
 
 interface FlatTx {
@@ -483,6 +540,61 @@ export function compareLedgersByBill(
   onlyInA.sort(byBillSort);
   onlyInB.sort(byBillSort);
 
+  // Payment matcher — pair leftover no-bill rows on each side by
+  // date + amount (with ±₹1 tolerance). Many real reconciliations
+  // have payments booked on both sides where A wrote a credit-note
+  // ref ("CRN-0232-000655") and B wrote a bank receipt ("BANK OF
+  // BARODA Chq.No.300625"). No shared bill number, but same date +
+  // same amount = same payment. Strong reconciliation signal worth
+  // surfacing as its own bucket.
+  //
+  // Algorithm:
+  //   1. Index B's no-bill rows by `${date}::${amount-in-paise}` key.
+  //      Multiple B rows on the same date+amount sit in a list under
+  //      the same key — first-come is matched in order.
+  //   2. For each A no-bill row, look up the matching key. If a free
+  //      candidate exists, pair them; otherwise A stays in no-bill.
+  //   3. Remaining B rows that weren't picked stay in no-bill.
+  //
+  // Exact-date match for v1. Some reconciliations need ±1 day
+  // tolerance (cheque issue date vs clearance date); that can be
+  // layered on later if real cases hit it.
+  const paymentMatches: PaymentMatchRow[] = [];
+  const matchedBIdx = new Set<number>();
+  const byDateAmountB = new Map<string, Array<{ idx: number; tx: FlatTx }>>();
+  noBillB.forEach((tx, idx) => {
+    if (!tx.date || tx.absAmount === 0) return;
+    // Quantise amount to paise (×100, rounded) so floating-point
+    // slop doesn't split logically-identical amounts into different
+    // keys.
+    const key = `${tx.date}::${Math.round(tx.absAmount * 100)}`;
+    if (!byDateAmountB.has(key)) byDateAmountB.set(key, []);
+    byDateAmountB.get(key)!.push({ idx, tx });
+  });
+  const leftoverNoBillA: FlatTx[] = [];
+  for (const a of noBillA) {
+    if (!a.date) { leftoverNoBillA.push(a); continue; }
+    const key = `${a.date}::${Math.round(a.absAmount * 100)}`;
+    const candidates = byDateAmountB.get(key) ?? [];
+    const free = candidates.find(c => !matchedBIdx.has(c.idx));
+    if (free) {
+      matchedBIdx.add(free.idx);
+      paymentMatches.push({
+        date: a.date,
+        amount: a.absAmount,
+        narrationA: a.narration,
+        narrationB: free.tx.narration,
+        bankRefA: extractBankRef(a.narration),
+        bankRefB: extractBankRef(free.tx.narration),
+      });
+    } else {
+      leftoverNoBillA.push(a);
+    }
+  }
+  const leftoverNoBillB = noBillB.filter((_, idx) => !matchedBIdx.has(idx));
+  // Stable sort by date for stable rendering.
+  paymentMatches.sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''));
+
   // Aggregate balance check from the ledger snapshots.
   const openingA = (ledgerA.accounts ?? []).reduce((s, a) => s + (Number(a.opening) || 0), 0);
   const openingB = (ledgerB.accounts ?? []).reduce((s, a) => s + (Number(a.opening) || 0), 0);
@@ -500,8 +612,9 @@ export function compareLedgersByBill(
     amountMismatchCount: amountMismatches.length,
     onlyInACount: onlyInA.length,
     onlyInBCount: onlyInB.length,
-    noBillCountA: noBillA.length,
-    noBillCountB: noBillB.length,
+    paymentMatchedCount: paymentMatches.length,
+    noBillCountA: leftoverNoBillA.length,
+    noBillCountB: leftoverNoBillB.length,
     netDifference: netA - netB,
   });
 
@@ -514,8 +627,13 @@ export function compareLedgersByBill(
       amountMismatchCount: amountMismatches.length,
       onlyInACount: onlyInA.length,
       onlyInBCount: onlyInB.length,
-      noBillCountA: noBillA.length,
-      noBillCountB: noBillB.length,
+      paymentMatchedCount: paymentMatches.length,
+      // Counts reflect rows REMAINING after the payment matcher
+      // consumed any date+amount pairs. The "noBill" buckets are
+      // genuinely-one-sided rows with no bill ref AND no twin
+      // payment on the other side.
+      noBillCountA: leftoverNoBillA.length,
+      noBillCountB: leftoverNoBillB.length,
       grossA, grossB, netA, netB,
       netDifference: netA - netB,
       headline,
@@ -524,8 +642,9 @@ export function compareLedgersByBill(
     amountMismatches,
     onlyInA,
     onlyInB,
-    noBillA: noBillA.map(t => ({ date: t.date, amount: t.absAmount, narration: t.narration })),
-    noBillB: noBillB.map(t => ({ date: t.date, amount: t.absAmount, narration: t.narration })),
+    paymentMatches,
+    noBillA: leftoverNoBillA.map(t => ({ date: t.date, amount: t.absAmount, narration: t.narration })),
+    noBillB: leftoverNoBillB.map(t => ({ date: t.date, amount: t.absAmount, narration: t.narration })),
     balanceCheck: {
       openingA, openingB, openingGap: openingA - openingB,
       closingA, closingB, closingGap: closingA - closingB,
@@ -538,6 +657,7 @@ function buildHeadline(s: {
   typeA: LedgerType; typeB: LedgerType;
   matchedCount: number; amountMismatchCount: number;
   onlyInACount: number; onlyInBCount: number;
+  paymentMatchedCount: number;
   noBillCountA: number; noBillCountB: number;
   netDifference: number;
 }): string {
@@ -549,16 +669,24 @@ function buildHeadline(s: {
   // sign). Bill-level match counts are the reliable signal.
   const totalIssues = s.amountMismatchCount + s.onlyInACount + s.onlyInBCount;
   if (totalIssues === 0) {
-    return `Books tie: all ${s.matchedCount} bills match.`;
+    const suffix = s.paymentMatchedCount > 0
+      ? ` (plus ${s.paymentMatchedCount} payment${s.paymentMatchedCount === 1 ? '' : 's'} matched by date+amount)`
+      : '';
+    return `Books tie: all ${s.matchedCount} bills match.${suffix}`;
   }
   const parts: string[] = [];
   if (s.amountMismatchCount > 0) parts.push(`${s.amountMismatchCount} amount mismatch${s.amountMismatchCount === 1 ? '' : 'es'}`);
   if (s.onlyInACount > 0) parts.push(`${s.onlyInACount} bill${s.onlyInACount === 1 ? '' : 's'} only on ${s.typeA} side`);
   if (s.onlyInBCount > 0) parts.push(`${s.onlyInBCount} bill${s.onlyInBCount === 1 ? '' : 's'} only on ${s.typeB} side`);
-  let extra = '';
-  if (s.noBillCountA + s.noBillCountB > 0) {
-    extra = ` (${s.noBillCountA + s.noBillCountB} row${s.noBillCountA + s.noBillCountB === 1 ? '' : 's'} had no bill reference and were skipped)`;
+  const tail: string[] = [];
+  if (s.paymentMatchedCount > 0) {
+    tail.push(`${s.paymentMatchedCount} payment${s.paymentMatchedCount === 1 ? '' : 's'} matched by date+amount`);
   }
+  const totalUnmatched = s.noBillCountA + s.noBillCountB;
+  if (totalUnmatched > 0) {
+    tail.push(`${totalUnmatched} row${totalUnmatched === 1 ? '' : 's'} without bill ref still unmatched`);
+  }
+  const extra = tail.length > 0 ? ` (${tail.join('; ')})` : '';
   return `Books do not tie: ${parts.join(', ')}.${extra}`;
 }
 

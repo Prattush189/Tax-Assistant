@@ -192,6 +192,14 @@ function buildCompareCsv(report: LedgerComparisonReport, labelA: string, labelB:
   for (const m of report.onlyInB) {
     rows.push([`only_in_${safeLabel(labelB)}`, m.bill, '', formatDate(m.date), '', String(m.amount), '', '', m.narration]);
   }
+  // Payment matches — pairs without a bill ref, matched by
+  // date+amount. We surface the bank reference (cheque/UTR) extracted
+  // from each side's narration in the Diff column so a quick Excel
+  // scan can confirm "yes, that's the same cheque on both sides".
+  for (const m of report.paymentMatches) {
+    const ref = [m.bankRefA, m.bankRefB].filter(Boolean).join(' / ');
+    rows.push(['payment_matched', '', formatDate(m.date), formatDate(m.date), String(m.amount), String(m.amount), ref, m.narrationA, m.narrationB]);
+  }
   for (const m of report.noBillA) {
     rows.push([`no_bill_${safeLabel(labelA)}`, '', formatDate(m.date), '', String(m.amount), '', '', m.narration, '']);
   }
@@ -805,8 +813,14 @@ export function LedgerCompareView() {
                 Export CSV
               </button>
             </div>
-            <div className="mt-3 grid grid-cols-2 sm:grid-cols-5 gap-3 text-center">
+            {/* 6-tile grid: bills matched, payments matched (no bill —
+              * date+amount pairs), amount mismatches, only-in-A, only-in-B,
+              * and any leftover rows without a bill ref. The payments-
+              * matched tile is "ok" tone — these are still reconciled
+              * pairs, just via the secondary matcher rather than bill no. */}
+            <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-center">
               <Stat label="Bills matched" value={report.summary.matchedCount} tone="ok" />
+              <Stat label="Payments matched" value={report.summary.paymentMatchedCount} tone="ok" />
               <Stat label="Amount mismatches" value={report.summary.amountMismatchCount} tone={report.summary.amountMismatchCount ? 'warn' : 'ok'} />
               <Stat label={`Only in ${labelA}`} value={report.summary.onlyInACount} tone={report.summary.onlyInACount ? 'warn' : 'ok'} />
               <Stat label={`Only in ${labelB}`} value={report.summary.onlyInBCount} tone={report.summary.onlyInBCount ? 'warn' : 'ok'} />
@@ -885,6 +899,25 @@ export function LedgerCompareView() {
               { header: 'Date', cell: (r) => formatDate(r.date) || '—' },
               { header: 'Amount', align: 'right', cell: (r) => fmtINR(r.amount) },
               { header: 'Narration', cell: (r) => r.narration },
+            ]}
+          />
+
+          {/* Payment matches — the date+amount fallback matcher pairs
+            * up no-bill rows on both sides (typically payments — cheque
+            * deposits, NEFT receipts, RTGS settlements) that wouldn't
+            * have surfaced via bill matching alone. Bank refs shown
+            * inline are informational only (extracted from narration),
+            * not used to match. */}
+          <ReportTable
+            title="Payments matched (no bill no., paired by date + amount)"
+            rows={report.paymentMatches}
+            columns={[
+              { header: 'Date', cell: (r) => formatDate(r.date) || '—' },
+              { header: 'Amount', align: 'right', cell: (r) => fmtINR(r.amount) },
+              { header: `${labelA} bank ref`, cell: (r) => r.bankRefA || '—' },
+              { header: `${labelB} bank ref`, cell: (r) => r.bankRefB || '—' },
+              { header: `${labelA} narration`, cell: (r) => r.narrationA },
+              { header: `${labelB} narration`, cell: (r) => r.narrationB },
             ]}
           />
 
