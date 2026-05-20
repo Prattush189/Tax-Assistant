@@ -360,7 +360,9 @@ const payReport = compareLedgersByBill(payA, 'sales', payB, 'purchase');
 expect('payment matched count', payReport.summary.paymentMatchedCount, 1);
 expect('payment matches length', payReport.paymentMatches.length, 1);
 expect('payment match date', payReport.paymentMatches[0]?.date, '2025-06-10');
-expect('payment match amount', payReport.paymentMatches[0]?.amount, 50000);
+expect('payment match amountA', payReport.paymentMatches[0]?.amountA, 50000);
+expect('payment match amountB', payReport.paymentMatches[0]?.amountB, 50000);
+expect('payment match diff (exact)', payReport.paymentMatches[0]?.diff, 0);
 expect('payment match bankRefA', payReport.paymentMatches[0]?.bankRefA, '234567');
 expect('payment match bankRefB', payReport.paymentMatches[0]?.bankRefB, 'N123456789012');
 // Leftover no-bill rows after pairing
@@ -388,6 +390,170 @@ const mismatchDateB = {
 const mismatchDateReport = compareLedgersByBill(mismatchDateA, 'sales', mismatchDateB, 'purchase');
 expect('no pairing on date mismatch', mismatchDateReport.summary.paymentMatchedCount, 0);
 expect('both go to no-bill', mismatchDateReport.noBillA.length + mismatchDateReport.noBillB.length, 2);
+
+// ─── 2026-05-20 payment matcher: ±₹1 rounding tolerance ─────
+// Real OSPL case: Marg books CRN-0232-00656 at ₹73,733,626 on
+// 31/07/2025, Finsys books a BANK OF BARODA cheque receipt at
+// ₹73,733,625 the same day. Same payment, off by ₹1 because the
+// two ERPs round differently. Exact-paise matching missed this
+// pair; ±₹1 tolerance catches it.
+const tolA = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      { date: '2025-07-31', narration: 'CRN-0232-00656', voucher: null, debit: 0, credit: 73_733_626, balance: null },
+    ],
+  }],
+};
+const tolB = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      // Same payment, A truncated paise to 73_733_626, B rounded to 73_733_625.
+      { date: '2025-07-31', narration: 'BANK OF BARODA Chq.No.310725 BEING AMOUNT RECEIVED', voucher: null, debit: 73_733_625, credit: 0, balance: null },
+    ],
+  }],
+};
+const tolReport = compareLedgersByBill(tolA, 'sales', tolB, 'purchase');
+expect('tolerance: pair matched', tolReport.summary.paymentMatchedCount, 1);
+expect('tolerance: amountA preserved', tolReport.paymentMatches[0]?.amountA, 73_733_626);
+expect('tolerance: amountB preserved', tolReport.paymentMatches[0]?.amountB, 73_733_625);
+expect('tolerance: diff = 1', tolReport.paymentMatches[0]?.diff, 1);
+expect('tolerance: bankRefB cheque', tolReport.paymentMatches[0]?.bankRefB, '310725');
+expect('tolerance: nothing left in no-bill', tolReport.noBillA.length + tolReport.noBillB.length, 0);
+
+// ─── payment matcher: ₹2 gap is NOT tolerated by the tight pass ──
+// The tight pass only accepts ±₹1 — protects the "clean pair"
+// bucket from admitting genuinely-different payments. The unique-
+// date loose pass DOES catch the pair afterwards (1:1 on the date)
+// and surfaces it for human review. Plain-narration rows used
+// here so the bill extractor doesn't grab them first.
+const beyondA = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      { date: '2025-07-31', narration: 'CRN-A only', voucher: null, debit: 0, credit: 50000, balance: null },
+    ],
+  }],
+};
+const beyondB = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      { date: '2025-07-31', narration: 'HDFC bank ref', voucher: null, debit: 50002, credit: 0, balance: null },
+    ],
+  }],
+};
+const beyondReport = compareLedgersByBill(beyondA, 'sales', beyondB, 'purchase');
+expect('beyond tolerance: tight pass skips', beyondReport.summary.paymentMatchedCount, 0);
+expect('beyond tolerance: loose pass catches', beyondReport.summary.paymentDateMatchedCount, 1);
+expect('beyond tolerance: diff = 2', beyondReport.paymentDateMatches[0]?.diff, 2);
+
+// ─── payment matcher: exact beats fuzzy on same day ─────────
+// When the same day has both an exact-match candidate and a
+// ±₹1 candidate, exact should win — otherwise a clean pair
+// gets shunted into a fuzzy bucket while the real fuzzy pair
+// becomes a false no-bill row.
+// Use plain narrations with no bill-pattern keywords (no Receipt /
+// Invoice / Bill / VCH) — otherwise the bill extractor swallows the
+// row before the payment matcher ever sees it.
+const exactBeatsA = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      { date: '2025-07-31', narration: 'CRN-0232-A', voucher: null, debit: 0, credit: 50000, balance: null },
+    ],
+  }],
+};
+const exactBeatsB = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      // Fuzzy candidate first (would win on first-fit), exact second.
+      { date: '2025-07-31', narration: 'HDFC fuzzy candidate', voucher: null, debit: 49999, credit: 0, balance: null },
+      { date: '2025-07-31', narration: 'HDFC exact candidate', voucher: null, debit: 50000, credit: 0, balance: null },
+    ],
+  }],
+};
+const exactBeatsReport = compareLedgersByBill(exactBeatsA, 'sales', exactBeatsB, 'purchase');
+expect('exact beats fuzzy: one pair', exactBeatsReport.summary.paymentMatchedCount, 1);
+expect('exact beats fuzzy: diff = 0', exactBeatsReport.paymentMatches[0]?.diff, 0);
+expect('exact beats fuzzy: exact picked', exactBeatsReport.paymentMatches[0]?.narrationB, 'HDFC exact candidate');
+expect('exact beats fuzzy: fuzzy left over', exactBeatsReport.noBillB[0]?.narration, 'HDFC fuzzy candidate');
+
+// ─── 2026-05-20 unique-date pairing (loose, amount differs) ──
+// Real OSPL-style case: A has ₹2,67,750 on 30/06 (CRN-0232 ref),
+// B has ₹2,67,000 on 30/06 (BANK OF BARODA cheque). ₹750 is well
+// outside ±₹1 so the tight pass skips it, but the date is unique
+// on both sides → almost certainly the same payment with a real
+// discrepancy. Surface in paymentDateMatches for human review.
+const uniqDateA = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      { date: '2025-06-30', narration: 'CRN-0232-00650', voucher: null, debit: 0, credit: 267_750, balance: null },
+    ],
+  }],
+};
+const uniqDateB = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      { date: '2025-06-30', narration: 'BANK OF BARODA Chq.No.300625 BEING AMOUNT RECEIVED', voucher: null, debit: 267_000, credit: 0, balance: null },
+    ],
+  }],
+};
+const uniqDateReport = compareLedgersByBill(uniqDateA, 'sales', uniqDateB, 'purchase');
+expect('unique-date: tight pass empty', uniqDateReport.summary.paymentMatchedCount, 0);
+expect('unique-date: loose pass picked it up', uniqDateReport.summary.paymentDateMatchedCount, 1);
+expect('unique-date: amountA preserved', uniqDateReport.paymentDateMatches[0]?.amountA, 267_750);
+expect('unique-date: amountB preserved', uniqDateReport.paymentDateMatches[0]?.amountB, 267_000);
+expect('unique-date: diff = 750', uniqDateReport.paymentDateMatches[0]?.diff, 750);
+expect('unique-date: nothing left in no-bill', uniqDateReport.noBillA.length + uniqDateReport.noBillB.length, 0);
+
+// ─── unique-date pairing: ambiguous days stay in no-bill ─────
+// When the same day has 2 leftover rows on A and 1 on B (or any
+// other non-1:1 layout), we can't pick which goes with which
+// without amount as a tiebreaker. Don't auto-pair — leave all
+// three in no-bill so the user decides.
+const ambigA = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      { date: '2025-06-30', narration: 'CRN-0232-A1', voucher: null, debit: 0, credit: 100_000, balance: null },
+      { date: '2025-06-30', narration: 'CRN-0232-A2', voucher: null, debit: 0, credit: 200_000, balance: null },
+    ],
+  }],
+};
+const ambigB = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      { date: '2025-06-30', narration: 'HDFC BANK transfer', voucher: null, debit: 150_000, credit: 0, balance: null },
+    ],
+  }],
+};
+const ambigReport = compareLedgersByBill(ambigA, 'sales', ambigB, 'purchase');
+expect('ambiguous: no tight match', ambigReport.summary.paymentMatchedCount, 0);
+expect('ambiguous: no loose match either', ambigReport.summary.paymentDateMatchedCount, 0);
+expect('ambiguous: all 3 stay in no-bill', ambigReport.noBillA.length + ambigReport.noBillB.length, 3);
+
+// ─── unique-date pairing: tight pass wins over loose ─────────
+// If a date has a clean ±₹1 pair AND another row on each side,
+// the tight pass consumes the clean pair first, so the leftovers
+// have only 1 row each on that date → the loose pass picks them
+// up. Net: 1 in paymentMatches + 1 in paymentDateMatches.
+const layeredA = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      { date: '2025-06-30', narration: 'CRN-A-clean', voucher: null, debit: 0, credit: 50_000, balance: null },
+      { date: '2025-06-30', narration: 'CRN-A-discrepant', voucher: null, debit: 0, credit: 100_000, balance: null },
+    ],
+  }],
+};
+const layeredB = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      { date: '2025-06-30', narration: 'HDFC clean', voucher: null, debit: 50_000, credit: 0, balance: null },
+      { date: '2025-06-30', narration: 'HDFC discrepant', voucher: null, debit: 99_500, credit: 0, balance: null },
+    ],
+  }],
+};
+const layeredReport = compareLedgersByBill(layeredA, 'sales', layeredB, 'purchase');
+expect('layered: 1 tight match', layeredReport.summary.paymentMatchedCount, 1);
+expect('layered: 1 loose match', layeredReport.summary.paymentDateMatchedCount, 1);
+expect('layered: loose diff = 500', layeredReport.paymentDateMatches[0]?.diff, 500);
+expect('layered: no leftovers', layeredReport.noBillA.length + layeredReport.noBillB.length, 0);
 
 // ─── payment matcher: first-come matching for duplicates ─────
 // If A has two rows for the same date+amount and B has only one,

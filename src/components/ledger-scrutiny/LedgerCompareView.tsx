@@ -193,12 +193,34 @@ function buildCompareCsv(report: LedgerComparisonReport, labelA: string, labelB:
     rows.push([`only_in_${safeLabel(labelB)}`, m.bill, '', formatDate(m.date), '', String(m.amount), '', '', m.narration]);
   }
   // Payment matches — pairs without a bill ref, matched by
-  // date+amount. We surface the bank reference (cheque/UTR) extracted
-  // from each side's narration in the Diff column so a quick Excel
-  // scan can confirm "yes, that's the same cheque on both sides".
+  // date+amount (with ±₹1 tolerance for ERP rounding splits). We
+  // surface both amounts so the rounding gap is visible, and include
+  // the diff in its own column. Bank refs go on the narration line
+  // (appended) so a quick Excel scan can confirm "yes, that's the
+  // same cheque on both sides".
   for (const m of report.paymentMatches) {
-    const ref = [m.bankRefA, m.bankRefB].filter(Boolean).join(' / ');
-    rows.push(['payment_matched', '', formatDate(m.date), formatDate(m.date), String(m.amount), String(m.amount), ref, m.narrationA, m.narrationB]);
+    const narrA = m.bankRefA ? `${m.narrationA} [ref ${m.bankRefA}]` : m.narrationA;
+    const narrB = m.bankRefB ? `${m.narrationB} [ref ${m.bankRefB}]` : m.narrationB;
+    rows.push([
+      'payment_matched', '',
+      formatDate(m.date), formatDate(m.date),
+      String(m.amountA), String(m.amountB), String(m.diff),
+      narrA, narrB,
+    ]);
+  }
+  // Date-matched payments — same date, unique on both sides, but the
+  // amounts differ by more than ±₹1. Separate status so filtering by
+  // 'payment_date_matched' in Excel surfaces exactly the rows that
+  // need human review.
+  for (const m of report.paymentDateMatches) {
+    const narrA = m.bankRefA ? `${m.narrationA} [ref ${m.bankRefA}]` : m.narrationA;
+    const narrB = m.bankRefB ? `${m.narrationB} [ref ${m.bankRefB}]` : m.narrationB;
+    rows.push([
+      'payment_date_matched', '',
+      formatDate(m.date), formatDate(m.date),
+      String(m.amountA), String(m.amountB), String(m.diff),
+      narrA, narrB,
+    ]);
   }
   for (const m of report.noBillA) {
     rows.push([`no_bill_${safeLabel(labelA)}`, '', formatDate(m.date), '', String(m.amount), '', '', m.narration, '']);
@@ -813,14 +835,16 @@ export function LedgerCompareView() {
                 Export CSV
               </button>
             </div>
-            {/* 6-tile grid: bills matched, payments matched (no bill —
-              * date+amount pairs), amount mismatches, only-in-A, only-in-B,
-              * and any leftover rows without a bill ref. The payments-
-              * matched tile is "ok" tone — these are still reconciled
-              * pairs, just via the secondary matcher rather than bill no. */}
-            <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-center">
+            {/* 7-tile grid: bills matched (clean), payments matched
+              * (tight date+amount±₹1), payment date matches (loose —
+              * same date, amount diff needs review), amount mismatches,
+              * only-in-A, only-in-B, and any leftover rows without a
+              * bill ref. Payment date-matches use "warn" tone because
+              * they always have a real amount discrepancy. */}
+            <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3 text-center">
               <Stat label="Bills matched" value={report.summary.matchedCount} tone="ok" />
               <Stat label="Payments matched" value={report.summary.paymentMatchedCount} tone="ok" />
+              <Stat label="Date-matched payments (review)" value={report.summary.paymentDateMatchedCount} tone={report.summary.paymentDateMatchedCount ? 'warn' : 'ok'} />
               <Stat label="Amount mismatches" value={report.summary.amountMismatchCount} tone={report.summary.amountMismatchCount ? 'warn' : 'ok'} />
               <Stat label={`Only in ${labelA}`} value={report.summary.onlyInACount} tone={report.summary.onlyInACount ? 'warn' : 'ok'} />
               <Stat label={`Only in ${labelB}`} value={report.summary.onlyInBCount} tone={report.summary.onlyInBCount ? 'warn' : 'ok'} />
@@ -909,11 +933,33 @@ export function LedgerCompareView() {
             * inline are informational only (extracted from narration),
             * not used to match. */}
           <ReportTable
-            title="Payments matched (no bill no., paired by date + amount)"
+            title="Payments matched (no bill no., paired by date + amount ±₹1)"
             rows={report.paymentMatches}
             columns={[
               { header: 'Date', cell: (r) => formatDate(r.date) || '—' },
-              { header: 'Amount', align: 'right', cell: (r) => fmtINR(r.amount) },
+              { header: `${labelA} amount`, align: 'right', cell: (r) => fmtINR(r.amountA) },
+              { header: `${labelB} amount`, align: 'right', cell: (r) => fmtINR(r.amountB) },
+              { header: 'Diff', align: 'right', cell: (r) => r.diff > 0 ? fmtINR(r.diff) : '—' },
+              { header: `${labelA} bank ref`, cell: (r) => r.bankRefA || '—' },
+              { header: `${labelB} bank ref`, cell: (r) => r.bankRefB || '—' },
+              { header: `${labelA} narration`, cell: (r) => r.narrationA },
+              { header: `${labelB} narration`, cell: (r) => r.narrationB },
+            ]}
+          />
+
+          {/* Date-only payment matches — same date, unique on both
+            * sides, but amount diff > ₹1. Likely the same underlying
+            * payment booked with a real discrepancy (short payment,
+            * TDS deducted on one side, bank charge swallowed, etc.).
+            * Worth the user reviewing one-by-one. */}
+          <ReportTable
+            title="Payment date matched — amounts differ (review one-by-one)"
+            rows={report.paymentDateMatches}
+            columns={[
+              { header: 'Date', cell: (r) => formatDate(r.date) || '—' },
+              { header: `${labelA} amount`, align: 'right', cell: (r) => fmtINR(r.amountA) },
+              { header: `${labelB} amount`, align: 'right', cell: (r) => fmtINR(r.amountB) },
+              { header: 'Diff', align: 'right', cell: (r) => fmtINR(r.diff) },
               { header: `${labelA} bank ref`, cell: (r) => r.bankRefA || '—' },
               { header: `${labelB} bank ref`, cell: (r) => r.bankRefB || '—' },
               { header: `${labelA} narration`, cell: (r) => r.narrationA },

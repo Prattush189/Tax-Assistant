@@ -2443,8 +2443,11 @@ export interface LedgerComparisonReport {
     amountMismatchCount: number;
     onlyInACount: number;
     onlyInBCount: number;
-    /** Pairs from the date+amount no-bill matcher. */
+    /** Pairs from the tight date+amount(±₹1) no-bill matcher. */
     paymentMatchedCount: number;
+    /** Pairs from the looser unique-date pass — same date but amounts
+     *  disagree. Surfaced separately so the user can review them. */
+    paymentDateMatchedCount: number;
     noBillCountA: number;
     noBillCountB: number;
     grossA: number;
@@ -2460,12 +2463,32 @@ export interface LedgerComparisonReport {
   onlyInB: Array<{ bill: string; date: string | null; amount: number; narration: string }>;
   /** Date+amount pairs for rows without a bill reference. Typically
    *  payments booked on both sides (A as a credit-note, B as a bank
-   *  receipt). bankRefA / bankRefB carry the cheque / UTR / NEFT
-   *  references extracted from each side's narration for confirmation
-   *  — they're informational, not used for matching. */
+   *  receipt). amountA / amountB carry both sides' values — they're
+   *  usually equal, but a ±₹1 ERP rounding split (Marg truncates
+   *  paise, Finsys rounds up) is tolerated and surfaces as `diff > 0`.
+   *  bankRefA / bankRefB carry the cheque / UTR / NEFT references
+   *  extracted from each side's narration for confirmation —
+   *  informational, not used for matching. */
   paymentMatches: Array<{
     date: string;
-    amount: number;
+    amountA: number;
+    amountB: number;
+    diff: number;
+    narrationA: string;
+    narrationB: string;
+    bankRefA: string | null;
+    bankRefB: string | null;
+  }>;
+  /** Looser bucket: same date, only one leftover row on each side
+   *  for that date, but amounts differ by more than ±₹1. Same shape
+   *  as paymentMatches — the user reviews these to decide whether
+   *  they represent the same underlying payment with a real
+   *  discrepancy. */
+  paymentDateMatches: Array<{
+    date: string;
+    amountA: number;
+    amountB: number;
+    diff: number;
     narrationA: string;
     narrationB: string;
     bankRefA: string | null;

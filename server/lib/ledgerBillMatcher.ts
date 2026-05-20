@@ -108,7 +108,15 @@ export interface NoBillRow {
  */
 export interface PaymentMatchRow {
   date: string;
-  amount: number;
+  /** Side A's amount (absolute). When `diff > 0`, A and B disagree by
+   *  small rounding (typical ±₹1 between Marg-style truncation and
+   *  Finsys-style round-up); show both so the user can see what was
+   *  reconciled. */
+  amountA: number;
+  amountB: number;
+  /** |amountA − amountB|, in rupees. 0 for exact ties; small (≤1) for
+   *  rounding-tolerated pairs. */
+  diff: number;
   narrationA: string;
   narrationB: string;
   bankRefA: string | null;
@@ -125,10 +133,20 @@ export interface LedgerCompareReport {
     amountMismatchCount: number;
     onlyInACount: number;
     onlyInBCount: number;
-    /** Pairs from the date+amount no-bill matcher (PaymentMatchRow[]). */
+    /** Pairs from the tight date+amount(±₹1) no-bill matcher
+     *  (PaymentMatchRow[]). High-confidence — same payment, same
+     *  rounding ballpark. */
     paymentMatchedCount: number;
-    /** Counts AFTER the payment matcher consumes pairs — i.e. rows
-     *  that remain genuinely one-sided with no bill reference. */
+    /** Pairs from the looser unique-date-only matcher — same date but
+     *  amounts disagree by more than ₹1. Surfaced as their own bucket
+     *  because they need human review (could be a real discrepancy
+     *  on the same underlying transaction). Only applied when the
+     *  date is unique on BOTH sides among leftover no-bill rows;
+     *  ambiguous days stay in no-bill. */
+    paymentDateMatchedCount: number;
+    /** Counts AFTER both payment-matcher passes consume pairs — i.e.
+     *  rows that remain genuinely one-sided with no bill reference
+     *  and no same-day counterpart. */
     noBillCountA: number;
     noBillCountB: number;
     /** Absolute total of A's transactions (sum of |amount|). Useful as
@@ -148,6 +166,7 @@ export interface LedgerCompareReport {
   onlyInA: OnlySideRow[];
   onlyInB: OnlySideRow[];
   paymentMatches: PaymentMatchRow[];
+  paymentDateMatches: PaymentMatchRow[];
   noBillA: NoBillRow[];
   noBillB: NoBillRow[];
   balanceCheck: {
@@ -548,44 +567,62 @@ export function compareLedgersByBill(
   // same amount = same payment. Strong reconciliation signal worth
   // surfacing as its own bucket.
   //
+  // Why a tolerance: real OSPL data showed A booking ₹7,37,33,626
+  // and B booking ₹7,37,33,625 on the same day (Marg truncates paise,
+  // Finsys rounds up). Exact-paise matching missed the pair and the
+  // user (correctly) called it out as the same payment. ₹1 covers
+  // every rounding-collision case seen so far without admitting
+  // unrelated same-day payments (different real payments rarely fall
+  // within ₹1 of each other).
+  //
   // Algorithm:
-  //   1. Index B's no-bill rows by `${date}::${amount-in-paise}` key.
-  //      Multiple B rows on the same date+amount sit in a list under
-  //      the same key — first-come is matched in order.
-  //   2. For each A no-bill row, look up the matching key. If a free
-  //      candidate exists, pair them; otherwise A stays in no-bill.
-  //   3. Remaining B rows that weren't picked stay in no-bill.
+  //   1. Group B's no-bill rows by `date` (not date+amount, because
+  //      tolerance means a key-based index can't find near-matches).
+  //   2. For each A no-bill row, scan the same-day B candidates and
+  //      pick the closest within ±₹1. Exact (diff = 0) wins over
+  //      tolerated (diff > 0) so a perfect pair is never beaten by
+  //      a fuzzy one on the same day.
+  //   3. Remaining rows on either side fall through to noBill A/B.
   //
   // Exact-date match for v1. Some reconciliations need ±1 day
   // tolerance (cheque issue date vs clearance date); that can be
   // layered on later if real cases hit it.
+  const PAYMENT_AMOUNT_TOLERANCE = 1.0; // rupees
   const paymentMatches: PaymentMatchRow[] = [];
   const matchedBIdx = new Set<number>();
-  const byDateAmountB = new Map<string, Array<{ idx: number; tx: FlatTx }>>();
+  const byDateB = new Map<string, Array<{ idx: number; tx: FlatTx }>>();
   noBillB.forEach((tx, idx) => {
     if (!tx.date || tx.absAmount === 0) return;
-    // Quantise amount to paise (×100, rounded) so floating-point
-    // slop doesn't split logically-identical amounts into different
-    // keys.
-    const key = `${tx.date}::${Math.round(tx.absAmount * 100)}`;
-    if (!byDateAmountB.has(key)) byDateAmountB.set(key, []);
-    byDateAmountB.get(key)!.push({ idx, tx });
+    if (!byDateB.has(tx.date)) byDateB.set(tx.date, []);
+    byDateB.get(tx.date)!.push({ idx, tx });
   });
   const leftoverNoBillA: FlatTx[] = [];
   for (const a of noBillA) {
-    if (!a.date) { leftoverNoBillA.push(a); continue; }
-    const key = `${a.date}::${Math.round(a.absAmount * 100)}`;
-    const candidates = byDateAmountB.get(key) ?? [];
-    const free = candidates.find(c => !matchedBIdx.has(c.idx));
-    if (free) {
-      matchedBIdx.add(free.idx);
+    if (!a.date || a.absAmount === 0) { leftoverNoBillA.push(a); continue; }
+    const sameDay = byDateB.get(a.date) ?? [];
+    // Pick the closest B-side amount within tolerance. Exact match
+    // (diff = 0) beats any tolerated match, so the typical clean
+    // case (paise-perfect on both sides) is never derailed by a
+    // noisy near-amount that happens to be on the same day.
+    let best: { idx: number; tx: FlatTx; diff: number } | null = null;
+    for (const c of sameDay) {
+      if (matchedBIdx.has(c.idx)) continue;
+      const diff = Math.abs(c.tx.absAmount - a.absAmount);
+      if (diff <= PAYMENT_AMOUNT_TOLERANCE && (!best || diff < best.diff)) {
+        best = { idx: c.idx, tx: c.tx, diff };
+      }
+    }
+    if (best) {
+      matchedBIdx.add(best.idx);
       paymentMatches.push({
         date: a.date,
-        amount: a.absAmount,
+        amountA: a.absAmount,
+        amountB: best.tx.absAmount,
+        diff: Math.round(best.diff * 100) / 100, // round to paise for display
         narrationA: a.narration,
-        narrationB: free.tx.narration,
+        narrationB: best.tx.narration,
         bankRefA: extractBankRef(a.narration),
-        bankRefB: extractBankRef(free.tx.narration),
+        bankRefB: extractBankRef(best.tx.narration),
       });
     } else {
       leftoverNoBillA.push(a);
@@ -594,6 +631,75 @@ export function compareLedgersByBill(
   const leftoverNoBillB = noBillB.filter((_, idx) => !matchedBIdx.has(idx));
   // Stable sort by date for stable rendering.
   paymentMatches.sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''));
+
+  // ── Pass 2: unique-date pairing (loose) ─────────────────────────
+  //
+  // After the tight ±₹1 pass, leftover rows may still represent the
+  // SAME underlying payment recorded differently — e.g. A booked
+  // "CRN-0232-00656" at ₹73,733,000 and B booked the bank receipt at
+  // ₹73,733,626 on the same day. ₹626 is way outside the ±₹1 ERP-
+  // rounding window but very likely the same transaction with a real
+  // discrepancy worth surfacing.
+  //
+  // Pair only when a date has EXACTLY ONE leftover A row AND EXACTLY
+  // ONE leftover B row. Days with 2+ rows on either side stay in
+  // no-bill — without amount as a tiebreaker we'd risk swapping
+  // unrelated payments. The user can review the resulting "date
+  // matched, amount differs" table and either confirm the pair as
+  // the same transaction or treat it as two separate one-sided rows.
+  //
+  // Bank-only matching (same bank ref, different date) is deliberately
+  // NOT attempted: a single bank account processes many payments per
+  // year, so same-bank-different-date catches both real clearance
+  // gaps AND unrelated transactions. Not enough signal to auto-pair.
+  const paymentDateMatches: PaymentMatchRow[] = [];
+  if (leftoverNoBillA.length > 0 && leftoverNoBillB.length > 0) {
+    const aIdxByDate = new Map<string, number[]>();
+    const bIdxByDate = new Map<string, number[]>();
+    leftoverNoBillA.forEach((tx, idx) => {
+      if (!tx.date) return;
+      if (!aIdxByDate.has(tx.date)) aIdxByDate.set(tx.date, []);
+      aIdxByDate.get(tx.date)!.push(idx);
+    });
+    leftoverNoBillB.forEach((tx, idx) => {
+      if (!tx.date) return;
+      if (!bIdxByDate.has(tx.date)) bIdxByDate.set(tx.date, []);
+      bIdxByDate.get(tx.date)!.push(idx);
+    });
+    const consumedA = new Set<number>();
+    const consumedB = new Set<number>();
+    for (const [date, aIdxs] of aIdxByDate) {
+      const bIdxs = bIdxByDate.get(date);
+      if (!bIdxs) continue;
+      if (aIdxs.length === 1 && bIdxs.length === 1) {
+        const a = leftoverNoBillA[aIdxs[0]];
+        const b = leftoverNoBillB[bIdxs[0]];
+        const diff = Math.abs(a.absAmount - b.absAmount);
+        consumedA.add(aIdxs[0]);
+        consumedB.add(bIdxs[0]);
+        paymentDateMatches.push({
+          date,
+          amountA: a.absAmount,
+          amountB: b.absAmount,
+          diff: Math.round(diff * 100) / 100,
+          narrationA: a.narration,
+          narrationB: b.narration,
+          bankRefA: extractBankRef(a.narration),
+          bankRefB: extractBankRef(b.narration),
+        });
+      }
+    }
+    // Filter consumed rows out of the leftover lists in place so the
+    // noBill arrays returned below reflect rows that survived BOTH
+    // passes.
+    const filteredA = leftoverNoBillA.filter((_, idx) => !consumedA.has(idx));
+    const filteredB = leftoverNoBillB.filter((_, idx) => !consumedB.has(idx));
+    leftoverNoBillA.length = 0;
+    leftoverNoBillA.push(...filteredA);
+    leftoverNoBillB.length = 0;
+    leftoverNoBillB.push(...filteredB);
+  }
+  paymentDateMatches.sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''));
 
   // Aggregate balance check from the ledger snapshots.
   const openingA = (ledgerA.accounts ?? []).reduce((s, a) => s + (Number(a.opening) || 0), 0);
@@ -613,6 +719,7 @@ export function compareLedgersByBill(
     onlyInACount: onlyInA.length,
     onlyInBCount: onlyInB.length,
     paymentMatchedCount: paymentMatches.length,
+    paymentDateMatchedCount: paymentDateMatches.length,
     noBillCountA: leftoverNoBillA.length,
     noBillCountB: leftoverNoBillB.length,
     netDifference: netA - netB,
@@ -628,8 +735,9 @@ export function compareLedgersByBill(
       onlyInACount: onlyInA.length,
       onlyInBCount: onlyInB.length,
       paymentMatchedCount: paymentMatches.length,
-      // Counts reflect rows REMAINING after the payment matcher
-      // consumed any date+amount pairs. The "noBill" buckets are
+      paymentDateMatchedCount: paymentDateMatches.length,
+      // Counts reflect rows REMAINING after BOTH payment-matcher
+      // passes consumed any pairs. The "noBill" buckets are
       // genuinely-one-sided rows with no bill ref AND no twin
       // payment on the other side.
       noBillCountA: leftoverNoBillA.length,
@@ -643,6 +751,7 @@ export function compareLedgersByBill(
     onlyInA,
     onlyInB,
     paymentMatches,
+    paymentDateMatches,
     noBillA: leftoverNoBillA.map(t => ({ date: t.date, amount: t.absAmount, narration: t.narration })),
     noBillB: leftoverNoBillB.map(t => ({ date: t.date, amount: t.absAmount, narration: t.narration })),
     balanceCheck: {
@@ -658,6 +767,7 @@ function buildHeadline(s: {
   matchedCount: number; amountMismatchCount: number;
   onlyInACount: number; onlyInBCount: number;
   paymentMatchedCount: number;
+  paymentDateMatchedCount: number;
   noBillCountA: number; noBillCountB: number;
   netDifference: number;
 }): string {
@@ -669,9 +779,14 @@ function buildHeadline(s: {
   // sign). Bill-level match counts are the reliable signal.
   const totalIssues = s.amountMismatchCount + s.onlyInACount + s.onlyInBCount;
   if (totalIssues === 0) {
-    const suffix = s.paymentMatchedCount > 0
-      ? ` (plus ${s.paymentMatchedCount} payment${s.paymentMatchedCount === 1 ? '' : 's'} matched by date+amount)`
-      : '';
+    const extras: string[] = [];
+    if (s.paymentMatchedCount > 0) {
+      extras.push(`${s.paymentMatchedCount} payment${s.paymentMatchedCount === 1 ? '' : 's'} matched by date+amount`);
+    }
+    if (s.paymentDateMatchedCount > 0) {
+      extras.push(`${s.paymentDateMatchedCount} more matched by date with amount diff to review`);
+    }
+    const suffix = extras.length > 0 ? ` (plus ${extras.join('; ')})` : '';
     return `Books tie: all ${s.matchedCount} bills match.${suffix}`;
   }
   const parts: string[] = [];
@@ -681,6 +796,9 @@ function buildHeadline(s: {
   const tail: string[] = [];
   if (s.paymentMatchedCount > 0) {
     tail.push(`${s.paymentMatchedCount} payment${s.paymentMatchedCount === 1 ? '' : 's'} matched by date+amount`);
+  }
+  if (s.paymentDateMatchedCount > 0) {
+    tail.push(`${s.paymentDateMatchedCount} more matched by date with amount diff to review`);
   }
   const totalUnmatched = s.noBillCountA + s.noBillCountB;
   if (totalUnmatched > 0) {
