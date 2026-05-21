@@ -7,7 +7,7 @@
  * every bucket lands in the right place.
  */
 
-import { compareLedgersByBill, normalizeBillKey, extractBillKey, extractBankRef } from '../server/lib/ledgerBillMatcher';
+import { compareLedgersByBill, normalizeBillKey, extractBillKey, extractBankRef, extractBankFingerprints } from '../server/lib/ledgerBillMatcher';
 
 let pass = 0;
 let fail = 0;
@@ -554,6 +554,103 @@ expect('layered: 1 tight match', layeredReport.summary.paymentMatchedCount, 1);
 expect('layered: 1 loose match', layeredReport.summary.paymentDateMatchedCount, 1);
 expect('layered: loose diff = 500', layeredReport.paymentDateMatches[0]?.diff, 500);
 expect('layered: no leftovers', layeredReport.noBillA.length + layeredReport.noBillB.length, 0);
+
+// ─── 2026-05-20 Pass 3: extractBankFingerprints ─────────────
+// Helper that picks bank account numbers (8–20 digit runs) out
+// of narrations. Short runs (cheque numbers, 6 digits) are
+// excluded so they don't poison the fingerprint set.
+expect('fingerprint: BOB account', extractBankFingerprints('BANK OF BARODA 71980200000910 Chq.No.310725'), ['71980200000910']);
+expect('fingerprint: HDFC account', extractBankFingerprints('HDFC BANK CC-50200034032231 Chq.No.586503'), ['50200034032231']);
+expect('fingerprint: no bank info', extractBankFingerprints('CRN-0232-00656'), []);
+expect('fingerprint: 6-digit cheque ignored', extractBankFingerprints('Chq No. 234567 deposit'), []);
+expect('fingerprint: empty / null', extractBankFingerprints(null), []);
+expect('fingerprint: multiple', extractBankFingerprints('Acct 12345678901234 transferred to 98765432109876'), ['12345678901234', '98765432109876']);
+
+// ─── Pass 3: bank-anchored loose pairing ─────────────────────
+// Build a small fixture where Pass 1 (tight ±₹1) matches one
+// pair on 31/07, which TEACHES the matcher that BOB account
+// ...00910 is a "known" payment bank. Then a leftover pair on
+// 15/08 with a ₹250 amount gap (well outside ±₹1, way outside
+// "unique date" since amount alone is no proof) should pair
+// because the bank anchor matches.
+const bankA = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      // Pair 1 — tight match seeds the fingerprint set
+      { date: '2025-07-31', narration: 'CRN-0232-00656', voucher: null, debit: 0, credit: 73_733_626, balance: null },
+      // Pair 2 — would-be Pass 3 candidate. ₹250 above B's value.
+      { date: '2025-08-15', narration: 'CRN-0232-00700', voucher: null, debit: 0, credit: 500_250, balance: null },
+    ],
+  }],
+};
+const bankB = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      // Pair 1 counterpart — uses BOB account 71980200000910
+      { date: '2025-07-31', narration: 'BANK OF BARODA 71980200000910 Chq.No.310725 BEING AMOUNT RECEIVED', voucher: null, debit: 73_733_625, credit: 0, balance: null },
+      // Pair 2 counterpart — SAME bank account number, +1 day, -₹250
+      { date: '2025-08-16', narration: 'BANK OF BARODA 71980200000910 Chq.No.300815 BEING AMOUNT RECEIVED', voucher: null, debit: 500_000, credit: 0, balance: null },
+    ],
+  }],
+};
+const bankReport = compareLedgersByBill(bankA, 'sales', bankB, 'purchase');
+expect('pass3: tight (Pass1) match still fires', bankReport.summary.paymentMatchedCount, 1);
+expect('pass3: bank match fired', bankReport.summary.paymentBankMatchedCount, 1);
+expect('pass3: bank anchor recorded', bankReport.paymentBankMatches[0]?.bankAnchor, '71980200000910');
+expect('pass3: dateDelta = 1 day', bankReport.paymentBankMatches[0]?.dateDeltaDays, 1);
+expect('pass3: amount diff = 250', bankReport.paymentBankMatches[0]?.diff, 250);
+expect('pass3: nothing left in no-bill', bankReport.noBillA.length + bankReport.noBillB.length, 0);
+
+// ─── Pass 3: no anchor → no match ───────────────────────────
+// Without a learned bank fingerprint (zero matched payments in
+// Pass 1 / Pass 2), Pass 3 has nothing to anchor on and should
+// not pair anything. Belt-and-braces test that Pass 3 doesn't
+// turn into "match anything within tolerance".
+const noAnchorA = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      { date: '2025-08-15', narration: 'CRN-0232-00700', voucher: null, debit: 0, credit: 500_250, balance: null },
+    ],
+  }],
+};
+const noAnchorB = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      { date: '2025-08-16', narration: 'BANK OF BARODA 71980200000910 Chq.No.300815 received', voucher: null, debit: 500_000, credit: 0, balance: null },
+    ],
+  }],
+};
+const noAnchorReport = compareLedgersByBill(noAnchorA, 'sales', noAnchorB, 'purchase');
+expect('no-anchor: nothing learned, nothing paired', noAnchorReport.summary.paymentBankMatchedCount, 0);
+expect('no-anchor: both stay in no-bill', noAnchorReport.noBillA.length + noAnchorReport.noBillB.length, 2);
+
+// ─── Pass 3: respect tolerances, don't over-pair ────────────
+// Bank anchor present, but date gap > 3 days AND amount gap >
+// 10% / ₹10K → no pair. Tests that BOTH branches of the
+// either-or condition fail before we refuse to pair.
+const farA = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      // Seed fingerprint via tight pair
+      { date: '2025-07-31', narration: 'CRN-A', voucher: null, debit: 0, credit: 100_000, balance: null },
+      // Candidate way outside tolerances
+      { date: '2025-09-01', narration: 'CRN-B', voucher: null, debit: 0, credit: 1_000_000, balance: null },
+    ],
+  }],
+};
+const farB = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      { date: '2025-07-31', narration: 'BANK OF BARODA 71980200000910 Chq.No.111 received', voucher: null, debit: 100_000, credit: 0, balance: null },
+      // 14 days off, ₹500K off — both axes fail
+      { date: '2025-09-15', narration: 'BANK OF BARODA 71980200000910 Chq.No.222 received', voucher: null, debit: 500_000, credit: 0, balance: null },
+    ],
+  }],
+};
+const farReport = compareLedgersByBill(farA, 'sales', farB, 'purchase');
+expect('far: tight fires for seed', farReport.summary.paymentMatchedCount, 1);
+expect('far: pass3 refuses far pair', farReport.summary.paymentBankMatchedCount, 0);
+expect('far: candidates back in no-bill', farReport.noBillA.length + farReport.noBillB.length, 2);
 
 // ─── payment matcher: first-come matching for duplicates ─────
 // If A has two rows for the same date+amount and B has only one,

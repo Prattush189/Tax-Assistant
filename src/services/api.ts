@@ -2449,6 +2449,10 @@ export interface LedgerComparisonReport {
     /** Pairs from the looser unique-date pass — same date but amounts
      *  disagree. Surfaced separately so the user can review them. */
     paymentDateMatchedCount: number;
+    /** Pairs from the loosest bank-anchored pass — bank account number
+     *  matched a known anchor from earlier matches; either dates were
+     *  within ±3 days OR amounts within ±10% / ₹10K cap. */
+    paymentBankMatchedCount: number;
     noBillCountA: number;
     noBillCountB: number;
     grossA: number;
@@ -2490,6 +2494,26 @@ export interface LedgerComparisonReport {
     amountA: number;
     amountB: number;
     diff: number;
+    narrationA: string;
+    narrationB: string;
+    bankRefA: string | null;
+    bankRefB: string | null;
+  }>;
+  /** Loosest bucket: bank account number from a successfully-matched
+   *  pair was found in one or both narrations, AND either dates are
+   *  within ±3 days OR amounts are within ±10% (capped at ₹10K).
+   *  matchedBy says which branch fired ('date' or 'amount').
+   *  bankAnchor carries the actual fingerprint used for the pair so
+   *  the user can verify visually. */
+  paymentBankMatches: Array<{
+    dateA: string | null;
+    dateB: string | null;
+    dateDeltaDays: number;
+    amountA: number;
+    amountB: number;
+    diff: number;
+    bankAnchor: string;
+    matchedBy: 'date' | 'amount';
     narrationA: string;
     narrationB: string;
     bankRefA: string | null;

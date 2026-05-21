@@ -123,6 +123,41 @@ export interface PaymentMatchRow {
   bankRefB: string | null;
 }
 
+/** Bank-anchored payment match (Pass 3) — looser than PaymentMatchRow.
+ *  The two passes above (date+amount±₹1 and unique-date) consumed the
+ *  clean cases; this pass picks up pairs where neither date nor amount
+ *  alone gave us enough confidence, but the BANK account number is one
+ *  we've already seen in successful matches.
+ *
+ *  Surfaces both row's date AND the date-gap / amount-gap so the user
+ *  can sanity-check the pair without re-reading both narrations. */
+export interface PaymentBankMatchRow {
+  dateA: string | null;
+  dateB: string | null;
+  /** Signed day delta dateB − dateA. 0 when both rows are on the same
+   *  day (matched via the amount-anchor branch of this pass); non-zero
+   *  when matched via the date-window branch. */
+  dateDeltaDays: number;
+  amountA: number;
+  amountB: number;
+  /** |amountA − amountB| in rupees. 0 when matched via the amount-
+   *  anchor branch; non-zero otherwise. */
+  diff: number;
+  /** The bank fingerprint (account number) that anchored the match —
+   *  same string appears in both narrations OR was learned from the
+   *  matched-payment set and present in at least one side here. */
+  bankAnchor: string;
+  /** Which branch of the matching rule fired:
+   *    - 'date'   : same date on both sides, amount differs
+   *    - 'amount' : amount close (±10%, max ₹10K), dates differ
+   *  Drives the UI hint shown next to each row. */
+  matchedBy: 'date' | 'amount';
+  narrationA: string;
+  narrationB: string;
+  bankRefA: string | null;
+  bankRefB: string | null;
+}
+
 export interface LedgerCompareReport {
   summary: {
     typeA: LedgerType;
@@ -144,6 +179,10 @@ export interface LedgerCompareReport {
      *  date is unique on BOTH sides among leftover no-bill rows;
      *  ambiguous days stay in no-bill. */
     paymentDateMatchedCount: number;
+    /** Pairs from Pass 3 — bank-anchored fallback. Used a bank account
+     *  number learned from the matched-payment set; one of date (±3
+     *  days) or amount (±10% / ₹10K cap) had to agree, but not both. */
+    paymentBankMatchedCount: number;
     /** Counts AFTER both payment-matcher passes consume pairs — i.e.
      *  rows that remain genuinely one-sided with no bill reference
      *  and no same-day counterpart. */
@@ -167,6 +206,7 @@ export interface LedgerCompareReport {
   onlyInB: OnlySideRow[];
   paymentMatches: PaymentMatchRow[];
   paymentDateMatches: PaymentMatchRow[];
+  paymentBankMatches: PaymentBankMatchRow[];
   noBillA: NoBillRow[];
   noBillB: NoBillRow[];
   balanceCheck: {
@@ -423,6 +463,43 @@ export function extractBankRef(narration: string | null): string | null {
     if (m) return m[1] ?? null;
   }
   return null;
+}
+
+/**
+ * Pull every plausible bank-account-number-shaped token out of a
+ * narration. Used by the Pass 3 (bank-anchored) matcher to learn the
+ * set of bank accounts that appear in successfully-matched payments,
+ * then locate leftover rows that reference those same accounts.
+ *
+ * Heuristic: a contiguous digit run of 8–20 chars. Bank account numbers
+ * typically sit in this range (Indian PSU banks favour 11–17 digits;
+ * cheque numbers are 6 digits). We bias against pure 6-7 digit runs so
+ * we don't pick up cheque numbers as "banks" — those are the volatile
+ * per-transaction tokens we explicitly want to AVOID anchoring on.
+ *
+ * Returns an empty array (not null) for narrations with no qualifying
+ * runs, so callers can spread directly into a Set.
+ *
+ * Examples from real OSPL data:
+ *   "BANK OF BARODA 71980200000910 Chq.No.310725 BEING AMOUNT RECEIVED"
+ *     → ['71980200000910']  (the 14-digit account ID; the 6-digit
+ *        cheque number is below the 8-char floor)
+ *   "HDFC BANK CC-50200034032231 Chq.No.586503"
+ *     → ['50200034032231']
+ *   "CRN-0232-00656" → []  (no qualifying digit run)
+ */
+export function extractBankFingerprints(narration: string | null): string[] {
+  if (!narration) return [];
+  const out: string[] = [];
+  // Boundary on either side to avoid partial-matching inside longer
+  // hash-like tokens. Word boundary in regex treats digits as word
+  // chars, so we rely on \D / start-of-string on the left and \D /
+  // end-of-string on the right.
+  const re = /(?<![\w])(\d{8,20})(?![\w])/g;
+  for (const m of narration.matchAll(re)) {
+    if (m[1]) out.push(m[1]);
+  }
+  return out;
 }
 
 // ─── Compare ────────────────────────────────────────────────────────
@@ -701,6 +778,162 @@ export function compareLedgersByBill(
   }
   paymentDateMatches.sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''));
 
+  // ── Pass 3: bank-anchored pairing (loosest) ─────────────────────
+  //
+  // Learn the set of bank account numbers that appear in successfully
+  // matched payment narrations (from passes 1 and 2 above). A leftover
+  // no-bill row whose narration contains one of these "known" bank
+  // accounts is almost certainly another payment from the same banking
+  // relationship — worth attempting a fuzzy pair.
+  //
+  // Pairing rule (per user request): bank fingerprint must appear in at
+  // least one side's narration AND either
+  //   (a) DATES match within ±3 days (catches cheque-issue vs clearance
+  //       gaps where amount agrees but the two ledgers booked on
+  //       adjacent days), OR
+  //   (b) AMOUNTS match within ±10% capped at ₹10,000 (catches the
+  //       same transaction recorded with a real discrepancy — TDS
+  //       deduction, bank charge swallowed on one side).
+  // The "either-or" condition is intentionally loose. False positives
+  // surface to the user in their own bucket for review, so the cost of
+  // a wrong pair is "user ignores a row in the new table", not "wrong
+  // reconciliation". The narrow buckets (passes 1 & 2) still consume
+  // the clean cases first.
+  //
+  // Asymmetry note: the OSPL test case has banks only in B's narrations
+  // ("BANK OF BARODA 71980200000910"), while A only has CRN refs. The
+  // fingerprint set is therefore mostly B-side. We still require the
+  // anchor to appear on AT LEAST one side of the candidate pair — so
+  // an A row with no bank info can pair with a B row that uses a
+  // known bank, but two A rows with no bank info cannot pair with each
+  // other through this pass.
+  const PASS3_DATE_WINDOW_DAYS = 3;
+  const PASS3_AMOUNT_REL_TOL = 0.10;
+  const PASS3_AMOUNT_ABS_CAP = 10_000;
+  const knownBankFingerprints = new Set<string>();
+  for (const m of paymentMatches) {
+    extractBankFingerprints(m.narrationA).forEach(f => knownBankFingerprints.add(f));
+    extractBankFingerprints(m.narrationB).forEach(f => knownBankFingerprints.add(f));
+  }
+  for (const m of paymentDateMatches) {
+    extractBankFingerprints(m.narrationA).forEach(f => knownBankFingerprints.add(f));
+    extractBankFingerprints(m.narrationB).forEach(f => knownBankFingerprints.add(f));
+  }
+
+  /** Find the first known bank fingerprint that appears in a narration,
+   *  or null if none do. We return the matching fingerprint (not just a
+   *  boolean) so the UI can show the user which bank anchored the pair. */
+  const findKnownBank = (narration: string): string | null => {
+    if (knownBankFingerprints.size === 0) return null;
+    const found = extractBankFingerprints(narration);
+    for (const f of found) {
+      if (knownBankFingerprints.has(f)) return f;
+    }
+    return null;
+  };
+
+  /** Day delta between two YYYY-MM-DD strings, or null if either is
+   *  unparseable. Positive when dateB is after dateA. */
+  const daysBetween = (dateA: string | null, dateB: string | null): number | null => {
+    if (!dateA || !dateB) return null;
+    const a = new Date(dateA).getTime();
+    const b = new Date(dateB).getTime();
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+    return Math.round((b - a) / (24 * 60 * 60 * 1000));
+  };
+
+  const paymentBankMatches: PaymentBankMatchRow[] = [];
+  if (knownBankFingerprints.size > 0 && leftoverNoBillA.length > 0 && leftoverNoBillB.length > 0) {
+    // Pre-compute the bank anchor and "is candidate" flag for each
+    // leftover row. A row is a candidate iff its narration contains a
+    // known fingerprint. We still allow non-candidate rows to PAIR
+    // (the OSPL case: A's CRN rows have no bank info but are valid
+    // counterparts), as long as their B counterpart IS a candidate.
+    const aCandidates = leftoverNoBillA.map((tx) => ({
+      tx, bank: findKnownBank(tx.narration),
+    }));
+    const bCandidates = leftoverNoBillB.map((tx) => ({
+      tx, bank: findKnownBank(tx.narration),
+    }));
+    const consumedA = new Set<number>();
+    const consumedB = new Set<number>();
+    // Greedy pass over A rows. For each A row, find the best B row
+    // satisfying (anchor on at least one side) AND (date-OR-amount
+    // criterion). Best = smallest combined "distance" (date diff in
+    // days + amount diff in rupees, both normalised) so a near-perfect
+    // pair beats a borderline one when both qualify.
+    for (let ai = 0; ai < aCandidates.length; ai++) {
+      const a = aCandidates[ai];
+      if (!a.tx.date || a.tx.absAmount === 0) continue;
+      let best: {
+        bi: number;
+        b: typeof bCandidates[number];
+        matchedBy: 'date' | 'amount';
+        dateDelta: number;
+        diff: number;
+      } | null = null;
+      for (let bi = 0; bi < bCandidates.length; bi++) {
+        if (consumedB.has(bi)) continue;
+        const b = bCandidates[bi];
+        if (!b.tx.date || b.tx.absAmount === 0) continue;
+        // Need at least one side to carry a known bank fingerprint.
+        const hasAnchor = a.bank !== null || b.bank !== null;
+        if (!hasAnchor) continue;
+        const dayGap = daysBetween(a.tx.date, b.tx.date);
+        const amtDiff = Math.abs(a.tx.absAmount - b.tx.absAmount);
+        const amtCap = Math.min(PASS3_AMOUNT_ABS_CAP, a.tx.absAmount * PASS3_AMOUNT_REL_TOL);
+        const dateOk = dayGap !== null && Math.abs(dayGap) <= PASS3_DATE_WINDOW_DAYS;
+        const amountOk = amtDiff <= amtCap;
+        if (!dateOk && !amountOk) continue;
+        // matchedBy = which axis was the stronger fit. If dates agree
+        // exactly (gap = 0) we report 'date' regardless of amount;
+        // otherwise the tighter axis wins.
+        const matchedBy: 'date' | 'amount' =
+          (dateOk && (!amountOk || Math.abs(dayGap!) === 0)) ? 'date' : 'amount';
+        // Distance score for greedy pick — prefer pairs where both
+        // axes fit, then prefer smaller date gap, then smaller amount
+        // gap. Normalise so the date and amount components are roughly
+        // comparable in magnitude.
+        const score =
+          (dateOk ? Math.abs(dayGap!) : PASS3_DATE_WINDOW_DAYS + 1) +
+          (amountOk ? (amtDiff / Math.max(1, amtCap)) : 1.1);
+        if (!best || score < (
+          (best.matchedBy === 'date' ? Math.abs(best.dateDelta) : PASS3_DATE_WINDOW_DAYS + 1) +
+          (best.matchedBy === 'amount' ? (best.diff / Math.max(1, PASS3_AMOUNT_ABS_CAP)) : 1.1)
+        )) {
+          best = { bi, b, matchedBy, dateDelta: dayGap ?? 0, diff: amtDiff };
+        }
+      }
+      if (best) {
+        consumedA.add(ai);
+        consumedB.add(best.bi);
+        const anchor = a.bank ?? best.b.bank ?? '';
+        paymentBankMatches.push({
+          dateA: a.tx.date,
+          dateB: best.b.tx.date,
+          dateDeltaDays: best.dateDelta,
+          amountA: a.tx.absAmount,
+          amountB: best.b.tx.absAmount,
+          diff: Math.round(best.diff * 100) / 100,
+          bankAnchor: anchor,
+          matchedBy: best.matchedBy,
+          narrationA: a.tx.narration,
+          narrationB: best.b.tx.narration,
+          bankRefA: extractBankRef(a.tx.narration),
+          bankRefB: extractBankRef(best.b.tx.narration),
+        });
+      }
+    }
+    // Drop the consumed rows from the leftover lists.
+    const filteredA = leftoverNoBillA.filter((_, idx) => !consumedA.has(idx));
+    const filteredB = leftoverNoBillB.filter((_, idx) => !consumedB.has(idx));
+    leftoverNoBillA.length = 0;
+    leftoverNoBillA.push(...filteredA);
+    leftoverNoBillB.length = 0;
+    leftoverNoBillB.push(...filteredB);
+  }
+  paymentBankMatches.sort((a, b) => (a.dateA ?? '').localeCompare(b.dateA ?? ''));
+
   // Aggregate balance check from the ledger snapshots.
   const openingA = (ledgerA.accounts ?? []).reduce((s, a) => s + (Number(a.opening) || 0), 0);
   const openingB = (ledgerB.accounts ?? []).reduce((s, a) => s + (Number(a.opening) || 0), 0);
@@ -720,6 +953,7 @@ export function compareLedgersByBill(
     onlyInBCount: onlyInB.length,
     paymentMatchedCount: paymentMatches.length,
     paymentDateMatchedCount: paymentDateMatches.length,
+    paymentBankMatchedCount: paymentBankMatches.length,
     noBillCountA: leftoverNoBillA.length,
     noBillCountB: leftoverNoBillB.length,
     netDifference: netA - netB,
@@ -736,10 +970,11 @@ export function compareLedgersByBill(
       onlyInBCount: onlyInB.length,
       paymentMatchedCount: paymentMatches.length,
       paymentDateMatchedCount: paymentDateMatches.length,
-      // Counts reflect rows REMAINING after BOTH payment-matcher
-      // passes consumed any pairs. The "noBill" buckets are
-      // genuinely-one-sided rows with no bill ref AND no twin
-      // payment on the other side.
+      paymentBankMatchedCount: paymentBankMatches.length,
+      // Counts reflect rows REMAINING after ALL THREE payment-matcher
+      // passes consumed pairs. The "noBill" buckets are
+      // genuinely-one-sided rows with no bill ref, no twin payment
+      // on the other side, and no bank-anchor hit.
       noBillCountA: leftoverNoBillA.length,
       noBillCountB: leftoverNoBillB.length,
       grossA, grossB, netA, netB,
@@ -752,6 +987,7 @@ export function compareLedgersByBill(
     onlyInB,
     paymentMatches,
     paymentDateMatches,
+    paymentBankMatches,
     noBillA: leftoverNoBillA.map(t => ({ date: t.date, amount: t.absAmount, narration: t.narration })),
     noBillB: leftoverNoBillB.map(t => ({ date: t.date, amount: t.absAmount, narration: t.narration })),
     balanceCheck: {
@@ -768,6 +1004,7 @@ function buildHeadline(s: {
   onlyInACount: number; onlyInBCount: number;
   paymentMatchedCount: number;
   paymentDateMatchedCount: number;
+  paymentBankMatchedCount: number;
   noBillCountA: number; noBillCountB: number;
   netDifference: number;
 }): string {
@@ -786,6 +1023,9 @@ function buildHeadline(s: {
     if (s.paymentDateMatchedCount > 0) {
       extras.push(`${s.paymentDateMatchedCount} more matched by date with amount diff to review`);
     }
+    if (s.paymentBankMatchedCount > 0) {
+      extras.push(`${s.paymentBankMatchedCount} via bank anchor (loose) to review`);
+    }
     const suffix = extras.length > 0 ? ` (plus ${extras.join('; ')})` : '';
     return `Books tie: all ${s.matchedCount} bills match.${suffix}`;
   }
@@ -799,6 +1039,9 @@ function buildHeadline(s: {
   }
   if (s.paymentDateMatchedCount > 0) {
     tail.push(`${s.paymentDateMatchedCount} more matched by date with amount diff to review`);
+  }
+  if (s.paymentBankMatchedCount > 0) {
+    tail.push(`${s.paymentBankMatchedCount} via bank anchor (loose) to review`);
   }
   const totalUnmatched = s.noBillCountA + s.noBillCountB;
   if (totalUnmatched > 0) {

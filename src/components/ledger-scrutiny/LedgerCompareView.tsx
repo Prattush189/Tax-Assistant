@@ -153,6 +153,7 @@ function fmtINR(n: number): string {
  *   - matched               : same bill, amounts agree
  *   - payment_matched       : no bill, paired by date + amount ±₹1
  *   - payment_date_matched  : no bill, same date, amounts differ (review)
+ *   - payment_bank_matched  : no bill, bank anchor + date≤3d OR amount≤10% (loose, review)
  *   - only_in_<labelA>      : bill only in side A's ledger
  *   - only_in_<labelB>      : bill only in side B's ledger
  *   - no_bill_<labelA>      : side-A row without an extractable bill ref
@@ -226,6 +227,25 @@ function buildCompareCsv(report: LedgerComparisonReport, labelA: string, labelB:
     rows.push([
       'payment_date_matched', '',
       formatDate(m.date), formatDate(m.date),
+      String(m.amountA), String(m.amountB), String(m.diff),
+      narrA, narrB,
+    ]);
+  }
+  // Bank-anchored payments (Pass 3) — loosest pairing. Bank account
+  // number from a matched pair appeared in at least one narration,
+  // and either dates were within ±3 days OR amounts within ±10%.
+  // We prefix the narration with the match basis + bank fingerprint
+  // so an Excel reviewer can immediately see "why did the system
+  // pair these?" without re-running the analysis.
+  for (const m of report.paymentBankMatches) {
+    const basis = m.matchedBy === 'date'
+      ? `[bank ${m.bankAnchor}, ${m.dateDeltaDays === 0 ? 'same date' : `dates ${m.dateDeltaDays}d apart`}]`
+      : `[bank ${m.bankAnchor}, amount within tol, ${m.dateDeltaDays}d apart]`;
+    const narrA = `${basis} ${m.bankRefA ? `[ref ${m.bankRefA}] ` : ''}${m.narrationA}`;
+    const narrB = `${basis} ${m.bankRefB ? `[ref ${m.bankRefB}] ` : ''}${m.narrationB}`;
+    rows.push([
+      'payment_bank_matched', '',
+      formatDate(m.dateA), formatDate(m.dateB),
       String(m.amountA), String(m.amountB), String(m.diff),
       narrA, narrB,
     ]);
@@ -849,16 +869,18 @@ export function LedgerCompareView() {
                 Export CSV
               </button>
             </div>
-            {/* 7-tile grid: bills matched (clean), payments matched
+            {/* 8-tile grid: bills matched (clean), payments matched
               * (tight date+amount±₹1), payment date matches (loose —
-              * same date, amount diff needs review), amount mismatches,
-              * only-in-A, only-in-B, and any leftover rows without a
-              * bill ref. Payment date-matches use "warn" tone because
-              * they always have a real amount discrepancy. */}
-            <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3 text-center">
+              * same date, amount diff needs review), bank-anchored
+              * payment matches (loosest, ±3d or ±10%), amount
+              * mismatches, only-in-A, only-in-B, and any leftover
+              * rows without a bill ref. All review-required buckets
+              * use "warn" tone. */}
+            <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3 text-center">
               <Stat label="Bills matched" value={report.summary.matchedCount} tone="ok" />
               <Stat label="Payments matched" value={report.summary.paymentMatchedCount} tone="ok" />
               <Stat label="Date-matched payments (review)" value={report.summary.paymentDateMatchedCount} tone={report.summary.paymentDateMatchedCount ? 'warn' : 'ok'} />
+              <Stat label="Bank-matched payments (review)" value={report.summary.paymentBankMatchedCount} tone={report.summary.paymentBankMatchedCount ? 'warn' : 'ok'} />
               <Stat label="Amount mismatches" value={report.summary.amountMismatchCount} tone={report.summary.amountMismatchCount ? 'warn' : 'ok'} />
               <Stat label={`Only in ${labelA}`} value={report.summary.onlyInACount} tone={report.summary.onlyInACount ? 'warn' : 'ok'} />
               <Stat label={`Only in ${labelB}`} value={report.summary.onlyInBCount} tone={report.summary.onlyInBCount ? 'warn' : 'ok'} />
@@ -884,15 +906,17 @@ export function LedgerCompareView() {
           {/* Render order (per user request 2026-05-20):
             *   1. Amount mismatches — same bill, different amounts  (highest review priority)
             *   2. Matched — bill AND amount agree                   (the clean case)
-            *   3. Payments matched — no bill, date+amount ±₹1
-            *   4. Payment date matched — no bill, amount differs    (kept adjacent to #3)
-            *   5. Only in A
-            *   6. Only in B
-            *   7. No-bill A
-            *   8. No-bill B
+            *   3. Payments matched — no bill, date+amount ±₹1       (tight)
+            *   4. Payment date matched — no bill, amount differs    (loose, kept adjacent to #3)
+            *   5. Bank-matched payments — bank-anchored fallback    (loosest, also adjacent to payment buckets)
+            *   6. Only in A
+            *   7. Only in B
+            *   8. No-bill A
+            *   9. No-bill B
             * Exception buckets surface first so the user lands on the
             * rows that need investigation; clean matches sit underneath
-            * for reference. */}
+            * for reference. Payment buckets ordered tight → loose so a
+            * top-down read sees high-confidence matches before fuzzy ones. */}
           <ReportTable
             title="Amount mismatches (same bill no., different amounts)"
             rows={report.amountMismatches}
@@ -957,6 +981,31 @@ export function LedgerCompareView() {
               { header: 'Diff', align: 'right', cell: (r) => fmtINR(r.diff) },
               { header: `${labelA} bank ref`, cell: (r) => r.bankRefA || '—' },
               { header: `${labelB} bank ref`, cell: (r) => r.bankRefB || '—' },
+              { header: `${labelA} narration`, cell: (r) => r.narrationA },
+              { header: `${labelB} narration`, cell: (r) => r.narrationB },
+            ]}
+          />
+
+          {/* Bank-anchored pairs (Pass 3, loosest) — the matcher learned
+            * which bank accounts are used in successfully-matched
+            * payments, then paired leftover rows where a learned bank
+            * account appears AND either dates are within ±3 days OR
+            * amounts within ±10%. Highest false-positive risk of the
+            * three payment buckets; the "Match on" column shows the
+            * matcher's reasoning so the user can verify quickly. */}
+          <ReportTable
+            title="Bank-matched payments — date ±3d OR amount ±10% (loosest, review carefully)"
+            rows={report.paymentBankMatches}
+            columns={[
+              { header: 'Match on', cell: (r) => r.matchedBy === 'date'
+                ? (r.dateDeltaDays === 0 ? 'date (same day)' : `date (±${Math.abs(r.dateDeltaDays)}d)`)
+                : `amount (±${fmtINR(r.diff).replace('₹', '')})` },
+              { header: `${labelA} date`, cell: (r) => formatDate(r.dateA) || '—' },
+              { header: `${labelB} date`, cell: (r) => formatDate(r.dateB) || '—' },
+              { header: `${labelA} amount`, align: 'right', cell: (r) => fmtINR(r.amountA) },
+              { header: `${labelB} amount`, align: 'right', cell: (r) => fmtINR(r.amountB) },
+              { header: 'Diff', align: 'right', cell: (r) => r.diff > 0 ? fmtINR(r.diff) : '—' },
+              { header: 'Bank anchor', cell: (r) => r.bankAnchor },
               { header: `${labelA} narration`, cell: (r) => r.narrationA },
               { header: `${labelB} narration`, cell: (r) => r.narrationB },
             ]}
