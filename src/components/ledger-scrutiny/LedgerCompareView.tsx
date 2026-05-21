@@ -148,13 +148,15 @@ function fmtINR(n: number): string {
  * buckets. Each row carries a `Status` column so the user can filter /
  * pivot in Excel after download.
  *
- * Status values:
- *   - matched          : same bill, amounts agree
- *   - amount_mismatch  : same bill, amounts differ
- *   - only_in_<labelA> : bill only in side A's ledger
- *   - only_in_<labelB> : bill only in side B's ledger
- *   - no_bill_<labelA> : side-A row without an extractable bill ref
- *   - no_bill_<labelB> : side-B row without an extractable bill ref
+ * Status values (rows emitted in this order — exception buckets first):
+ *   - amount_mismatch       : same bill, amounts differ
+ *   - matched               : same bill, amounts agree
+ *   - payment_matched       : no bill, paired by date + amount ±₹1
+ *   - payment_date_matched  : no bill, same date, amounts differ (review)
+ *   - only_in_<labelA>      : bill only in side A's ledger
+ *   - only_in_<labelB>      : bill only in side B's ledger
+ *   - no_bill_<labelA>      : side-A row without an extractable bill ref
+ *   - no_bill_<labelB>      : side-B row without an extractable bill ref
  *
  * Amounts are plain numbers (no ₹ symbol, no Indian thousands grouping)
  * so the file reopens cleanly in Excel / Google Sheets as numeric data.
@@ -179,18 +181,24 @@ function buildCompareCsv(report: LedgerComparisonReport, labelA: string, labelB:
   // present them in CSV as dd/MM/yyyy to match Indian convention and
   // the dashboard display. formatDate returns empty string for null/
   // invalid, which is what we want in the CSV (empty cell).
+  // Row order (per user request 2026-05-20) — same order as the UI:
+  //   1. amount_mismatch  (highest review priority, surfaces first)
+  //   2. matched          (clean ties)
+  //   3. payment_matched  (no bill, tight ±₹1 date+amount)
+  //   4. payment_date_matched (no bill, same date, amount differs — review)
+  //   5. only_in_<labelA>
+  //   6. only_in_<labelB>
+  //   7. no_bill_<labelA>
+  //   8. no_bill_<labelB>
+  // payment_date_matched stays adjacent to payment_matched since it's
+  // the loose sibling of the same bucket; both filter together when
+  // someone runs "show me all payment pairs" in Excel.
   const rows: string[][] = [];
-  for (const m of report.matched) {
-    rows.push(['matched', m.bill, formatDate(m.dateA), formatDate(m.dateB), String(m.amountA), String(m.amountB), '0', m.narrationA, m.narrationB]);
-  }
   for (const m of report.amountMismatches) {
     rows.push(['amount_mismatch', m.bill, formatDate(m.dateA), formatDate(m.dateB), String(m.amountA), String(m.amountB), String(m.diff), m.narrationA, m.narrationB]);
   }
-  for (const m of report.onlyInA) {
-    rows.push([`only_in_${safeLabel(labelA)}`, m.bill, formatDate(m.date), '', String(m.amount), '', '', m.narration, '']);
-  }
-  for (const m of report.onlyInB) {
-    rows.push([`only_in_${safeLabel(labelB)}`, m.bill, '', formatDate(m.date), '', String(m.amount), '', '', m.narration]);
+  for (const m of report.matched) {
+    rows.push(['matched', m.bill, formatDate(m.dateA), formatDate(m.dateB), String(m.amountA), String(m.amountB), '0', m.narrationA, m.narrationB]);
   }
   // Payment matches — pairs without a bill ref, matched by
   // date+amount (with ±₹1 tolerance for ERP rounding splits). We
@@ -221,6 +229,12 @@ function buildCompareCsv(report: LedgerComparisonReport, labelA: string, labelB:
       String(m.amountA), String(m.amountB), String(m.diff),
       narrA, narrB,
     ]);
+  }
+  for (const m of report.onlyInA) {
+    rows.push([`only_in_${safeLabel(labelA)}`, m.bill, formatDate(m.date), '', String(m.amount), '', '', m.narration, '']);
+  }
+  for (const m of report.onlyInB) {
+    rows.push([`only_in_${safeLabel(labelB)}`, m.bill, '', formatDate(m.date), '', String(m.amount), '', '', m.narration]);
   }
   for (const m of report.noBillA) {
     rows.push([`no_bill_${safeLabel(labelA)}`, '', formatDate(m.date), '', String(m.amount), '', '', m.narration, '']);
@@ -867,28 +881,18 @@ export function LedgerCompareView() {
             )}
           </div>
 
-          {/* Render order (per user request 2026-05-18):
-            *   1. Matched — bill AND amount agree (the clean case)
-            *   2. Amount mismatches — same bill, different amounts
-            *   3. Only in A
-            *   4. Only in B
-            *   5. No-bill A / B
-            * The clean case goes first so the user can scroll past the
-            * majority of rows quickly when looking for the exception
-            * buckets below. */}
-          <ReportTable
-            title="Matched (bill no. and amount both agree)"
-            rows={report.matched}
-            columns={[
-              { header: 'Bill', cell: (r) => r.bill },
-              { header: `${labelA} date`, cell: (r) => formatDate(r.dateA) || '—' },
-              { header: `${labelB} date`, cell: (r) => formatDate(r.dateB) || '—' },
-              { header: 'Amount', align: 'right', cell: (r) => fmtINR(r.amountA) },
-              { header: `${labelA} narration`, cell: (r) => r.narrationA },
-              { header: `${labelB} narration`, cell: (r) => r.narrationB },
-            ]}
-          />
-
+          {/* Render order (per user request 2026-05-20):
+            *   1. Amount mismatches — same bill, different amounts  (highest review priority)
+            *   2. Matched — bill AND amount agree                   (the clean case)
+            *   3. Payments matched — no bill, date+amount ±₹1
+            *   4. Payment date matched — no bill, amount differs    (kept adjacent to #3)
+            *   5. Only in A
+            *   6. Only in B
+            *   7. No-bill A
+            *   8. No-bill B
+            * Exception buckets surface first so the user lands on the
+            * rows that need investigation; clean matches sit underneath
+            * for reference. */}
           <ReportTable
             title="Amount mismatches (same bill no., different amounts)"
             rows={report.amountMismatches}
@@ -905,24 +909,15 @@ export function LedgerCompareView() {
           />
 
           <ReportTable
-            title={`Only in ${labelA} (bill missing on ${labelB})`}
-            rows={report.onlyInA}
+            title="Matched (bill no. and amount both agree)"
+            rows={report.matched}
             columns={[
               { header: 'Bill', cell: (r) => r.bill },
-              { header: 'Date', cell: (r) => formatDate(r.date) || '—' },
-              { header: 'Amount', align: 'right', cell: (r) => fmtINR(r.amount) },
-              { header: 'Narration', cell: (r) => r.narration },
-            ]}
-          />
-
-          <ReportTable
-            title={`Only in ${labelB} (bill missing on ${labelA})`}
-            rows={report.onlyInB}
-            columns={[
-              { header: 'Bill', cell: (r) => r.bill },
-              { header: 'Date', cell: (r) => formatDate(r.date) || '—' },
-              { header: 'Amount', align: 'right', cell: (r) => fmtINR(r.amount) },
-              { header: 'Narration', cell: (r) => r.narration },
+              { header: `${labelA} date`, cell: (r) => formatDate(r.dateA) || '—' },
+              { header: `${labelB} date`, cell: (r) => formatDate(r.dateB) || '—' },
+              { header: 'Amount', align: 'right', cell: (r) => fmtINR(r.amountA) },
+              { header: `${labelA} narration`, cell: (r) => r.narrationA },
+              { header: `${labelB} narration`, cell: (r) => r.narrationB },
             ]}
           />
 
@@ -964,6 +959,28 @@ export function LedgerCompareView() {
               { header: `${labelB} bank ref`, cell: (r) => r.bankRefB || '—' },
               { header: `${labelA} narration`, cell: (r) => r.narrationA },
               { header: `${labelB} narration`, cell: (r) => r.narrationB },
+            ]}
+          />
+
+          <ReportTable
+            title={`Only in ${labelA} (bill missing on ${labelB})`}
+            rows={report.onlyInA}
+            columns={[
+              { header: 'Bill', cell: (r) => r.bill },
+              { header: 'Date', cell: (r) => formatDate(r.date) || '—' },
+              { header: 'Amount', align: 'right', cell: (r) => fmtINR(r.amount) },
+              { header: 'Narration', cell: (r) => r.narration },
+            ]}
+          />
+
+          <ReportTable
+            title={`Only in ${labelB} (bill missing on ${labelA})`}
+            rows={report.onlyInB}
+            columns={[
+              { header: 'Bill', cell: (r) => r.bill },
+              { header: 'Date', cell: (r) => formatDate(r.date) || '—' },
+              { header: 'Amount', align: 'right', cell: (r) => fmtINR(r.amount) },
+              { header: 'Narration', cell: (r) => r.narration },
             ]}
           />
 
