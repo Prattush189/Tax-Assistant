@@ -1038,6 +1038,7 @@ export type PartnershipDeedTemplateId =
   | 'llp_agreement'
   | 'reconstitution_deed'
   | 'retirement_deed'
+  | 'retirement_admission_deed'
   | 'dissolution_deed';
 
 export type PartnershipDeedStatus = 'draft' | 'generating' | 'generated' | 'error';

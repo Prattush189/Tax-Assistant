@@ -33,6 +33,12 @@ export const TEMPLATE_LIST: DeedTemplateMeta[] = [
     governingAct: 'Indian Partnership Act, 1932 (Section 32)',
   },
   {
+    id: 'retirement_admission_deed',
+    title: 'Retirement cum Admission Deed',
+    subtitle: 'Simultaneous exit of an outgoing partner and admission of a new one',
+    governingAct: 'Indian Partnership Act, 1932 (Sections 31 & 32)',
+  },
+  {
     id: 'dissolution_deed',
     title: 'Dissolution Deed',
     subtitle: 'Dissolution of the partnership firm',

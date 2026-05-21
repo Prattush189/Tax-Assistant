@@ -9,11 +9,12 @@
  */
 
 export type PartnershipDeedTemplateId =
-  | 'partnership_deed'        // Indian Partnership Act 1932 — formation
-  | 'llp_agreement'           // LLP Act 2008
-  | 'reconstitution_deed'     // admit new partner
-  | 'retirement_deed'         // partner exit
-  | 'dissolution_deed';       // dissolution
+  | 'partnership_deed'             // Indian Partnership Act 1932 — formation
+  | 'llp_agreement'                // LLP Act 2008
+  | 'reconstitution_deed'          // admit new partner
+  | 'retirement_deed'              // partner exit
+  | 'retirement_admission_deed'    // simultaneous exit + admission in one instrument
+  | 'dissolution_deed';            // dissolution
 
 export interface PartnerBlock {
   name?: string;
@@ -122,6 +123,7 @@ export const TEMPLATE_TITLES: Record<PartnershipDeedTemplateId, string> = {
   llp_agreement: 'LLP Agreement',
   reconstitution_deed: 'Reconstitution Deed',
   retirement_deed: 'Retirement Deed',
+  retirement_admission_deed: 'Retirement cum Admission Deed',
   dissolution_deed: 'Dissolution Deed',
 };
 
@@ -129,11 +131,16 @@ export function emptyDraft(templateId: PartnershipDeedTemplateId): PartnershipDe
   return { templateId };
 }
 
-/** Step order varies by template — only show the relevant template-specific step. */
+/** Step order varies by template — only show the relevant template-specific step.
+ *  Retirement-cum-admission needs BOTH the retirement AND the reconstitution
+ *  steps because the same instrument carries an exit and an entry. We show
+ *  retirement first (the outgoing partner), then reconstitution (the
+ *  incoming partner + revised shares post-both-changes). */
 export function getStepOrder(templateId: PartnershipDeedTemplateId): StepId[] {
   const base: StepId[] = ['templatePicker', 'firm', 'partners', 'banking', 'clauses'];
   if (templateId === 'reconstitution_deed') return [...base, 'reconstitution', 'review'];
   if (templateId === 'retirement_deed') return [...base, 'retirement', 'review'];
+  if (templateId === 'retirement_admission_deed') return [...base, 'retirement', 'reconstitution', 'review'];
   if (templateId === 'dissolution_deed') return [...base, 'dissolution', 'review'];
   return [...base, 'review'];
 }

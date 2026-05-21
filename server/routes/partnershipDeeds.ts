@@ -22,6 +22,7 @@ const TEMPLATE_IDS: readonly PartnershipDeedTemplateId[] = [
   'llp_agreement',
   'reconstitution_deed',
   'retirement_deed',
+  'retirement_admission_deed',
   'dissolution_deed',
 ];
 
@@ -47,6 +48,7 @@ const TEMPLATE_GOVERNING_ACT: Record<PartnershipDeedTemplateId, string> = {
   llp_agreement: 'Limited Liability Partnership Act, 2008',
   reconstitution_deed: 'Indian Partnership Act, 1932 (Sections 31–32)',
   retirement_deed: 'Indian Partnership Act, 1932 (Section 32)',
+  retirement_admission_deed: 'Indian Partnership Act, 1932 (Sections 31 & 32)',
   dissolution_deed: 'Indian Partnership Act, 1932 (Sections 39–55)',
 };
 
@@ -55,6 +57,7 @@ const TEMPLATE_TITLES: Record<PartnershipDeedTemplateId, string> = {
   llp_agreement: 'LLP Agreement',
   reconstitution_deed: 'Reconstitution Deed',
   retirement_deed: 'Retirement Deed',
+  retirement_admission_deed: 'Retirement cum Admission Deed',
   dissolution_deed: 'Dissolution Deed',
 };
 
@@ -72,7 +75,7 @@ You will be given: the template type, the firm's particulars, partner details, b
 DOCUMENT STRUCTURE (produce every section that applies, in this order)
 
 (1) **Preamble** — Title in ALL CAPS centred (the AI host's PDF wraps this in a stamp-paper banner; you only emit the deed body). Then the parties block:
-   "THIS DEED OF PARTNERSHIP / LLP AGREEMENT / DEED OF RECONSTITUTION / DEED OF RETIREMENT / DEED OF DISSOLUTION is made and executed at <principal place>, on this <today's IST date>"
+   "THIS DEED OF PARTNERSHIP / LLP AGREEMENT / DEED OF RECONSTITUTION / DEED OF RETIREMENT / DEED OF RETIREMENT CUM ADMISSION / DEED OF DISSOLUTION is made and executed at <principal place>, on this <today's IST date>"
    followed by a numbered list of parties (one paragraph per partner) in this format:
    "(1) <Mr/Ms/Mrs/Shri> <Name>, aged <age> years, son/daughter/wife of ____, resident of <address>, holding PAN <PAN>, hereinafter referred to as the 'First Partner / Party of the First Part';"
    For an LLP Agreement, refer to 'Designated Partners' instead of 'Partners' where appropriate.
@@ -99,6 +102,8 @@ DOCUMENT STRUCTURE (produce every section that applies, in this order)
 For RECONSTITUTION deeds: ALSO include a clause "Admission of New Partner(s)" with the incoming partner block, effective date, capital contribution, and revised share table.
 
 For RETIREMENT deeds: ALSO include "Retirement and Settlement" with the retiring partner's name, effective date, settlement amount in Rs., and settlement mode. State that the continuing partners shall be discharged of all liabilities arising thereafter.
+
+For RETIREMENT-CUM-ADMISSION deeds: title the instrument "DEED OF RETIREMENT CUM ADMISSION". The recitals must establish BOTH events (the named partner wishes to retire AND the parties wish to admit new partner(s)). Include BOTH operative clauses — "Retirement and Settlement of Outgoing Partner" (with the outgoing partner's name, effective date, settlement amount and mode, and a discharge-of-future-liabilities statement) AND "Admission of New Partner(s)" (with the incoming partner block, effective date, and capital contribution). The Profit and Loss Sharing table must show two columns: the pre-deed shares and the post-deed shares (with the outgoing partner removed and the incoming partner(s) added at their agreed share). Cite BOTH Section 31 (admission) AND Section 32 (retirement) of the Indian Partnership Act, 1932 in the relevant clauses.
 
 For DISSOLUTION deeds: include "Mode of Dissolution", "Settlement of Accounts (Section 48 IPA)" with the user-supplied settlement plan, "Asset Distribution" if specific allocations are provided, and "Liability Discharge" with the user-supplied plan.
 
@@ -278,14 +283,33 @@ router.post('/drafts/:id/generate', async (req: AuthRequest, res: Response) => {
   userPrompt += `\nBanking Authority:\n${JSON.stringify(banking, null, 2)}\n`;
   userPrompt += `\nClauses:\n${JSON.stringify(clauses, null, 2)}\n`;
 
-  if (draft.template_id === 'reconstitution_deed' && payload.reconstitution) {
-    userPrompt += `\nReconstitution block:\n${JSON.stringify(payload.reconstitution, null, 2)}\n`;
+  // Reconstitution block — for both 'reconstitution_deed' (admission only)
+  // and 'retirement_admission_deed' (admission half of the combined instrument).
+  if (
+    (draft.template_id === 'reconstitution_deed' ||
+      draft.template_id === 'retirement_admission_deed') &&
+    payload.reconstitution
+  ) {
+    userPrompt += `\nReconstitution block (incoming partner(s) & revised shares):\n${JSON.stringify(payload.reconstitution, null, 2)}\n`;
   }
-  if (draft.template_id === 'retirement_deed' && payload.retirement) {
-    userPrompt += `\nRetirement block:\n${JSON.stringify(payload.retirement, null, 2)}\n`;
+  // Retirement block — for both 'retirement_deed' (exit only) and
+  // 'retirement_admission_deed' (exit half of the combined instrument).
+  if (
+    (draft.template_id === 'retirement_deed' ||
+      draft.template_id === 'retirement_admission_deed') &&
+    payload.retirement
+  ) {
+    userPrompt += `\nRetirement block (outgoing partner & settlement):\n${JSON.stringify(payload.retirement, null, 2)}\n`;
   }
   if (draft.template_id === 'dissolution_deed' && payload.dissolution) {
     userPrompt += `\nDissolution block:\n${JSON.stringify(payload.dissolution, null, 2)}\n`;
+  }
+  // Extra steer for the combined deed: the LLM tends to default to
+  // ONE narrative ("retirement deed" OR "admission deed"). Spell out
+  // that the instrument carries both transactions on the same date(s).
+  if (draft.template_id === 'retirement_admission_deed') {
+    userPrompt += `\nCOMBINED-DEED INSTRUCTION:\n`;
+    userPrompt += `This is a single deed effecting BOTH the retirement of the outgoing partner AND the admission of the incoming partner(s) in the SAME instrument. Title it "DEED OF RETIREMENT CUM ADMISSION". Cover both transactions in the recitals (WHEREAS the named partner wishes to retire AND the parties wish to admit new partner(s)). Include both operative clauses — "Retirement and Settlement of Outgoing Partner" and "Admission of New Partner(s)". The "Revised Profit Sharing" table must reflect the post-retirement, post-admission shares (outgoing partner removed, incoming partner(s) added, continuing partners' shares updated). Cite both Section 31 (admission) and Section 32 (retirement) of the Indian Partnership Act, 1932.\n`;
   }
 
   userPrompt += `\n=== STAMP DUTY GROUNDING INSTRUCTION ===\n`;

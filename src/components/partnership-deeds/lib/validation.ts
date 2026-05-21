@@ -34,9 +34,12 @@ export function validateDraft(draft: PartnershipDeedDraft): ValidationResult {
   if (!firm.commencementDate) errors.push('Commencement date is required.');
 
   // Partners — required for every template; at least 2 partners for
-  // formation / LLP / reconstitution / dissolution.
+  // formation / LLP / reconstitution / dissolution / retirement-cum-admission.
+  // Retirement-cum-admission needs at least 2 existing partners so the
+  // outgoing one can be selected and at least one continuing partner remains
+  // before the incoming partner joins.
   const partners = draft.partners ?? [];
-  const minPartners = draft.templateId === 'retirement_deed' ? 2 : 2;
+  const minPartners = 2;
   if (partners.length < minPartners) {
     errors.push(`At least ${minPartners} partners are required.`);
   }
@@ -71,13 +74,29 @@ export function validateDraft(draft: PartnershipDeedDraft): ValidationResult {
   }
   if (!banking.mode) errors.push('Banking signing mode is required.');
 
-  // Template-specific
-  if (draft.templateId === 'reconstitution_deed') {
+  // Template-specific.
+  // Retirement-cum-admission carries BOTH a retirement block (outgoing
+  // partner + settlement) AND a reconstitution block (incoming partner +
+  // revised shares), so both passes fire for it.
+  const needsReconstitution =
+    draft.templateId === 'reconstitution_deed' ||
+    draft.templateId === 'retirement_admission_deed';
+  const needsRetirement =
+    draft.templateId === 'retirement_deed' ||
+    draft.templateId === 'retirement_admission_deed';
+
+  if (needsReconstitution) {
     const r = draft.reconstitution ?? {};
     if (!r.incomingPartners || r.incomingPartners.length === 0) {
-      errors.push('At least one incoming partner is required for a reconstitution deed.');
+      errors.push('At least one incoming partner is required.');
     }
-    if (!r.effectiveDate) errors.push('Effective date of reconstitution is required.');
+    if (!r.effectiveDate) {
+      errors.push(
+        draft.templateId === 'retirement_admission_deed'
+          ? 'Effective date of admission is required.'
+          : 'Effective date of reconstitution is required.',
+      );
+    }
     (r.incomingPartners ?? []).forEach((p, idx) => {
       const tag = p.name?.trim() ? `Incoming partner "${p.name}"` : `Incoming partner #${idx + 1}`;
       if (!p.name?.trim()) errors.push(`${tag}: name is required.`);
@@ -93,7 +112,7 @@ export function validateDraft(draft: PartnershipDeedDraft): ValidationResult {
     }
   }
 
-  if (draft.templateId === 'retirement_deed') {
+  if (needsRetirement) {
     const r = draft.retirement ?? {};
     if (!r.outgoingPartnerName?.trim()) errors.push('Retiring partner must be selected.');
     if (!r.effectiveDate) errors.push('Effective date of retirement is required.');

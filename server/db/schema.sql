@@ -220,6 +220,7 @@ CREATE TABLE IF NOT EXISTS partnership_deeds (
     'llp_agreement',
     'reconstitution_deed',
     'retirement_deed',
+    'retirement_admission_deed',
     'dissolution_deed'
   )),
   name TEXT NOT NULL,

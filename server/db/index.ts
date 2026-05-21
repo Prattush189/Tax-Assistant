@@ -336,6 +336,57 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_bank_rules_user_id ON bank_statement_rul
   }
 }
 
+// Migration: extend the partnership_deeds.template_id CHECK constraint to
+// allow 'retirement_admission_deed'. SQLite doesn't support ALTER CHECK,
+// so we use the canonical table-rebuild dance:
+//   1. Pull the stored CREATE TABLE SQL from sqlite_master.
+//   2. If it doesn't already mention 'retirement_admission_deed', splice
+//      the new value into the IN(...) list and create a parallel table.
+//   3. Copy rows over, drop the old table, rename the new one.
+// Idempotent: the `tbl.sql.includes(...)` check skips the whole block once
+// the migration has run on this database.
+{
+  const tbl = db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='partnership_deeds'",
+  ).get() as { sql: string } | undefined;
+  if (tbl && !tbl.sql.includes("'retirement_admission_deed'")) {
+    const newSql = tbl.sql
+      .replace(
+        "'dissolution_deed'",
+        "'retirement_admission_deed',\n    'dissolution_deed'",
+      )
+      .replace(
+        /CREATE TABLE(\s+IF\s+NOT\s+EXISTS)?\s+["`]?partnership_deeds["`]?/i,
+        'CREATE TABLE partnership_deeds_new',
+      );
+    db.exec('BEGIN');
+    try {
+      db.exec(newSql);
+      // Copy with explicit column list pulled from PRAGMA so we don't
+      // need to keep this migration in sync with column changes — it
+      // works whether the live schema has status/file_hash/etc or not.
+      const cols = (db.prepare("PRAGMA table_info(partnership_deeds)").all() as Array<{ name: string }>)
+        .map(c => `"${c.name}"`)
+        .join(', ');
+      db.exec(`INSERT INTO partnership_deeds_new (${cols}) SELECT ${cols} FROM partnership_deeds`);
+      db.exec('DROP TABLE partnership_deeds');
+      db.exec('ALTER TABLE partnership_deeds_new RENAME TO partnership_deeds');
+      // Recreate indexes — the rebuild loses them. IF NOT EXISTS keeps
+      // this safe to re-run if something downstream already created them.
+      db.exec('CREATE INDEX IF NOT EXISTS idx_partnership_deeds_user_id ON partnership_deeds(user_id)');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_partnership_deeds_updated_at ON partnership_deeds(updated_at DESC)');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_partnership_deeds_billing ON partnership_deeds(billing_user_id)');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_partnership_deeds_user_hash ON partnership_deeds(user_id, file_hash)');
+      db.exec('COMMIT');
+      console.log("[db] partnership_deeds CHECK extended to allow 'retirement_admission_deed'");
+    } catch (err) {
+      db.exec('ROLLBACK');
+      console.error('[db] Failed to extend partnership_deeds CHECK constraint:', err);
+      throw err;
+    }
+  }
+}
+
 // Indexes for ledger_scrutiny_* (AI ledger scrutiny analyzer)
 db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_jobs_user_id ON ledger_scrutiny_jobs(user_id)");
 db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_jobs_billing ON ledger_scrutiny_jobs(billing_user_id)");
