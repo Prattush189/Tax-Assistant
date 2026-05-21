@@ -6,6 +6,7 @@ import { OAuth2Client } from 'google-auth-library';
 import { userRepo, normalizePhone } from '../db/repositories/userRepo.js';
 import { verificationRepo } from '../db/repositories/verificationRepo.js';
 import { authMiddleware } from '../middleware/auth.js';
+import { authLimiter } from '../middleware/rateLimiter.js';
 import { notifyAssistOfLogin } from '../lib/assistNotify.js';
 import { AuthRequest } from '../types.js';
 import { sanitizePluginLimits, getEffectivePlan, getTrialEndsAt } from '../lib/planLimits.js';
@@ -113,7 +114,7 @@ function isVerificationExempt(user: {
 // POST /api/auth/signup — creates a user in unverified state and emails an
 // OTP. Responds with { needsEmailVerification: true } — NO JWT is issued
 // until the code is verified via /api/auth/verify-email.
-router.post('/signup', async (req: Request, res: Response) => {
+router.post('/signup', authLimiter, async (req: Request, res: Response) => {
   const { email, password, name } = req.body;
 
   // Validate
@@ -179,7 +180,7 @@ router.post('/signup', async (req: Request, res: Response) => {
 });
 
 // POST /api/auth/verify-email — consumes a valid OTP and returns JWT tokens.
-router.post('/verify-email', async (req: Request, res: Response) => {
+router.post('/verify-email', authLimiter, async (req: Request, res: Response) => {
   const { email, code } = req.body ?? {};
   if (typeof email !== 'string' || typeof code !== 'string') {
     res.status(400).json({ error: 'email and code are required' });
@@ -227,7 +228,7 @@ router.post('/verify-email', async (req: Request, res: Response) => {
 
 // POST /api/auth/resend-verification — rate-limited to 1 per 60 seconds
 // per user. Accepts `{email}` and re-sends the OTP.
-router.post('/resend-verification', async (req: Request, res: Response) => {
+router.post('/resend-verification', authLimiter, async (req: Request, res: Response) => {
   const { email } = req.body ?? {};
   if (typeof email !== 'string') {
     res.status(400).json({ error: 'email is required' });
@@ -275,7 +276,7 @@ router.post('/resend-verification', async (req: Request, res: Response) => {
 // POST /api/auth/forgot-password — issues a 6-digit OTP for password reset.
 // Always responds 200 to avoid leaking whether the email is registered.
 // Silently no-ops for Google-only accounts (they have no password to reset).
-router.post('/forgot-password', async (req: Request, res: Response) => {
+router.post('/forgot-password', authLimiter, async (req: Request, res: Response) => {
   const { email } = req.body ?? {};
   if (typeof email !== 'string') {
     res.status(400).json({ error: 'email is required' });
@@ -328,7 +329,7 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
 
 // POST /api/auth/reset-password — consumes a valid reset OTP and updates
 // the password. On success, logs the user in by returning fresh JWT tokens.
-router.post('/reset-password', async (req: Request, res: Response) => {
+router.post('/reset-password', authLimiter, async (req: Request, res: Response) => {
   const { email, code, newPassword } = req.body ?? {};
   if (typeof email !== 'string' || typeof code !== 'string' || typeof newPassword !== 'string') {
     res.status(400).json({ error: 'email, code and newPassword are required' });
@@ -384,7 +385,7 @@ router.post('/reset-password', async (req: Request, res: Response) => {
 // POST /api/auth/login — accepts either {identifier, password} (new shape;
 // identifier can be an email OR a phone number) or {email, password}
 // (legacy, preserved for backwards compatibility).
-router.post('/login', async (req: Request, res: Response) => {
+router.post('/login', authLimiter, async (req: Request, res: Response) => {
   const { identifier, email, password } = req.body ?? {};
 
   const rawId =
@@ -470,7 +471,7 @@ router.post('/refresh', (req: Request, res: Response) => {
 });
 
 // POST /api/auth/google
-router.post('/google', async (req: Request, res: Response) => {
+router.post('/google', authLimiter, async (req: Request, res: Response) => {
   const { code } = req.body;
 
   if (!code) {
@@ -710,7 +711,7 @@ router.delete('/account', authMiddleware, async (req: AuthRequest, res: Response
 // neither inviterUserId nor phone, we retry with the legacy 9-field base
 // string (pre-v2 parent apps). This closes the downgrade attack: a legacy
 // sig can only authorize a legacy payload.
-router.post('/plugin-sso', (req: Request, res: Response) => {
+router.post('/plugin-sso', authLimiter, (req: Request, res: Response) => {
   if (!PLUGIN_SSO_SECRET) {
     res.status(500).json({ error: 'Plugin SSO is not configured on the server' });
     return;

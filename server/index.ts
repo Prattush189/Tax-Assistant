@@ -31,7 +31,6 @@ import billingDetailsRouter from './routes/billingDetails.js';
 import documentDownloadRouter from './routes/documentDownload.js';
 import { authMiddleware, adminMiddleware, trialCheckMiddleware } from './middleware/auth.js';
 import {
-  authLimiter,
   chatLimiter,
   uploadLimiter,
   bankStatementsLimiter,
@@ -120,8 +119,16 @@ app.use('/api/webhooks', express.raw({ type: 'application/json' }), webhooksRout
 app.use(express.json({ limit: '20mb' }));
 
 // 4. API routes
-// Auth routes — public, with brute-force protection
-app.use('/api/auth', authLimiter, authRouter);
+// Auth routes — brute-force protection is applied PER-ENDPOINT inside the
+// router, not at this mount point. The limiter at this level was rejecting
+// routine session checks (`/me`, `/refresh`) at 10 req/min/IP, which lit
+// up after every deploy: existing tabs reconnect → each fires `/me` →
+// shared NAT IP burns the bucket within seconds and everyone sees "Too
+// many login attempts." The credential-checking endpoints (login, signup,
+// password reset, OAuth, etc.) still apply `authLimiter` individually;
+// `/me`, `/refresh`, and the authenticated PATCH/DELETE routes rely on
+// the JWT signature for protection and don't need IP rate-limiting.
+app.use('/api/auth', authRouter);
 
 // Invitation accept route is PUBLIC — anyone with a valid token can consume
 // it without being logged in. Mount BEFORE the global authMiddleware gate.
