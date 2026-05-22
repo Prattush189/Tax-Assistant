@@ -1,4 +1,5 @@
-import { Repeat, CheckCircle2 } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Repeat, CheckCircle2, Brain, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { BankTransaction } from '../../services/api';
 import { formatINR, formatDate } from '../../lib/utils';
@@ -10,6 +11,25 @@ interface Props {
   manager: BankStatementManager;
 }
 
+// Accumulator for the "Remember selected" batch toast. One entry per
+// corrected row; entries are added as the user changes categories
+// across the statement and consumed when the user clicks Remember on
+// the persistent panel. Same row corrected twice = its entry is
+// overwritten (latest category wins).
+interface PendingLearn {
+  txId: string;
+  category: string;
+  /** Truncated display sample for the panel row. */
+  sample: string;
+  /** Full narration for the title hover. */
+  fullSample: string;
+  /** Checkbox state. Defaults to true so the bulk Remember does the
+   *  expected thing — uncheck the obvious one-offs before clicking. */
+  checked: boolean;
+}
+
+const PENDING_TOAST_ID = 'pending-learns';
+
 export function TransactionTable({ transactions, manager }: Props) {
   if (!transactions.length) {
     return (
@@ -19,24 +39,183 @@ export function TransactionTable({ transactions, manager }: Props) {
     );
   }
 
-  // After a category change, prompt the user to remember it for
-  // future similar entries. Locked precedence: every correction is
-  // saved immediately; learning is opt-in via the explicit Remember
-  // click.
+  // ── Accumulating Remember-panel state ─────────────────────────
   //
-  // UX choices (revised 2026-05-22):
-  //   - VERTICAL layout: long sample labels (full-narration UPI
-  //     references like "PCI/9710/Segpay.com*...") were truncating
-  //     the Remember button off-screen with the previous horizontal
-  //     row. Stacking puts buttons on their own line, always visible.
-  //   - PERSISTENT (duration: Infinity): toast stays until the user
-  //     clicks Remember or Dismiss. Lets them batch-correct multiple
-  //     rows and decide which to remember without each toast
-  //     expiring on a timer. Multiple toasts stack in the corner; the
-  //     user can leave the most-likely-to-remember ones up and
-  //     dismiss the obviously-one-off ones first.
-  //   - Sample is truncated to 60 chars in the visible text; the
-  //     full text sits in the title attribute for hover.
+  // Every category change immediately persists the new category on
+  // the row (we never gate persistence on a Remember click). The
+  // optional follow-up — converting that correction into a learned
+  // rule the firm reuses — gets BATCHED into a single persistent
+  // panel that accumulates across the session.
+  //
+  // Why one panel instead of N toasts:
+  //   - User correcting 8 rows of "Segpay" should be able to make
+  //     all 8 corrections, then click Remember ONCE. Per-row toasts
+  //     mean 8 Remember clicks (or 8 dismissals plus a lost rule).
+  //   - The panel also lets the user UNCHECK obvious one-offs they
+  //     don't want stored as rules ("adjustment", "test entry").
+  //   - Single persistent panel is unobtrusive compared to a stack
+  //     of toasts in the corner.
+  //
+  // State shape: Map keyed by txId so re-correcting the same row
+  // updates the existing entry rather than creating a duplicate.
+  const [pendingLearns, setPendingLearns] = useState<Map<string, PendingLearn>>(new Map());
+
+  const toggleChecked = useCallback((txId: string) => {
+    setPendingLearns((prev) => {
+      const next = new Map(prev);
+      const entry = next.get(txId);
+      if (entry) next.set(txId, { ...entry, checked: !entry.checked });
+      return next;
+    });
+  }, []);
+
+  const removeFromPending = useCallback((txId: string) => {
+    setPendingLearns((prev) => {
+      const next = new Map(prev);
+      next.delete(txId);
+      return next;
+    });
+  }, []);
+
+  const dismissAll = useCallback(() => {
+    setPendingLearns(new Map());
+    toast.dismiss(PENDING_TOAST_ID);
+  }, []);
+
+  // Bulk Remember — upsert a learned rule for every checked row.
+  // Uses Promise.allSettled so a single failure doesn't poison the
+  // batch (e.g. one row's narration produces an empty fingerprint;
+  // others succeed). At-best-effort feedback: toast counts successes
+  // and warns about failures.
+  const rememberSelected = useCallback(async () => {
+    const selected = Array.from(pendingLearns.values()).filter((p) => p.checked);
+    if (selected.length === 0) return;
+    toast.dismiss(PENDING_TOAST_ID);
+    setPendingLearns(new Map());
+    const results = await Promise.allSettled(
+      selected.map((p) =>
+        manager.reassignCategory(p.txId, p.category, null, { remember: 'always' }),
+      ),
+    );
+    const ok = results.filter((r) => r.status === 'fulfilled' && (r.value as { learned: unknown } | undefined)?.learned).length;
+    const failed = results.length - ok;
+    if (ok > 0) {
+      toast.success(
+        `Remembered ${ok} rule${ok === 1 ? '' : 's'}. Will auto-apply to similar entries going forward.`,
+        { duration: 4000 },
+      );
+    }
+    if (failed > 0) {
+      toast.error(`${failed} rule${failed === 1 ? '' : 's'} could not be saved (narration too generic).`, { duration: 5000 });
+    }
+  }, [manager, pendingLearns]);
+
+  // Re-render the persistent panel whenever pendingLearns changes.
+  // Using a stable toast id means react-hot-toast updates the
+  // existing toast in place rather than stacking new ones.
+  // Stash the latest handlers in refs so the toast's closure
+  // always calls the freshest versions — without this, the
+  // initial toast captures the first render's handlers and stale
+  // pendingLearns leak through.
+  const pendingLearnsRef = useRef(pendingLearns);
+  const handlersRef = useRef({ toggleChecked, removeFromPending, dismissAll, rememberSelected });
+  useEffect(() => {
+    pendingLearnsRef.current = pendingLearns;
+    handlersRef.current = { toggleChecked, removeFromPending, dismissAll, rememberSelected };
+  }, [pendingLearns, toggleChecked, removeFromPending, dismissAll, rememberSelected]);
+
+  useEffect(() => {
+    if (pendingLearns.size === 0) {
+      toast.dismiss(PENDING_TOAST_ID);
+      return;
+    }
+    const entries = Array.from(pendingLearns.values());
+    const checkedCount = entries.filter((e) => e.checked).length;
+    toast.custom(
+      () => (
+        <div className="w-80 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl shadow-lg overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-800 bg-violet-50 dark:bg-violet-900/20 flex items-center gap-2">
+            <Brain className="w-4 h-4 text-violet-600 dark:text-violet-400 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                Remember these classifications?
+              </p>
+              <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
+                We'll auto-apply selected rules to future similar entries across your firm.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => handlersRef.current.dismissAll()}
+              className="p-1 rounded hover:bg-violet-100 dark:hover:bg-violet-900/40 shrink-0"
+              aria-label="Dismiss all"
+            >
+              <X className="w-3.5 h-3.5 text-gray-500" />
+            </button>
+          </div>
+          <ul className="max-h-64 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-800">
+            {entries.map((e) => (
+              <li key={e.txId} className="px-3 py-2 flex items-start gap-2 hover:bg-gray-50 dark:hover:bg-gray-800/40">
+                <input
+                  type="checkbox"
+                  checked={e.checked}
+                  onChange={() => handlersRef.current.toggleChecked(e.txId)}
+                  className="mt-0.5 w-3.5 h-3.5 accent-emerald-600 cursor-pointer shrink-0"
+                />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    Set to <span className="font-medium text-gray-800 dark:text-gray-200">{e.category}</span>
+                  </p>
+                  <p className="text-[11px] text-gray-600 dark:text-gray-400 break-all" title={e.fullSample}>
+                    {e.sample}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handlersRef.current.removeFromPending(e.txId)}
+                  className="p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-700 shrink-0"
+                  aria-label="Remove from pending"
+                  title="Don't ask about this one"
+                >
+                  <X className="w-3 h-3 text-gray-400" />
+                </button>
+              </li>
+            ))}
+          </ul>
+          <div className="px-3 py-2 border-t border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/60 flex items-center justify-between gap-2">
+            <span className="text-[11px] text-gray-500 dark:text-gray-400">
+              {checkedCount} of {entries.length} selected
+            </span>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => handlersRef.current.dismissAll()}
+                className="text-xs px-2 py-1 rounded text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
+              >
+                Dismiss
+              </button>
+              <button
+                type="button"
+                onClick={() => { void handlersRef.current.rememberSelected(); }}
+                disabled={checkedCount === 0}
+                className="text-xs font-medium px-3 py-1 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Remember {checkedCount > 0 ? checkedCount : ''}
+              </button>
+            </div>
+          </div>
+        </div>
+      ),
+      { id: PENDING_TOAST_ID, duration: Infinity, position: 'bottom-right' },
+    );
+  }, [pendingLearns]);
+
+  // ── Per-row category change handler ───────────────────────────
+  //
+  // 1. Persist the category change immediately (no gating).
+  // 2. Append/replace the row in pendingLearns so the accumulating
+  //    panel surfaces it.
+  // Same row corrected multiple times keeps only the latest category.
   const handleChange = async (txId: string, category: string) => {
     const tx = transactions.find((t) => t.id === txId);
     try {
@@ -46,49 +225,11 @@ export function TransactionTable({ transactions, manager }: Props) {
       return;
     }
     const fullSample = (tx?.counterparty || tx?.narration || '') || 'similar entries';
-    const truncatedSample = fullSample.length > 60 ? fullSample.slice(0, 60) + '…' : fullSample;
-    toast((t) => (
-      <div className="flex flex-col gap-2 max-w-xs">
-        <p className="text-sm text-gray-800 dark:text-gray-100">
-          Set to <span className="font-medium">{category}</span>.
-        </p>
-        <p className="text-xs text-gray-500 dark:text-gray-400" title={fullSample}>
-          Remember for similar entries to <span className="font-medium text-gray-700 dark:text-gray-200 break-all">{truncatedSample}</span>?
-        </p>
-        <div className="flex items-center gap-2 mt-1">
-          <button
-            type="button"
-            className="text-xs font-medium px-3 py-1.5 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 shrink-0"
-            onClick={() => {
-              // Fire the upsert in the background. The reassignCategory
-              // hook sends remember:'always' so the server upserts a
-              // learned rule (the row's category was already set by
-              // the first PATCH, so this is a pure rule-create on the
-              // server with no impact on the row itself).
-              void manager.reassignCategory(txId, category, null, { remember: 'always' }).then((res) => {
-                toast.dismiss(t.id);
-                if (res?.learned) {
-                  toast.success('Remembered. Will auto-apply to similar entries going forward.', { duration: 4000 });
-                }
-              });
-            }}
-          >
-            Remember
-          </button>
-          <button
-            type="button"
-            className="text-xs px-2 py-1.5 rounded-md text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
-            onClick={() => toast.dismiss(t.id)}
-          >
-            Dismiss
-          </button>
-        </div>
-      </div>
-    ), {
-      // Persistent — user explicitly Remembers or Dismisses. Lets them
-      // batch-process several corrections without losing any to a
-      // 6-second timer expiry.
-      duration: Infinity,
+    const truncatedSample = fullSample.length > 80 ? fullSample.slice(0, 80) + '…' : fullSample;
+    setPendingLearns((prev) => {
+      const next = new Map(prev);
+      next.set(txId, { txId, category, sample: truncatedSample, fullSample, checked: true });
+      return next;
     });
   };
 
