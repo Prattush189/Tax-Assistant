@@ -18,6 +18,7 @@ import usageRouter from './routes/usage.js';
 import itrRouter from './routes/itr.js';
 import boardResolutionsRouter from './routes/boardResolutions.js';
 import partnershipDeedsRouter from './routes/partnershipDeeds.js';
+import cmaRouter from './routes/cma.js';
 import paymentsRouter from './routes/payments.js';
 import webhooksRouter from './routes/webhooks.js';
 import itPortalImportRouter from './routes/itPortalImport.js';
@@ -169,6 +170,10 @@ app.use('/api/usage', usageRouter);
 app.use('/api/itr', itrLimiter, itrRouter);
 app.use('/api/board-resolutions', boardResolutionsLimiter, boardResolutionsRouter);
 app.use('/api/partnership-deeds', partnershipDeedsLimiter, partnershipDeedsRouter);
+// CMA — pure CRUD over draft state, no AI/streaming. No per-feature
+// rate-limiter needed; the global authMiddleware already gates
+// access, and a token-budget gate doesn't apply (no Gemini calls).
+app.use('/api/cma', cmaRouter);
 app.use('/api/it-portal', itPortalLimiter, itPortalImportRouter);
 app.use('/api/style-profile', styleProfileRouter);
 app.use('/api/form16-import', form16ImportLimiter, form16ImportRouter);

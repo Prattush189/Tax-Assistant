@@ -20,11 +20,23 @@ export function TransactionTable({ transactions, manager }: Props) {
   }
 
   // After a category change, prompt the user to remember it for
-  // future similar entries. Default action (toast auto-dismisses
-  // or user does nothing) = just-this-row, matching the locked
-  // precedence: every correction is saved, but learning is opt-in.
-  // Clicking "Remember" re-issues the PATCH with remember=always,
-  // and the server upserts a learned rule scoped to the firm.
+  // future similar entries. Locked precedence: every correction is
+  // saved immediately; learning is opt-in via the explicit Remember
+  // click.
+  //
+  // UX choices (revised 2026-05-22):
+  //   - VERTICAL layout: long sample labels (full-narration UPI
+  //     references like "PCI/9710/Segpay.com*...") were truncating
+  //     the Remember button off-screen with the previous horizontal
+  //     row. Stacking puts buttons on their own line, always visible.
+  //   - PERSISTENT (duration: Infinity): toast stays until the user
+  //     clicks Remember or Dismiss. Lets them batch-correct multiple
+  //     rows and decide which to remember without each toast
+  //     expiring on a timer. Multiple toasts stack in the corner; the
+  //     user can leave the most-likely-to-remember ones up and
+  //     dismiss the obviously-one-off ones first.
+  //   - Sample is truncated to 60 chars in the visible text; the
+  //     full text sits in the title attribute for hover.
   const handleChange = async (txId: string, category: string) => {
     const tx = transactions.find((t) => t.id === txId);
     try {
@@ -33,45 +45,51 @@ export function TransactionTable({ transactions, manager }: Props) {
       toast.error(err instanceof Error ? err.message : 'Failed to update category');
       return;
     }
-    // Best-effort: only offer remember when we still have the row in
-    // scope (always true here since we just looked it up). The toast
-    // has a sticky duration so the user has time to decide, but is
-    // dismissable if they want to move on.
-    const sampleLabel = (tx?.counterparty || tx?.narration || '').slice(0, 40) || 'similar entries';
+    const fullSample = (tx?.counterparty || tx?.narration || '') || 'similar entries';
+    const truncatedSample = fullSample.length > 60 ? fullSample.slice(0, 60) + '…' : fullSample;
     toast((t) => (
-      <div className="flex items-center gap-3">
-        <span className="text-sm">
-          Set to <span className="font-medium">{category}</span>. Remember for similar entries to <span className="font-medium">{sampleLabel}</span>?
-        </span>
-        <button
-          type="button"
-          className="text-xs font-medium px-2 py-1 rounded-md bg-emerald-600 text-white hover:bg-emerald-700"
-          onClick={() => {
-            // Fire the upsert in the background — no need to await
-            // before dismissing the toast. The reassignCategory hook
-            // sends remember:'always' which makes the server PATCH
-            // call upsert the learned rule (the row's category is
-            // already correct from the first PATCH, so this is a
-            // pure no-op on the bank_transactions table).
-            void manager.reassignCategory(txId, category, null, { remember: 'always' }).then((res) => {
-              toast.dismiss(t.id);
-              if (res?.learned) {
-                toast.success(`Remembered. Will auto-apply to similar entries going forward.`, { duration: 4000 });
-              }
-            });
-          }}
-        >
-          Remember
-        </button>
-        <button
-          type="button"
-          className="text-xs text-gray-500 hover:text-gray-800 dark:hover:text-gray-200"
-          onClick={() => toast.dismiss(t.id)}
-        >
-          Dismiss
-        </button>
+      <div className="flex flex-col gap-2 max-w-xs">
+        <p className="text-sm text-gray-800 dark:text-gray-100">
+          Set to <span className="font-medium">{category}</span>.
+        </p>
+        <p className="text-xs text-gray-500 dark:text-gray-400" title={fullSample}>
+          Remember for similar entries to <span className="font-medium text-gray-700 dark:text-gray-200 break-all">{truncatedSample}</span>?
+        </p>
+        <div className="flex items-center gap-2 mt-1">
+          <button
+            type="button"
+            className="text-xs font-medium px-3 py-1.5 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 shrink-0"
+            onClick={() => {
+              // Fire the upsert in the background. The reassignCategory
+              // hook sends remember:'always' so the server upserts a
+              // learned rule (the row's category was already set by
+              // the first PATCH, so this is a pure rule-create on the
+              // server with no impact on the row itself).
+              void manager.reassignCategory(txId, category, null, { remember: 'always' }).then((res) => {
+                toast.dismiss(t.id);
+                if (res?.learned) {
+                  toast.success('Remembered. Will auto-apply to similar entries going forward.', { duration: 4000 });
+                }
+              });
+            }}
+          >
+            Remember
+          </button>
+          <button
+            type="button"
+            className="text-xs px-2 py-1.5 rounded-md text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
+            onClick={() => toast.dismiss(t.id)}
+          >
+            Dismiss
+          </button>
+        </div>
       </div>
-    ), { duration: 6000 });
+    ), {
+      // Persistent — user explicitly Remembers or Dismisses. Lets them
+      // batch-process several corrections without losing any to a
+      // 6-second timer expiry.
+      duration: Infinity,
+    });
   };
 
   return (

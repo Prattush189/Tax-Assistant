@@ -1,8 +1,8 @@
 import { ReactNode } from 'react';
-import { Landmark, BookOpenCheck } from 'lucide-react';
+import { Landmark, BookOpenCheck, LineChart } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
-type BooksTab = 'bank_statements' | 'ledger_scrutiny';
+type BooksTab = 'bank_statements' | 'ledger_scrutiny' | 'cma';
 
 interface Props {
   activeView: BooksTab | string;
@@ -13,6 +13,9 @@ interface Props {
 const TABS: { id: BooksTab; label: string; icon: typeof Landmark; ai?: boolean }[] = [
   { id: 'bank_statements', label: 'Bank Statements', icon: Landmark, ai: true },
   { id: 'ledger_scrutiny', label: 'Ledger Scrutiny', icon: BookOpenCheck, ai: true },
+  // CMA — financial-workflow companion. No AI badge: v1 generation is
+  // pure computation (Excel emit), not an LLM call.
+  { id: 'cma', label: 'CMA Report', icon: LineChart },
 ];
 
 /**

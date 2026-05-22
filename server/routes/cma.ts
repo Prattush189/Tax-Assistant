@@ -1,0 +1,115 @@
+/**
+ * CMA (Credit Monitoring Arrangement) wizard routes — pure CRUD over
+ * a JSON ui_payload. No AI calls, no streaming, no quota gating in
+ * Phase 1 (Excel emit is computation, not Gemini spend). Phase 6
+ * will add a /export endpoint that streams an xlsx download — also
+ * synchronous, no token budget impact.
+ *
+ * Auth: every endpoint requires authMiddleware (mounted globally in
+ * server/index.ts). Scoping is user-level via cmaDraftRepo's
+ * findByIdForUser — the billing_user_id is set on create for usage
+ * accounting but doesn't grant cross-user access to drafts.
+ */
+import { Router, Response } from 'express';
+import { cmaDraftRepo, CmaDraftRow } from '../db/repositories/cmaDraftRepo.js';
+import { userRepo } from '../db/repositories/userRepo.js';
+import { getBillingUser } from '../lib/billing.js';
+import { AuthRequest } from '../types.js';
+
+const router = Router();
+
+function parseUiPayload(row: { ui_payload: string }): Record<string, unknown> {
+  try {
+    return JSON.parse(row.ui_payload);
+  } catch {
+    return {};
+  }
+}
+
+function serialize(row: CmaDraftRow) {
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    name: row.name,
+    ui_payload: parseUiPayload(row),
+    exported_at: row.exported_at,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+// ── List user's drafts ───────────────────────────────────────────
+router.get('/drafts', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const rows = cmaDraftRepo.findByUserId(req.user.id);
+  res.json({ drafts: rows.map(serialize) });
+});
+
+// ── Create empty draft ───────────────────────────────────────────
+// No AI call, no quota debit — drafts are free to create. The user
+// pays in token budget only when they (eventually) export, and even
+// then the cost is local computation, not Gemini.
+router.post('/drafts', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const { name, ui_payload } = req.body ?? {};
+  if (!name || typeof name !== 'string' || name.trim().length === 0) {
+    res.status(400).json({ error: 'name is required' });
+    return;
+  }
+  const actor = userRepo.findById(req.user.id);
+  if (!actor) { res.status(401).json({ error: 'User not found' }); return; }
+  const billingUser = getBillingUser(actor);
+  const payloadStr =
+    typeof ui_payload === 'string' ? ui_payload : JSON.stringify(ui_payload ?? {});
+  const draft = cmaDraftRepo.create(req.user.id, name.trim(), payloadStr, billingUser.id);
+  res.status(201).json(serialize(draft));
+});
+
+// ── Get single draft ─────────────────────────────────────────────
+router.get('/drafts/:id', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const draft = cmaDraftRepo.findByIdForUser(req.params.id, req.user.id);
+  if (!draft) { res.status(404).json({ error: 'Draft not found' }); return; }
+  res.json(serialize(draft));
+});
+
+// ── Autosave: name and/or ui_payload ─────────────────────────────
+// Either field is independently optional. Frontend autosave fires
+// payload updates on every form change (debounced client-side); name
+// updates fire from the rename input.
+router.patch('/drafts/:id', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const draft = cmaDraftRepo.findByIdForUser(req.params.id, req.user.id);
+  if (!draft) { res.status(404).json({ error: 'Draft not found' }); return; }
+  const { name, ui_payload } = req.body ?? {};
+  if (typeof name === 'string' && name.trim().length > 0) {
+    cmaDraftRepo.updateName(draft.id, req.user.id, name.trim());
+  }
+  if (ui_payload !== undefined) {
+    const payloadStr =
+      typeof ui_payload === 'string' ? ui_payload : JSON.stringify(ui_payload);
+    cmaDraftRepo.updatePayload(draft.id, req.user.id, payloadStr);
+  }
+  res.json({ success: true });
+});
+
+// ── Delete ───────────────────────────────────────────────────────
+router.delete('/drafts/:id', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const deleted = cmaDraftRepo.deleteById(req.params.id, req.user.id);
+  if (!deleted) { res.status(404).json({ error: 'Draft not found' }); return; }
+  res.json({ success: true });
+});
+
+// ── Mark exported (called after xlsx download) ───────────────────
+// Stamps exported_at so the dashboard list can show "last exported
+// 3 days ago" badges and the user knows which drafts they've already
+// shipped to the bank.
+router.post('/drafts/:id/mark-exported', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const ok = cmaDraftRepo.markExported(req.params.id, req.user.id);
+  if (!ok) { res.status(404).json({ error: 'Draft not found' }); return; }
+  res.json({ success: true });
+});
+
+export default router;

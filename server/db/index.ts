@@ -176,6 +176,24 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_partnership_deeds_user_id ON partnership
 db.exec("CREATE INDEX IF NOT EXISTS idx_partnership_deeds_updated_at ON partnership_deeds(updated_at DESC)");
 db.exec("CREATE INDEX IF NOT EXISTS idx_partnership_deeds_billing ON partnership_deeds(billing_user_id)");
 
+// CMA drafts — Credit Monitoring Arrangement workflow. No template
+// enum, no async generation status (Excel emission is synchronous),
+// so the table is plain CRUD over a JSON ui_payload. See
+// src/components/cma/lib/uiModel.ts for the payload shape.
+db.exec(`CREATE TABLE IF NOT EXISTS cma_drafts (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  billing_user_id TEXT,
+  name TEXT NOT NULL,
+  ui_payload TEXT NOT NULL DEFAULT '{}',
+  exported_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+)`);
+db.exec("CREATE INDEX IF NOT EXISTS idx_cma_drafts_user_id ON cma_drafts(user_id)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_cma_drafts_updated_at ON cma_drafts(updated_at DESC)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_cma_drafts_billing ON cma_drafts(billing_user_id)");
+
 // Indexes for clients table (CA bulk ITR filing)
 db.exec("CREATE INDEX IF NOT EXISTS idx_clients_user_id ON clients(user_id)");
 db.exec("CREATE INDEX IF NOT EXISTS idx_clients_pan ON clients(pan)");

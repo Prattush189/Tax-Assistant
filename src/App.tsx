@@ -12,6 +12,7 @@ import { useNoticeDrafter } from './hooks/useNoticeDrafter';
 import { useItrManager } from './hooks/useItrManager';
 import { useBoardResolutionManager } from './hooks/useBoardResolutionManager';
 import { usePartnershipDeedsManager } from './hooks/usePartnershipDeedsManager';
+import { useCMAManager } from './hooks/useCMAManager';
 import { useProfileManager } from './hooks/useProfileManager';
 import { useBankStatementManager } from './hooks/useBankStatementManager';
 import { useLedgerScrutinyManager } from './hooks/useLedgerScrutinyManager';
@@ -32,6 +33,7 @@ import { NoticeDrafterPage } from './components/notices/NoticeDrafterPage';
 import { ItrView } from './components/itr/ItrView';
 import { BoardResolutionView } from './components/board-resolutions/BoardResolutionView';
 import { PartnershipDeedView } from './components/partnership-deeds/PartnershipDeedView';
+import { CMAView } from './components/cma/CMAView';
 import { LegalView } from './components/legal/LegalView';
 import { BankStatementView } from './components/bank-statements/BankStatementView';
 import { BooksView } from './components/books/BooksView';
@@ -41,7 +43,7 @@ import { TaxCalculatorProvider } from './contexts/TaxCalculatorContext';
 import type { ParentToIframeMessage } from './lib/pluginProtocol';
 import { cn } from './lib/utils';
 
-type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions' | 'partnership_deeds' | 'bank_statements' | 'ledger_scrutiny';
+type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions' | 'partnership_deeds' | 'bank_statements' | 'ledger_scrutiny' | 'cma';
 
 /**
  * Dispatches SET_VIEW / SET_CALCULATOR_TAB / LOGOUT into local state.
@@ -111,6 +113,10 @@ function AppContent() {
   const bankStatementManager = useBankStatementManager(!!user);
   // Ledger scrutiny: open to all authenticated users (plan limits enforced server-side).
   const ledgerScrutinyManager = useLedgerScrutinyManager(!!user);
+  // CMA report generator: open to all authenticated users. No plan
+  // gating in v1 (no Gemini cost) — gating layer can be added when
+  // we introduce per-feature usage caps.
+  const cmaManager = useCMAManager(!!user);
 
   // Trial expiry: free-plan users are locked out after 30 days.
   const isTrialExpired =
@@ -236,6 +242,11 @@ function AppContent() {
               {activeView === 'ledger_scrutiny' && (
                 <BooksView activeView={activeView} onViewChange={navigateTo}>
                   <LedgerScrutinyView manager={ledgerScrutinyManager} />
+                </BooksView>
+              )}
+              {activeView === 'cma' && (
+                <BooksView activeView={activeView} onViewChange={navigateTo}>
+                  <CMAView manager={cmaManager} />
                 </BooksView>
               )}
               {isTrialExpired && <TrialExpiredWall />}

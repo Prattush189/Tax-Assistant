@@ -1164,6 +1164,59 @@ export async function generatePartnershipDeed(
   }
 }
 
+// ── CMA Data Module API ─────────────────────────────────────────────────
+
+import type { CmaDraft } from '../components/cma/lib/uiModel';
+
+/** Server row shape — distinct from the wizard-side CmaDraft type
+ *  (server returns metadata fields like exported_at + timestamps;
+ *  ui_payload is the wizard's persisted state). */
+export interface CmaDraftRow {
+  id: string;
+  user_id: string;
+  name: string;
+  ui_payload: CmaDraft;
+  exported_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function fetchCmaDrafts(): Promise<{ drafts: CmaDraftRow[] }> {
+  return authFetch('/api/cma/drafts');
+}
+
+export async function fetchCmaDraft(id: string): Promise<CmaDraftRow> {
+  return authFetch(`/api/cma/drafts/${id}`);
+}
+
+export async function createCmaDraft(input: {
+  name: string;
+  ui_payload?: CmaDraft;
+}): Promise<CmaDraftRow> {
+  return authFetch('/api/cma/drafts', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function updateCmaDraft(
+  id: string,
+  patch: { name?: string; ui_payload?: CmaDraft },
+): Promise<void> {
+  await authFetch(`/api/cma/drafts/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+}
+
+export async function deleteCmaDraft(id: string): Promise<void> {
+  await authFetch(`/api/cma/drafts/${id}`, { method: 'DELETE' });
+}
+
+export async function markCmaExported(id: string): Promise<void> {
+  await authFetch(`/api/cma/drafts/${id}/mark-exported`, { method: 'POST' });
+}
+
 // ── Income Tax portal import ────────────────────────────────────────────
 
 export interface ItPortalImportResult {

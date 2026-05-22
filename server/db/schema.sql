@@ -231,6 +231,28 @@ CREATE TABLE IF NOT EXISTS partnership_deeds (
   updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
 );
 
+-- CMA (Credit Monitoring Arrangement) drafts. Used by CAs to prepare
+-- bank-ready CMA reports for client loan applications. Unlike partnership
+-- deeds, CMA generation is pure computation (no AI streaming) so this
+-- table doesn't need status / file_hash / error_message — the Excel
+-- output is generated on demand from ui_payload.
+--
+-- ui_payload carries the full wizard state: historical P&L + BS imports,
+-- column mapping to canonical accounts, growth assumptions, term-loan
+-- inputs, MPBF method choice, stress-test toggle, projection horizon
+-- (3 or 5 years). See src/components/cma/lib/uiModel.ts for the
+-- TypeScript shape.
+CREATE TABLE IF NOT EXISTS cma_drafts (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  billing_user_id TEXT,
+  name TEXT NOT NULL,
+  ui_payload TEXT NOT NULL DEFAULT '{}',
+  exported_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+);
+
 -- Clients table for CA bulk ITR filing management
 CREATE TABLE IF NOT EXISTS clients (
   id TEXT PRIMARY KEY,
