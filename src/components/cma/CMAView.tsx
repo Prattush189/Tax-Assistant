@@ -19,6 +19,15 @@ import {
   type CmaStepId,
   type CmaDraft,
 } from './lib/uiModel';
+import { UploadStep } from './steps/UploadStep';
+import { FirmInfoStep } from './steps/FirmInfoStep';
+import { MappingStep } from './steps/MappingStep';
+import { HorizonStep } from './steps/HorizonStep';
+import { AssumptionsStep } from './steps/AssumptionsStep';
+import { WorkingCapitalStep } from './steps/WorkingCapitalStep';
+import { TermLoansStep } from './steps/TermLoansStep';
+import { StressStep } from './steps/StressStep';
+import { ReviewStep } from './steps/ReviewStep';
 
 interface Props {
   manager: CMAManager;
@@ -114,7 +123,7 @@ export function CMAView({ manager }: Props) {
               <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">{STEP_LABELS[step]}</h2>
               <p className="text-sm text-gray-500 dark:text-gray-500 mt-0.5">{STEP_DESCRIPTIONS[step]}</p>
             </div>
-            <StepBody step={step} draft={draft} onChange={updateDraft} />
+            <StepBody step={step} draft={draft} draftId={manager.currentId} onChange={updateDraft} />
           </div>
         </div>
         {/* Bottom nav */}
@@ -153,40 +162,25 @@ export function CMAView({ manager }: Props) {
 }
 
 // ── Step body dispatcher ────────────────────────────────────────
-// Each step gets its real implementation in Phases 2-6. For now we
-// render a "Coming in Phase N" placeholder so the wizard navigation
-// is testable end-to-end before the math lands.
 
 interface StepBodyProps {
   step: CmaStepId;
   draft: CmaDraft;
+  draftId: string | null;
   onChange: (patch: Partial<CmaDraft>) => void;
 }
 
-function StepBody({ step }: StepBodyProps) {
-  return (
-    <div className="rounded-2xl border border-dashed border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900/40 p-8 text-center">
-      <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-        {STEP_LABELS[step]} — placeholder
-      </p>
-      <p className="text-xs text-gray-500 dark:text-gray-400">
-        {placeholderHint(step)}
-      </p>
-    </div>
-  );
-}
-
-function placeholderHint(step: CmaStepId): string {
+function StepBody({ step, draft, draftId, onChange }: StepBodyProps) {
   switch (step) {
-    case 'upload': return 'Phase 2 — Excel upload + sheet picker';
-    case 'firmInfo': return 'Phase 2 — Firm identity form';
-    case 'mapping': return 'Phase 2 — Column-to-canonical-account wizard';
-    case 'horizon': return 'Phase 3 — 3/5-year toggle + MPBF method picker';
-    case 'assumptions': return 'Phase 3 — Per-line growth assumptions';
-    case 'workingCapital': return 'Phase 3 — Cycle days / % of sales selector';
-    case 'termLoans': return 'Phase 3 — Existing + proposed loan schedules';
-    case 'stress': return 'Phase 5 — Stress-test toggle';
-    case 'review': return 'Phase 6 — Generate + Excel download';
+    case 'upload':         return <UploadStep draft={draft} onChange={onChange} />;
+    case 'firmInfo':       return <FirmInfoStep draft={draft} onChange={onChange} />;
+    case 'mapping':        return <MappingStep draft={draft} onChange={onChange} />;
+    case 'horizon':        return <HorizonStep draft={draft} onChange={onChange} />;
+    case 'assumptions':    return <AssumptionsStep draft={draft} onChange={onChange} />;
+    case 'workingCapital': return <WorkingCapitalStep draft={draft} onChange={onChange} />;
+    case 'termLoans':      return <TermLoansStep draft={draft} onChange={onChange} />;
+    case 'stress':         return <StressStep draft={draft} onChange={onChange} />;
+    case 'review':         return <ReviewStep draft={draft} draftId={draftId} />;
   }
 }
 

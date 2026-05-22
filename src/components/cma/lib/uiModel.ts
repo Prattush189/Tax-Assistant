@@ -117,6 +117,11 @@ export interface HistoricalUpload {
   /** Year labels the user identified (e.g. ["FY 23-24", "FY 24-25"]).
    *  Used to label columns in the projected output. */
   yearLabels?: string[];
+  /** Column index in `rows` holding the earlier year's values. The
+   *  user picks these on the Mapping step; we default to the last
+   *  two non-empty columns if not set. */
+  yearColumnA?: number;
+  yearColumnB?: number;
 }
 
 /** Mapping from uploaded line items (by row index) onto canonical
