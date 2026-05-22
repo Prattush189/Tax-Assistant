@@ -4,7 +4,7 @@ import { usageRepo } from '../db/repositories/usageRepo.js';
 import { AuthRequest } from '../types.js';
 import db from '../db/index.js';
 import { getBillingUser } from '../lib/billing.js';
-import { getEffectivePlan, getUsagePeriodStart } from '../lib/planLimits.js';
+import { getEffectivePlan, getUsagePeriodStart, PLAN_DEFAULTS } from '../lib/planLimits.js';
 import { licenseKeyRepo } from '../db/repositories/licenseKeyRepo.js';
 import { paymentRepo } from '../db/repositories/paymentRepo.js';
 import { issueExternalApiKey, listExternalApiKeys, revokeExternalApiKey, setExternalWebhookUrl } from '../lib/externalApiKey.js';
@@ -233,18 +233,34 @@ router.get('/users/:id/details', (req: AuthRequest, res: Response) => {
   const periodStart = getUsagePeriodStart(billing);
   const tokensThisPeriod = usageRepo.sumTokensSinceForBillingUser(billing.id, periodStart);
   const effectivePlan = getEffectivePlan(billing);
-  const PLAN_BUDGETS: Record<string, number> = {
-    free: 250_000, pro: 2_000_000, enterprise: 6_000_000,
-  };
-  const tokenBudget = PLAN_BUDGETS[effectivePlan] ?? PLAN_BUDGETS.free;
+  // Single source of truth: planLimits.ts owns the per-plan token
+  // budgets. The local hard-coded table that used to sit here drifted
+  // 10× below reality (pro: 2M, enterprise: 6M — versus the real
+  // 20M / 60M) and silently mis-rendered the budget bar for paid
+  // accounts. Reading directly from PLAN_DEFAULTS keeps admin in
+  // lockstep with the actual quota gate (tokenQuota.ts uses
+  // getUserLimits().monthlyTokenBudget which reads the same table).
+  const tokenBudget = PLAN_DEFAULTS[effectivePlan].monthlyTokenBudget;
 
-  // Cumulative totals across api_usage (excluding failed). Same filter
-  // sumTokensThisMonth uses, so totals add up.
+  // Cumulative totals across api_usage (excluding failed). Inputs +
+  // outputs use the same weighted-token expression the quota gate
+  // sums (see usageRepo.sumTokensThisMonthByBillingUser) — when
+  // weighted_tokens > 0 (post-modelWeights backfill), use that;
+  // otherwise fall back to raw input+output. Without this, the
+  // admin "Total tokens" displayed a different number than what
+  // the budget bar measured against, by exactly the model-weight
+  // factor (T2 input vs T1 output etc).
+  //
+  // We still expose total_input_tokens and total_output_tokens
+  // separately for the "X in · Y out" tile and the avg-cost-per-
+  // 1M-tokens computation. Those legitimately want raw token counts
+  // (cost is paid on raw tokens, not weighted), so keep both.
   const totals = db.prepare(`
     SELECT
       COUNT(*) AS requests,
       COALESCE(SUM(input_tokens), 0) AS total_input_tokens,
       COALESCE(SUM(output_tokens), 0) AS total_output_tokens,
+      COALESCE(SUM(CASE WHEN weighted_tokens > 0 THEN weighted_tokens ELSE (input_tokens + output_tokens) END), 0) AS total_weighted_tokens,
       COALESCE(SUM(cost), 0) AS total_cost,
       MAX(created_at) AS last_used
     FROM api_usage
@@ -253,17 +269,21 @@ router.get('/users/:id/details', (req: AuthRequest, res: Response) => {
     requests: number;
     total_input_tokens: number;
     total_output_tokens: number;
+    total_weighted_tokens: number;
     total_cost: number;
     last_used: string | null;
   };
 
   // Daily history — last 30 days, one row per day (gaps fine, UI fills 0s).
+  // Same weighted-token rationale as totals above. The daily chart's
+  // bars need to match the budget bar so the trend reads consistently.
   const daily = db.prepare(`
     SELECT
       DATE(created_at) AS date,
       COUNT(*) AS requests,
       COALESCE(SUM(input_tokens), 0) AS input_tokens,
       COALESCE(SUM(output_tokens), 0) AS output_tokens,
+      COALESCE(SUM(CASE WHEN weighted_tokens > 0 THEN weighted_tokens ELSE (input_tokens + output_tokens) END), 0) AS weighted_tokens,
       COALESCE(SUM(cost), 0) AS cost
     FROM api_usage
     WHERE user_id = ?
@@ -276,6 +296,7 @@ router.get('/users/:id/details', (req: AuthRequest, res: Response) => {
     requests: number;
     input_tokens: number;
     output_tokens: number;
+    weighted_tokens: number;
     cost: number;
   }>;
 
@@ -308,8 +329,16 @@ router.get('/users/:id/details', (req: AuthRequest, res: Response) => {
 
   // Avg cost per 1M tokens — what the user actually wants to see at a
   // glance, normalised across input + output. Guard against div-by-zero.
-  const totalTokens = totals.total_input_tokens + totals.total_output_tokens;
-  const avgCostPer1MUsd = totalTokens > 0 ? (totals.total_cost / totalTokens) * 1_000_000 : 0;
+  // Uses RAW input + output (not weighted) because cost is billed by
+  // Gemini on raw token counts, not weighted ones — the weighted
+  // version would inflate the divisor and understate per-1M cost.
+  const totalRawTokens = totals.total_input_tokens + totals.total_output_tokens;
+  // "Total tokens" headline (admin card + budget bar consistency)
+  // uses the weighted figure so it matches what the quota gate sums.
+  // Falls back to raw when weighted_tokens hasn't been backfilled yet
+  // (the COALESCE inside the SQL handles this row-by-row).
+  const totalTokens = totals.total_weighted_tokens;
+  const avgCostPer1MUsd = totalRawTokens > 0 ? (totals.total_cost / totalRawTokens) * 1_000_000 : 0;
   const usdToInr = 85;
 
   res.json({

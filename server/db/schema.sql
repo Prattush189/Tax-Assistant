@@ -288,6 +288,27 @@ CREATE TABLE IF NOT EXISTS bank_statements (
   updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
 );
 
+-- Per-transaction anomaly flags emitted by the Phase 2 anomaly
+-- detector. A single transaction can have multiple anomalies (e.g.
+-- an outlier amount AND a new counterparty) — each is a separate
+-- row. CASCADE on bank_transactions DELETE so reanalyze (which
+-- bulk-deletes + reinserts transactions) automatically clears
+-- stale anomalies.
+CREATE TABLE IF NOT EXISTS bank_transaction_anomalies (
+  id TEXT PRIMARY KEY,
+  transaction_id TEXT NOT NULL REFERENCES bank_transactions(id) ON DELETE CASCADE,
+  statement_id TEXT NOT NULL REFERENCES bank_statements(id) ON DELETE CASCADE,
+  anomaly_type TEXT NOT NULL CHECK(anomaly_type IN (
+    'outlier_amount',
+    'new_counterparty',
+    'round_cash_deposit',
+    'same_day_cash_cluster'
+  )),
+  severity TEXT NOT NULL CHECK(severity IN ('info', 'warn')),
+  reason TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+);
+
 -- Bank transactions: one row per parsed transaction. amount is signed
 -- (positive = credit / inflow, negative = debit / outflow). user_override = 1
 -- when a human has reassigned the category away from the AI-inferred one.
@@ -304,7 +325,15 @@ CREATE TABLE IF NOT EXISTS bank_transactions (
   reference TEXT,
   is_recurring INTEGER NOT NULL DEFAULT 0,
   user_override INTEGER NOT NULL DEFAULT 0,
-  sort_index INTEGER NOT NULL DEFAULT 0
+  sort_index INTEGER NOT NULL DEFAULT 0,
+  -- Normalised narration signature (extractNarrationFingerprint).
+  -- Used by the anomaly detector's "new counterparty" rule (cross-
+  -- statement query within the billing user's prior 12 months) and
+  -- by the party-wise breakdown as a fallback grouping key when
+  -- counterparty extraction returned null. Existing rows pre-
+  -- migration stay NULL — queries that depend on this column must
+  -- treat NULL as "no signal" rather than "matches everything".
+  fingerprint TEXT
 );
 
 -- User-defined rules: if a narration contains `match_text` (case-insensitive),
@@ -317,6 +346,52 @@ CREATE TABLE IF NOT EXISTS bank_statement_rules (
   category TEXT,
   counterparty_label TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+);
+
+-- Learned classifications. Implicit per-firm memory: when the user
+-- corrects a row's category and explicitly chooses to remember it (or
+-- when the same fingerprint is corrected twice in a session), we
+-- store a normalized fingerprint -> category mapping here. The
+-- classifier consults this table BEFORE the deterministic anchors
+-- and AI fallback, so the firm gradually teaches the system its own
+-- recurring counterparties without re-explaining them every statement.
+--
+-- Scope is `billing_user_id` (not `user_id`) so CAs in the same firm
+-- share learned rules — Pratik teaches "ACME DISTRIBUTORS = Inventory
+-- Purchase" once, Riya benefits on her next upload. Aligns with the
+-- existing feature_usage / bank_statements billing scope.
+--
+-- `direction_scope` lets the same counterparty have different rules
+-- for credit vs debit transactions (e.g. HDFC BANK = Loan Repayment
+-- when debit, but = Transfer when credit). Default 'either' applies
+-- to both directions.
+--
+-- Soft-delete via `disabled_at` rather than hard delete: disabled
+-- rules stop applying but stay in the table so the user can re-enable
+-- via the management page. Hard-delete only on explicit user action.
+CREATE TABLE IF NOT EXISTS learned_classifications (
+  id TEXT PRIMARY KEY,
+  billing_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  fingerprint TEXT NOT NULL,
+  category TEXT NOT NULL,
+  subcategory TEXT,
+  direction_scope TEXT NOT NULL DEFAULT 'either' CHECK(direction_scope IN ('credit', 'debit', 'either')),
+  -- Sample narration that taught this rule — surfaced in the
+  -- management UI so the user can see "what this rule looks like in
+  -- practice" without inspecting the (normalized) fingerprint string.
+  sample_narration TEXT,
+  -- Number of rows this rule has been applied to since creation.
+  -- Tells the user which learned rules are pulling weight; low-hit
+  -- rules surface in the management UI as candidates for review.
+  hit_count INTEGER NOT NULL DEFAULT 0,
+  -- Who taught it (within the firm). NULL when the original user has
+  -- been deleted but the rule survives — ON DELETE SET NULL keeps
+  -- the rule alive but drops the attribution.
+  created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  disabled_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
+  last_applied_at TEXT
 );
 
 -- Free-form per-user conditions appended to the bank-statement parse prompt.

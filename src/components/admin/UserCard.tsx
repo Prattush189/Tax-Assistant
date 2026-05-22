@@ -375,11 +375,16 @@ function Stat({
 }
 
 function DailyBars({ daily }: { daily: AdminUserDetails['daily'] }) {
-  const max = Math.max(1, ...daily.map(d => d.input_tokens + d.output_tokens));
+  // Use weighted tokens (model-weight × raw) when present so the
+  // chart matches the budget bar. Falls back to raw input+output
+  // for pre-backfill rows where weighted_tokens isn't populated.
+  const tokensFor = (d: AdminUserDetails['daily'][number]) =>
+    d.weighted_tokens && d.weighted_tokens > 0 ? d.weighted_tokens : d.input_tokens + d.output_tokens;
+  const max = Math.max(1, ...daily.map(tokensFor));
   return (
     <div className="flex items-end gap-1 h-20">
       {daily.map(d => {
-        const total = d.input_tokens + d.output_tokens;
+        const total = tokensFor(d);
         const h = Math.max(2, Math.round((total / max) * 80));
         return (
           <div

@@ -193,6 +193,61 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_bank_tx_statement_id ON bank_transaction
 db.exec("CREATE INDEX IF NOT EXISTS idx_bank_tx_category ON bank_transactions(category)");
 db.exec("CREATE INDEX IF NOT EXISTS idx_bank_rules_user_id ON bank_statement_rules(user_id)");
 
+// bank_transaction_anomalies — Phase 2 anomaly flags. CREATE TABLE
+// IF NOT EXISTS for fresh installs + existing databases. CASCADE
+// on bank_transactions DELETE clears stale anomalies when a
+// statement is reanalysed (the bulk-delete + reinsert flow).
+db.exec(`CREATE TABLE IF NOT EXISTS bank_transaction_anomalies (
+  id TEXT PRIMARY KEY,
+  transaction_id TEXT NOT NULL REFERENCES bank_transactions(id) ON DELETE CASCADE,
+  statement_id TEXT NOT NULL REFERENCES bank_statements(id) ON DELETE CASCADE,
+  anomaly_type TEXT NOT NULL CHECK(anomaly_type IN (
+    'outlier_amount',
+    'new_counterparty',
+    'round_cash_deposit',
+    'same_day_cash_cluster'
+  )),
+  severity TEXT NOT NULL CHECK(severity IN ('info', 'warn')),
+  reason TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+)`);
+db.exec("CREATE INDEX IF NOT EXISTS idx_anomalies_statement ON bank_transaction_anomalies(statement_id)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_anomalies_transaction ON bank_transaction_anomalies(transaction_id)");
+
+// learned_classifications — per-firm memory layer for bank-statement
+// classification. Created as a regular CREATE TABLE IF NOT EXISTS so
+// fresh installs and existing databases both pick it up; schema.sql
+// carries the full table definition.
+//
+// Three indexes:
+//   - lookup        : hot-path classifier query, (billing_user_id,
+//                     fingerprint) filtered to active rows
+//   - management    : Settings page list view, (billing_user_id,
+//                     updated_at DESC)
+//   - unique-active : enforces one active rule per (billing_user,
+//                     fingerprint, direction_scope) so a re-learn
+//                     overwrites the old one cleanly. Partial on
+//                     disabled_at IS NULL so disabled rules don't
+//                     compete with active ones.
+db.exec(`CREATE TABLE IF NOT EXISTS learned_classifications (
+  id TEXT PRIMARY KEY,
+  billing_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  fingerprint TEXT NOT NULL,
+  category TEXT NOT NULL,
+  subcategory TEXT,
+  direction_scope TEXT NOT NULL DEFAULT 'either' CHECK(direction_scope IN ('credit', 'debit', 'either')),
+  sample_narration TEXT,
+  hit_count INTEGER NOT NULL DEFAULT 0,
+  created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  disabled_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
+  last_applied_at TEXT
+)`);
+db.exec("CREATE INDEX IF NOT EXISTS idx_learned_classifications_lookup ON learned_classifications(billing_user_id, fingerprint) WHERE disabled_at IS NULL");
+db.exec("CREATE INDEX IF NOT EXISTS idx_learned_classifications_billing ON learned_classifications(billing_user_id, updated_at DESC)");
+db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_learned_classifications_unique ON learned_classifications(billing_user_id, fingerprint, direction_scope) WHERE disabled_at IS NULL");
+
 // Reload-resume support for bank_statements: status / file_hash / error_message
 // columns so a row can be created upfront with status='analyzing', survive
 // tab close, and be picked up via the same hash on retry. Mirrors the ledger
@@ -534,7 +589,11 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_obs_account_id ON ledger_observat
   }
 }
 
-// Add counterparty/reference columns if upgrading from an earlier feature-branch build.
+// Add counterparty/reference/fingerprint columns if upgrading from an
+// earlier feature-branch build. `fingerprint` (2026-05) powers the
+// Phase 2 anomaly detector's "new counterparty" rule and the Phase 3
+// party-wise breakdown's fallback grouping when counterparty is null.
+// Existing rows stay NULL — queries treat NULL as "no signal".
 {
   const txCols = (db.prepare("PRAGMA table_info(bank_transactions)").all() as { name: string }[]).map(c => c.name);
   if (!txCols.includes('counterparty')) {
@@ -542,6 +601,14 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_obs_account_id ON ledger_observat
   }
   if (!txCols.includes('reference')) {
     db.exec("ALTER TABLE bank_transactions ADD COLUMN reference TEXT");
+  }
+  if (!txCols.includes('fingerprint')) {
+    db.exec("ALTER TABLE bank_transactions ADD COLUMN fingerprint TEXT");
+    // Composite index used by the anomaly detector's "have we seen
+    // this fingerprint anywhere in the firm's history?" query —
+    // joins via bank_statements.billing_user_id. The leading
+    // fingerprint lets the planner scan only matching rows.
+    db.exec("CREATE INDEX IF NOT EXISTS idx_bank_tx_fingerprint ON bank_transactions(fingerprint, statement_id)");
   }
 }
 

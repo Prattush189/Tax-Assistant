@@ -19,12 +19,59 @@ export function TransactionTable({ transactions, manager }: Props) {
     );
   }
 
+  // After a category change, prompt the user to remember it for
+  // future similar entries. Default action (toast auto-dismisses
+  // or user does nothing) = just-this-row, matching the locked
+  // precedence: every correction is saved, but learning is opt-in.
+  // Clicking "Remember" re-issues the PATCH with remember=always,
+  // and the server upserts a learned rule scoped to the firm.
   const handleChange = async (txId: string, category: string) => {
+    const tx = transactions.find((t) => t.id === txId);
     try {
       await manager.reassignCategory(txId, category);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to update category');
+      return;
     }
+    // Best-effort: only offer remember when we still have the row in
+    // scope (always true here since we just looked it up). The toast
+    // has a sticky duration so the user has time to decide, but is
+    // dismissable if they want to move on.
+    const sampleLabel = (tx?.counterparty || tx?.narration || '').slice(0, 40) || 'similar entries';
+    toast((t) => (
+      <div className="flex items-center gap-3">
+        <span className="text-sm">
+          Set to <span className="font-medium">{category}</span>. Remember for similar entries to <span className="font-medium">{sampleLabel}</span>?
+        </span>
+        <button
+          type="button"
+          className="text-xs font-medium px-2 py-1 rounded-md bg-emerald-600 text-white hover:bg-emerald-700"
+          onClick={() => {
+            // Fire the upsert in the background — no need to await
+            // before dismissing the toast. The reassignCategory hook
+            // sends remember:'always' which makes the server PATCH
+            // call upsert the learned rule (the row's category is
+            // already correct from the first PATCH, so this is a
+            // pure no-op on the bank_transactions table).
+            void manager.reassignCategory(txId, category, null, { remember: 'always' }).then((res) => {
+              toast.dismiss(t.id);
+              if (res?.learned) {
+                toast.success(`Remembered. Will auto-apply to similar entries going forward.`, { duration: 4000 });
+              }
+            });
+          }}
+        >
+          Remember
+        </button>
+        <button
+          type="button"
+          className="text-xs text-gray-500 hover:text-gray-800 dark:hover:text-gray-200"
+          onClick={() => toast.dismiss(t.id)}
+        >
+          Dismiss
+        </button>
+      </div>
+    ), { duration: 6000 });
   };
 
   return (
@@ -48,7 +95,10 @@ export function TransactionTable({ transactions, manager }: Props) {
               const meta = CATEGORY_META[cat];
               const isCredit = t.amount >= 0;
               return (
-                <tr key={t.id} className="hover:bg-gray-50 dark:hover:bg-gray-900/20">
+                // id={`tx-${id}`} so the FlaggedTransactions component
+                // can scroll a flagged row into view via scrollIntoView.
+                // Adds zero visual weight; pure anchor target.
+                <tr key={t.id} id={`tx-${t.id}`} className="hover:bg-gray-50 dark:hover:bg-gray-900/20 transition-shadow">
                   <td className="px-4 py-2.5 whitespace-nowrap text-gray-700 dark:text-gray-300">{formatDate(t.date)}</td>
                   <td className="px-4 py-2.5 max-w-xs">
                     <div className="flex items-center gap-1.5">

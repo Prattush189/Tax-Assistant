@@ -16,6 +16,7 @@ import {
   deleteBankStatementCondition,
   BankStatementSummary,
   BankTransaction,
+  BankTransactionAnomaly,
   BankStatementRule,
   BankStatementCondition,
   BankStatementAnalyzeProgress,
@@ -24,6 +25,10 @@ import {
 export type BankStatementDetail = {
   statement: BankStatementSummary;
   transactions: BankTransaction[];
+  /** Phase 2 anomaly flags surfaced by the detector. Optional —
+   *  pre-Phase-2 statements have none, and statements with zero
+   *  detected anomalies omit the array entirely. */
+  anomalies?: BankTransactionAnomaly[];
   /** True when the server short-circuited because this exact file was
    *  already analyzed successfully — we surface a different toast
    *  ("opened the existing one") so the user understands no new
@@ -245,9 +250,35 @@ export function useBankStatementManager(enabled: boolean) {
   }, [refresh]);
 
   const reassignCategory = useCallback(
-    async (txId: string, category: string, subcategory?: string | null) => {
-      if (!current) return;
-      await updateBankTransaction(current.statement.id, txId, category, subcategory ?? null);
+    async (
+      txId: string,
+      category: string,
+      subcategory?: string | null,
+      options?: { remember?: 'always' },
+    ) => {
+      if (!current) return { learned: null } as const;
+      // Look up the row so we can pass narration to the server when
+      // the user wants to remember. The server fingerprints it for
+      // the learned-rules table.
+      const tx = current.transactions.find((t) => t.id === txId);
+      const result = await updateBankTransaction(
+        current.statement.id,
+        txId,
+        category,
+        subcategory ?? null,
+        options?.remember
+          ? {
+            remember: 'always',
+            narration: tx?.narration ?? '',
+            // Direction defaults to 'either' — the same counterparty
+            // commonly appears on both credit and debit sides for
+            // related transactions (e.g. a vendor we both pay and
+            // receive refunds from). User can scope tighter via the
+            // management page if needed.
+            direction: 'either',
+          }
+          : undefined,
+      );
       setCurrent((prev) => {
         if (!prev) return prev;
         return {
@@ -259,6 +290,7 @@ export function useBankStatementManager(enabled: boolean) {
           ),
         };
       });
+      return result;
     },
     [current],
   );

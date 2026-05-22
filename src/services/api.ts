@@ -353,6 +353,10 @@ export interface AdminUserDetails {
   daily: Array<{
     date: string; requests: number;
     input_tokens: number; output_tokens: number;
+    /** Weighted total (model-weight × raw tokens). Matches the
+     *  quota gate's accounting so the chart and the budget bar
+     *  align. Optional for safety on legacy admin responses. */
+    weighted_tokens?: number;
     cost: number; cost_inr: number;
   }>;
   recent: Array<{
@@ -1844,6 +1848,10 @@ export interface BankTransaction {
   reference: string | null;
   isRecurring: boolean;
   userOverride: boolean;
+  /** Normalized narration signature — used by the party-wise
+   *  breakdown as a fallback grouping key when counterparty
+   *  extraction returned null. Pre-Phase-2 rows are null. */
+  fingerprint?: string | null;
 }
 
 export interface BankStatementRule {
@@ -1872,7 +1880,18 @@ export async function fetchBankStatements(): Promise<{
   return authFetch('/api/bank-statements');
 }
 
-export async function fetchBankStatement(id: string): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[]; alreadyAnalyzed?: boolean }> {
+/** A flagged transaction surfaced by the Phase 2 anomaly detector.
+ *  One transaction can produce multiple anomalies (e.g. outlier
+ *  amount AND new counterparty); each is a separate object here. */
+export interface BankTransactionAnomaly {
+  id: string;
+  transactionId: string;
+  type: 'outlier_amount' | 'new_counterparty' | 'round_cash_deposit' | 'same_day_cash_cluster';
+  severity: 'info' | 'warn';
+  reason: string;
+}
+
+export async function fetchBankStatement(id: string): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[]; anomalies?: BankTransactionAnomaly[]; alreadyAnalyzed?: boolean }> {
   return authFetch(`/api/bank-statements/${id}`);
 }
 
@@ -1885,7 +1904,7 @@ export interface BankStatementAnalyzeProgress {
 export async function analyzeBankStatementFile(
   file: File,
   _onProgress?: (p: BankStatementAnalyzeProgress) => void,
-): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[]; alreadyAnalyzed?: boolean }> {
+): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[]; anomalies?: BankTransactionAnomaly[]; alreadyAnalyzed?: boolean }> {
   // Vision-only fallback path. The "TSV via Gemini text extraction"
   // path used to live here — when the client could pull a text layer
   // out of the PDF, we'd send raw text to the server and have Gemini
@@ -1945,7 +1964,7 @@ export async function analyzeBankStatementFile(
 //   - analyzeBankStatementFile : vision multipart for un-grid-able PDFs
 //   - analyzeBankStatementCsv  : wizard-mapped uploads (the cheap path)
 
-export async function analyzeBankStatementCsv(csvText: string, filename?: string): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[]; alreadyAnalyzed?: boolean }> {
+export async function analyzeBankStatementCsv(csvText: string, filename?: string): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[]; anomalies?: BankTransactionAnomaly[]; alreadyAnalyzed?: boolean }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 120_000);
   const doFetch = () => fetch('/api/bank-statements/analyze', {
@@ -1988,16 +2007,91 @@ export async function cancelBankStatement(id: string): Promise<{ statement: Bank
   return authFetch(`/api/bank-statements/${id}/cancel`, { method: 'POST' });
 }
 
+/** Shape of a learned classification surfaced by the backend (the
+ *  per-firm memory rule that maps narration fingerprints to categories).
+ *  Returned by the `learned` field on reclassify responses and as
+ *  list entries from the management endpoint. */
+export interface LearnedClassification {
+  id: string;
+  fingerprint: string;
+  category: string;
+  subcategory: string | null;
+  directionScope: 'credit' | 'debit' | 'either';
+  sampleNarration: string | null;
+  hitCount: number;
+  createdByName: string | null;
+  disabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastAppliedAt: string | null;
+}
+
 export async function updateBankTransaction(
   statementId: string,
   txId: string,
   category: string,
   subcategory?: string | null,
-): Promise<void> {
-  await authFetch(`/api/bank-statements/${statementId}/transactions/${txId}`, {
+  options?: {
+    /** When 'always', the server upserts a learned rule for this
+     *  narration's fingerprint scoped to the firm. The next analyze
+     *  run that sees a similar narration auto-applies this category
+     *  without an AI roundtrip. */
+    remember?: 'always';
+    /** Required when remember === 'always' — the narration the server
+     *  fingerprints to build the rule key. The frontend already has
+     *  this on the row; passing it avoids a server-side DB read. */
+    narration?: string;
+    /** Scope the rule to one direction or both. Default 'either' —
+     *  the same counterparty often appears on both sides of the
+     *  ledger and the same category typically applies. */
+    direction?: 'credit' | 'debit' | 'either';
+  },
+): Promise<{ learned: LearnedClassification | null }> {
+  const body: Record<string, unknown> = {
+    category,
+    subcategory: subcategory ?? null,
+  };
+  if (options?.remember) {
+    body.remember = options.remember;
+    if (options.narration) body.narration = options.narration;
+    if (options.direction) body.direction = options.direction;
+  }
+  const data = (await authFetch(`/api/bank-statements/${statementId}/transactions/${txId}`, {
     method: 'PATCH',
-    body: JSON.stringify({ category, subcategory: subcategory ?? null }),
-  });
+    body: JSON.stringify(body),
+  })) as { learned?: LearnedClassification | null };
+  return { learned: data.learned ?? null };
+}
+
+// ── Learned classifications management ───────────────────────────
+
+export async function listLearnedClassifications(): Promise<{ rules: LearnedClassification[] }> {
+  return (await authFetch('/api/bank-statements/learned-rules')) as { rules: LearnedClassification[] };
+}
+
+export async function updateLearnedClassification(
+  ruleId: string,
+  patch: Partial<{ category: string; subcategory: string | null; disabled: boolean }>,
+): Promise<{ rule: LearnedClassification | null }> {
+  return (await authFetch(`/api/bank-statements/learned-rules/${ruleId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })) as { rule: LearnedClassification | null };
+}
+
+export async function deleteLearnedClassification(ruleId: string): Promise<void> {
+  await authFetch(`/api/bank-statements/learned-rules/${ruleId}`, { method: 'DELETE' });
+}
+
+export async function bulkUpdateLearnedClassifications(input: {
+  ids: string[];
+  category: string;
+  subcategory?: string | null;
+}): Promise<{ changed: number }> {
+  return (await authFetch('/api/bank-statements/learned-rules/bulk-update', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })) as { changed: number };
 }
 
 export async function downloadBankStatementCsv(id: string, suggestedName: string): Promise<void> {

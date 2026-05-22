@@ -6,7 +6,10 @@ import Papa from 'papaparse';
 import { extractVisionWithFallback } from '../lib/visionFallback.js';
 import { callGeminiJson, type GeminiJsonResult } from '../lib/geminiJson.js';
 import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_CATEGORIES, buildConditionsBlock, countWords, MAX_CONDITION_WORDS } from '../lib/bankStatementPrompt.js';
-import { classifyRow, extractCounterpartyAndReference, markRecurring, unifyAmbiguousCounterparties, validateDirectionCategory, applyRetailBusinessPromotion } from '../lib/bankClassifier.js';
+import { classifyWithLearning, extractCounterpartyAndReference, extractNarrationFingerprint, markRecurring, unifyAmbiguousCounterparties, validateDirectionCategory, applyRetailBusinessPromotion } from '../lib/bankClassifier.js';
+import { learnedClassificationsRepo } from '../db/repositories/learnedClassificationsRepo.js';
+import { detectAnomalies } from '../lib/bankAnomalyDetector.js';
+import { bankTransactionAnomalyRepo } from '../db/repositories/bankTransactionAnomalyRepo.js';
 import { costForModel } from '../lib/gemini.js';
 import { creditsForPages, creditsForCsvRows, PAGES_PER_CREDIT, CSV_ROWS_PER_CREDIT } from '../lib/creditPolicy.js';
 import { enforceTokenQuota } from '../lib/tokenQuota.js';
@@ -698,7 +701,18 @@ function persistStatement(
     rawExtracted: JSON.stringify(data),
     accountKind: accountKind,
   });
-  bankTransactionRepo.bulkInsert(statementId, txs);
+  // Compute narration fingerprint for each row before persist. Used
+  // by the Phase 2 anomaly detector's "new counterparty" rule (cross-
+  // statement history query) and as a fallback grouping key for the
+  // Phase 3 party-wise breakdown when counterparty extraction
+  // returned null. Empty fingerprints (pure-noise narrations) are
+  // stored as NULL — queries treat those as "no history available"
+  // rather than matching the empty string.
+  const txsWithFingerprint = txs.map((tx) => {
+    const fp = extractNarrationFingerprint(tx.narration);
+    return { ...tx, fingerprint: fp.length > 0 ? fp : null };
+  });
+  bankTransactionRepo.bulkInsert(statementId, txsWithFingerprint);
   bankStatementRepo.updateTotals(statementId, inflow, outflow, txs.length);
 
   return { txCount: txs.length, autoCorrected, mismatches, amountOverridden, phantomDropped: totalPhantomDropped, closingMismatch };
@@ -745,6 +759,10 @@ function serializeTransaction(row: ReturnType<typeof bankTransactionRepo.listByS
     reference: row.reference,
     isRecurring: row.is_recurring === 1,
     userOverride: row.user_override === 1,
+    // Phase 3 — exposed so the party-wise breakdown can fall back to
+    // fingerprint when counterparty extraction returned null. Legacy
+    // rows pre-Phase-2 stay null; the UI handles both cases.
+    fingerprint: row.fingerprint,
   };
 }
 
@@ -816,6 +834,115 @@ router.delete('/rules/:ruleId', (req: AuthRequest, res: Response) => {
   res.json({ success: true });
 });
 
+// ─── Learned Classifications ────────────────────────────────────────
+// Per-firm memory layer surfaced to the UI. Distinct from the legacy
+// `/rules` endpoints above (which are per-user match_text rules
+// entered manually). Learned rules are scoped to billing_user_id so
+// the whole firm shares them — Pratik teaches it once, Riya benefits.
+
+function serializeLearnedRule(
+  row: import('../db/repositories/learnedClassificationsRepo.js').LearnedClassificationRow & { created_by_name?: string | null },
+) {
+  return {
+    id: row.id,
+    fingerprint: row.fingerprint,
+    category: row.category,
+    subcategory: row.subcategory,
+    directionScope: row.direction_scope,
+    sampleNarration: row.sample_narration,
+    hitCount: row.hit_count,
+    createdByName: row.created_by_name ?? null,
+    disabled: !!row.disabled_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    lastAppliedAt: row.last_applied_at,
+  };
+}
+
+// GET /api/bank-statements/learned-rules — full list for the firm.
+// Listed by updatedAt DESC so recently-changed rules surface first.
+router.get('/learned-rules', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const actor = userRepo.findById(req.user.id);
+  if (!actor) { res.status(401).json({ error: 'User not found' }); return; }
+  const billingUser = getBillingUser(actor);
+  const rules = learnedClassificationsRepo
+    .listForBillingUser(billingUser.id)
+    .map(serializeLearnedRule);
+  res.json({ rules });
+});
+
+// PATCH /api/bank-statements/learned-rules/:ruleId — edit category /
+// subcategory, or toggle enabled/disabled. Accepts a partial body;
+// only the fields that need to change are sent.
+router.patch('/learned-rules/:ruleId', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const actor = userRepo.findById(req.user.id);
+  if (!actor) { res.status(401).json({ error: 'User not found' }); return; }
+  const billingUser = getBillingUser(actor);
+  const { ruleId } = req.params;
+  const rule = learnedClassificationsRepo.findById(ruleId, billingUser.id);
+  if (!rule) { res.status(404).json({ error: 'Rule not found' }); return; }
+
+  // Enable/disable toggle.
+  if (typeof req.body?.disabled === 'boolean') {
+    if (req.body.disabled) {
+      learnedClassificationsRepo.disable(ruleId, billingUser.id);
+    } else {
+      learnedClassificationsRepo.enable(ruleId, billingUser.id);
+    }
+  }
+  // Category / subcategory edit. Re-uses the upsert path so the unique
+  // (billing_user, fingerprint, direction) constraint is enforced.
+  if (typeof req.body?.category === 'string') {
+    const category = normalizeCategory(req.body.category);
+    if (!category) { res.status(400).json({ error: 'Invalid category' }); return; }
+    const subcategory = typeof req.body?.subcategory === 'string' ? req.body.subcategory : null;
+    learnedClassificationsRepo.upsert({
+      billingUserId: billingUser.id,
+      fingerprint: rule.fingerprint,
+      category,
+      subcategory,
+      directionScope: rule.direction_scope,
+      sampleNarration: rule.sample_narration,
+      createdByUserId: req.user.id,
+    });
+  }
+  const updated = learnedClassificationsRepo.findById(ruleId, billingUser.id);
+  res.json({ rule: updated ? serializeLearnedRule(updated) : null });
+});
+
+// DELETE /api/bank-statements/learned-rules/:ruleId — hard delete.
+// Distinct from PATCH { disabled: true } (soft-delete). UI exposes
+// both: "Disable" keeps the rule visible for re-enable, "Delete"
+// removes it entirely.
+router.delete('/learned-rules/:ruleId', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const actor = userRepo.findById(req.user.id);
+  if (!actor) { res.status(401).json({ error: 'User not found' }); return; }
+  const billingUser = getBillingUser(actor);
+  const ok = learnedClassificationsRepo.deleteById(req.params.ruleId, billingUser.id);
+  if (!ok) { res.status(404).json({ error: 'Rule not found' }); return; }
+  res.json({ success: true });
+});
+
+// POST /api/bank-statements/learned-rules/bulk-update — reassign the
+// category for many rules at once (the management page's bulk-edit
+// action). Single transaction so partial failures roll back.
+router.post('/learned-rules/bulk-update', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const actor = userRepo.findById(req.user.id);
+  if (!actor) { res.status(401).json({ error: 'User not found' }); return; }
+  const billingUser = getBillingUser(actor);
+  const ids = Array.isArray(req.body?.ids) ? (req.body.ids as unknown[]).filter((x): x is string => typeof x === 'string') : [];
+  if (ids.length === 0) { res.status(400).json({ error: 'ids array is required' }); return; }
+  const category = typeof req.body?.category === 'string' ? normalizeCategory(req.body.category) : null;
+  if (!category) { res.status(400).json({ error: 'category is required' }); return; }
+  const subcategory = typeof req.body?.subcategory === 'string' ? req.body.subcategory : null;
+  const changed = learnedClassificationsRepo.bulkUpdateCategory(billingUser.id, ids, category, subcategory);
+  res.json({ changed });
+});
+
 function serializeCondition(row: BankStatementConditionRow) {
   return { id: row.id, text: row.text, createdAt: row.created_at };
 }
@@ -854,9 +981,17 @@ router.get('/:id', (req: AuthRequest, res: Response) => {
   const row = bankStatementRepo.findByIdForUser(req.params.id, req.user.id);
   if (!row) { res.status(404).json({ error: 'Statement not found' }); return; }
   const txs = bankTransactionRepo.listByStatement(row.id);
+  const anomalies = bankTransactionAnomalyRepo.listByStatement(row.id);
   res.json({
     statement: serializeStatement(row),
     transactions: txs.map(serializeTransaction),
+    anomalies: anomalies.map((a) => ({
+      id: a.id,
+      transactionId: a.transaction_id,
+      type: a.anomaly_type,
+      severity: a.severity,
+      reason: a.reason,
+    })),
   });
 });
 
@@ -1121,18 +1256,33 @@ router.post(
               counterparty?: string | null;
               reference?: string | null;
             };
+            // Vision path post-pass: learned rules + deterministic anchors
+            // over the AI-extracted rows. The AI may have set its own
+            // category already, but we let our deterministic layers win
+            // — same rationale as the CSV path: testable, free, and the
+            // memory layer captures the user's specific corrections.
+            const visionLearnedLookup = (fp: string, dir: 'credit' | 'debit') =>
+              learnedClassificationsRepo.lookupForClassify(quota.billingUserId, fp, dir);
+            const visionTierCounts = { learned: 0, anchor: 0, unclassified: 0, conflicts: 0 };
+            const visionLearnedHitIds = new Set<string>();
             for (const row of extracted.transactions as VisionRow[]) {
               if (!row || typeof row.narration !== 'string') continue;
-              const classified = classifyRow({
-                narration: row.narration,
-                type: row.type,
-                amount: typeof row.amount === 'number' ? row.amount : 0,
-              });
-              if (classified) {
-                row.category = classified.category;
-                row.subcategory = classified.subcategory;
-                row.counterparty = classified.counterparty;
-                row.reference = classified.reference;
+              const out = classifyWithLearning(
+                {
+                  narration: row.narration,
+                  type: row.type,
+                  amount: typeof row.amount === 'number' ? row.amount : 0,
+                },
+                visionLearnedLookup,
+              );
+              visionTierCounts[out.tier]++;
+              if (out.anchorConflict) visionTierCounts.conflicts++;
+              if (out.learnedRuleId) visionLearnedHitIds.add(out.learnedRuleId);
+              if (out.result) {
+                row.category = out.result.category;
+                row.subcategory = out.result.subcategory;
+                row.counterparty = out.result.counterparty;
+                row.reference = out.result.reference;
               } else {
                 const extr = extractCounterpartyAndReference(row.narration);
                 row.category = 'Other';
@@ -1141,6 +1291,10 @@ router.post(
                 row.reference = extr.reference;
               }
             }
+            for (const id of visionLearnedHitIds) {
+              learnedClassificationsRepo.recordHit(id);
+            }
+            console.log(`[bank-statements] vision classifier post-pass: ${visionTierCounts.learned} learned, ${visionTierCounts.anchor} anchor, ${visionTierCounts.unclassified} → Other (${visionTierCounts.conflicts} learned/anchor conflicts)`);
             // Now that category / subcategory are set, the consistency
             // pass can back-fill any obvious cross-row inconsistency
             // (same counterparty appearing with different categories).
@@ -1214,29 +1368,51 @@ router.post(
         });
 
         // ──── Server-side classifier pre-pass (Phase A token-cost cut) ────
-        // Run the deterministic narration anchors over every row first.
-        // Rows that match (typically 60-75% of an Indian bank statement —
-        // bank charges, interest, EMI, salary, GST, recognizable UPI VPAs)
-        // get their category/subcategory/counterparty/reference filled
-        // in here for free. Only the unclassified rows are sent to AI,
-        // which slashes input + output tokens proportionally.
+        // Run the learned-rule lookup + deterministic narration anchors
+        // over every row first. Rows that match (typically 60-75% of an
+        // Indian bank statement — bank charges, interest, EMI, salary,
+        // GST, recognizable UPI VPAs — plus this firm's remembered
+        // counterparties on top) get their category/subcategory/
+        // counterparty/reference filled in here for free. Only the
+        // unclassified rows are sent to AI, which slashes input + output
+        // tokens proportionally.
         //
         // For rows that DO go to AI, we still pre-fill counterparty +
         // reference from the regex extractor — those are deterministic
         // even when category isn't, and pre-filling means the AI prompt
         // can focus on the category decision and produces shorter
         // output (the schema below drops counterparty/reference too).
+        const learnedLookup = (fp: string, dir: 'credit' | 'debit') =>
+          learnedClassificationsRepo.lookupForClassify(quota.billingUserId, fp, dir);
+        const tierCounts = { learned: 0, anchor: 0, unclassified: 0, conflicts: 0 };
+        const learnedHitIds = new Set<string>();
         const ruleResults = normalized.map((row, index) => {
-          const classified = classifyRow({ narration: row.narration, type: row.type as 'credit' | 'debit', amount: row.amount });
-          if (classified) {
-            return { index, row, classified, needsAi: false };
+          const out = classifyWithLearning(
+            { narration: row.narration, type: row.type as 'credit' | 'debit', amount: row.amount },
+            learnedLookup,
+          );
+          tierCounts[out.tier]++;
+          if (out.anchorConflict) {
+            tierCounts.conflicts++;
+            console.log(`[bank-statements] learned/anchor conflict on "${row.narration.slice(0, 60)}": learned=${out.anchorConflict.learnedCategory} vs anchor=${out.anchorConflict.anchorCategory} — learned wins`);
+          }
+          if (out.learnedRuleId) learnedHitIds.add(out.learnedRuleId);
+          if (out.result) {
+            return { index, row, classified: out.result, needsAi: false };
           }
           const { counterparty, reference } = extractCounterpartyAndReference(row.narration);
           return { index, row, classified: null, counterparty, reference, needsAi: true };
         });
         const ambiguous = ruleResults.filter(r => r.needsAi);
         const classified = ruleResults.filter(r => !r.needsAi);
-        console.log(`[bank-statements] csv classifier pre-pass: ${classified.length}/${normalized.length} rows handled deterministically, ${ambiguous.length} sent to AI`);
+        // Bump hit_count + last_applied_at on every learned rule that
+        // fired this run. Single repo call per rule (not per row) so
+        // a 500-row statement triggering one popular rule writes once,
+        // not 500 times.
+        for (const id of learnedHitIds) {
+          learnedClassificationsRepo.recordHit(id);
+        }
+        console.log(`[bank-statements] csv classifier pre-pass: ${tierCounts.learned} learned, ${tierCounts.anchor} anchor, ${tierCounts.unclassified} → AI (of ${normalized.length} rows; ${tierCounts.conflicts} learned/anchor conflicts)`);
 
         // Batch size lowered 80 → 40 (2026-05): empirically T2
         // (gemini-2.5-flash-lite) skips rows it can't categorize
@@ -1599,6 +1775,52 @@ ${JSON.stringify(batch)}`;
       }
       const { txCount, autoCorrected, mismatches, amountOverridden, phantomDropped, closingMismatch } = persistStatement(req.user.id, placeholder.id, extracted, filename ?? 'Bank Statement');
 
+      // Phase 2 anomaly detector — runs against the just-persisted
+      // rows (re-reading them to get the database-assigned IDs that
+      // anomaly records need to FK to). Best-effort: a failure here
+      // logs and continues; the analyze is still considered
+      // successful — anomalies are an enrichment layer, not a
+      // correctness signal.
+      try {
+        const persistedRows = bankTransactionRepo.listByStatement(placeholder.id);
+        // History snapshot: distinct fingerprints from the firm's
+        // prior statements within the 12-month lookback. Empty set
+        // when the firm has no prior statements — the detector
+        // short-circuits the new-counterparty rule in that case.
+        const since = new Date();
+        since.setDate(since.getDate() - 365);
+        const sinceIso = since.toISOString().replace('Z', '').replace('T', ' ').slice(0, 19);
+        const knownFingerprints = bankTransactionRepo.fingerprintsForBillingUserSince(
+          quota.billingUserId,
+          placeholder.id,
+          sinceIso,
+        );
+        const hasPriorHistory = bankTransactionRepo.hasPriorStatementForBillingUser(
+          quota.billingUserId,
+          placeholder.id,
+        );
+        const anomalies = detectAnomalies(
+          persistedRows.map((r) => ({
+            id: r.id,
+            date: r.tx_date,
+            narration: r.narration,
+            amount: r.amount,
+            category: r.category,
+            subcategory: r.subcategory,
+            fingerprint: r.fingerprint,
+          })),
+          { knownFingerprints, hasPriorHistory },
+        );
+        bankTransactionAnomalyRepo.bulkInsert(placeholder.id, anomalies);
+        if (anomalies.length > 0) {
+          const warnCount = anomalies.filter((a) => a.severity === 'warn').length;
+          const infoCount = anomalies.length - warnCount;
+          console.log(`[bank-statements] anomaly detector: ${anomalies.length} flags (${warnCount} warn, ${infoCount} info) on ${persistedRows.length} rows`);
+        }
+      } catch (err) {
+        console.error('[bank-statements] anomaly detection failed (non-fatal):', err);
+      }
+
       // Bill credits based on the actual file size processed. For PDF
       // paths pages_processed reflects chunks completed; for CSV the
       // route hasn't bumped it (single non-chunked Gemini call), so we
@@ -1670,10 +1892,21 @@ ${JSON.stringify(batch)}`;
         }
         return parts.length > 0 ? parts.join(' ') : null;
       })();
+      // Surface anomalies in the analyze response so the frontend
+      // can render the "Flagged transactions" section without an
+      // extra round-trip. Matches the shape returned by GET /:id.
+      const persistedAnomalies = bankTransactionAnomalyRepo.listByStatement(placeholder.id);
       const payload = {
         statement: serializeStatement(bankStatementRepo.findByIdForUser(placeholder.id, req.user.id)),
         transactions,
         txCount,
+        anomalies: persistedAnomalies.map((a) => ({
+          id: a.id,
+          transactionId: a.transaction_id,
+          type: a.anomaly_type,
+          severity: a.severity,
+          reason: a.reason,
+        })),
         ...(warning ? { warning } : {}),
         ...(reconciliationWarning ? { reconciliationWarning } : {}),
         ...(mismatches && mismatches.length > 0 ? { mismatches: mismatches.slice(0, 20) } : {}),
@@ -1767,7 +2000,22 @@ router.post('/:id/cancel', (req: AuthRequest, res: Response) => {
   res.json({ statement: serializeStatement(bankStatementRepo.findByIdForUser(stmt.id, req.user.id)) });
 });
 
-// PATCH /api/bank-statements/:id/transactions/:txId — reassign category
+// PATCH /api/bank-statements/:id/transactions/:txId — reassign
+// category. Optionally also creates / updates a learned rule when
+// `remember: 'always'` is passed: the narration is fingerprinted
+// (server-side, so the frontend doesn't need to know the algorithm)
+// and upserted into learned_classifications for the user's
+// billing-firm. Next time a row in any of the firm's statements
+// fingerprints to the same key, the classifier auto-applies this
+// category — saving the round-trip to AI.
+//
+// Body: {
+//   category: string,
+//   subcategory?: string | null,
+//   remember?: 'never' | 'always',  // default 'never'
+//   narration?: string,             // required when remember='always'
+//   direction?: 'credit' | 'debit' | 'either', // default 'either'
+// }
 router.patch('/:id/transactions/:txId', (req: AuthRequest, res: Response) => {
   if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
   const { id, txId } = req.params;
@@ -1776,7 +2024,43 @@ router.patch('/:id/transactions/:txId', (req: AuthRequest, res: Response) => {
   if (!category) { res.status(400).json({ error: 'category is required' }); return; }
   const ok = bankTransactionRepo.updateCategory(txId, id, req.user.id, category, subcategory);
   if (!ok) { res.status(404).json({ error: 'Transaction not found' }); return; }
-  res.json({ success: true });
+
+  // Optional: remember this correction as a learned rule. The
+  // frontend sends narration + direction so we don't need a DB roundtrip
+  // to read them from bank_transactions. Direction defaults to 'either'
+  // so the rule applies to both credit and debit rows unless the
+  // frontend opts in to a more specific scope.
+  let learned: ReturnType<typeof serializeLearnedRule> | null = null;
+  if (req.body?.remember === 'always') {
+    const narration = typeof req.body?.narration === 'string' ? req.body.narration : '';
+    if (narration.trim()) {
+      const fingerprint = extractNarrationFingerprint(narration);
+      // Empty fingerprint = the narration was all-noise. Skip silently
+      // rather than 400 — the user clicked "remember", the row's
+      // category still got persisted, just no rule was learnable.
+      if (fingerprint) {
+        const direction = req.body?.direction === 'credit' || req.body?.direction === 'debit'
+          ? (req.body.direction as 'credit' | 'debit')
+          : 'either';
+        const actor = userRepo.findById(req.user.id);
+        if (actor) {
+          const billingUser = getBillingUser(actor);
+          const rule = learnedClassificationsRepo.upsert({
+            billingUserId: billingUser.id,
+            fingerprint,
+            category,
+            subcategory,
+            directionScope: direction,
+            sampleNarration: narration.slice(0, 200),
+            createdByUserId: req.user.id,
+          });
+          learned = serializeLearnedRule(rule);
+        }
+      }
+    }
+  }
+
+  res.json({ success: true, learned });
 });
 
 // GET /api/bank-statements/:id/export.csv — download categorized CSV

@@ -15,6 +15,7 @@ export interface BankTransactionRow {
   is_recurring: number;
   user_override: number;
   sort_index: number;
+  fingerprint: string | null;
 }
 
 export interface BankTransactionInput {
@@ -27,17 +28,51 @@ export interface BankTransactionInput {
   counterparty: string | null;
   reference: string | null;
   isRecurring: boolean;
+  /** Narration fingerprint, computed by extractNarrationFingerprint.
+   *  Optional on input so callers that don't compute it (legacy CSV
+   *  paths) can omit; the insert stmt will write NULL and queries
+   *  treat that as "no history available". */
+  fingerprint?: string | null;
 }
 
 const stmts = {
   listByStatement: db.prepare(
     'SELECT * FROM bank_transactions WHERE statement_id = ? ORDER BY sort_index ASC'
   ),
+  // Distinct fingerprints from the billing user's prior statements
+  // within a lookback window. Joined via bank_statements.billing_user_id
+  // because bank_transactions doesn't carry that field. Excludes the
+  // current statement (the anomaly detector compares the new run
+  // against prior history, not against itself). Excludes NULL
+  // fingerprints (legacy rows pre-fingerprint-column) — they'd match
+  // nothing anyway.
+  fingerprintsForBillingUserSince: db.prepare(`
+    SELECT DISTINCT bt.fingerprint
+    FROM bank_transactions bt
+    JOIN bank_statements bs ON bs.id = bt.statement_id
+    WHERE bs.billing_user_id = ?
+      AND bs.id != ?
+      AND bs.created_at >= ?
+      AND bt.fingerprint IS NOT NULL
+  `),
+  // Cheap existence check used by the anomaly detector to decide
+  // whether to fire the new-counterparty rule (first-upload accounts
+  // skip it entirely — without prior data, every counterparty looks
+  // new). Returns 1 if the billing user has ANY prior statement,
+  // else 0.
+  hasPriorStatement: db.prepare(`
+    SELECT EXISTS(
+      SELECT 1 FROM bank_statements
+      WHERE billing_user_id = ?
+        AND id != ?
+        AND status = 'done'
+    ) AS has_prior
+  `),
   insert: db.prepare(
     `INSERT INTO bank_transactions (
       id, statement_id, tx_date, narration, amount, balance,
-      category, subcategory, counterparty, reference, is_recurring, user_override, sort_index
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`
+      category, subcategory, counterparty, reference, is_recurring, user_override, sort_index, fingerprint
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`
   ),
   deleteByStatement: db.prepare(
     'DELETE FROM bank_transactions WHERE statement_id = ?'
@@ -68,6 +103,7 @@ const insertMany = db.transaction((stmtId: string, txs: BankTransactionInput[]) 
       tx.reference,
       tx.isRecurring ? 1 : 0,
       i,
+      tx.fingerprint ?? null,
     );
   }
 });
@@ -91,5 +127,34 @@ export const bankTransactionRepo = {
 
   updateCategory(txId: string, statementId: string, userId: string, category: string, subcategory: string | null): boolean {
     return stmts.updateCategory.run(category, subcategory, txId, statementId, userId).changes > 0;
+  },
+
+  /**
+   * Fetch the set of narration fingerprints the billing user has
+   * seen in the lookback window, excluding the current statement.
+   * Used by the anomaly detector's "new counterparty" rule.
+   *
+   * @param excludeStatementId The statement we're analysing (skip it
+   *   so the detector compares against PRIOR history, not the
+   *   current run's own rows).
+   * @param sinceDateIso A SQLite-friendly IST timestamp (the same
+   *   format bank_statements.created_at uses — see toSqlIst).
+   */
+  fingerprintsForBillingUserSince(
+    billingUserId: string,
+    excludeStatementId: string,
+    sinceDateIso: string,
+  ): Set<string> {
+    const rows = stmts.fingerprintsForBillingUserSince.all(
+      billingUserId,
+      excludeStatementId,
+      sinceDateIso,
+    ) as Array<{ fingerprint: string }>;
+    return new Set(rows.map((r) => r.fingerprint));
+  },
+
+  hasPriorStatementForBillingUser(billingUserId: string, excludeStatementId: string): boolean {
+    const row = stmts.hasPriorStatement.get(billingUserId, excludeStatementId) as { has_prior: number };
+    return row.has_prior === 1;
   },
 };

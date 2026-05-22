@@ -8,8 +8,10 @@ import { BankStatementSummary } from './BankStatementSummary';
 import { CategoryBreakdown } from './CategoryBreakdown';
 import { CounterpartySummary } from './CounterpartySummary';
 import { TransactionTable } from './TransactionTable';
+import { FlaggedTransactions } from './FlaggedTransactions';
 import { BankStatementRules } from './BankStatementRules';
 import { BankStatementConditions } from './BankStatementConditions';
+import { LearnedClassificationsPanel } from './LearnedClassificationsPanel';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { scrubProviderName } from '../../lib/utils';
 
@@ -106,6 +108,11 @@ export function BankStatementView({ manager }: Props) {
           <BankStatementRules manager={manager} />
 
           <BankStatementConditions manager={manager} />
+
+          {/* Per-firm memory layer — accumulates from "Remember"
+              actions on individual row corrections. Distinct from
+              BankStatementRules (per-user explicit match_text). */}
+          <LearnedClassificationsPanel />
 
           {manager.statements.length > 0 && (
             <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900/40 p-5">
@@ -225,6 +232,14 @@ export function BankStatementView({ manager }: Props) {
         )}
         {!isAnalyzing && !isError && !isCancelled && (
           <>
+            {/* Phase 2 anomaly callouts. Renders nothing when no
+                anomalies fired (silence is good news — no false
+                "0 issues" banner). Clicking a row scrolls to the
+                underlying transaction in TransactionTable below. */}
+            <FlaggedTransactions
+              anomalies={manager.current.anomalies ?? []}
+              transactions={manager.current.transactions}
+            />
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
               <CategoryBreakdown transactions={manager.current.transactions} />
               <CounterpartySummary transactions={manager.current.transactions} />

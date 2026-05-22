@@ -3,12 +3,15 @@
  *
  * Replaces the per-feature credit gates (`enforceQuota` in
  * bankStatements / ledgerScrutiny / etc.) with a single number that
- * caps total Gemini token spend per user per month, regardless of
- * which features they ran.
+ * caps total Gemini token spend per user per yearly billing window,
+ * regardless of which features they ran.
  *
- *   Free       250 K tokens
- *   Pro          2 M
- *   Enterprise 7.5 M
+ *   Free       250 K tokens (account lifetime — trial wall at 30 days)
+ *   Pro         20 M        (yearly, resets on Razorpay renewal)
+ *   Enterprise  60 M        (yearly, resets on Razorpay renewal)
+ *
+ * Authoritative source: PLAN_DEFAULTS in planLimits.ts. The numbers
+ * above are documentation only; the gate reads from getUserLimits().
  *
  * Counts toward the budget: any call that completed (success) or
  * was cancelled mid-flight (cancelled). Both consumed real tokens;
@@ -120,7 +123,7 @@ export function enforceTokenQuota(
   // half-way through a chunked run.
   if (estimatedTokens > 0 && estimatedTokens > remaining) {
     res.status(429).json({
-      error: `This run would use about ${estimatedTokens.toLocaleString('en-IN')} tokens, but you only have ${remaining.toLocaleString('en-IN')} left in your current period (${used.toLocaleString('en-IN')} of ${budget.toLocaleString('en-IN')} already used${reserved > 0 ? `, including ${reserved.toLocaleString('en-IN')} in other runs currently in progress` : ''}). ${plan === 'free' ? 'Try a smaller file or upgrade to Pro for a 2M-token monthly budget.' : 'Try a smaller file, wait for in-flight runs to finish, or renew now to start a fresh quota.'}`,
+      error: `This run would use about ${estimatedTokens.toLocaleString('en-IN')} tokens, but you only have ${remaining.toLocaleString('en-IN')} left in your current period (${used.toLocaleString('en-IN')} of ${budget.toLocaleString('en-IN')} already used${reserved > 0 ? `, including ${reserved.toLocaleString('en-IN')} in other runs currently in progress` : ''}). ${plan === 'free' ? 'Try a smaller file or upgrade to Pro for a 20M-token yearly budget.' : 'Try a smaller file, wait for in-flight runs to finish, or renew now to start a fresh quota.'}`,
       tokensUsed: used,
       tokenBudget: budget,
       tokensEstimated: estimatedTokens,

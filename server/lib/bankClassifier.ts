@@ -576,6 +576,165 @@ export function extractReference(narration: string): string | null {
   return candidate;
 }
 
+// ─── Narration fingerprint ────────────────────────────────────────
+//
+// Strip every volatile element from a narration so two transactions
+// with the same counterparty but different dates / UPI refs / cheque
+// numbers / amounts collapse to the same stable key. Used as the
+// lookup key for the learned-classifications memory layer.
+//
+// Examples of what should fingerprint to the same value:
+//   "UPI/123456789012/Payment to ACME DISTRIBUTORS/utib/xxxxxx@axisbank/UPI"
+//   "UPI-N987654321098-PAYMENT-TO-ACME DISTRIBUTORS-axisbank"
+//   "PAYMENT TO ACME DISTRIBUTORS UPI 555555555555"
+//     → "payment to acme distributors"
+//
+// Strategy:
+//   1. Lowercase everything (Indian narrations rarely encode meaning
+//      in case).
+//   2. Strip dates in common formats (DD/MM/YYYY, DD-MM-YY, etc.).
+//   3. Strip transaction-id-shaped tokens (digit runs ≥ 6, alpha-
+//      numeric refs after UPI/NEFT/IMPS/RTGS/UTR/RRN keywords, IFSC
+//      codes).
+//   4. Strip amount-shaped tokens (digits with optional comma
+//      grouping and decimals).
+//   5. Strip common bank prefix/suffix noise ("BY TRANSFER",
+//      "TO TRANSFER", "BY CASH", "FROM", "TO", "VIA").
+//   6. Strip standalone bank/wire-method tokens that don't identify
+//      a counterparty (UPI, NEFT, IMPS, RTGS, ATM, POS, ECS, NACH).
+//   7. Strip punctuation noise (/, \, -, _, #, @, : repeated).
+//   8. Collapse whitespace.
+//
+// Why a fingerprint instead of just the counterparty: extractCounterparty
+// already tries to identify the merchant/party, but it returns null
+// for ~30% of rows where the pattern doesn't match. The fingerprint is
+// a fallback that almost always returns SOMETHING (even if noisy), and
+// what it returns is still stable across narration variants. Two rows
+// that share a counterparty will share a fingerprint even when the
+// counterparty extractor failed on both.
+
+const DATE_PATTERNS: RegExp[] = [
+  // DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY (and 2-digit-year variants).
+  // Anchored to non-word so we don't bite into longer numeric tokens.
+  /\b\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}\b/g,
+  // YYYY/MM/DD ISO-ish.
+  /\b\d{4}[/\-.]\d{1,2}[/\-.]\d{1,2}\b/g,
+  // Month names — short narrations sometimes say "JAN-25" / "FEB 2026".
+  /\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[\s/\-.]*\d{1,4}\b/gi,
+];
+
+// Bank/payment-method noise tokens. These are standalone — we strip
+// them as whole words, not as substrings (so we don't accidentally
+// strip "upi" from "upiwala").
+//
+// Three groups:
+//   a) Wire methods + transaction verbs — never identifying.
+//   b) Currency / amount-formatting boilerplate — Rs / INR / Rupees.
+//   c) Bank short-names matching the IFSC-prefix list. These leak
+//      into narrations frequently (sender-bank label, receiver-bank
+//      label, "via HDFC", etc.) and bias fingerprints away from the
+//      actual counterparty. Stripping them makes "HDFC HOME LOAN EMI"
+//      and "ICICI HOME LOAN EMI" share a fingerprint (correct — both
+//      are home-loan EMIs from the user's perspective).
+const NOISE_WORDS = new Set([
+  // (a) wire methods + verbs
+  'upi', 'neft', 'imps', 'rtgs', 'atm', 'pos', 'ecs', 'nach',
+  'by', 'to', 'from', 'via', 'ref', 'refno', 'txn', 'trf',
+  'transfer', 'payment', 'pmt', 'recd', 'received', 'sent',
+  'credit', 'debit', 'cash', 'inward', 'outward',
+  'purchase', 'purch', 'spend', 'spends',
+  // (b) currency / amount boilerplate
+  'rs', 'inr', 'rupees', 'rupee', 'amt', 'amount',
+  // (c) bank short-names — IFSC-prefix list + common variants
+  'hdfc', 'icic', 'icici', 'sbi', 'sbin', 'state',
+  'axis', 'axisbank', 'utib',
+  'kotak', 'kkbk',
+  'punb', 'pnb', 'punjab',
+  'yes', 'yesb', 'yesbank',
+  'bob', 'bobl', 'bobm', 'baroda',
+  'idfc', 'idfcf', 'idfcbank',
+  'indusind', 'idbi',
+  'canara', 'cnrb',
+  'union', 'ubin',
+  'jaka', 'jkb',
+  'citin', 'citi',
+  'hsbc', 'scb', 'rbl', 'rblb',
+  'federal', 'dcb', 'cosmos', 'sbm',
+  'iob', 'iobu',
+]);
+
+// IFSC-shaped tokens — strip these because they identify a bank
+// branch, not the counterparty. Format: 4 alpha + 0 + 6 alphanumeric.
+const IFSC_PATTERN = /\b[a-z]{4}0[a-z0-9]{6}\b/gi;
+
+// Long alphanumeric refs that follow UPI/NEFT/IMPS/RTGS/UTR/RRN
+// keywords OR sit standalone as digit runs ≥ 6 chars. The 6-char
+// floor is below cheque-number length (cheques are typically 6+ —
+// borderline. We accept that fingerprints occasionally lose a
+// suffix-cheque-number; the cost is small relative to over-keeping
+// noise).
+const REF_AFTER_KEYWORD = /(?:upi|neft|imps|rtgs|utr|rrn|txn|ref)[\s\-/.:#]*[a-z0-9]{6,}/gi;
+const STANDALONE_DIGIT_RUN = /\b\d{6,}\b/g;
+// Alphanumeric tokens that look like refs (≥ 4 alpha + ≥ 6 digit
+// mixed). Catches "N123456789012", "P000216", "HDFCR52025040112345678".
+const ALPHANUM_REF = /\b[a-z]{1,8}\d{6,}\b/gi;
+
+// Amount-shaped tokens: 1,23,456.78 or 100000.00 or 1500/-.
+const AMOUNT_PATTERN = /\b\d{1,3}(?:,\d{2,3})+(?:\.\d{1,2})?\b|\b\d+\.\d{1,2}\b|\b\d+\/?-?\b/g;
+
+/**
+ * Strip the volatile parts of a narration and return a stable key.
+ * Returns an empty string if the narration is empty / all noise — the
+ * caller treats empty fingerprints as "no learnable signature here"
+ * and skips the lookup.
+ */
+export function extractNarrationFingerprint(narration: string | null): string {
+  if (!narration) return '';
+  let s = String(narration).toLowerCase();
+
+  // 1. Dates
+  for (const p of DATE_PATTERNS) s = s.replace(p, ' ');
+  // 2. IFSC codes
+  s = s.replace(IFSC_PATTERN, ' ');
+  // 3. Reference tokens after UPI/NEFT/etc keywords — strip the whole
+  //    "neft-n123" cluster so we don't leave the keyword behind.
+  s = s.replace(REF_AFTER_KEYWORD, ' ');
+  // 4. Alphanumeric refs (P000216, N123456789012)
+  s = s.replace(ALPHANUM_REF, ' ');
+  // 5. Standalone long digit runs (cheque numbers, txn IDs)
+  s = s.replace(STANDALONE_DIGIT_RUN, ' ');
+  // 6. Amounts. NOTE: keep short 1-5 digit numbers — they can be part
+  //    of legitimate counterparty names ("M3 ENTERPRISES", "247 CARS").
+  s = s.replace(AMOUNT_PATTERN, ' ');
+  // 6b. Anonymisation VPAs: "xxxxxx@axisbank", "******@kotak". Strip
+  //     these BEFORE the masked-card pass — otherwise the masked-card
+  //     pass eats just the "xxxxxx" prefix and strands "@axisbank" as
+  //     an orphan token in the output. Genuine VPAs ("foo@axisbank")
+  //     are preserved because the pattern requires 3+ consecutive
+  //     x's or asterisks in the prefix.
+  s = s.replace(/\b[x*]{3,}@\S+/gi, ' ');
+  // 6c. Masked card numbers: "5555XXXX1234", "XXXXX1234", "1234XXXX".
+  //     Any token mixing digits with 2+ consecutive X/x. Strip whole
+  //     token — the actual digits are per-card noise that varies
+  //     across transactions with the same merchant.
+  s = s.replace(/\b\d*[xX*]{2,}\d*\b/g, ' ');
+  // 7. Punctuation → space. Keep @ for UPI VPAs (foo@axisbank stays
+  //    identifying), strip everything else.
+  s = s.replace(/[/\\\-_#:.,;()\[\]{}<>!?*&^%$+=|"']/g, ' ');
+  // 8. Drop noise words. Splits on whitespace, filters, rejoins.
+  const tokens = s.split(/\s+/).filter((tok) => {
+    if (!tok) return false;
+    if (NOISE_WORDS.has(tok)) return false;
+    // Single-char tokens are almost always noise residue ("a", "x")
+    if (tok.length === 1) return false;
+    // Pure-digit short tokens that survived — also noise.
+    if (/^\d+$/.test(tok)) return false;
+    return true;
+  });
+  // 9. Collapse whitespace.
+  return tokens.join(' ').trim();
+}
+
 // ─── Public entry ────────────────────────────────────────────────
 
 /**
@@ -621,6 +780,116 @@ export function extractCounterpartyAndReference(narration: string): {
   return {
     counterparty: extractCounterparty(narration),
     reference: extractReference(narration),
+  };
+}
+
+// ─── Learned-rule integration ─────────────────────────────────────
+
+/**
+ * Row passed to the learnedLookup callback. We keep the shape minimal
+ * so consumers don't have to import the repo's row type — the only
+ * fields the classifier needs are id, category, subcategory.
+ */
+export interface LearnedRuleLike {
+  id: string;
+  category: string;
+  subcategory: string | null;
+}
+
+export type LearnedLookupFn = (
+  fingerprint: string,
+  direction: 'credit' | 'debit',
+) => LearnedRuleLike | null;
+
+export interface ClassifyWithLearningResult {
+  /** Which tier produced the classification. 'learned' = a remembered
+   *  rule fired; 'anchor' = the deterministic regex pass fired;
+   *  'unclassified' = neither, caller should send the row to AI. */
+  tier: 'learned' | 'anchor' | 'unclassified';
+  /** The classifier output. Null only when tier is 'unclassified'. */
+  result: ClassifierResult | null;
+  /** ID of the learned rule that fired, when tier === 'learned'. The
+   *  route uses this to batch-call recordHit() after the run, so each
+   *  rule's hit_count and last_applied_at reflect actual usage. */
+  learnedRuleId: string | null;
+  /** Diagnostic: if a learned rule fired AND a deterministic anchor
+   *  would have returned a different category, both are captured here
+   *  so the telemetry logger can flag conflicts for later review.
+   *  Conflicts are not errors — learned wins per the locked
+   *  precedence — but tracking them helps the user spot stale
+   *  remembered rules. */
+  anchorConflict: { learnedCategory: string; anchorCategory: string } | null;
+}
+
+/**
+ * Classify a row with the learned-rule layer in front of the
+ * deterministic anchors. Precedence (locked 2026-05-22):
+ *
+ *   1. Learned rule (per billing user, by fingerprint).
+ *   2. Deterministic anchor.
+ *   3. AI fallback (caller's responsibility — we return tier =
+ *      'unclassified' and let the caller queue the row).
+ *
+ * `learnedLookup` is a callback so this module stays free of DB
+ * dependencies (the repo is wired in by the route). It returns the
+ * matching rule or null.
+ *
+ * We ALWAYS compute the anchor result, even when a learned rule fires,
+ * because:
+ *   - The anchor's `counterparty` / `reference` extraction is still
+ *     useful to attach to the row (the learned rule only carries
+ *     category + subcategory).
+ *   - Conflict detection: learned-vs-anchor disagreement is a
+ *     diagnostic worth logging.
+ */
+export function classifyWithLearning(
+  input: ClassifierInput,
+  learnedLookup: LearnedLookupFn,
+): ClassifyWithLearningResult {
+  const fingerprint = extractNarrationFingerprint(input.narration);
+  const anchorResult = classifyRow(input);
+
+  if (fingerprint.length > 0) {
+    const learned = learnedLookup(fingerprint, input.type);
+    if (learned) {
+      // Learned rule wins. Inherit counterparty/reference from the
+      // anchor result when available, otherwise compute fresh — the
+      // anchor may have returned null (no category match) but still
+      // populated counterparty as a side effect via classifyRow.
+      const counterparty = anchorResult?.counterparty ?? extractCounterparty(input.narration);
+      const reference = anchorResult?.reference ?? extractReference(input.narration);
+      const conflict =
+        anchorResult && anchorResult.category !== learned.category
+          ? { learnedCategory: learned.category, anchorCategory: anchorResult.category }
+          : null;
+      return {
+        tier: 'learned',
+        result: {
+          category: learned.category as BankStatementCategory,
+          subcategory: learned.subcategory,
+          counterparty,
+          reference,
+        },
+        learnedRuleId: learned.id,
+        anchorConflict: conflict,
+      };
+    }
+  }
+
+  if (anchorResult) {
+    return {
+      tier: 'anchor',
+      result: anchorResult,
+      learnedRuleId: null,
+      anchorConflict: null,
+    };
+  }
+
+  return {
+    tier: 'unclassified',
+    result: null,
+    learnedRuleId: null,
+    anchorConflict: null,
   };
 }
 

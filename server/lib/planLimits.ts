@@ -188,9 +188,23 @@ export function getUsagePeriodStart(user: {
   return toSqlIst(new Date(user.created_at));
 }
 
-/** Convert a JS Date to the same IST-local string format api_usage rows
- *  use (no trailing 'Z'). The DB stores `datetime('now', '+5h30m')`. */
+/** Convert a JS Date to the same string format SQLite emits via
+ *  `datetime('now', '+5h30m')` — "YYYY-MM-DD HH:MM:SS" (space
+ *  separator, no millisecond fraction, no trailing 'Z').
+ *
+ *  Why this matters: api_usage.created_at and users.created_at are
+ *  both stored in that format. The quota gate filters rows with
+ *  `created_at >= ?` (string comparison). If `since` uses ISO
+ *  format ("...T...000" with a T separator and millis), the ASCII
+ *  ordering breaks: 'T' (0x54) > ' ' (0x20), so the stored value
+ *  sorts BEFORE `since` and gets excluded — every row falls through
+ *  the filter and tokensThisPeriod reports 0. Free-trial users
+ *  (whose period start is close in time to their first call) hit
+ *  this hardest; paid users get accidentally rescued because their
+ *  period start is months in the past and the date component
+ *  dominates the comparison.
+ *
+ *  Match storage format precisely. Mirrors usageRepo.ts:300's pattern. */
 function toSqlIst(d: Date): string {
-  // Strip the 'Z' so SQLite string comparisons line up with stored values.
-  return d.toISOString().replace('Z', '');
+  return d.toISOString().replace('Z', '').replace('T', ' ').slice(0, 19);
 }

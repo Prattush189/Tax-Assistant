@@ -10,7 +10,7 @@
  *   npx tsx scripts/smoke-test-bank-classifier.ts
  */
 
-import { classifyRow, extractCounterparty, extractReference, markRecurring, unifyAmbiguousCounterparties, normalizeCounterpartyKey, validateDirectionCategory, applyRetailBusinessPromotion } from '../server/lib/bankClassifier';
+import { classifyRow, extractCounterparty, extractReference, markRecurring, unifyAmbiguousCounterparties, normalizeCounterpartyKey, validateDirectionCategory, applyRetailBusinessPromotion, classifyWithLearning, type LearnedRuleLike } from '../server/lib/bankClassifier';
 
 interface Case {
   narration: string;
@@ -541,6 +541,102 @@ function run(): void {
     failures.push(`applyRetailBusinessPromotion: personal-account row wrongly promoted`);
   } else {
     pass++;
+  }
+
+  // ─── classifyWithLearning — tier precedence ──────────────────
+  // Locked precedence (2026-05-22): learned > anchor > unclassified.
+  // These cases construct a mock learnedLookup that returns canned
+  // rules and verifies each tier fires correctly.
+
+  // Case 1: learned wins over anchor when both have an opinion.
+  {
+    const lookup = (_fp: string, _dir: 'credit' | 'debit'): LearnedRuleLike | null => ({
+      id: 'rule-1', category: 'Business Expenses', subcategory: null,
+    });
+    // "ATM CHARGES QUARTERLY" matches the anchor for Bank Charges/ATM.
+    // The learned rule overrides to a different category.
+    const r = classifyWithLearning(
+      { narration: 'ATM CHARGES QUARTERLY', type: 'debit', amount: 200 },
+      lookup,
+    );
+    if (r.tier === 'learned' && r.result?.category === 'Business Expenses' && r.anchorConflict) {
+      pass++;
+    } else {
+      fail++;
+      failures.push(`classifyWithLearning: learned-overrides-anchor — got tier=${r.tier} cat=${r.result?.category}`);
+    }
+  }
+
+  // Case 2: no learned rule, anchor fires.
+  {
+    const noLearn = (_fp: string, _dir: 'credit' | 'debit'): LearnedRuleLike | null => null;
+    const r = classifyWithLearning(
+      { narration: 'ATM CHARGES QUARTERLY', type: 'debit', amount: 200 },
+      noLearn,
+    );
+    if (r.tier === 'anchor' && r.result?.subcategory === 'ATM' && !r.anchorConflict) {
+      pass++;
+    } else {
+      fail++;
+      failures.push(`classifyWithLearning: anchor-only — got tier=${r.tier}`);
+    }
+  }
+
+  // Case 3: no learned, no anchor → unclassified (caller sends to AI).
+  {
+    const noLearn = (_fp: string, _dir: 'credit' | 'debit'): LearnedRuleLike | null => null;
+    const r = classifyWithLearning(
+      { narration: 'RANDOM NARRATION WITH NO ANCHORS', type: 'debit', amount: 1000 },
+      noLearn,
+    );
+    if (r.tier === 'unclassified' && r.result === null) {
+      pass++;
+    } else {
+      fail++;
+      failures.push(`classifyWithLearning: unclassified — got tier=${r.tier}`);
+    }
+  }
+
+  // Case 4: empty fingerprint short-circuits learned lookup.
+  // Pure-noise narrations ("UPI NEFT") fingerprint to empty string —
+  // the learned-rule layer must not attempt a lookup with an empty
+  // key (would otherwise risk matching a stray entry).
+  {
+    let lookupCalled = false;
+    const trackingLookup = (_fp: string, _dir: 'credit' | 'debit'): LearnedRuleLike | null => {
+      lookupCalled = true;
+      return null;
+    };
+    classifyWithLearning(
+      { narration: 'UPI NEFT', type: 'debit', amount: 100 },
+      trackingLookup,
+    );
+    if (!lookupCalled) {
+      pass++;
+    } else {
+      fail++;
+      failures.push(`classifyWithLearning: empty fingerprint should skip lookup, but lookup was called`);
+    }
+  }
+
+  // Case 5: learned rule preserves counterparty/reference from anchor.
+  // When the anchor returned a counterparty even though the learned
+  // rule wins on category, we want to keep that counterparty so the
+  // row's display data isn't blank.
+  {
+    const lookup = (_fp: string, _dir: 'credit' | 'debit'): LearnedRuleLike | null => ({
+      id: 'rule-2', category: 'Personal', subcategory: null,
+    });
+    const r = classifyWithLearning(
+      { narration: 'POS PURCHASE BIGBASKET BANGALORE 15/06/2025', type: 'debit', amount: 1500 },
+      lookup,
+    );
+    if (r.tier === 'learned' && r.result?.counterparty && r.result.counterparty.toUpperCase().includes('BIGBASKET')) {
+      pass++;
+    } else {
+      fail++;
+      failures.push(`classifyWithLearning: counterparty preservation — got "${r.result?.counterparty}"`);
+    }
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);
