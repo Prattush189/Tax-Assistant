@@ -1217,6 +1217,74 @@ export async function markCmaExported(id: string): Promise<void> {
   await authFetch(`/api/cma/drafts/${id}/mark-exported`, { method: 'POST' });
 }
 
+/** AI-assisted mapping. Frontend sends row labels + canonical chart
+ *  options; server calls Gemini and returns suggested keys per row. */
+export async function aiSuggestCmaMapping(
+  draftId: string,
+  rows: Array<{ index: number; label: string }>,
+  options: Array<{ key: string; label: string; group: string }>,
+): Promise<{ suggestions: Array<{ index: number; key: string | null }> }> {
+  return (await authFetch(`/api/cma/drafts/${draftId}/ai-suggest-mapping`, {
+    method: 'POST',
+    body: JSON.stringify({ rows, options }),
+  })) as { suggestions: Array<{ index: number; key: string | null }> };
+}
+
+// ── TB → BS API ─────────────────────────────────────────────────
+
+import type { TbBsDraft } from '../components/tb-bs/lib/uiModel';
+
+export interface TbBsDraftRow {
+  id: string;
+  user_id: string;
+  name: string;
+  ui_payload: TbBsDraft;
+  exported_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function fetchTbBsDrafts(): Promise<{ drafts: TbBsDraftRow[] }> {
+  return authFetch('/api/tb-bs/drafts');
+}
+
+export async function fetchTbBsDraft(id: string): Promise<TbBsDraftRow> {
+  return authFetch(`/api/tb-bs/drafts/${id}`);
+}
+
+export async function createTbBsDraft(input: { name: string; ui_payload?: TbBsDraft }): Promise<TbBsDraftRow> {
+  return authFetch('/api/tb-bs/drafts', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function updateTbBsDraft(id: string, patch: { name?: string; ui_payload?: TbBsDraft }): Promise<void> {
+  await authFetch(`/api/tb-bs/drafts/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+}
+
+export async function deleteTbBsDraft(id: string): Promise<void> {
+  await authFetch(`/api/tb-bs/drafts/${id}`, { method: 'DELETE' });
+}
+
+export async function markTbBsExported(id: string): Promise<void> {
+  await authFetch(`/api/tb-bs/drafts/${id}/mark-exported`, { method: 'POST' });
+}
+
+export async function aiSuggestTbBsMapping(
+  draftId: string,
+  rows: Array<{ index: number; label: string }>,
+  options: Array<{ key: string; label: string; group: string }>,
+): Promise<{ suggestions: Array<{ index: number; key: string | null }> }> {
+  return (await authFetch(`/api/tb-bs/drafts/${draftId}/ai-suggest-mapping`, {
+    method: 'POST',
+    body: JSON.stringify({ rows, options }),
+  })) as { suggestions: Array<{ index: number; key: string | null }> };
+}
+
 // ── Income Tax portal import ────────────────────────────────────────────
 
 export interface ItPortalImportResult {

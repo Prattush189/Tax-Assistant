@@ -19,6 +19,7 @@ import itrRouter from './routes/itr.js';
 import boardResolutionsRouter from './routes/boardResolutions.js';
 import partnershipDeedsRouter from './routes/partnershipDeeds.js';
 import cmaRouter from './routes/cma.js';
+import tbBsRouter from './routes/tbBs.js';
 import paymentsRouter from './routes/payments.js';
 import webhooksRouter from './routes/webhooks.js';
 import itPortalImportRouter from './routes/itPortalImport.js';
@@ -174,6 +175,8 @@ app.use('/api/partnership-deeds', partnershipDeedsLimiter, partnershipDeedsRoute
 // rate-limiter needed; the global authMiddleware already gates
 // access, and a token-budget gate doesn't apply (no Gemini calls).
 app.use('/api/cma', cmaRouter);
+// TB → BS — same shape as CMA (pure CRUD, no AI, no quota gating).
+app.use('/api/tb-bs', tbBsRouter);
 app.use('/api/it-portal', itPortalLimiter, itPortalImportRouter);
 app.use('/api/style-profile', styleProfileRouter);
 app.use('/api/form16-import', form16ImportLimiter, form16ImportRouter);

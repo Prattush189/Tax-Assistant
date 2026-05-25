@@ -13,7 +13,11 @@
 import { Router, Response } from 'express';
 import { cmaDraftRepo, CmaDraftRow } from '../db/repositories/cmaDraftRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
+import { usageRepo } from '../db/repositories/usageRepo.js';
 import { getBillingUser } from '../lib/billing.js';
+import { enforceTokenQuota } from '../lib/tokenQuota.js';
+import { aiSuggestMappings } from '../lib/financialMapper.js';
+import { costForModel } from '../lib/gemini.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
@@ -110,6 +114,63 @@ router.post('/drafts/:id/mark-exported', (req: AuthRequest, res: Response) => {
   const ok = cmaDraftRepo.markExported(req.params.id, req.user.id);
   if (!ok) { res.status(404).json({ error: 'Draft not found' }); return; }
   res.json({ success: true });
+});
+
+// ── AI-assisted mapping (opt-in, token-gated) ────────────────────
+// Frontend sends the row labels + the canonical chart options. We
+// call Gemini to classify in one shot. Returns the same shape the
+// frontend's heuristic suggester returns, so the UI is dumb.
+//
+// Why the chart is in the request body, not server-side: keeping
+// the canonical chart in src/components/cma/lib/canonicalAccounts.ts
+// means there's exactly one source of truth. Re-shipping it across
+// the wire each call costs ~2 KB on a typical CMA — well worth the
+// duplication-avoidance.
+router.post('/drafts/:id/ai-suggest-mapping', async (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const draft = cmaDraftRepo.findByIdForUser(req.params.id, req.user.id);
+  if (!draft) { res.status(404).json({ error: 'Draft not found' }); return; }
+
+  const { rows, options } = req.body ?? {};
+  if (!Array.isArray(rows) || rows.length === 0) {
+    res.status(400).json({ error: 'rows array is required' }); return;
+  }
+  if (!Array.isArray(options) || options.length === 0) {
+    res.status(400).json({ error: 'options (canonical chart) is required' }); return;
+  }
+
+  // Token-quota gate — pre-flight estimate of ~50 tokens per row +
+  // ~500 fixed overhead. The actual cost is logged post-call.
+  const estimate = rows.length * 50 + 500;
+  const quota = enforceTokenQuota(req, res, estimate);
+  if (!quota.ok) return;
+
+  const callStartMs = Date.now();
+  try {
+    const result = await aiSuggestMappings(
+      rows as Array<{ index: number; label: string }>,
+      options as Array<{ key: string; label: string; group: string }>,
+      'These are P&L and Balance Sheet line items from an Indian CMA filing.',
+    );
+    // Log the actual cost.
+    try {
+      const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
+      const cost = costForModel(result.modelUsed, result.inputTokens, result.outputTokens);
+      usageRepo.logWithBilling(
+        clientIp, req.user.id, quota.billingUserId,
+        result.inputTokens, result.outputTokens, cost, false,
+        result.modelUsed, false, 'cma_ai_mapping', rows.length,
+        'success', quota.estimatedTokens, Date.now() - callStartMs,
+      );
+    } catch (err) { console.error('[cma-ai-mapping] cost log failed:', err); }
+
+    res.json({ suggestions: result.suggestions });
+  } catch (err) {
+    console.error('[cma-ai-mapping] failed:', err);
+    res.status(500).json({ error: err instanceof Error ? err.message : 'AI mapping failed' });
+  } finally {
+    quota.release();
+  }
 });
 
 export default router;

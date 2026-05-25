@@ -8,7 +8,7 @@ import { usePreferences } from '../../hooks/usePreferences';
 import { useAuth } from '../../contexts/AuthContext';
 import { CalculatorTab, CALCULATOR_TABS } from '../calculator/CalculatorView';
 
-type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions' | 'partnership_deeds' | 'bank_statements' | 'ledger_scrutiny' | 'cma';
+type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions' | 'partnership_deeds' | 'bank_statements' | 'ledger_scrutiny' | 'cma' | 'tb_bs';
 
 // Views that all live inside the unified "Legal" hub. The Legal nav button is
 // highlighted whenever the current view is any of these.
@@ -18,12 +18,14 @@ const LEGAL_VIEWS: ReadonlySet<ActiveView> = new Set([
   'partnership_deeds',
 ]);
 
-// Views that all live inside the "Books" hub (Bank Statements + Ledger
-// Scrutiny + CMA). The Books nav button stays highlighted on any tab.
+// Views that all live inside the "Books" hub. The Books nav button
+// stays highlighted on any tab (bank statements, ledger scrutiny,
+// CMA, or TB → BS).
 const BOOKS_VIEWS: ReadonlySet<ActiveView> = new Set([
   'bank_statements',
   'ledger_scrutiny',
   'cma',
+  'tb_bs',
 ]);
 
 interface SidebarProps {

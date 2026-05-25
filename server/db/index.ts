@@ -194,6 +194,22 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_cma_drafts_user_id ON cma_drafts(user_id
 db.exec("CREATE INDEX IF NOT EXISTS idx_cma_drafts_updated_at ON cma_drafts(updated_at DESC)");
 db.exec("CREATE INDEX IF NOT EXISTS idx_cma_drafts_billing ON cma_drafts(billing_user_id)");
 
+// TB → BS drafts — same lifecycle as cma_drafts (form-driven,
+// synchronous Excel emit). Mirror the table + indexes.
+db.exec(`CREATE TABLE IF NOT EXISTS tb_bs_drafts (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  billing_user_id TEXT,
+  name TEXT NOT NULL,
+  ui_payload TEXT NOT NULL DEFAULT '{}',
+  exported_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+)`);
+db.exec("CREATE INDEX IF NOT EXISTS idx_tb_bs_drafts_user_id ON tb_bs_drafts(user_id)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_tb_bs_drafts_updated_at ON tb_bs_drafts(updated_at DESC)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_tb_bs_drafts_billing ON tb_bs_drafts(billing_user_id)");
+
 // Indexes for clients table (CA bulk ITR filing)
 db.exec("CREATE INDEX IF NOT EXISTS idx_clients_user_id ON clients(user_id)");
 db.exec("CREATE INDEX IF NOT EXISTS idx_clients_pan ON clients(pan)");

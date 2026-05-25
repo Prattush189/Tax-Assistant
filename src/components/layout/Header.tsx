@@ -2,7 +2,7 @@ import { Menu, Moon, Sun, LogOut, MessageCircle, Calculator, CreditCard, FileSpr
 import { cn } from '../../lib/utils';
 import { postToParent } from '../../lib/pluginProtocol';
 
-type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions' | 'partnership_deeds' | 'bank_statements' | 'ledger_scrutiny' | 'cma';
+type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions' | 'partnership_deeds' | 'bank_statements' | 'ledger_scrutiny' | 'cma' | 'tb_bs';
 
 // Views that all live inside the unified "Legal" hub. The Legal nav button is
 // highlighted whenever the current view is any of these.
@@ -13,11 +13,12 @@ const LEGAL_VIEWS: ReadonlySet<ActiveView> = new Set([
 ]);
 
 // Views that all live inside the "Books" hub. The Books nav button stays
-// highlighted on either tab (bank statements, ledger scrutiny, or CMA).
+// highlighted on any tab (bank statements, ledger scrutiny, CMA, TB→BS).
 const BOOKS_VIEWS: ReadonlySet<ActiveView> = new Set([
   'bank_statements',
   'ledger_scrutiny',
   'cma',
+  'tb_bs',
 ]);
 
 interface HeaderProps {

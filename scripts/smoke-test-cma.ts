@@ -117,7 +117,7 @@ expect('suggest unrelated', suggestCanonicalKey('XYZ Account Item'), null);
   };
   const draft: CmaDraft = {
     name: 'wc-test',
-    projectionHorizon: 1,
+    projectionHorizon: 1 as unknown as 3,  // horizon 1 keeps test arrays short; runtime accepts any positive int
     mpbfMethod: 'tandon_ii',
     assumptions: [
       { canonicalKey: 'pl_revenue', growthPctByYear: [25] },  // 1.5M
@@ -185,7 +185,7 @@ expect('suggest unrelated', suggestCanonicalKey('XYZ Account Item'), null);
   };
   const draft: CmaDraft = {
     name: 'ratio-test',
-    projectionHorizon: 1,
+    projectionHorizon: 1 as unknown as 3,  // horizon 1 keeps test arrays short; runtime accepts any positive int
     mpbfMethod: 'tandon_ii',
     assumptions: [],
     termLoans: [
@@ -216,7 +216,7 @@ expect('suggest unrelated', suggestCanonicalKey('XYZ Account Item'), null);
   };
   const draft: CmaDraft = {
     name: 'stress',
-    projectionHorizon: 1,
+    projectionHorizon: 1 as unknown as 3,  // horizon 1 keeps test arrays short; runtime accepts any positive int
     mpbfMethod: 'tandon_ii',
     assumptions: [
       { canonicalKey: 'pl_revenue', growthPctByYear: [20] },

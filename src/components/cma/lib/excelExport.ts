@@ -58,6 +58,7 @@ export async function buildCmaWorkbook(input: CmaExportInput): Promise<Blob> {
   buildCoverSheet(wb, input);
   buildPLSheet(wb, input);
   buildBSSheet(wb, input);
+  buildCashFlowSheet(wb, input);
   buildWcMpbfSheet(wb, input);
   buildRatiosSheet(wb, input);
   if (input.stress) buildStressSheet(wb, input);
@@ -374,6 +375,162 @@ function buildTermLoansSheet(wb: ExcelJS.Workbook, input: CmaExportInput) {
     if (ci > 1) c.numFmt = RUPEE_FMT;
   });
   for (let c = 1; c <= yearCols.length + 1; c++) ws.getColumn(c).width = c === 1 ? 28 : 16;
+}
+
+// ── Sheet: Cash Flow Statement (indirect method) ───────────────
+//
+// Derived ENTIRELY from numbers on the P&L and BS sheets, so every
+// cell can reference back to its source and the banker can audit.
+// Indirect method (the format banks expect for CMA):
+//
+//   Operating activities:
+//     + PAT
+//     + Depreciation (non-cash)
+//     + Finance cost (added back; financing-side outflow shown separately)
+//     − Tax paid (current year)
+//     ± Working-capital changes (Δ receivables, Δ inventory, Δ payables, etc.)
+//   = Net cash from operating activities
+//
+//   Investing activities:
+//     − Capex (Δ in gross fixed assets, FY-to-FY)
+//   = Net cash from investing activities
+//
+//   Financing activities:
+//     − Term loan principal repayment
+//     − Finance cost paid (= the add-back above, now reflected as actual outflow)
+//   = Net cash from financing activities
+//
+//   Net change in cash = sum of all three
+//   Reconciles to: Δ cash & bank on the BS
+//
+// We render historical + projected years side by side. The first
+// historical year has no Δ working-capital row (no prior year to
+// diff against) — those cells show 0 by formula.
+
+function buildCashFlowSheet(wb: ExcelJS.Workbook, input: CmaExportInput) {
+  const ws = wb.addWorksheet('Cash Flow');
+  const yearCols = input.projection.yearLabels;
+  const n = yearCols.length;
+  const firstP = input.projection.firstProjectedIndex;
+  setupHeader(ws, 'Cash Flow Statement (indirect method, Rs. in nearest)', yearCols);
+
+  const sectionRow = (label: string) => {
+    const r = ws.addRow([label]);
+    r.font = { bold: true };
+    r.getCell(1).fill = SECTION_FILL;
+    return r;
+  };
+
+  const writeNumberRow = (label: string, values: number[]) => {
+    const row = ws.addRow([`  ${label}`, ...values.map(roundFor)]);
+    formatValueRow(row, firstP);
+    return row.number;
+  };
+
+  // ── Operating activities ────────────────────────────────────
+  sectionRow('A. CASH FLOW FROM OPERATING ACTIVITIES');
+
+  const patRow = writeNumberRow('Profit after tax', input.projection.derived.profitAfterTax);
+  const depRow = writeNumberRow('Add: Depreciation', input.projection.series.pl_depreciation ?? new Array(n).fill(0));
+  const intRow = writeNumberRow('Add: Finance cost', input.projection.series.pl_finance_cost ?? new Array(n).fill(0));
+  const taxRow = writeNumberRow('Less: Tax paid', (input.projection.series.pl_tax ?? new Array(n).fill(0)));
+
+  // Working-capital changes — Δ year-over-year. Positive ΔCA = cash
+  // outflow (more money locked in WC); positive ΔCL = cash inflow
+  // (more vendor / statutory funding). Year 0 has no prior year
+  // reference → zero.
+  const wcDeltaFor = (
+    series: number[] | undefined,
+    sign: 1 | -1,
+  ): number[] => {
+    const arr = series ?? new Array(n).fill(0);
+    return arr.map((v, i) => i === 0 ? 0 : sign * (arr[i - 1] - v));
+  };
+
+  const dReceivables = wcDeltaFor(input.projection.series.bs_receivables, 1);
+  const dInventory = wcDeltaFor(input.projection.series.bs_inventory, 1);
+  const dOtherCA = wcDeltaFor(input.projection.series.bs_other_current_assets, 1);
+  const dCreditors = wcDeltaFor(input.projection.series.bs_creditors, -1);
+  const dStatutory = wcDeltaFor(input.projection.series.bs_statutory_dues, -1);
+  const dOtherCL = wcDeltaFor(input.projection.series.bs_other_current_liabilities, -1);
+
+  const dRecvRow = writeNumberRow('Less: Increase in receivables', dReceivables);
+  const dInvRow = writeNumberRow('Less: Increase in inventory', dInventory);
+  const dOtherCARow = writeNumberRow('Less: Increase in other current assets', dOtherCA);
+  const dCredRow = writeNumberRow('Add: Increase in trade payables', dCreditors);
+  const dStatRow = writeNumberRow('Add: Increase in statutory dues', dStatutory);
+  const dOtherCLRow = writeNumberRow('Add: Increase in other current liabilities', dOtherCL);
+
+  // Net cash from operating activities — formula summing all the rows above.
+  const operatingRefs = [patRow, depRow, intRow, taxRow, dRecvRow, dInvRow, dOtherCARow, dCredRow, dStatRow, dOtherCLRow];
+  const netOperatingRow = ws.addRow([
+    'Net cash from operating activities (A)',
+    ...yearCols.map((_, i) => ({ formula: operatingRefs.map((r) => cellRef(r, i + 2)).join('+') })),
+  ]);
+  formatTotalRow(netOperatingRow);
+  ws.addRow([]);
+
+  // ── Investing activities ────────────────────────────────────
+  sectionRow('B. CASH FLOW FROM INVESTING ACTIVITIES');
+  // Capex = increase in gross fixed assets year-over-year. First
+  // year shows 0 (no prior to diff against).
+  const grossFa = input.projection.series.bs_gross_fixed_assets ?? new Array(n).fill(0);
+  const capex = grossFa.map((v, i) => i === 0 ? 0 : -(v - grossFa[i - 1]));
+  const capexRow = writeNumberRow('Less: Capex (increase in gross fixed assets)', capex);
+  const netInvestingRow = ws.addRow([
+    'Net cash from investing activities (B)',
+    ...yearCols.map((_, i) => ({ formula: cellRef(capexRow, i + 2) })),
+  ]);
+  formatTotalRow(netInvestingRow);
+  ws.addRow([]);
+
+  // ── Financing activities ────────────────────────────────────
+  sectionRow('C. CASH FLOW FROM FINANCING ACTIVITIES');
+  const principalRow = writeNumberRow(
+    'Less: Term loan principal repayment',
+    input.projection.derived.termLoanPrincipal.map((v) => -v),
+  );
+  const interestPaidRow = writeNumberRow(
+    'Less: Finance cost paid',
+    (input.projection.series.pl_finance_cost ?? new Array(n).fill(0)).map((v) => -v),
+  );
+  // Change in equity (paid-up capital injection) — positive = inflow.
+  const equity = input.projection.series.bs_paid_up_capital ?? new Array(n).fill(0);
+  const equityChange = equity.map((v, i) => i === 0 ? 0 : v - equity[i - 1]);
+  const equityRow = writeNumberRow('Add: Increase in paid-up capital', equityChange);
+
+  const netFinancingRow = ws.addRow([
+    'Net cash from financing activities (C)',
+    ...yearCols.map((_, i) => ({
+      formula: `${cellRef(principalRow, i + 2)}+${cellRef(interestPaidRow, i + 2)}+${cellRef(equityRow, i + 2)}`,
+    })),
+  ]);
+  formatTotalRow(netFinancingRow);
+  ws.addRow([]);
+
+  // ── Net change in cash ──────────────────────────────────────
+  const netChangeRow = ws.addRow([
+    'Net increase / (decrease) in cash (A + B + C)',
+    ...yearCols.map((_, i) => ({
+      formula: `${cellRef(netOperatingRow.number, i + 2)}+${cellRef(netInvestingRow.number, i + 2)}+${cellRef(netFinancingRow.number, i + 2)}`,
+    })),
+  ]);
+  formatTotalRow(netChangeRow);
+
+  // Reconciliation: BS cash & bank delta YoY should match net change
+  // calculated above (within rounding). Surface as an italic check
+  // row at the bottom so the banker can see the tie.
+  const cashBank = input.projection.series.bs_cash_bank ?? new Array(n).fill(0);
+  const cashDelta = cashBank.map((v, i) => i === 0 ? 0 : v - cashBank[i - 1]);
+  const reconcileRow = ws.addRow([
+    'BS Δ cash check (should reconcile to row above)',
+    ...cashDelta.map(roundFor),
+  ]);
+  reconcileRow.font = { italic: true, color: { argb: 'FF6B7280' } };
+  for (let c = 2; c <= n + 1; c++) reconcileRow.getCell(c).numFmt = RUPEE_FMT;
+
+  ws.getColumn(1).width = 50;
+  for (let c = 2; c <= n + 1; c++) ws.getColumn(c).width = 16;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────

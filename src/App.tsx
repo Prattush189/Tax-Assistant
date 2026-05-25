@@ -13,6 +13,7 @@ import { useItrManager } from './hooks/useItrManager';
 import { useBoardResolutionManager } from './hooks/useBoardResolutionManager';
 import { usePartnershipDeedsManager } from './hooks/usePartnershipDeedsManager';
 import { useCMAManager } from './hooks/useCMAManager';
+import { useTbBsManager } from './hooks/useTbBsManager';
 import { useProfileManager } from './hooks/useProfileManager';
 import { useBankStatementManager } from './hooks/useBankStatementManager';
 import { useLedgerScrutinyManager } from './hooks/useLedgerScrutinyManager';
@@ -34,6 +35,7 @@ import { ItrView } from './components/itr/ItrView';
 import { BoardResolutionView } from './components/board-resolutions/BoardResolutionView';
 import { PartnershipDeedView } from './components/partnership-deeds/PartnershipDeedView';
 import { CMAView } from './components/cma/CMAView';
+import { TbBsView } from './components/tb-bs/TbBsView';
 import { LegalView } from './components/legal/LegalView';
 import { BankStatementView } from './components/bank-statements/BankStatementView';
 import { BooksView } from './components/books/BooksView';
@@ -43,7 +45,7 @@ import { TaxCalculatorProvider } from './contexts/TaxCalculatorContext';
 import type { ParentToIframeMessage } from './lib/pluginProtocol';
 import { cn } from './lib/utils';
 
-type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions' | 'partnership_deeds' | 'bank_statements' | 'ledger_scrutiny' | 'cma';
+type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions' | 'partnership_deeds' | 'bank_statements' | 'ledger_scrutiny' | 'cma' | 'tb_bs';
 
 /**
  * Dispatches SET_VIEW / SET_CALCULATOR_TAB / LOGOUT into local state.
@@ -117,6 +119,8 @@ function AppContent() {
   // gating in v1 (no Gemini cost) — gating layer can be added when
   // we introduce per-feature usage caps.
   const cmaManager = useCMAManager(!!user);
+  // TB → Financial Statements: open to all authenticated users.
+  const tbBsManager = useTbBsManager(!!user);
 
   // Trial expiry: free-plan users are locked out after 30 days.
   const isTrialExpired =
@@ -247,6 +251,11 @@ function AppContent() {
               {activeView === 'cma' && (
                 <BooksView activeView={activeView} onViewChange={navigateTo}>
                   <CMAView manager={cmaManager} />
+                </BooksView>
+              )}
+              {activeView === 'tb_bs' && (
+                <BooksView activeView={activeView} onViewChange={navigateTo}>
+                  <TbBsView manager={tbBsManager} />
                 </BooksView>
               )}
               {isTrialExpired && <TrialExpiredWall />}

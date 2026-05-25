@@ -14,17 +14,24 @@
  * "Particulars / Schedule / Year 1 / Year 2" or "Account / Year 1 /
  * Year 2 / Notes" — the column index varies.
  */
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
+import { Sparkles, Loader2 } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { Card } from '../../itr/shared/Inputs';
 import type { CmaDraft, MappingEntry } from '../lib/uiModel';
 import { CANONICAL_ACCOUNTS, GROUP_LABELS, suggestCanonicalKey, type CanonicalSection } from '../lib/canonicalAccounts';
+import { aiSuggestCmaMapping } from '../../../services/api';
 
 interface Props {
   draft: CmaDraft;
+  /** Required for the AI-suggest button — the server route needs it
+   *  to gate the call against the user's draft + token budget. */
+  draftId: string | null;
   onChange: (patch: Partial<CmaDraft>) => void;
 }
 
-export function MappingStep({ draft, onChange }: Props) {
+export function MappingStep({ draft, draftId, onChange }: Props) {
+  const [aiLoading, setAiLoading] = useState(false);
   const rows = draft.historical?.rows ?? [];
   const mapping = draft.mapping ?? [];
   const mappingByRow = useMemo(() => {
@@ -90,6 +97,46 @@ export function MappingStep({ draft, onChange }: Props) {
     onChange({ mapping: next });
   };
 
+  const runAiSuggest = async () => {
+    if (!draftId) {
+      toast.error('Save the draft first (create or open one).');
+      return;
+    }
+    // Only ask the AI about ROWS THE USER HASN'T MAPPED YET. We
+    // preserve existing user mappings (they take priority over both
+    // heuristic suggestions AND AI suggestions).
+    const existingIdx = new Set(mapping.map((m) => m.sourceRowIndex));
+    const unmappedRows = rows
+      .map((r, idx) => ({ idx, label: (r[0] ?? '').trim() }))
+      .filter((r) => !existingIdx.has(r.idx) && r.label.length > 0);
+    if (unmappedRows.length === 0) {
+      toast('All rows are already mapped. Nothing to ask the AI about.', { icon: 'ℹ️' });
+      return;
+    }
+    setAiLoading(true);
+    try {
+      const result = await aiSuggestCmaMapping(
+        draftId,
+        unmappedRows.map((r) => ({ index: r.idx, label: r.label })),
+        CANONICAL_ACCOUNTS.map((a) => ({ key: a.key, label: a.label, group: a.group })),
+      );
+      const next: MappingEntry[] = [...mapping];
+      let applied = 0;
+      for (const s of result.suggestions) {
+        if (!s.key) continue;
+        if (existingIdx.has(s.index)) continue;
+        next.push({ sourceRowIndex: s.index, canonicalKey: s.key });
+        applied++;
+      }
+      onChange({ mapping: next });
+      toast.success(`AI mapped ${applied} of ${unmappedRows.length} unmapped rows.`, { duration: 4000 });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'AI mapping failed');
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
   if (rows.length === 0) {
     return (
       <Card>
@@ -144,15 +191,31 @@ export function MappingStep({ draft, onChange }: Props) {
 
       <Card
         title={`Map your rows (${mappedCount} of ${rows.length} mapped${suggestedCount > 0 ? `, ${suggestedCount} suggestions available` : ''})`}
-        action={suggestedCount > 0 && mappedCount < suggestedCount ? (
-          <button
-            type="button"
-            onClick={acceptAllSuggestions}
-            className="text-xs font-medium px-3 py-1.5 rounded-md bg-emerald-600 text-white hover:bg-emerald-700"
-          >
-            Accept all {suggestedCount} suggestions
-          </button>
-        ) : undefined}
+        action={
+          <div className="flex items-center gap-2">
+            {suggestedCount > 0 && mappedCount < suggestedCount && (
+              <button
+                type="button"
+                onClick={acceptAllSuggestions}
+                className="text-xs font-medium px-3 py-1.5 rounded-md bg-emerald-600 text-white hover:bg-emerald-700"
+              >
+                Accept all {suggestedCount} suggestions
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => void runAiSuggest()}
+              disabled={aiLoading}
+              className="inline-flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-md bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Uses AI to classify unmapped rows. Cheap (one Gemini call); counts against your token budget."
+            >
+              {aiLoading
+                ? <Loader2 className="w-3 h-3 animate-spin" />
+                : <Sparkles className="w-3 h-3" />}
+              AI-suggest
+            </button>
+          </div>
+        }
       >
         <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
           Pick the canonical CMA account each row maps to, or mark "Skip" for sub-totals / blank rows.

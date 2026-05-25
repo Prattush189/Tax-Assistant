@@ -1,8 +1,8 @@
 import { ReactNode } from 'react';
-import { Landmark, BookOpenCheck, LineChart } from 'lucide-react';
+import { Landmark, BookOpenCheck, LineChart, FileSpreadsheet } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
-type BooksTab = 'bank_statements' | 'ledger_scrutiny' | 'cma';
+type BooksTab = 'bank_statements' | 'ledger_scrutiny' | 'cma' | 'tb_bs';
 
 interface Props {
   activeView: BooksTab | string;
@@ -13,9 +13,12 @@ interface Props {
 const TABS: { id: BooksTab; label: string; icon: typeof Landmark; ai?: boolean }[] = [
   { id: 'bank_statements', label: 'Bank Statements', icon: Landmark, ai: true },
   { id: 'ledger_scrutiny', label: 'Ledger Scrutiny', icon: BookOpenCheck, ai: true },
-  // CMA — financial-workflow companion. No AI badge: v1 generation is
-  // pure computation (Excel emit), not an LLM call.
-  { id: 'cma', label: 'CMA Report', icon: LineChart },
+  // TB → BS and CMA — opt-in AI mapping (the "AI-suggest" button on
+  // the mapping step calls Gemini to classify uploaded rows). The
+  // rest of each module is pure computation. Badge flagged because
+  // there IS an AI path now.
+  { id: 'tb_bs', label: 'TB → Statements', icon: FileSpreadsheet, ai: true },
+  { id: 'cma', label: 'CMA Report', icon: LineChart, ai: true },
 ];
 
 /**

@@ -253,6 +253,22 @@ CREATE TABLE IF NOT EXISTS cma_drafts (
   updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
 );
 
+-- TB → BS drafts (Trial Balance → Schedule III financial statements).
+-- Same lifecycle as cma_drafts (form-driven, synchronous Excel emit,
+-- no AI streaming) so it shares the same table shape. ui_payload
+-- carries the raw TB upload, mapping, and any computed outputs cached
+-- for the review step. See src/components/tb-bs/lib/uiModel.ts.
+CREATE TABLE IF NOT EXISTS tb_bs_drafts (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  billing_user_id TEXT,
+  name TEXT NOT NULL,
+  ui_payload TEXT NOT NULL DEFAULT '{}',
+  exported_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+);
+
 -- Clients table for CA bulk ITR filing management
 CREATE TABLE IF NOT EXISTS clients (
   id TEXT PRIMARY KEY,
