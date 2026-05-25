@@ -11,6 +11,7 @@ import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_CATEGORIES, buildConditionsBlock,
 import { classifyWithLearning, extractCounterpartyAndReference, extractNarrationFingerprint, markRecurring, unifyAmbiguousCounterparties, validateDirectionCategory, applyRetailBusinessPromotion } from '../lib/bankClassifier.js';
 import { learnedClassificationsRepo } from '../db/repositories/learnedClassificationsRepo.js';
 import { lookupAiClassification, recordAiClassification } from '../lib/bankAiClassificationCache.js';
+import { extractBankMetadata } from '../lib/bankStatementMetadata.js';
 import { detectAnomalies } from '../lib/bankAnomalyDetector.js';
 import { bankTransactionAnomalyRepo } from '../db/repositories/bankTransactionAnomalyRepo.js';
 import { costForModel } from '../lib/gemini.js';
@@ -1490,28 +1491,29 @@ router.post(
         //     lets the native Gemini API cache the static portion ONCE
         //     per statement and reuse it across every subsequent batch
         //     — the cached input runs at ~25% of normal cost.
-        //   - Output schema is array-of-arrays instead of an array of
-        //     objects: `[["Cat","Sub"], ...]` vs `[{"category":...},...]`.
-        //     Removes the `"category":` / `"subcategory":` key labels
-        //     from every row — output drops ~40% on average. Output
-        //     tokens are 4× more expensive than input on T2, so this
-        //     is the biggest per-row lever after caching.
+        //   - Output is a top-level array of [category, subcategory|null]
+        //     pairs. No wrapping object, no per-row key labels. Output
+        //     tokens are 4× more expensive than input on T2, so every
+        //     character we cut from the response scales by batch count.
         //   - Input schema is TSV (narration\ttype\tamount) instead of
         //     JSON.stringify of an array of objects. Removes per-row
         //     `{"narration":"`, `","type":"`, `","amount":` overhead.
         //     ~25% input shrink on the dynamic tail.
+        //   - Bank metadata (name / masked account / period) was
+        //     previously asked for in an `m` field; that's now extracted
+        //     server-side from filename + narrations + row dates (see
+        //     extractBankMetadata). The prompt no longer mentions it.
         //
-        // The static prefix is IDENTICAL for first vs continuation
-        // batches (always asks for m=meta). We just ignore m on
-        // continuation results — keeps the cache key stable across
-        // every batch within a statement.
-        const STATIC_PREFIX = `${conditionsBlock}You categorise Indian bank-statement rows the rule-based pre-pass could not auto-tag. Return ONE JSON object, no fences, no prose:
+        // Because the prompt has zero per-batch variance, the cache
+        // key is identical across every batch within a statement and
+        // across every statement uploaded by the same user with the
+        // same conditions block within the cache TTL.
+        const STATIC_PREFIX = `${conditionsBlock}You categorise Indian bank-statement rows the rule-based pre-pass could not auto-tag. Return ONE JSON array, no fences, no prose:
 
-{"m":[bankName_or_null,accLast4_or_null,periodFrom_YYYY-MM-DD_or_null,periodTo_YYYY-MM-DD_or_null],"r":[[category,subcategory_or_null], ...]}
+[[category, subcategory_or_null], ...]
 
 Rules:
-- r MUST be the same length and order as INPUT_ROWS. No skipping, no reordering.
-- m: read bank name / last-4 account / period from narrations when visible; null when not. Continuation batches may not see them — null is fine.
+- The array MUST be the same length and order as INPUT_ROWS. No skipping, no reordering.
 - category ∈ {${BANK_STATEMENT_CATEGORIES.map(c => `"${c}"`).join(',')}}.
 - Upstream already handled bank charges, EMI, salary, GST, TDS, and well-known merchants. You see only UPI/NEFT/IMPS/RTGS to ambiguous counterparties, cheques, cash, local POS.
 - ENTERPRISES/TRADERS/PVT LTD/LIMITED/LLP/15-digit GSTIN → "Business Expenses" (debit) / "Business Income" (credit).
@@ -1533,13 +1535,11 @@ INPUT_ROWS — TSV, one row per line, columns narration<TAB>type<TAB>amount:
             })
             .join('\n');
 
-        // Compact response shape from the model — { m: [...], r: [[...], ...] }.
-        // We translate back to the existing EnrichmentResponse shape so
-        // the downstream merge / batchResults[0].meta code is unchanged.
-        interface CompactEnrichmentResponse {
-          m?: [string | null, string | null, string | null, string | null] | null;
-          r?: Array<[string | null, string | null] | null> | null;
-        }
+        // Compact response shape from the model — a top-level array
+        // of [category, subcategory|null] tuples. We translate back to
+        // the existing EnrichmentResponse shape so the downstream merge
+        // code is unchanged.
+        type CompactEnrichmentResponse = Array<[string | null, string | null] | null>;
 
         // Enrichment batch runner. 2026-05 rework:
         //
@@ -1579,15 +1579,17 @@ INPUT_ROWS — TSV, one row per line, columns narration<TAB>type<TAB>amount:
                 onFallback: () => { try { bankStatementRepo.markProviderFallback(placeholder.id); } catch (e) { console.warn('[bank-statements] markProviderFallback failed:', (e as Error).message); } },
               },
             );
-            // Translate compact { m, r } → existing EnrichmentResponse
-            // shape so downstream merge code is unchanged.
-            const m = compact.data.m ?? [null, null, null, null];
-            const rRaw = Array.isArray(compact.data.r) ? compact.data.r : [];
+            // Translate compact [[cat, sub], ...] → existing
+            // EnrichmentResponse shape. Bank metadata is now extracted
+            // server-side (see extractBankMetadata), so the four meta
+            // fields ride null through this code path; they're filled
+            // in by the caller from the server-extracted values.
+            const rRaw = Array.isArray(compact.data) ? compact.data : [];
             const enrichmentsResponse: EnrichmentResponse = {
-              bankName: m[0] ?? null,
-              accountNumberMasked: m[1] ?? null,
-              periodFrom: m[2] ?? null,
-              periodTo: m[3] ?? null,
+              bankName: null,
+              accountNumberMasked: null,
+              periodFrom: null,
+              periodTo: null,
               currency: 'INR',
               enrichments: rRaw.map(pair => ({
                 category: Array.isArray(pair) ? (pair[0] ?? null) : null,
@@ -1665,11 +1667,16 @@ INPUT_ROWS — TSV, one row per line, columns narration<TAB>type<TAB>amount:
         // original normalized[] we can pull either the classifier
         // result or the AI enrichment at that index.
         const aiEnrichmentsByIndex = new Map<number, { category: string; subcategory: string | null }>();
-        let bankMeta: EnrichmentResponse = {
-          bankName: null,
-          accountNumberMasked: null,
-          periodFrom: null,
-          periodTo: null,
+        // Bank metadata is server-extracted (filename + narrations +
+        // row dates). The LLM no longer reads or returns these fields,
+        // which keeps the cached prompt prefix stable across every
+        // batch and shrinks the response by 4 fields per batch.
+        const serverMeta = extractBankMetadata(filename, normalized);
+        const bankMeta: EnrichmentResponse = {
+          bankName: serverMeta.bankName,
+          accountNumberMasked: serverMeta.accountNumberMasked,
+          periodFrom: serverMeta.periodFrom,
+          periodTo: serverMeta.periodTo,
           currency: 'INR',
           enrichments: [],
         };
@@ -1684,11 +1691,52 @@ INPUT_ROWS — TSV, one row per line, columns narration<TAB>type<TAB>amount:
           console.log('[bank-statements] csv path: 0 ambiguous rows — skipping AI call entirely');
           sendSse({ type: 'start', totalChunks: 0, pages: 0 });
         } else {
-          const batches: Array<typeof ambiguous> = [];
-          for (let i = 0; i < ambiguous.length; i += CSV_BATCH_SIZE) {
-            batches.push(ambiguous.slice(i, i + CSV_BATCH_SIZE));
+          // ──── In-statement fingerprint dedup ────
+          //
+          // Many statements contain the same fingerprint many times
+          // (recurring UPI to one VPA, monthly transfer to the same
+          // counterparty). Sending all of them to the LLM is pure
+          // duplication — same input row → same answer. Group by
+          // (fingerprint, direction), send ONE representative per
+          // group, propagate the decision to siblings in a server-
+          // side pass.
+          //
+          // Rows with empty fingerprint can't safely dedup (the
+          // narration is too noisy to be sure two rows mean the same
+          // thing); they ride through as singletons.
+          //
+          // Direction matters: a credit and a debit to the same
+          // counterparty are genuinely different (income vs payment),
+          // so the group key includes type.
+          const groupKey = (fp: string, dir: string) => `${dir}|${fp}`;
+          const representativeOriginalIndexByGroup = new Map<string, number>();
+          const shadowToRepOriginalIndex = new Map<number, number>();
+          const deduped: typeof ambiguous = [];
+          for (const a of ambiguous) {
+            const fp = (a as { fingerprint?: string }).fingerprint;
+            if (!fp) {
+              deduped.push(a);
+              continue;
+            }
+            const key = groupKey(fp, a.row.type);
+            const existingRep = representativeOriginalIndexByGroup.get(key);
+            if (existingRep === undefined) {
+              representativeOriginalIndexByGroup.set(key, a.index);
+              deduped.push(a);
+            } else {
+              shadowToRepOriginalIndex.set(a.index, existingRep);
+            }
           }
-          console.log(`[bank-statements] csv path: ${ambiguous.length} ambiguous rows → ${batches.length} batch(es) of up to ${CSV_BATCH_SIZE}`);
+          const dedupRatio = ambiguous.length === 0 ? 1 : deduped.length / ambiguous.length;
+          if (shadowToRepOriginalIndex.size > 0) {
+            console.log(`[bank-statements] csv in-statement dedup: ${ambiguous.length} ambiguous → ${deduped.length} unique (${shadowToRepOriginalIndex.size} shadows, ${(dedupRatio * 100).toFixed(0)}% compression)`);
+          }
+
+          const batches: Array<typeof ambiguous> = [];
+          for (let i = 0; i < deduped.length; i += CSV_BATCH_SIZE) {
+            batches.push(deduped.slice(i, i + CSV_BATCH_SIZE));
+          }
+          console.log(`[bank-statements] csv path: ${deduped.length} unique rows → ${batches.length} batch(es) of up to ${CSV_BATCH_SIZE}`);
           sendSse({ type: 'start', totalChunks: batches.length, pages: batches.length });
           try { bankStatementRepo.setAnalyzeChunksTotal(placeholder.id, req.user!.id, batches.length); } catch (e) { console.error('[bank-statements] set chunks total failed', e); }
 
@@ -1703,8 +1751,6 @@ INPUT_ROWS — TSV, one row per line, columns narration<TAB>type<TAB>amount:
             },
           );
 
-          // First batch carries bank metadata.
-          if (batchResults[0]) bankMeta = batchResults[0].meta;
           for (const br of batchResults) {
             br.slice.forEach((r, i) => {
               const e: Partial<EnrichmentResponse['enrichments'][number]> = br.enrichments[i] ?? {};
@@ -1720,6 +1766,21 @@ INPUT_ROWS — TSV, one row per line, columns narration<TAB>type<TAB>amount:
               }
             });
             aiUsages.push({ inputTokens: br.inputTokens, outputTokens: br.outputTokens, modelUsed: br.modelUsed });
+          }
+
+          // Propagate representative decisions to shadow rows. Done
+          // AFTER all batches return so we don't depend on batch
+          // ordering — a shadow's representative might be in a later
+          // batch than the shadow itself.
+          for (const [shadowIdx, repIdx] of shadowToRepOriginalIndex) {
+            const repDecision = aiEnrichmentsByIndex.get(repIdx);
+            if (repDecision) {
+              aiEnrichmentsByIndex.set(shadowIdx, repDecision);
+            }
+            // Else: representative's batch failed and its row didn't
+            // land in aiEnrichmentsByIndex. Shadow will fall through
+            // to the 'Other' default in the merge below, same as if
+            // the row itself had been the one to fail.
           }
         }
 
