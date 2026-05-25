@@ -2,23 +2,24 @@
  * Gemini vision extractor — sends a PDF / image inline as base64 to
  * Gemini's native generateContent API and returns parsed JSON.
  *
- * Default model: GEMINI_CHAT_MODEL_T1 (3.1 Flash-Lite preview).
+ * Default model: GEMINI_CHAT_MODEL_T2 (2.5 Flash-Lite — cheap primary).
  * Caller can override via opts.model.
  *
  * Hard request-size limit: Gemini accepts up to 20 MB per inline-data
  * request. The route-layer multer 10 MB cap keeps payloads well under.
  */
 
-import { GEMINI_API_KEYS, GEMINI_CHAT_MODEL_T1 } from './gemini.js';
+import { GEMINI_API_KEYS, GEMINI_CHAT_MODEL_T2 } from './gemini.js';
 import { safeParseJson, type GeminiJsonOptions, type GeminiJsonResult } from './geminiJson.js';
 import { withBreaker } from './circuitBreaker.js';
+import { getOrCreateCachedContent, invalidateCache } from './geminiCache.js';
 
 const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
 
 export interface GeminiVisionOptions {
   /** Output token cap. Defaults to 8192. */
   maxTokens?: number;
-  /** Override the Gemini model. Defaults to T1 (3.1 Flash-Lite preview). */
+  /** Override the Gemini model. Defaults to T2 (2.5 Flash-Lite — cheap primary). */
   model?: string;
   /** Pass-through usage logging callback. */
   recordAttempt?: GeminiJsonOptions['recordAttempt'];
@@ -33,7 +34,7 @@ export async function extractGeminiVision<T = unknown>(
   prompt: string,
   opts: GeminiVisionOptions = {},
 ): Promise<GeminiJsonResult<T>> {
-  const model = opts.model ?? GEMINI_CHAT_MODEL_T1;
+  const model = opts.model ?? GEMINI_CHAT_MODEL_T2;
   const maxTokens = opts.maxTokens ?? 8192;
   const recordAttempt = opts.recordAttempt;
   const apiKey = GEMINI_API_KEYS[0] ?? '';
@@ -44,26 +45,45 @@ export async function extractGeminiVision<T = unknown>(
     data: buffer.toString('base64'),
   };
 
-  const body = {
-    contents: [{
-      role: 'user',
-      parts: [
-        { inline_data: inlineData },
-        { text: prompt },
-      ],
-    }],
-    generationConfig: {
-      maxOutputTokens: maxTokens,
-      responseMimeType: 'application/json',
-      // 3.x Flash-Lite Preview burns most of max_tokens on internal
-      // reasoning tokens by default — explicitly zero the thinking
-      // budget so the entire output budget goes to the JSON we want.
-      thinkingConfig: { thinkingBudget: 0 },
-    },
+  // Try to get a cached content handle for the static prompt. When this
+  // returns a name, the request omits the prompt text and references the
+  // cache instead — input tokens drop to ~25% of full cost on a hit. The
+  // file bytes (inline_data) are NOT cached (per-upload by definition);
+  // only the ~1.4K static prompt + the conditions block (which is stable
+  // per-user) lives in the cache. Failure to obtain a cache is silently
+  // ignored — we just send the full prompt that call.
+  const cachedName = await getOrCreateCachedContent(model, prompt, apiKey);
+
+  const baseGenerationConfig = {
+    maxOutputTokens: maxTokens,
+    responseMimeType: 'application/json',
+    // 3.x Flash-Lite Preview burns most of max_tokens on internal
+    // reasoning tokens by default — explicitly zero the thinking
+    // budget so the entire output budget goes to the JSON we want.
+    thinkingConfig: { thinkingBudget: 0 },
   };
+
+  const buildBody = (useCache: boolean) =>
+    useCache && cachedName
+      ? {
+          cachedContent: cachedName,
+          contents: [{ role: 'user', parts: [{ inline_data: inlineData }] }],
+          generationConfig: baseGenerationConfig,
+        }
+      : {
+          contents: [{
+            role: 'user',
+            parts: [
+              { inline_data: inlineData },
+              { text: prompt },
+            ],
+          }],
+          generationConfig: baseGenerationConfig,
+        };
 
   return withBreaker('gemini', async () => {
     let lastErr: unknown;
+    let useCache = !!cachedName;
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       let succeeded = false;
       let inputTokens = 0;
@@ -73,11 +93,22 @@ export async function extractGeminiVision<T = unknown>(
         const res = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
+          body: JSON.stringify(buildBody(useCache)),
         });
         if (!res.ok) {
           const text = await res.text();
           const status = res.status;
+          // Cached-content reference is stale (TTL expired or the cache
+          // got rotated under us). Invalidate our local entry, drop back
+          // to the uncached path for the rest of this call's retries,
+          // and immediately retry this attempt without burning the
+          // backoff budget — the next iteration sends the full prompt.
+          if (useCache && (status === 404 || /cached.?content/i.test(text))) {
+            console.warn(`[geminiVision] ${model} cache reference stale (HTTP ${status}); recreating uncached`);
+            invalidateCache(model, prompt, apiKey);
+            useCache = false;
+            continue;
+          }
           // User-facing message — must NOT include "Gemini" or the
           // model name. Internal log keeps the model for debugging.
           console.warn(`[geminiVision] ${model} HTTP ${status}: ${text.slice(0, 300)}`);

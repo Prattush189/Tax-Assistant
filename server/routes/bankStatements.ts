@@ -5,9 +5,11 @@ import multer, { MulterError } from 'multer';
 import Papa from 'papaparse';
 import { extractVisionWithFallback } from '../lib/visionFallback.js';
 import { callGeminiJson, type GeminiJsonResult } from '../lib/geminiJson.js';
-import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_CATEGORIES, buildConditionsBlock, countWords, MAX_CONDITION_WORDS } from '../lib/bankStatementPrompt.js';
+import { getBreakerStatus } from '../lib/circuitBreaker.js';
+import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_CATEGORIES, buildConditionsBlock, countWords, MAX_CONDITION_WORDS, type BankStatementCategory } from '../lib/bankStatementPrompt.js';
 import { classifyWithLearning, extractCounterpartyAndReference, extractNarrationFingerprint, markRecurring, unifyAmbiguousCounterparties, validateDirectionCategory, applyRetailBusinessPromotion } from '../lib/bankClassifier.js';
 import { learnedClassificationsRepo } from '../db/repositories/learnedClassificationsRepo.js';
+import { lookupAiClassification, recordAiClassification } from '../lib/bankAiClassificationCache.js';
 import { detectAnomalies } from '../lib/bankAnomalyDetector.js';
 import { bankTransactionAnomalyRepo } from '../db/repositories/bankTransactionAnomalyRepo.js';
 import { costForModel } from '../lib/gemini.js';
@@ -1384,24 +1386,47 @@ router.post(
         // output (the schema below drops counterparty/reference too).
         const learnedLookup = (fp: string, dir: 'credit' | 'debit') =>
           learnedClassificationsRepo.lookupForClassify(quota.billingUserId, fp, dir);
-        const tierCounts = { learned: 0, anchor: 0, unclassified: 0, conflicts: 0 };
+        const tierCounts = { learned: 0, anchor: 0, aiCache: 0, unclassified: 0, conflicts: 0 };
         const learnedHitIds = new Set<string>();
         const ruleResults = normalized.map((row, index) => {
           const out = classifyWithLearning(
             { narration: row.narration, type: row.type as 'credit' | 'debit', amount: row.amount },
             learnedLookup,
           );
-          tierCounts[out.tier]++;
           if (out.anchorConflict) {
             tierCounts.conflicts++;
             console.log(`[bank-statements] learned/anchor conflict on "${row.narration.slice(0, 60)}": learned=${out.anchorConflict.learnedCategory} vs anchor=${out.anchorConflict.anchorCategory} — learned wins`);
           }
           if (out.learnedRuleId) learnedHitIds.add(out.learnedRuleId);
           if (out.result) {
+            tierCounts[out.tier]++;
             return { index, row, classified: out.result, needsAi: false };
           }
+          // Anchor + learned both missed. Check the in-memory AI-decision
+          // cache for this firm/fingerprint before scheduling a Gemini
+          // call — most multi-statement upload sessions hit the same
+          // unfamiliar UPI VPAs across statements, and we already paid
+          // the AI to classify them once. See bankAiClassificationCache
+          // for safety rules (low-confidence floors NOT cached; 24h TTL).
           const { counterparty, reference } = extractCounterpartyAndReference(row.narration);
-          return { index, row, classified: null, counterparty, reference, needsAi: true };
+          const fp = extractNarrationFingerprint(row.narration);
+          const cached = fp ? lookupAiClassification(quota.billingUserId, fp, row.type as 'credit' | 'debit') : null;
+          if (cached) {
+            tierCounts.aiCache++;
+            return {
+              index,
+              row,
+              classified: {
+                category: cached.category as BankStatementCategory,
+                subcategory: cached.subcategory,
+                counterparty,
+                reference,
+              },
+              needsAi: false,
+            };
+          }
+          tierCounts.unclassified++;
+          return { index, row, classified: null, counterparty, reference, fingerprint: fp, needsAi: true };
         });
         const ambiguous = ruleResults.filter(r => r.needsAi);
         const classified = ruleResults.filter(r => !r.needsAi);
@@ -1412,7 +1437,7 @@ router.post(
         for (const id of learnedHitIds) {
           learnedClassificationsRepo.recordHit(id);
         }
-        console.log(`[bank-statements] csv classifier pre-pass: ${tierCounts.learned} learned, ${tierCounts.anchor} anchor, ${tierCounts.unclassified} → AI (of ${normalized.length} rows; ${tierCounts.conflicts} learned/anchor conflicts)`);
+        console.log(`[bank-statements] csv classifier pre-pass: ${tierCounts.learned} learned, ${tierCounts.anchor} anchor, ${tierCounts.aiCache} ai-cache, ${tierCounts.unclassified} → AI (of ${normalized.length} rows; ${tierCounts.conflicts} learned/anchor conflicts)`);
 
         // Batch size lowered 80 → 40 (2026-05): empirically T2
         // (gemini-2.5-flash-lite) skips rows it can't categorize
@@ -1423,7 +1448,23 @@ router.post(
         // failures (less for T2 to lose track of) AND the cost of
         // failures (no extra API calls on bisect). Concurrency stays
         // at 3 — we just run more, smaller batches concurrently.
-        const CSV_BATCH_SIZE = 40;
+        // Adaptive batch size: when the Gemini breaker is open / half_open
+        // (i.e. we're inside or just exiting an upstream outage window),
+        // shrink batches 40 → 25. Smaller batches truncate less often and
+        // fail-and-bisect less often, so the recovery path costs fewer API
+        // calls. Cost-neutral in steady state; reliability-positive during
+        // 503 bursts. Threshold mirrors the failure_threshold the breaker
+        // uses (5 consecutive fails) — even a `closed` breaker with ≥3
+        // recent failures is treated as wobbly.
+        const breakerInfo = getBreakerStatus().find(b => b.upstream === 'gemini');
+        const breakerWobbly =
+          breakerInfo?.state === 'open' ||
+          breakerInfo?.state === 'half_open' ||
+          (breakerInfo?.failures ?? 0) >= 3;
+        const CSV_BATCH_SIZE = breakerWobbly ? 25 : 40;
+        if (breakerWobbly) {
+          console.log(`[bank-statements] csv batch size shrunk 40 → 25 (gemini breaker state=${breakerInfo?.state}, failures=${breakerInfo?.failures})`);
+        }
         const CSV_BATCH_CONCURRENCY = 3;
         const CSV_MAX_OUTPUT_TOKENS = 16_384;
 
@@ -1654,6 +1695,13 @@ ${JSON.stringify(batch)}`;
               const category = typeof e.category === 'string' && e.category.trim() ? e.category : 'Other';
               const subcategory = typeof e.subcategory === 'string' && e.subcategory.trim() ? e.subcategory : null;
               aiEnrichmentsByIndex.set(r.index, { category, subcategory });
+              // Write into the per-process AI-decision cache. The cache
+              // itself drops low-confidence ('Other' + null subcategory)
+              // rows, so we can safely call it for every result.
+              const fp = (r as { fingerprint?: string }).fingerprint;
+              if (fp) {
+                recordAiClassification(quota.billingUserId, fp, r.row.type as 'credit' | 'debit', category, subcategory);
+              }
             });
             aiUsages.push({ inputTokens: br.inputTokens, outputTokens: br.outputTokens, modelUsed: br.modelUsed });
           }

@@ -1,20 +1,20 @@
 /**
  * Two-tier vision extractor.
  *
- *   Primary  : Gemini 3.1 Flash-Lite Preview — cheap, fast, decent on
- *              dense Indian bank/ledger PDFs.
- *   Fallback : Gemini 2.5 Flash-Lite — different family, often handles
- *              what 3.1 trips on (and vice versa).
+ *   Primary  : Gemini 2.5 Flash-Lite — cheapest in the line-up
+ *              ($0.10 in / $0.40 out per 1M). Handles most Indian
+ *              bank/ledger PDFs cleanly.
+ *   Fallback : Gemini 3.1 Flash-Lite Preview — different family
+ *              ($0.25 in / $1.50 out, 2.5×/3.75× pricier). Rescues
+ *              what 2.5 can't parse (dense / image-only / 20+ page
+ *              ICICI-style PDFs).
  *
- * Previously this module also re-exported a `ClaudePageLimitError`
- * type used as a backstop when Sonnet vision was in the chain. The
- * Anthropic provider was removed from the codebase entirely (the
- * 2026-05 prod key went inactive and the project standardised on
- * Gemini for vision). Gemini has no documented 100-page hard limit,
- * so the page-count backstop went away with the Claude removal —
- * routes that used to `instanceof ClaudePageLimitError` now just
- * propagate any error. The upstream page-count check (in the
- * frontend's `pdfTooLarge` dialog) is still in place for UX.
+ * Order flipped 2026-05 (was T1 → T2). Vision was the only path in
+ * the codebase that called T1 first, costing ~3× per upload across
+ * every statement even though T2 succeeds on the vast majority. The
+ * `looksValid` callback (empty-array detector at the caller) plus the
+ * MAX_TOKENS / parse-error fallback below catch the dense-PDF cases
+ * that originally motivated T1-first and route them to T1 transparently.
  */
 
 import { extractGeminiVision } from './geminiVision.js';
@@ -38,28 +38,28 @@ export async function extractVisionWithFallback<T = unknown>(
   prompt: string,
   opts: VisionFallbackOptions = {},
 ): Promise<GeminiJsonResult<T>> {
-  // Tier 1: Gemini 3.1 Flash-Lite Preview.
+  // Tier 1: Gemini 2.5 Flash-Lite (cheap primary).
   try {
     const result = await extractGeminiVision<T>(buffer, mimeType, prompt, {
       maxTokens: opts.maxTokens,
       recordAttempt: opts.recordAttempt,
-      model: GEMINI_CHAT_MODEL_T1,
+      model: GEMINI_CHAT_MODEL_T2,
     });
     if (opts.looksValid && !opts.looksValid(result.data)) {
       // Internal — caller catches this and falls through to tier 2.
-      throw new Error('Tier-1 vision parse passed schema but looksValid returned false');
+      throw new Error('Primary vision parse passed schema but looksValid returned false');
     }
     return result;
   } catch (err) {
-    console.warn('[visionFallback] Gemini 3.1 failed, falling back to 2.5:', (err as Error).message?.slice(0, 200));
-    try { opts.onFallback?.({ from: GEMINI_CHAT_MODEL_T1, to: GEMINI_CHAT_MODEL_T2 }); }
+    console.warn('[visionFallback] 2.5 Flash-Lite failed, falling back to 3.1:', (err as Error).message?.slice(0, 200));
+    try { opts.onFallback?.({ from: GEMINI_CHAT_MODEL_T2, to: GEMINI_CHAT_MODEL_T1 }); }
     catch (e) { console.warn('[visionFallback] onFallback hook threw:', (e as Error).message); }
   }
 
-  // Tier 2: Gemini 2.5 Flash-Lite.
+  // Tier 2: Gemini 3.1 Flash-Lite Preview (pricier rescue tier).
   return extractGeminiVision<T>(buffer, mimeType, prompt, {
     maxTokens: opts.maxTokens,
     recordAttempt: opts.recordAttempt,
-    model: GEMINI_CHAT_MODEL_T2,
+    model: GEMINI_CHAT_MODEL_T1,
   });
 }
