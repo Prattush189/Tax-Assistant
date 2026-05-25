@@ -2,6 +2,7 @@ import { Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { AuthRequest, AuthUser } from '../types.js';
 import { userRepo } from '../db/repositories/userRepo.js';
+import { userSessionRepo } from '../db/repositories/userSessionRepo.js';
 import { isTrialExpired, getTrialEndsAt } from '../lib/planLimits.js';
 
 const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-secret-change-me';
@@ -51,17 +52,33 @@ export function authMiddleware(req: AuthRequest, res: Response, next: NextFuncti
       userRepo.suspend(payload.id, null);
     }
 
-    // Single-session enforcement
-    if (
-      freshUser?.session_token &&
-      payload.sessionToken &&
-      freshUser.session_token !== payload.sessionToken
-    ) {
-      res.status(401).json({ error: 'Session expired — you logged in on another device' });
+    // Multi-session validation: the JWT carries a sessionToken that
+    // MUST exist in user_sessions. Revoking a session (logout, "sign
+    // out of all other devices", admin suspend) deletes the row,
+    // making every JWT bearing that token immediately invalid. JWTs
+    // issued before the multi-session migration that DON'T carry a
+    // sessionToken are rejected so we don't fall through to a
+    // permissive path.
+    if (!payload.sessionToken) {
+      res.status(401).json({ error: 'Session expired — please sign in again' });
       return;
     }
-
+    const session = userSessionRepo.findByToken(payload.sessionToken);
+    if (!session || session.user_id !== payload.id) {
+      res.status(401).json({ error: 'Session expired — please sign in again' });
+      return;
+    }
+    // Touch last_seen_at. Internally rate-limited to 1 write per 60s
+    // so streaming chat requests don't write hundreds of times per
+    // minute. (req.user is set BEFORE the touch so the rest of the
+    // request still works if the touch throws.)
     req.user = { id: payload.id, email: payload.email, role: freshUser?.role ?? 'user' };
+    userSessionRepo.touch(payload.sessionToken);
+    // Stash the session token on the request for downstream handlers
+    // (the /api/sessions list endpoint marks the current session, and
+    // "sign out of all others" needs the token to know which row to
+    // keep).
+    (req as AuthRequest & { sessionToken?: string }).sessionToken = payload.sessionToken;
     next();
   } catch {
     res.status(401).json({ error: 'Invalid or expired token' });
@@ -93,10 +110,14 @@ export function optionalAuthMiddleware(req: AuthRequest, res: Response, next: Ne
         }
         userRepo.suspend(payload.id, null);
       }
-      if (freshUser?.session_token && payload.sessionToken && freshUser.session_token !== payload.sessionToken) {
-        // Treat as guest
-      } else {
+      // Multi-session validation (same logic as authMiddleware
+      // above, but failure here just treats the request as guest
+      // instead of returning 401 — keeps optionalAuth permissive).
+      const session = payload.sessionToken ? userSessionRepo.findByToken(payload.sessionToken) : null;
+      if (session && session.user_id === payload.id) {
         req.user = { id: payload.id, email: payload.email, role: freshUser?.role ?? 'user' };
+        userSessionRepo.touch(payload.sessionToken!);
+        (req as AuthRequest & { sessionToken?: string }).sessionToken = payload.sessionToken;
       }
     } catch {
       // Invalid token — treat as guest

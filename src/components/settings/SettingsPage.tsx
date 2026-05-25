@@ -3,7 +3,7 @@ import {
   User, Mail, Lock, Trash2, AlertTriangle, Check, Sliders, PenTool,
   CreditCard, MessageSquare, Paperclip, Lightbulb, FileText, FileSignature,
   ScrollText, Landmark, BookOpenCheck, Users, TrendingUp, Clock, Download, CheckCircle2, XCircle, Hourglass,
-  MapPin, Pencil, Building2, Loader2,
+  MapPin, Pencil, Building2, Loader2, Monitor,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import {
@@ -26,6 +26,7 @@ import { cn } from '../../lib/utils';
 import toast from 'react-hot-toast';
 import { TeamSection } from './TeamSection';
 import { StyleSection } from './StyleSection';
+import { SessionsSection } from './SessionsSection';
 import { generatePaymentReceipt, generatePaymentInvoice, type PaymentData } from '../../lib/paymentPdf';
 
 // ── types ─────────────────────────────────────────────────────────────────────
@@ -914,6 +915,14 @@ export function SettingsPage() {
                   {savingPwd ? 'Updating...' : 'Update Password'}
                 </button>
               </div>
+            </Section>
+
+            <Section
+              title="Active Sessions"
+              description="Devices currently signed in to your account. Sign out of any you don't recognise."
+              icon={Monitor}
+            >
+              <SessionsSection buttonPrimary={buttonPrimary} />
             </Section>
           </div>
         )}

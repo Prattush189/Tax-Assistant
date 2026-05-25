@@ -76,6 +76,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   const logout = useCallback(() => {
+    // Tell the server to drop this session row so the JWT isn't
+    // honoured even if the refresh token was stolen. Fire-and-forget
+    // — we don't block local logout on the network call (the user
+    // expects an instant sign-out), and the server returns ok=true
+    // even when the session was already gone.
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (token) {
+      fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => { /* network error — local state is already cleared below */ });
+    }
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(REFRESH_KEY);
     setUser(null);

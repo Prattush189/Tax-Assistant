@@ -98,11 +98,51 @@ if (!colNames.includes('inviter_id')) {
   db.exec("ALTER TABLE users ADD COLUMN inviter_id TEXT");
   db.exec("CREATE INDEX IF NOT EXISTS idx_users_inviter_id ON users(inviter_id)");
 }
-// Single-session enforcement: each login stamps a random token; old sessions
-// are invalidated because the JWT's sessionToken no longer matches.
+// Single-session column kept for legacy migrations; the authoritative
+// store is the user_sessions table below (multi-session, up to 5
+// concurrent devices per user).
 if (!colNames.includes('session_token')) {
   db.exec("ALTER TABLE users ADD COLUMN session_token TEXT");
 }
+
+// Multi-session table. Replaces the single-column users.session_token
+// model with a row-per-active-session store, capped at 5 sessions per
+// user with FIFO eviction (oldest last_seen_at evicted first). Each
+// row carries the JWT-embedded session_token plus device-identifying
+// metadata (UA, IP) so the user can see and revoke individual
+// devices from the Settings page.
+//
+// Why a separate table instead of a JSON column on users: the row
+// model gives us a unique index on session_token (auth lookup is
+// O(log n)), trivial FIFO eviction via ORDER BY last_seen_at LIMIT,
+// and per-row delete for explicit revocation. JSON would require
+// reading+writing the whole array on every auth touch.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS user_sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    session_token TEXT NOT NULL UNIQUE,
+    user_agent TEXT,
+    ip TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
+    last_seen_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+  )
+`);
+db.exec("CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id, last_seen_at DESC)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_user_sessions_token ON user_sessions(session_token)");
+
+// Backfill: for every existing user that still has a session_token
+// on the row but no matching user_sessions entry, materialise one.
+// This keeps existing JWTs valid across the deploy that introduces
+// this table — without backfill, every logged-in user would be
+// kicked the moment auth middleware switched over.
+db.exec(`
+  INSERT OR IGNORE INTO user_sessions (id, user_id, session_token, user_agent, ip)
+  SELECT lower(hex(randomblob(16))), id, session_token, 'migrated', NULL
+  FROM users
+  WHERE session_token IS NOT NULL
+    AND session_token NOT IN (SELECT session_token FROM user_sessions)
+`);
 // Grandfather all pre-existing users as verified exactly once, the first
 // time the email_verified column appears. New signups go through the OTP
 // flow regardless.

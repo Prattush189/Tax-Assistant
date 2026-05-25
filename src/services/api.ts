@@ -595,6 +595,44 @@ export async function deleteAccount(currentPassword: string | null, confirmation
   });
 }
 
+// ── Active Sessions API ─────────────────────────────────────────────────
+
+export interface ActiveSession {
+  id: string;
+  deviceLabel: string;
+  userAgent: string | null;
+  ip: string | null;
+  createdAt: string;
+  lastSeenAt: string;
+  /** True for the session this very request is being made from. The
+   *  Settings UI uses this to highlight the current device and disable
+   *  its revoke button (revoking yourself is what /logout is for). */
+  current: boolean;
+}
+
+export interface ListSessionsResponse {
+  maxSessions: number;
+  sessions: ActiveSession[];
+}
+
+export async function listSessions(): Promise<ListSessionsResponse> {
+  return authFetch('/api/auth/sessions');
+}
+
+export async function revokeSession(id: string): Promise<{ ok: true }> {
+  return authFetch(`/api/auth/sessions/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}
+
+/** Sign out of every device EXCEPT the one calling this. Returns the
+ *  number of sessions that were revoked so the UI can surface a toast. */
+export async function revokeAllOtherSessions(): Promise<{ ok: true; revoked: number }> {
+  return authFetch('/api/auth/sessions', {
+    method: 'DELETE',
+  });
+}
+
 // ── Notice Drafter API ───────────────────────────────────────────────────
 
 export type NoticeStatus = 'draft' | 'generating' | 'generated' | 'error';

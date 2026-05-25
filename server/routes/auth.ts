@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { OAuth2Client } from 'google-auth-library';
 import { userRepo, normalizePhone } from '../db/repositories/userRepo.js';
+import { userSessionRepo } from '../db/repositories/userSessionRepo.js';
 import { verificationRepo } from '../db/repositories/verificationRepo.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { authLimiter } from '../middleware/rateLimiter.js';
@@ -50,12 +51,26 @@ export function generateTokens(user: { id: string; email: string; role?: string;
 }
 
 /**
- * Rotate the session token (invalidating all other sessions) and generate
- * fresh JWTs that include the new token. Every login path should call this
- * instead of bare `generateTokens()`.
+ * Create a new session row for this device and issue JWTs bound to
+ * its session_token. Every login path should call this instead of
+ * bare `generateTokens()`. The session row carries device-identifying
+ * metadata (User-Agent, IP) so the Settings UI can render a human-
+ * readable device list later. Per-user session count is FIFO-capped
+ * at MAX_SESSIONS_PER_USER (5) inside the repo — callers don't need
+ * to handle that.
  */
-function loginAndIssueTokens(user: { id: string; email: string; role?: string; plan?: string }) {
-  const sessionToken = userRepo.rotateSessionToken(user.id);
+function loginAndIssueTokens(
+  user: { id: string; email: string; role?: string; plan?: string },
+  req: Request,
+) {
+  const userAgent = (req.headers['user-agent'] ?? '').toString();
+  // x-forwarded-for is the only trustworthy IP source behind a proxy;
+  // req.ip falls back to the socket address. Take the leftmost forward
+  // hop (the client's real IP) and trim — proxies sometimes pad with
+  // spaces.
+  const forwarded = (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim();
+  const ip = forwarded || req.ip || null;
+  const sessionToken = userSessionRepo.create(user.id, userAgent || null, ip);
   return generateTokens({ ...user, sessionToken });
 }
 
@@ -219,7 +234,7 @@ router.post('/verify-email', authLimiter, async (req: Request, res: Response) =>
   verificationRepo.markConsumed(row.id);
   userRepo.markEmailVerified(user.id);
   const fresh = userRepo.findById(user.id)!;
-  const tokens = loginAndIssueTokens(fresh);
+  const tokens = loginAndIssueTokens(fresh, req);
   res.json({
     ...tokens,
     user: toUserResponse(fresh),
@@ -375,7 +390,7 @@ router.post('/reset-password', authLimiter, async (req: Request, res: Response) 
   }
 
   const fresh = userRepo.findById(user.id)!;
-  const tokens = loginAndIssueTokens(fresh);
+  const tokens = loginAndIssueTokens(fresh, req);
   res.json({
     ...tokens,
     user: toUserResponse(fresh),
@@ -425,7 +440,7 @@ router.post('/login', authLimiter, async (req: Request, res: Response) => {
     return;
   }
 
-  const tokens = loginAndIssueTokens(user);
+  const tokens = loginAndIssueTokens(user, req);
   notifyAssistOfLogin({
     userId: user.id,
     email: user.email,
@@ -456,14 +471,24 @@ router.post('/refresh', (req: Request, res: Response) => {
       res.status(401).json({ error: 'User not found' });
       return;
     }
-    // Validate session is still active — if the user logged in elsewhere,
-    // user.session_token has changed and this refresh token is stale.
-    if (user.session_token && payload.sessionToken && user.session_token !== payload.sessionToken) {
-      res.status(401).json({ error: 'Session expired — you logged in on another device' });
+    // Validate that the session row this refresh token references
+    // still exists. A revoke (logout, "sign out of other devices",
+    // FIFO eviction at the 6th concurrent login) deletes the row,
+    // which makes every refresh token bearing that session_token
+    // immediately stale.
+    if (!payload.sessionToken) {
+      res.status(401).json({ error: 'Session expired — please sign in again' });
       return;
     }
-    // Reissue with the SAME session token (refresh doesn't create a new session)
-    const tokens = generateTokens({ ...user, sessionToken: user.session_token ?? undefined });
+    const session = userSessionRepo.findByToken(payload.sessionToken);
+    if (!session || session.user_id !== user.id) {
+      res.status(401).json({ error: 'Session expired — please sign in again' });
+      return;
+    }
+    // Refresh keeps the same session row — bump last_seen_at and
+    // reissue tokens bound to the same session_token.
+    userSessionRepo.touch(payload.sessionToken);
+    const tokens = generateTokens({ ...user, sessionToken: payload.sessionToken });
     res.json(tokens);
   } catch {
     res.status(401).json({ error: 'Invalid or expired refresh token' });
@@ -523,7 +548,7 @@ router.post('/google', authLimiter, async (req: Request, res: Response) => {
       issueSignupLicense(user.id, user.created_at);
     }
 
-    const tokens = loginAndIssueTokens(user);
+    const tokens = loginAndIssueTokens(user, req);
     notifyAssistOfLogin({
       userId: user.id,
       email: user.email,
@@ -615,7 +640,7 @@ router.patch('/email', authMiddleware, async (req: AuthRequest, res: Response) =
 
   userRepo.updateEmail(user.id, normalizedEmail);
   const updated = userRepo.findById(user.id)!;
-  const tokens = loginAndIssueTokens(updated);
+  const tokens = loginAndIssueTokens(updated, req);
   res.json({
     ...tokens,
     user: toUserResponse(updated),
@@ -880,10 +905,16 @@ router.post('/plugin-sso', authLimiter, (req: Request, res: Response) => {
     typeof consultantId === 'string' ? consultantId : null,
   );
 
-  // Re-read so loginAndIssueTokens + response reflect the latest overrides
+  // Re-read so loginAndIssueTokens + response reflect the latest overrides.
+  // Plugin SSO is treated as a fresh device — we create a new session row
+  // (FIFO-evicted at the cap inside userSessionRepo.create) rather than
+  // sharing a session with the parent app handshake.
   const fresh = userRepo.findById(user.id)!;
   const effectivePlan = getEffectivePlan(fresh);
-  const sessionToken = userRepo.rotateSessionToken(user.id);
+  const userAgent = (req.headers['user-agent'] ?? '').toString();
+  const forwarded = (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim();
+  const ip = forwarded || req.ip || null;
+  const sessionToken = userSessionRepo.create(user.id, userAgent || null, ip);
   const tokens = generateTokens({ ...fresh, plan: effectivePlan, sessionToken });
 
   res.json({
@@ -894,6 +925,80 @@ router.post('/plugin-sso', authLimiter, (req: Request, res: Response) => {
       consultantId: fresh.plugin_consultant_id ?? undefined,
     },
   });
+});
+
+// ── Session management ──────────────────────────────────────────
+//
+// GET /api/auth/sessions          — list active sessions for the current user
+// DELETE /api/auth/sessions/:id   — revoke a specific session row
+// DELETE /api/auth/sessions       — sign out of all OTHER devices (keeps current)
+// POST /api/auth/logout           — drop the current session row
+//
+// All four require authMiddleware. The middleware stashes the
+// current request's session token on req.sessionToken so these
+// handlers can identify "this device" without re-parsing the JWT.
+
+/** Best-effort user-agent → short device label.
+ *  Pure heuristic; the raw UA is also returned so the UI can show
+ *  the full string on hover for power users. */
+function deviceLabelFromUserAgent(ua: string | null): string {
+  if (!ua) return 'Unknown device';
+  // Order matters — more-specific first.
+  if (/iPad/i.test(ua)) return 'iPad';
+  if (/iPhone/i.test(ua)) return 'iPhone';
+  if (/Android/i.test(ua)) return /Mobile/i.test(ua) ? 'Android phone' : 'Android tablet';
+  if (/Edg\//.test(ua)) return 'Edge on ' + osFromUa(ua);
+  if (/Chrome\//.test(ua) && !/Chromium/.test(ua)) return 'Chrome on ' + osFromUa(ua);
+  if (/Firefox\//.test(ua)) return 'Firefox on ' + osFromUa(ua);
+  if (/Safari\//.test(ua) && !/Chrome/.test(ua)) return 'Safari on ' + osFromUa(ua);
+  return 'Browser on ' + osFromUa(ua);
+}
+function osFromUa(ua: string): string {
+  if (/Windows NT/i.test(ua)) return 'Windows';
+  if (/Mac OS X/i.test(ua)) return 'Mac';
+  if (/Linux/i.test(ua)) return 'Linux';
+  if (/Android/i.test(ua)) return 'Android';
+  if (/iPhone|iPad|iOS/i.test(ua)) return 'iOS';
+  return 'unknown OS';
+}
+
+router.get('/sessions', authMiddleware, (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const currentToken = (req as AuthRequest & { sessionToken?: string }).sessionToken;
+  const rows = userSessionRepo.listForUser(req.user.id);
+  res.json({
+    maxSessions: 5,
+    sessions: rows.map(r => ({
+      id: r.id,
+      deviceLabel: deviceLabelFromUserAgent(r.user_agent),
+      userAgent: r.user_agent,
+      ip: r.ip,
+      createdAt: r.created_at,
+      lastSeenAt: r.last_seen_at,
+      current: r.session_token === currentToken,
+    })),
+  });
+});
+
+router.delete('/sessions/:id', authMiddleware, (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const ok = userSessionRepo.deleteByIdForUser(req.params.id, req.user.id);
+  if (!ok) { res.status(404).json({ error: 'Session not found' }); return; }
+  res.json({ ok: true });
+});
+
+router.delete('/sessions', authMiddleware, (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const currentToken = (req as AuthRequest & { sessionToken?: string }).sessionToken;
+  if (!currentToken) { res.status(400).json({ error: 'No current session to keep' }); return; }
+  const revoked = userSessionRepo.deleteAllOtherForUser(req.user.id, currentToken);
+  res.json({ ok: true, revoked });
+});
+
+router.post('/logout', authMiddleware, (req: AuthRequest, res: Response) => {
+  const currentToken = (req as AuthRequest & { sessionToken?: string }).sessionToken;
+  if (currentToken) userSessionRepo.deleteByToken(currentToken);
+  res.json({ ok: true });
 });
 
 export default router;
