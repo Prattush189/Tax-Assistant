@@ -622,29 +622,40 @@ function tryRule(rule: BankRule, gridIn: PdfGrid): DetectedBankMapping | null {
   // header text ("Withdrawal" / "Deposit" / "Balance") and a right-
   // aligned data column for the actual numbers. The header→role
   // mapping anchors on the header column, but the data lives one
-  // column to the right with an empty header. Two-pass logic:
+  // column to the right with an empty header. Three-pass logic:
   //
-  //   Pass 1 — direct shift: if the role's current column has ≤25%
-  //   numeric data AND the next column is 'skip' AND has ≥50%
-  //   numeric data, shift the role to the next column.
+  //   Pass 1 — symmetric shift: if the role's current column has
+  //   ≤25% numeric data AND the next column is 'skip' AND has ≥50%
+  //   numeric data, shift the role to the next column. Tuned for
+  //   layouts where both directions fire often enough to satisfy
+  //   the 50% threshold (Canara's typical mix, HDFC corporate).
   //
-  //   Pass 2 — companion shift: if Pass 1 fired for ANY role, the
-  //   layout is confirmed to be a header-text/data-column split.
-  //   For any remaining numeric role whose current column has 0
-  //   numeric data AND the next column is 'skip' AND ALSO has 0
-  //   numeric data AND the next column's HEADER is empty — shift
-  //   anyway. This catches the streak case: a Canara statement
-  //   where the first 50 dated rows are all withdrawals leaves the
-  //   "Deposits" header column with zero data evidence in both Pass
-  //   1's signal columns, so Pass 1 can't fire on the credit role.
-  //   The Withdrawal column DID shift (proving the split layout),
-  //   so we shift Credit on faith.
+  //   Pass 2 — skewed-direction shift: catches the case where the
+  //   misaligned column is the LESS-COMMON direction. On a debit-
+  //   heavy B2B account, credits may be <20% of sampled rows —
+  //   below Pass 1's 50% gate. Conservative guards prevent false
+  //   positives: current column MUST be completely empty (no numeric
+  //   data at all), next column MUST be 'skip' with an empty header
+  //   (proves it's an unmapped layout artifact rather than a
+  //   different mapped role), and next column MUST have ≥3 numeric
+  //   hits (real evidence, not noise). Canonical case: Kotak's
+  //   compact format places "Deposit (Cr.)" text above an empty
+  //   grid cell with the actual credit values one column further
+  //   right.
   //
-  // Sample size: 50 dated rows (was 10). With 10 rows, single-
-  // direction streaks (all credits or all debits in the first batch)
-  // produced incorrect non-shifts. 50 rows almost always contains
-  // both directions on a typical account; the few that don't get
-  // rescued by Pass 2.
+  //   Pass 3 — companion shift: if Pass 1 or Pass 2 fired for ANY
+  //   role, the layout is confirmed to be a header-text/data-column
+  //   split. For any remaining numeric role whose current column
+  //   has 0 numeric data AND the next column is 'skip' AND ALSO has
+  //   0 numeric data AND the next column's HEADER is empty — shift
+  //   anyway. Catches the all-debits / all-credits streak case (a
+  //   Canara statement with no credits in the first 50 rows can't
+  //   surface evidence on the credit role's next column).
+  //
+  // Sample size: 50 dated rows. With smaller samples, single-
+  // direction streaks produced incorrect non-shifts. 50 rows almost
+  // always contains both directions on a typical account; the few
+  // that don't get rescued by Pass 3.
   const dateColForShift = roles.indexOf('date');
   if (dateColForShift >= 0) {
     const datedRows = grid.rows
@@ -654,6 +665,8 @@ function tryRule(rule: BankRule, gridIn: PdfGrid): DetectedBankMapping | null {
     if (datedRows.length >= 3) {
       const numAt = (i: number) => datedRows.filter(r => /\d/.test((r[i] ?? '').trim())).length;
       let anyShift = false;
+
+      // Pass 1 — symmetric.
       for (const numericRole of ['debit', 'credit', 'amount', 'balance'] as const) {
         const col = roles.indexOf(numericRole);
         if (col < 0 || col >= roles.length - 1) continue;
@@ -667,6 +680,31 @@ function tryRule(rule: BankRule, gridIn: PdfGrid): DetectedBankMapping | null {
           anyShift = true;
         }
       }
+
+      // Pass 2 — skewed-direction. Independent of Pass 1; fires when
+      // the structural guards prove the layout is header-text /
+      // empty / data even if the role is the minority direction.
+      // Excludes 'balance' because balance is universally present on
+      // every row, so a zero-count balance column is genuinely
+      // unmapped, not skewed.
+      for (const numericRole of ['debit', 'credit', 'amount'] as const) {
+        const col = roles.indexOf(numericRole);
+        if (col < 0 || col >= roles.length - 1) continue;
+        if (roles[col + 1] !== 'skip') continue;
+        const nextHeader = (headers[col + 1] ?? '').trim();
+        if (nextHeader !== '') continue; // next col is a different mapped role
+        const cur = numAt(col);
+        const next = numAt(col + 1);
+        if (cur === 0 && next >= 3) {
+          console.log(`[perBankRules] ${rule.name} skewed-shift ${numericRole} from col ${col} → col ${col + 1} (0 numeric in header column, ${next} in next headerless column)`);
+          roles[col] = 'skip';
+          roles[col + 1] = numericRole;
+          anyShift = true;
+        }
+      }
+
+      // Pass 3 — companion (faith-based, requires Pass 1 or Pass 2
+      // to have fired).
       if (anyShift) {
         for (const numericRole of ['debit', 'credit', 'amount'] as const) {
           const col = roles.indexOf(numericRole);

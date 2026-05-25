@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useTheme } from './hooks/useTheme';
 import { usePluginMode, usePluginParentMessage } from './hooks/usePluginMode';
@@ -115,12 +115,26 @@ function AppContent() {
   const bankStatementManager = useBankStatementManager(!!user);
   // Ledger scrutiny: open to all authenticated users (plan limits enforced server-side).
   const ledgerScrutinyManager = useLedgerScrutinyManager(!!user);
-  // CMA report generator: open to all authenticated users. No plan
-  // gating in v1 (no Gemini cost) — gating layer can be added when
-  // we introduce per-feature usage caps.
-  const cmaManager = useCMAManager(!!user);
-  // TB → Financial Statements: open to all authenticated users.
-  const tbBsManager = useTbBsManager(!!user);
+  // CMA report + TB → Financial Statements: paid-only (pro / enterprise).
+  // The hooks short-circuit for unauthorised users so we don't fetch
+  // drafts a free user can't see. Server routes also return 403 on
+  // any tb-bs / cma endpoint for free users.
+  const canAccessPaidBooks = !!user && (user.plan === 'pro' || user.plan === 'enterprise');
+  const cmaManager = useCMAManager(canAccessPaidBooks);
+  const tbBsManager = useTbBsManager(canAccessPaidBooks);
+
+  // Redirect free users away from paid-only Books tabs they reached
+  // via stored localStorage activeView (e.g. they were on a trial
+  // that expired, or clicked an old bookmark). Without this they'd
+  // see a blank content area because the matching `activeView ===
+  // 'cma' && canAccessPaidBooks` render guard would short-circuit.
+  useEffect(() => {
+    if (!user) return;
+    if (canAccessPaidBooks) return;
+    if (activeView === 'cma' || activeView === 'tb_bs') {
+      navigateTo('bank_statements');
+    }
+  }, [user, canAccessPaidBooks, activeView, navigateTo]);
 
   // Trial expiry: free-plan users are locked out after 30 days.
   const isTrialExpired =
@@ -248,12 +262,12 @@ function AppContent() {
                   <LedgerScrutinyView manager={ledgerScrutinyManager} />
                 </BooksView>
               )}
-              {activeView === 'cma' && (
+              {activeView === 'cma' && canAccessPaidBooks && (
                 <BooksView activeView={activeView} onViewChange={navigateTo}>
                   <CMAView manager={cmaManager} />
                 </BooksView>
               )}
-              {activeView === 'tb_bs' && (
+              {activeView === 'tb_bs' && canAccessPaidBooks && (
                 <BooksView activeView={activeView} onViewChange={navigateTo}>
                   <TbBsView manager={tbBsManager} />
                 </BooksView>

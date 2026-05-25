@@ -10,7 +10,7 @@
  * findByIdForUser — the billing_user_id is set on create for usage
  * accounting but doesn't grant cross-user access to drafts.
  */
-import { Router, Response } from 'express';
+import { Router, Response, NextFunction } from 'express';
 import { cmaDraftRepo, CmaDraftRow } from '../db/repositories/cmaDraftRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
@@ -18,9 +18,28 @@ import { getBillingUser } from '../lib/billing.js';
 import { enforceTokenQuota } from '../lib/tokenQuota.js';
 import { aiSuggestMappings } from '../lib/financialMapper.js';
 import { costForModel } from '../lib/gemini.js';
+import { getEffectivePlan } from '../lib/planLimits.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
+
+// Paid-plan gate. CMA Report is exposed only to pro / enterprise users.
+// The UI hides the tab for free users, but a stale client (cached JS)
+// or a direct API caller would otherwise bypass it — this middleware
+// is the authoritative check. Reads the effective plan (plugin_plan
+// overrides plan) the same way the rest of the codebase does.
+router.use((req: AuthRequest, res: Response, next: NextFunction) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const actor = userRepo.findById(req.user.id);
+  if (!actor) { res.status(401).json({ error: 'User not found' }); return; }
+  const billingUser = getBillingUser(actor);
+  const plan = getEffectivePlan(billingUser);
+  if (plan !== 'pro' && plan !== 'enterprise') {
+    res.status(403).json({ error: 'CMA Report is available on Pro and Enterprise plans only.' });
+    return;
+  }
+  next();
+});
 
 function parseUiPayload(row: { ui_payload: string }): Record<string, unknown> {
   try {
