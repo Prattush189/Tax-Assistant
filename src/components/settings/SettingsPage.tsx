@@ -924,6 +924,24 @@ export function SettingsPage() {
             >
               <SessionsSection buttonPrimary={buttonPrimary} />
             </Section>
+
+            <Section
+              title="Legal"
+              description="Our policies covering data, billing, and your rights."
+              icon={ScrollText}
+            >
+              <div className="flex flex-wrap gap-x-5 gap-y-2 text-sm">
+                <a href="/privacy" target="_blank" rel="noopener" className="text-emerald-600 dark:text-emerald-400 hover:underline">
+                  Privacy Policy
+                </a>
+                <a href="/terms" target="_blank" rel="noopener" className="text-emerald-600 dark:text-emerald-400 hover:underline">
+                  Terms of Service
+                </a>
+                <a href="/refund" target="_blank" rel="noopener" className="text-emerald-600 dark:text-emerald-400 hover:underline">
+                  Refund &amp; Cancellation
+                </a>
+              </div>
+            </Section>
           </div>
         )}
 

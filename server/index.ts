@@ -213,6 +213,21 @@ if (process.env.NODE_ENV === 'production') {
     },
   }));
 
+  // Clean-URL legal pages — served as plain HTML so Razorpay's domain-
+  // verification bot and Google's OAuth-verification reviewer can read
+  // them without executing JavaScript. The .html versions are reachable
+  // directly via the express.static middleware above (e.g. /privacy.html);
+  // these routes give the cleaner /privacy, /terms, /refund URLs we link
+  // from the login footer and Settings. Must be declared BEFORE the SPA
+  // catch-all below, otherwise the catch-all swallows them and returns
+  // the SPA shell.
+  for (const slug of ['privacy', 'terms', 'refund'] as const) {
+    app.get(`/${slug}`, (_req, res) => {
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+      res.sendFile(path.join(distPath, `${slug}.html`));
+    });
+  }
+
   // SPA fallback — always serve fresh index.html
   app.get('*', (_req, res) => {
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');

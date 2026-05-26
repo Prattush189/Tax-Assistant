@@ -36,6 +36,21 @@ const dbPath = process.env.DB_PATH ?? path.join(__dirname, '..', '..', 'data', '
 
 const db = new Database(dbPath);
 
+// Defensive migration: in production the server may not have been
+// restarted since the books_paid_enabled column was introduced, in
+// which case the column doesn't exist yet (the migration in
+// server/db/index.ts only runs at server boot). The script opens
+// the SQLite file directly and would otherwise fail with "no such
+// column" on a fresh deploy. Idempotent — ALTER is a no-op when
+// the column already exists, gated by the PRAGMA check.
+{
+  const cols = db.prepare("PRAGMA table_info(users)").all() as Array<{ name: string }>;
+  if (!cols.some(c => c.name === 'books_paid_enabled')) {
+    db.exec("ALTER TABLE users ADD COLUMN books_paid_enabled INTEGER NOT NULL DEFAULT 0");
+    console.log('[grant-books] migrated: added users.books_paid_enabled column');
+  }
+}
+
 interface UserLite {
   id: string;
   email: string;

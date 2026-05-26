@@ -224,6 +224,27 @@ export function LoginPage({ onSwitchToSignup, onNeedsVerification, onForgotPassw
               Create one
             </button>
           </motion.p>
+
+          {/* Legal links — required so unauthenticated visitors (including
+              Razorpay's KYC verifier and Google's OAuth reviewer) can reach
+              the policy pages without signing in. target=_blank keeps the
+              login form's draft state intact when the user returns. */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.7 }}
+            className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700 flex flex-wrap justify-center gap-x-5 gap-y-1 text-xs text-gray-400 dark:text-gray-500"
+          >
+            <a href="/privacy" target="_blank" rel="noopener" className="hover:text-emerald-600 dark:hover:text-emerald-400">
+              Privacy Policy
+            </a>
+            <a href="/terms" target="_blank" rel="noopener" className="hover:text-emerald-600 dark:hover:text-emerald-400">
+              Terms of Service
+            </a>
+            <a href="/refund" target="_blank" rel="noopener" className="hover:text-emerald-600 dark:hover:text-emerald-400">
+              Refund &amp; Cancellation
+            </a>
+          </motion.div>
         </motion.div>
       </div>
     </div>
