@@ -931,13 +931,13 @@ export function SettingsPage() {
               icon={ScrollText}
             >
               <div className="flex flex-wrap gap-x-5 gap-y-2 text-sm">
-                <a href="/privacy" target="_blank" rel="noopener" className="text-emerald-600 dark:text-emerald-400 hover:underline">
+                <a href="/privacy.html" target="_blank" rel="noopener" className="text-emerald-600 dark:text-emerald-400 hover:underline">
                   Privacy Policy
                 </a>
-                <a href="/terms" target="_blank" rel="noopener" className="text-emerald-600 dark:text-emerald-400 hover:underline">
+                <a href="/terms.html" target="_blank" rel="noopener" className="text-emerald-600 dark:text-emerald-400 hover:underline">
                   Terms of Service
                 </a>
-                <a href="/refund" target="_blank" rel="noopener" className="text-emerald-600 dark:text-emerald-400 hover:underline">
+                <a href="/refund.html" target="_blank" rel="noopener" className="text-emerald-600 dark:text-emerald-400 hover:underline">
                   Refund &amp; Cancellation
                 </a>
               </div>
