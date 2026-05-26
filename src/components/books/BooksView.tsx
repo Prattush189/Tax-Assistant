@@ -11,19 +11,15 @@ interface Props {
   children: ReactNode;
 }
 
-// Plan-tier ordering — matches the rest of the codebase (Sidebar,
-// ProLock). Used to gate the paid-only tabs below.
-const PLAN_RANK: Record<string, number> = { free: 0, pro: 1, enterprise: 2 };
-
 interface BooksTabDef {
   id: BooksTab;
   label: string;
   icon: typeof Landmark;
   ai?: boolean;
-  /** Minimum plan required to see this tab. Free users don't see
-   *  tabs above their tier. Server-side routes also enforce this so
-   *  a direct API call can't bypass the UI gate. */
-  minPlan?: 'pro' | 'enterprise';
+  /** When true, only users with admin role OR books_paid_enabled
+   *  see this tab. Server-side routes enforce the same gate so a
+   *  direct API call can't bypass it. */
+  booksPaidOnly?: boolean;
 }
 
 const ALL_TABS: BooksTabDef[] = [
@@ -31,14 +27,11 @@ const ALL_TABS: BooksTabDef[] = [
   { id: 'ledger_scrutiny', label: 'Ledger Scrutiny', icon: BookOpenCheck, ai: true },
   // TB → BS and CMA — opt-in AI mapping (the "AI-suggest" button on
   // the mapping step calls Gemini to classify uploaded rows). The
-  // rest of each module is pure computation. Badge flagged because
-  // there IS an AI path now. Paid-only: the AI-suggest button burns
-  // tokens disproportionately for the use case (CMA / TB → BS users
-  // typically map dozens of accounts per draft), and the feature
-  // surface is positioned as a pro-tier accountant tool, not a free
-  // self-serve flow.
-  { id: 'tb_bs', label: 'TB → Statements', icon: FileSpreadsheet, ai: true, minPlan: 'pro' },
-  { id: 'cma', label: 'CMA Report', icon: LineChart, ai: true, minPlan: 'pro' },
+  // rest of each module is pure computation. Off by default for
+  // every user including pro / enterprise — flipped per-user via
+  // server/scripts/grant-books.ts. Admins always see them.
+  { id: 'tb_bs', label: 'TB → Statements', icon: FileSpreadsheet, ai: true, booksPaidOnly: true },
+  { id: 'cma', label: 'CMA Report', icon: LineChart, ai: true, booksPaidOnly: true },
 ];
 
 /**
@@ -47,8 +40,8 @@ const ALL_TABS: BooksTabDef[] = [
  */
 export function BooksView({ activeView, onViewChange, children }: Props) {
   const { user } = useAuth();
-  const userRank = PLAN_RANK[user?.plan ?? 'free'] ?? 0;
-  const tabs = ALL_TABS.filter(t => !t.minPlan || userRank >= PLAN_RANK[t.minPlan]);
+  const canAccessPaidBooks = user?.role === 'admin' || user?.books_paid_enabled === true;
+  const tabs = ALL_TABS.filter(t => !t.booksPaidOnly || canAccessPaidBooks);
   return (
     <div className="flex-1 flex flex-col min-h-0">
       <div className="px-4 lg:px-6 py-2 border-b border-gray-200/50 dark:border-gray-800/50 shrink-0 bg-white/30 dark:bg-gray-900/20">

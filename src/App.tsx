@@ -119,7 +119,12 @@ function AppContent() {
   // The hooks short-circuit for unauthorised users so we don't fetch
   // drafts a free user can't see. Server routes also return 403 on
   // any tb-bs / cma endpoint for free users.
-  const canAccessPaidBooks = !!user && (user.plan === 'pro' || user.plan === 'enterprise');
+  // Off by default for every user including pro / enterprise. Admins
+  // always have access; everyone else needs books_paid_enabled,
+  // flipped per-user via server/scripts/grant-books.ts. The plan-
+  // based gate that used to live here was disabled — the per-user
+  // grant is the only path.
+  const canAccessPaidBooks = !!user && (user.role === 'admin' || user.books_paid_enabled === true);
   const cmaManager = useCMAManager(canAccessPaidBooks);
   const tbBsManager = useTbBsManager(canAccessPaidBooks);
 

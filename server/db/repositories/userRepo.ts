@@ -19,6 +19,7 @@ export interface UserRow {
   email_verified: number;             // 0 | 1 (SQLite has no bool)
   inviter_id: string | null;          // pool owner for shared-plan members
   itr_enabled: number;                // 0 | 1 — grants ITR tab without admin role
+  books_paid_enabled: number;         // 0 | 1 — grants TB → Statements + CMA Report (admins always have)
   session_token: string | null;       // random token per login — single-session enforcement
   plan_expires_at: string | null;           // ISO timestamp — paid plan expiry; NULL = no paid sub
   razorpay_subscription_id: string | null;  // active Razorpay subscription ID
@@ -136,6 +137,9 @@ const stmts = {
   countInvitees: db.prepare('SELECT COUNT(*) as n FROM users WHERE inviter_id = ?'),
   setItrEnabled: db.prepare(
     "UPDATE users SET itr_enabled = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
+  ),
+  setBooksPaidEnabled: db.prepare(
+    "UPDATE users SET books_paid_enabled = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
   ),
   updateEmail: db.prepare(
     "UPDATE users SET email = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
@@ -361,6 +365,16 @@ export const userRepo = {
    */
   setItrEnabled(userId: string, enabled: boolean): void {
     stmts.setItrEnabled.run(enabled ? 1 : 0, userId);
+  },
+
+  /**
+   * Toggle Books-paid feature access (TB → Statements + CMA Report)
+   * independently of admin role and plan. Admins ALWAYS have access
+   * regardless of this flag — the server-side gates check role first.
+   * See server/scripts/grant-books.ts.
+   */
+  setBooksPaidEnabled(userId: string, enabled: boolean): void {
+    stmts.setBooksPaidEnabled.run(enabled ? 1 : 0, userId);
   },
 
   /**

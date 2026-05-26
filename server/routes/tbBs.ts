@@ -13,24 +13,24 @@ import { getBillingUser } from '../lib/billing.js';
 import { enforceTokenQuota } from '../lib/tokenQuota.js';
 import { aiSuggestMappings } from '../lib/financialMapper.js';
 import { costForModel } from '../lib/gemini.js';
-import { getEffectivePlan } from '../lib/planLimits.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
 
-// Paid-plan gate. TB → BS is exposed only to pro / enterprise users.
-// The UI hides the tab for free users, but a stale client (cached JS)
-// or a direct API caller would otherwise bypass it — this middleware
-// is the authoritative check. Reads the effective plan (plugin_plan
-// overrides plan) the same way the rest of the codebase does.
+// Opt-in feature gate. TB → Statements is disabled by default for
+// every user including pro / enterprise — the AI-suggest mapping
+// path burns disproportionate Gemini tokens (dozens of accounts per
+// draft × heavy classification prompt). Two ways to gain access:
+//   1. role === 'admin' (automatic, no flag check needed)
+//   2. books_paid_enabled === 1 (flipped per-user via
+//      server/scripts/grant-books.ts)
+// Direct API callers without either are rejected with 403.
 router.use((req: AuthRequest, res: Response, next: NextFunction) => {
   if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
   const actor = userRepo.findById(req.user.id);
   if (!actor) { res.status(401).json({ error: 'User not found' }); return; }
-  const billingUser = getBillingUser(actor);
-  const plan = getEffectivePlan(billingUser);
-  if (plan !== 'pro' && plan !== 'enterprise') {
-    res.status(403).json({ error: 'TB → Statements is available on Pro and Enterprise plans only.' });
+  if (actor.role !== 'admin' && actor.books_paid_enabled !== 1) {
+    res.status(403).json({ error: 'TB → Statements is not enabled for this account. Contact support to request access.' });
     return;
   }
   next();

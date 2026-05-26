@@ -8,6 +8,10 @@ interface User {
   plan: 'free' | 'pro' | 'enterprise';
   /** Grants ITR tab access independently of admin role. */
   itr_enabled?: boolean;
+  /** Grants TB → Statements + CMA Report independently of plan.
+   *  Admins always have access regardless of this flag. Flipped
+   *  per-user via server/scripts/grant-books.ts. */
+  books_paid_enabled?: boolean;
   /** ISO timestamp when the free-plan trial expires (always present). */
   trial_ends_at?: string;
   /** ISO timestamp when the current paid plan expires; null if no active sub. */

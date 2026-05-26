@@ -88,6 +88,7 @@ export function toUserResponse(u: {
   role?: 'user' | 'admin' | null;
   plan?: string | null;
   itr_enabled?: number | null;
+  books_paid_enabled?: number | null;
   created_at?: string | null;
   plan_expires_at?: string | null;
 }) {
@@ -99,6 +100,7 @@ export function toUserResponse(u: {
     role: u.role ?? 'user',
     plan: u.plan ?? 'free',
     itr_enabled: u.itr_enabled === 1,
+    books_paid_enabled: u.books_paid_enabled === 1,
     trial_ends_at: getTrialEndsAt(createdAt),
     plan_expires_at: u.plan_expires_at ?? null,
   };

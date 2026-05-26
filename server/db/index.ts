@@ -69,6 +69,17 @@ if (!colNames.includes('itr_enabled')) {
   db.exec("ALTER TABLE users ADD COLUMN itr_enabled INTEGER NOT NULL DEFAULT 0");
 }
 
+// Books-paid features (TB → Statements + CMA Report). Default off
+// for every user including pro/enterprise — these features burn
+// disproportionate Gemini tokens via the AI-suggest mapping path
+// (dozens of accounts per draft × heavy classification prompt), so
+// they're opt-in per user via server/scripts/grant-books.ts. Admins
+// have automatic access; the column is only consulted for non-admin
+// users. Mirrors the itr_enabled gate above.
+if (!colNames.includes('books_paid_enabled')) {
+  db.exec("ALTER TABLE users ADD COLUMN books_paid_enabled INTEGER NOT NULL DEFAULT 0");
+}
+
 // Dealer attribution from assist's GetDealerInfo lookup. Refreshed on
 // every successful login (notifyAssistOfLogin in lib/assistNotify.ts).
 // Both nullable — leftover when the API call failed, the user is brand
