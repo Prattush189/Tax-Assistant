@@ -38,8 +38,10 @@ export function planKey(plan: PaidPlan, _billing: BillingCycle = 'yearly'): Plan
 
 /**
  * Maximum dealer-level discount allowed on the pre-GST base price, in paise.
- * Set to ₹1,000. Discounts apply to the taxable value; GST is then charged
- * on the discounted base, so the inclusive discount cap is ₹1,180.
+ * Set to ₹1,500. Discounts apply to the taxable value; GST is then charged
+ * on the discounted base, so the inclusive discount cap is ₹1,770.
+ * Raised from ₹1,000 in 2026-05 to give dealers more room on competitive
+ * deals; the upstream assist UI enforces the same ceiling.
  */
-export const MAX_DEALER_DISCOUNT_BASE_PAISE = 1_000_00;
+export const MAX_DEALER_DISCOUNT_BASE_PAISE = 1_500_00;
 export const MAX_DEALER_DISCOUNT_INCL_PAISE = Math.round(MAX_DEALER_DISCOUNT_BASE_PAISE * (1 + GST_RATE));
