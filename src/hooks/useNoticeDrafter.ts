@@ -126,9 +126,30 @@ export function useNoticeDrafter() {
         input,
         (text) => setGeneratedContent(prev => prev + text),
         (msg) => { setError(msg); setIsGenerating(false); },
-        (noticeId) => {
+        async (noticeId, meta) => {
           setCurrentNoticeId(noticeId);
           setIsGenerating(false);
+          // When the server post-processed the draft (e.g. stripped
+          // citations without an authoritative source URL), the
+          // streamed text the user just watched come in is now stale
+          // — the persisted draft has fewer citations. Re-fetch the
+          // canonical content so the on-screen view matches what
+          // will be exported / filed.
+          if (meta?.citationsSanitized && noticeId) {
+            try {
+              const fresh = await fetchNotice(noticeId);
+              if (fresh.generated_content) setGeneratedContent(fresh.generated_content);
+              const n = meta.citationsDropped ?? 0;
+              const msg = n > 0
+                ? `Removed ${n} case-law citation${n === 1 ? '' : 's'} we couldn't verify against an authoritative source. Always double-check before filing.`
+                : `Cleaned up case-law citations to keep only verified ones. Always double-check before filing.`;
+              // Lazy-import toast so the hook stays react-only.
+              const { default: toast } = await import('react-hot-toast');
+              toast(msg, { icon: '⚠️', duration: 6000 });
+            } catch (e) {
+              console.warn('[useNoticeDrafter] re-fetch after sanitisation failed:', e);
+            }
+          }
           loadNotices();
         },
         file,

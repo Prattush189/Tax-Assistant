@@ -3,6 +3,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
 import { pickChatProvider } from '../lib/chatProvider.js';
 import { SseWriter } from '../lib/sseStream.js';
+import { sanitizeNoticeCitations } from '../lib/noticeCitationSanitizer.js';
 
 import { noticeRepo } from '../db/repositories/noticeRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
@@ -92,7 +93,7 @@ DOCUMENT STRUCTURE (produce every section that applies, in this order)
 
 (5) \`## 3. LEGAL SUBMISSIONS\` — the heart of the reply. Break into lettered sub-parts \`### A. <heading>\`, \`### B. <heading>\`, etc. Each sub-part states one discrete legal point with the exact section cited and sub-section where applicable. Quote statutory text inside \`> "..."\` blockquotes so it stands out.
 
-(6) \`## 4. SUPPORTING CASE LAWS / LEGAL PRECEDENTS\` — a numbered list using \`**(i)** <heading>:\`, \`**(ii)** <heading>:\` etc. Under each, a short paragraph stating the principle and the citation in this exact form: \`[Assessee] v. [Department], (Year) Volume ITR/GSTL Page (Court abbreviation)\`. Cite 2–4 precedents. Only use real judgments — never fabricate a citation; if unsure, state the principle as a "well-settled rule" without a fake citation. Verify each cited section number, sub-section text, and case-law reference against the web search results before relying on it.
+(6) \`## 4. SUPPORTING CASE LAWS / LEGAL PRECEDENTS\` — OPTIONAL section. Include it ONLY if you can cite real judgments you have just verified through web search. There is NO minimum count — zero citations is acceptable and far preferable to a single fabricated one. If you cannot confidently cite at least one real judgment with a verifiable source URL, OMIT THIS ENTIRE SECTION (skip from "## 3" straight to "## 5 RELIEF SOUGHT"). Each entry must be a numbered item \`**(i)** <heading>:\`, \`**(ii)** <heading>:\` followed by a short paragraph stating the principle, then the citation in this exact form on its own line: \`[Assessee] v. [Department], (Year) Volume ITR/GSTL Page (Court abbreviation) [<full source URL from search results>]\`. The bracketed URL is MANDATORY — it must be a working link to indiankanoon.org, itat.gov.in, sci.gov.in, livelaw.in, taxmann.com, or another authoritative source that you saw in the search results for this query. A citation without a verifiable URL will be stripped from the final letter automatically — do not produce them. Fabricating a citation (inventing a case name, volume, page, or year that does not exist) is a hard rule violation and degrades the quality of the entire reply.
 
 (7) \`## 5. RELIEF SOUGHT\` — a numbered list \`(1) (2) (3) ...\` of the exact prayers. Include precise rupee amounts wherever the notice has quantified figures (e.g. refund, interest withdrawal, demand rectification).
 
@@ -118,8 +119,8 @@ FORMATTING RULES (strict)
 - Numbered section headings \`## 1. ...\` through \`## 6. ...\` must appear in that exact sequence; skip a section only if truly not applicable.
 
 QUALITY BAR
+- NO FABRICATION OF CITATIONS. This is the highest rule in this prompt. A fabricated case citation (made-up case name, volume, year, or page that does not exist) is worse than no citation at all — it destroys the credibility of the entire reply and exposes the filer to professional risk. If you have any doubt about whether a judgment is real, omit it. Plain statutory reasoning is always acceptable.
 - Be precise about section numbers and sub-sections — a wrong citation sinks the reply.
-- Only cite judgments you are confident exist with the citation you provide. A plain principle is better than a fabricated citation.
 - Write in the voice of a practising senior advocate: precise, assertive, respectful. No marketing language, no emojis, no hedging about being AI-generated.
 - Complete every sentence — never truncate mid-argument.
 
@@ -405,7 +406,28 @@ router.post(
       (text) => { fullResponse += text; sse.writeText(text); },
     );
 
+    let sanitizationReport = { changed: false, droppedEntries: 0, totalEntries: 0, keptEntries: 0 };
     if (fullResponse) {
+      // Strip any case-law citations the model produced without a
+      // verifiable source URL. The model has been told (in the system
+      // prompt) that URL-less citations will be removed; this is the
+      // automated enforcement of that rule and catches the residual
+      // hallucination cases where the search-grounding signal was
+      // weak. See noticeCitationSanitizer for the precise behaviour.
+      //
+      // The streamed text the user saw mid-generation may have
+      // included a fabricated citation that gets stripped here —
+      // that's acceptable because the persisted draft (which is what
+      // the user will refresh / save / export) is now clean, and the
+      // SSE 'done' event tells the frontend the canonical content
+      // changed so it can re-fetch and replace the live view.
+      const sanitized = sanitizeNoticeCitations(fullResponse);
+      sanitizationReport = sanitized.report;
+      if (sanitized.report.changed) {
+        console.log(`[notices] sanitised notice ${noticeId}: dropped ${sanitized.report.droppedEntries}/${sanitized.report.totalEntries} citation(s) without an authoritative source URL`);
+      }
+      fullResponse = sanitized.text;
+
       // updateContent flips status='generating' → 'generated' and clears
       // any previous error_message. Quota is debited here too (only on
       // success) via featureUsageRepo below.
@@ -430,7 +452,19 @@ router.post(
     // bank statements, uploads, and AI suggestions).
     featureUsageRepo.logWithBilling(req.user!.id, billingUserId, 'notice');
 
-    sse.writeDone({ noticeId });
+    // Signal to the frontend whether the live-streamed text drifted
+    // from the persisted canonical content because of citation
+    // sanitisation. The client uses this to re-fetch the notice from
+    // /api/notices/:id so the displayed draft matches what got saved
+    // (and what the user will export / file). Without this flag the
+    // user could read a fabricated citation on screen, hit "Export
+    // PDF", and only then realise the PDF didn't contain it — or
+    // worse, copy the on-screen text manually.
+    sse.writeDone({
+      noticeId,
+      citationsSanitized: sanitizationReport.changed,
+      citationsDropped: sanitizationReport.droppedEntries,
+    });
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
     console.error(`[notices] Generation error: ${errMsg.slice(0, 200)}`);

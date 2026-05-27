@@ -673,11 +673,20 @@ export interface NoticeGenerateInput {
   extractedText?: string;
 }
 
+/** Extra metadata included in the SSE `done` event so the UI can
+ *  react to server-side post-processing (e.g. citation sanitisation
+ *  that mutated the persisted draft and made the live-streamed text
+ *  stale). All fields optional — older server builds omit them. */
+export interface NoticeGenerateDoneMeta {
+  citationsSanitized?: boolean;
+  citationsDropped?: number;
+}
+
 export async function generateNotice(
   input: NoticeGenerateInput,
   onChunk: (text: string) => void,
   onError: (msg: string) => void,
-  onDone?: (noticeId: string | null) => void,
+  onDone?: (noticeId: string | null, meta?: NoticeGenerateDoneMeta) => void,
   file?: File,
 ): Promise<void> {
   // When a file is attached, we ship it as multipart so the notice route can
@@ -733,7 +742,13 @@ export async function generateNotice(
       if (!line.startsWith('data: ')) continue;
       try {
         const parsed = JSON.parse(line.slice(6).trim());
-        if (parsed.done) { onDone?.(parsed.noticeId ?? null); return; }
+        if (parsed.done) {
+          onDone?.(parsed.noticeId ?? null, {
+            citationsSanitized: parsed.citationsSanitized === true,
+            citationsDropped: typeof parsed.citationsDropped === 'number' ? parsed.citationsDropped : undefined,
+          });
+          return;
+        }
         if (parsed.error) { onError(parsed.message ?? 'Generation failed.'); return; }
         if (parsed.text) onChunk(parsed.text);
       } catch { /* skip */ }
