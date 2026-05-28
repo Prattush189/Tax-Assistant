@@ -180,7 +180,7 @@ function StepBody({ step, draft, draftId, onChange }: StepBodyProps) {
     case 'workingCapital': return <WorkingCapitalStep draft={draft} onChange={onChange} />;
     case 'termLoans':      return <TermLoansStep draft={draft} onChange={onChange} />;
     case 'stress':         return <StressStep draft={draft} onChange={onChange} />;
-    case 'review':         return <ReviewStep draft={draft} draftId={draftId} />;
+    case 'review':         return <ReviewStep draft={draft} draftId={draftId} onChange={onChange} />;
   }
 }
 

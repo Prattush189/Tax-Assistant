@@ -149,6 +149,104 @@ export interface WorkingCapitalAssumption {
   creditorDays?: number;
   /** When model='percent_of_sales': WC as % of projected sales. */
   wcAsPctOfSales?: number;
+  /** Banker holding-period assumptions used by Form IV. All optional;
+   *  exporter falls back to the inventoryDays / debtorDays / creditorDays
+   *  values above when these aren't set explicitly. Expressed as
+   *  MONTHS (not days) because Form IV's banker convention is months. */
+  holdingPeriods?: {
+    /** Raw material held — months of consumption. */
+    rawMaterialMonths?: number;
+    /** Stock-in-process — months of cost of production. */
+    workInProcessMonths?: number;
+    /** Finished goods — months of cost of sales. */
+    finishedGoodsMonths?: number;
+    /** Trade receivables — months of net sales (credit sales). */
+    receivablesMonths?: number;
+    /** Trade payables — months of purchases. */
+    payablesMonths?: number;
+  };
+}
+
+/**
+ * One block of fixed assets for Schedule II–style WDV depreciation.
+ * Banks expect to see asset categories split out (Plant & Machinery
+ * vs Buildings vs Computers vs Furniture) because the rates differ
+ * meaningfully — a CMA that puts everything under a single 15% rate
+ * over-states depreciation for Buildings (10%) and under-states it
+ * for Computers (40%). The Phase 4 Depreciation sheet renders one
+ * block per row × N projected years.
+ *
+ * `additions` and `deductions` are aligned to the projection horizon
+ * (one entry per FY). When omitted, the exporter treats them as
+ * zero — the block simply rolls down at `ratePct`. Future enhancement
+ * can derive additions from term-loan disbursements (capex proxy).
+ */
+export interface FixedAssetBlock {
+  name: string;
+  /** Depreciation rate as a decimal — 0.15 = 15%. */
+  ratePct: number;
+  /** Opening WDV at the start of the FIRST projected year. */
+  openingWdv: number;
+  /** Capex added during each projected FY (optional). */
+  additions?: number[];
+  /** Disposals during each projected FY (optional). */
+  deductions?: number[];
+}
+
+/** Standard Schedule II–derived defaults the exporter falls back on
+ *  when the user hasn't supplied any blocks. Opening WDVs are zero;
+ *  the exporter substitutes the latest historical fixed-asset total
+ *  into the FIRST block as a sensible starting point. */
+export const DEFAULT_FIXED_ASSET_BLOCKS: FixedAssetBlock[] = [
+  { name: 'Plant & Machinery', ratePct: 0.15, openingWdv: 0 },
+  { name: 'Buildings', ratePct: 0.10, openingWdv: 0 },
+  { name: 'Furniture & Fittings', ratePct: 0.10, openingWdv: 0 },
+  { name: 'Computers', ratePct: 0.40, openingWdv: 0 },
+  { name: 'Vehicles', ratePct: 0.15, openingWdv: 0 },
+];
+
+/**
+ * Project Report / Introduction page content (Form I in some banker
+ * templates). Phase 2 surfaces this on the exported Excel as the
+ * "Introduction" sheet. Each field is optional; the exporter falls
+ * back to deterministic defaults built from firm + projection data
+ * when a value is missing. Users edit on ReviewStep before export.
+ */
+export interface ProjectReport {
+  /** "Rs.83.75 Lacs Term Loan + Enhancement in CC from Rs.80L to Rs.150L". */
+  creditRequest?: string;
+  /** Margin (own contribution) ratio as a decimal — 0.25 = 25%. */
+  margin?: number;
+  /** Itemised cost-of-project entries. */
+  costOfProject?: Array<{ item: string; amount: number }>;
+  /** Itemised means-of-finance entries (own contribution, bank loan, etc.). */
+  meansOfFinance?: Array<{ item: string; amount: number }>;
+  /** Multi-paragraph narrative about the firm, promoter, business. */
+  briefProfile?: string;
+  /** Machinery / equipment description. */
+  machineryDetails?: string;
+  /** Premises description. */
+  premises?: string;
+  /** Power connection details. */
+  powerConnection?: string;
+  /** ROI assumptions (e.g. "Term Loan at 8.35% p.a., CC at 8.50% p.a."). */
+  rateOfInterestNotes?: string;
+}
+
+/**
+ * BEP (Break-Even Point) inputs. Each canonical cost line is treated
+ * as some proportion variable and the rest fixed. The exporter uses
+ * these to split the operating statement into variable vs fixed
+ * components on the BEP sheet. Sensible defaults applied when a key
+ * is missing: COGS = 100% variable, SG&A = 20% variable, depreciation
+ * = 0% variable (fully fixed), finance cost = 0% variable. Users can
+ * override on ReviewStep.
+ */
+export interface BepAssumption {
+  /** Per canonical cost key — fraction of that line that's variable.
+   *  0 = fully fixed, 1 = fully variable. Anything between 0 and 1 is
+   *  a split (e.g. 0.8 means 80% variable / 20% fixed). */
+  variableFractionByKey?: Partial<Record<string, number>>;
 }
 
 export interface TermLoan {
@@ -170,6 +268,12 @@ export interface TermLoan {
    *  supports the first two; ballooning falls through to free-form
    *  notes in the export. */
   repaymentType?: 'equal_emi' | 'equal_principal';
+  /** Month within the projection's FIRST year in which the loan is
+   *  disbursed (1 = April for FY accounting, 12 = March). Used by the
+   *  Phase 3 monthly amortisation schedule so the disbursement row
+   *  lands on the correct month and the moratorium counts forward
+   *  from there. Defaults to month 1 (start of FY) when unset. */
+  disbursementMonth?: number;
 }
 
 export interface StressTest {
@@ -195,6 +299,21 @@ export interface CmaDraft {
   workingCapital?: WorkingCapitalAssumption;
   termLoans?: TermLoan[];
   stress?: StressTest;
+  /** Form I content (Phase 2). Auto-defaulted in the exporter; user
+   *  can edit on ReviewStep before export. */
+  projectReport?: ProjectReport;
+  /** BEP inputs (Phase 2). Same default-and-edit pattern. */
+  bep?: BepAssumption;
+  /** Per-block depreciation schedule (Phase 4). When omitted, the
+   *  exporter renders a single 15% Plant & Machinery block seeded
+   *  from the latest historical fixed-asset total — same as Phase 3
+   *  behaviour. User adds blocks on the AssumptionsStep. */
+  fixedAssetBlocks?: FixedAssetBlock[];
+  /** Monthly seasonality vector for the MPBF Monthly sheet (Phase
+   *  4). 12 numbers summing to 1.0; when omitted, the exporter
+   *  treats each month as 1/12. Useful for seasonal businesses
+   *  (textiles peak in Oct-Nov; agri inputs peak in May-Jun). */
+  monthlySeasonality?: number[];
 }
 
 export function emptyDraft(name = ''): CmaDraft {

@@ -18,6 +18,7 @@ import { getBillingUser } from '../lib/billing.js';
 import { enforceTokenQuota } from '../lib/tokenQuota.js';
 import { aiSuggestMappings } from '../lib/financialMapper.js';
 import { costForModel } from '../lib/gemini.js';
+import { callGeminiJson } from '../lib/geminiJson.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
@@ -187,6 +188,119 @@ router.post('/drafts/:id/ai-suggest-mapping', async (req: AuthRequest, res: Resp
   } catch (err) {
     console.error('[cma-ai-mapping] failed:', err);
     res.status(500).json({ error: err instanceof Error ? err.message : 'AI mapping failed' });
+  } finally {
+    quota.release();
+  }
+});
+
+// ── AI narrative generator for the Introduction sheet ─────────
+//
+// Generates a brief profile + machinery / premises / ROI narrative
+// for the CMA Project Report. The output replaces the template-driven
+// defaults from phase2Defaults.ts when the user clicks "Generate with
+// AI" on ReviewStep. All fields are returned in one Gemini call to
+// keep cost predictable.
+//
+// Inputs from the client:
+//   { firmName, businessNature, state, applicationContext,
+//     projectionHorizon, latestRevenueLacs, proposedLoanLacs }
+//
+// Output:
+//   { briefProfile, machineryDetails, premises, powerConnection,
+//     rateOfInterestNotes }
+//
+// All fields are short (1-4 sentences each). User edits on
+// ReviewStep before export. We DON'T persist directly — caller is
+// expected to merge into draft.projectReport via the existing draft
+// save path so server-side billing already covers the storage write.
+router.post('/drafts/:id/ai-narrative', async (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const draft = cmaDraftRepo.findByIdForUser(req.params.id, req.user.id);
+  if (!draft) { res.status(404).json({ error: 'Draft not found' }); return; }
+
+  const body = req.body ?? {};
+  const firmName = typeof body.firmName === 'string' ? body.firmName.trim() : '';
+  const businessNature = typeof body.businessNature === 'string' ? body.businessNature.trim() : '';
+  const state = typeof body.state === 'string' ? body.state.trim() : '';
+  const applicationContext = typeof body.applicationContext === 'string' ? body.applicationContext.trim() : '';
+  const latestRevenueLacs = Number.isFinite(body.latestRevenueLacs) ? Number(body.latestRevenueLacs) : null;
+  const proposedLoanLacs = Number.isFinite(body.proposedLoanLacs) ? Number(body.proposedLoanLacs) : null;
+
+  if (!firmName || !businessNature) {
+    res.status(400).json({ error: 'firmName and businessNature are required to generate a narrative.' });
+    return;
+  }
+
+  // Pre-flight token quota gate. Narrative is short (~600 input + 400
+  // output tokens typical) so the estimate is generous.
+  const estimate = 1200;
+  const quota = enforceTokenQuota(req, res, estimate);
+  if (!quota.ok) return;
+
+  const callStartMs = Date.now();
+  try {
+    const userPrompt = `Generate a project-report narrative for an Indian CMA filing. Inputs:
+- Firm Name: ${firmName}
+- Nature of Business: ${businessNature}
+- State / Location: ${state || 'India'}
+- Credit Request: ${applicationContext || 'as separately specified'}
+- Latest Annual Revenue (Rs. Lacs): ${latestRevenueLacs ?? 'not specified'}
+- Proposed Loan (Rs. Lacs): ${proposedLoanLacs ?? 'not specified'}
+
+Return STRICT JSON with these keys ONLY:
+{
+  "briefProfile": "3-5 short sentences about the firm, promoter, scale, market positioning. Plausible for an Indian SME. No promotional language. Avoid superlatives. Each sentence on a new line.",
+  "machineryDetails": "1-2 sentences describing machinery suitable for this business nature.",
+  "premises": "1-2 sentences about the premises being suitable for the operations.",
+  "powerConnection": "1 sentence about power load adequacy.",
+  "rateOfInterestNotes": "1 sentence about ROI assumptions in the CMA."
+}
+
+Hard rules:
+- Use plain ASCII (no Unicode rupee symbol — write "Rs." instead).
+- Do not invent specific names of promoters, towns, supplier vendors, machine models, or other facts not given.
+- Keep it bankable in tone — terse, factual, no marketing.
+- Do not include URLs, citations, or footnotes.
+- Output ONLY the JSON object. No markdown, no prose around it.`;
+
+    const result = await callGeminiJson<{
+      briefProfile?: string;
+      machineryDetails?: string;
+      premises?: string;
+      powerConnection?: string;
+      rateOfInterestNotes?: string;
+    }>(
+      [{ role: 'user', content: userPrompt }],
+      { maxTokens: 1024 },
+    );
+
+    // Log cost under a dedicated feature tag — matches the rest of
+    // the codebase's per-feature billing taxonomy.
+    try {
+      const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
+      const cost = costForModel(result.modelUsed, result.inputTokens, result.outputTokens);
+      usageRepo.logWithBilling(
+        clientIp, req.user.id, quota.billingUserId,
+        result.inputTokens, result.outputTokens, cost, false,
+        result.modelUsed, false, 'cma_ai_narrative', 0,
+        'success', quota.estimatedTokens, Date.now() - callStartMs,
+      );
+    } catch (err) { console.error('[cma-ai-narrative] cost log failed:', err); }
+
+    // Defensive shape — trim, drop unknown keys, replace Unicode
+    // rupee just in case the model emitted it despite the instruction.
+    const sanitize = (s: unknown): string =>
+      typeof s === 'string' ? s.replace(/₹/g, 'Rs.').trim() : '';
+    res.json({
+      briefProfile: sanitize(result.data.briefProfile),
+      machineryDetails: sanitize(result.data.machineryDetails),
+      premises: sanitize(result.data.premises),
+      powerConnection: sanitize(result.data.powerConnection),
+      rateOfInterestNotes: sanitize(result.data.rateOfInterestNotes),
+    });
+  } catch (err) {
+    console.error('[cma-ai-narrative] failed:', err);
+    res.status(500).json({ error: err instanceof Error ? err.message : 'AI narrative generation failed' });
   } finally {
     quota.release();
   }

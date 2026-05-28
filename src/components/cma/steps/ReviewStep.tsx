@@ -9,22 +9,27 @@
  * back/forth between steps without recomputing on every render.
  */
 import { useMemo, useState } from 'react';
-import { Download, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Download, AlertTriangle, CheckCircle2, Sparkles, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Card } from '../../itr/shared/Inputs';
 import { cn, formatINR } from '../../../lib/utils';
-import { markCmaExported } from '../../../services/api';
+import { markCmaExported, generateCmaNarrative } from '../../../services/api';
 import { resolveHistorical } from '../lib/resolveHistorical';
 import { runProjection } from '../lib/projectionEngine';
 import { computeMpbf } from '../lib/mpbf';
 import { computeRatios, gradeRatio } from '../lib/ratios';
 import { applyStressTest } from '../lib/stressTest';
 import { buildCmaWorkbook } from '../lib/excelExport';
+import { buildProjectReportDefaults, buildBepDefaults } from '../lib/phase2Defaults';
 import type { CmaDraft } from '../lib/uiModel';
 
 interface Props {
   draft: CmaDraft;
   draftId: string | null;
+  /** Optional — when supplied, the Phase 2 editor section appears and
+   *  edits persist via the parent manager (which saves to the server
+   *  on debounce). Without it, the Phase 2 editor renders read-only. */
+  onChange?: (next: CmaDraft) => void;
 }
 
 interface ValidationIssue {
@@ -50,10 +55,86 @@ function validate(draft: CmaDraft): ValidationIssue[] {
   return issues;
 }
 
-export function ReviewStep({ draft, draftId }: Props) {
+export function ReviewStep({ draft, draftId, onChange }: Props) {
   const [downloading, setDownloading] = useState(false);
+  const [phase2Open, setPhase2Open] = useState(false);
+  const [generatingNarrative, setGeneratingNarrative] = useState(false);
   const issues = useMemo(() => validate(draft), [draft]);
   const hasErrors = issues.some((i) => i.level === 'error');
+  const projectReportDefaults = useMemo(() => buildProjectReportDefaults(draft), [draft]);
+  const bepDefaults = useMemo(() => buildBepDefaults(), []);
+
+  const setReportField = <K extends keyof NonNullable<CmaDraft['projectReport']>>(
+    key: K,
+    value: NonNullable<CmaDraft['projectReport']>[K],
+  ) => {
+    if (!onChange) return;
+    onChange({
+      ...draft,
+      projectReport: { ...(draft.projectReport ?? {}), [key]: value },
+    });
+  };
+  const setBepFraction = (key: string, fraction: number) => {
+    if (!onChange) return;
+    onChange({
+      ...draft,
+      bep: {
+        ...(draft.bep ?? {}),
+        variableFractionByKey: {
+          ...(draft.bep?.variableFractionByKey ?? {}),
+          [key]: fraction,
+        },
+      },
+    });
+  };
+
+  const onGenerateNarrative = async () => {
+    if (!onChange || !draftId) return;
+    if (!draft.firm?.firmName || !draft.firm?.businessNature) {
+      toast.error('Please set Firm Name and Nature of Business on the first step before generating an AI narrative.');
+      return;
+    }
+    setGeneratingNarrative(true);
+    try {
+      // Pull latest revenue + proposed-loan total to give the model
+      // enough context that the narrative isn't generic. Falls back
+      // gracefully when computed isn't ready.
+      const lastRevenue = computed
+        ? (computed.projection.series.pl_revenue ?? []).at(-1) ?? null
+        : null;
+      const proposedLoan = (draft.termLoans ?? [])
+        .filter(tl => tl.status === 'proposed')
+        .reduce((s, tl) => s + (tl.principal ?? 0), 0);
+      const result = await generateCmaNarrative(draftId, {
+        firmName: draft.firm.firmName,
+        businessNature: draft.firm.businessNature,
+        state: draft.firm.state ?? undefined,
+        applicationContext: draft.firm.applicationContext ?? undefined,
+        latestRevenueLacs: typeof lastRevenue === 'number' ? lastRevenue / 100000 : null,
+        proposedLoanLacs: proposedLoan > 0 ? proposedLoan / 100000 : null,
+      });
+      // Merge over existing user values — but only into fields the
+      // user hasn't already populated, so re-clicking Generate
+      // doesn't blow away manual edits. To explicitly re-generate a
+      // field, the user can clear it first and click again.
+      onChange({
+        ...draft,
+        projectReport: {
+          ...(draft.projectReport ?? {}),
+          briefProfile: draft.projectReport?.briefProfile?.trim() ? draft.projectReport.briefProfile : result.briefProfile,
+          machineryDetails: draft.projectReport?.machineryDetails?.trim() ? draft.projectReport.machineryDetails : result.machineryDetails,
+          premises: draft.projectReport?.premises?.trim() ? draft.projectReport.premises : result.premises,
+          powerConnection: draft.projectReport?.powerConnection?.trim() ? draft.projectReport.powerConnection : result.powerConnection,
+          rateOfInterestNotes: draft.projectReport?.rateOfInterestNotes?.trim() ? draft.projectReport.rateOfInterestNotes : result.rateOfInterestNotes,
+        },
+      });
+      toast.success('AI narrative drafted. Review the text and edit anything before exporting.');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'AI narrative generation failed');
+    } finally {
+      setGeneratingNarrative(false);
+    }
+  };
 
   const computed = useMemo(() => {
     if (hasErrors) return null;
@@ -232,6 +313,95 @@ export function ReviewStep({ draft, draftId }: Props) {
             </Card>
           )}
         </>
+      )}
+
+      {/* Phase 2 — Project Report + BEP overrides. Hidden behind a
+          disclosure so users who just want a default export aren't
+          forced through it. Every field has a sensible default
+          surfaced as placeholder text; the user only types when they
+          want to override. */}
+      {onChange && (
+        <Card>
+          <button
+            type="button"
+            onClick={() => setPhase2Open(o => !o)}
+            className="flex items-center justify-between w-full text-sm font-medium text-gray-700 dark:text-gray-200"
+          >
+            <span>Project Report &amp; BEP overrides{phase2Open ? '' : ' (auto-filled — click to edit)'}</span>
+            <span className="text-gray-400 text-xs">{phase2Open ? '▾' : '▸'}</span>
+          </button>
+          {phase2Open && (
+            <div className="mt-4 space-y-4 text-sm">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Credit Request (shown on Introduction sheet)</label>
+                <input
+                  type="text"
+                  value={draft.projectReport?.creditRequest ?? ''}
+                  placeholder={projectReportDefaults.creditRequest ?? 'e.g. Rs. 83.75 Lacs Term Loan + Rs. 70 Lacs CC enhancement'}
+                  onChange={(e) => setReportField('creditRequest', e.target.value)}
+                  className="w-full rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm"
+                />
+              </div>
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">Brief Profile (free text — appears under "BRIEF PROFILE" on Introduction)</label>
+                  <button
+                    type="button"
+                    onClick={onGenerateNarrative}
+                    disabled={generatingNarrative || !draftId}
+                    className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400 hover:text-emerald-800 dark:hover:text-emerald-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Calls Gemini to draft a project-report narrative based on the firm info. Empty fields get filled; existing edits are preserved."
+                  >
+                    {generatingNarrative ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                    {generatingNarrative ? 'Generating…' : 'Generate with AI'}
+                  </button>
+                </div>
+                <textarea
+                  value={draft.projectReport?.briefProfile ?? ''}
+                  placeholder={projectReportDefaults.briefProfile}
+                  onChange={(e) => setReportField('briefProfile', e.target.value)}
+                  rows={5}
+                  className="w-full rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm font-sans"
+                />
+                <p className="text-xs text-gray-400 mt-1">Multi-line. One paragraph per line break. Default is generated from firm name + nature of business; edit for specifics. AI generation also fills Machinery / Premises / Power / ROI notes on the Introduction sheet.</p>
+              </div>
+              <div className="border-t border-gray-200 dark:border-gray-800 pt-3">
+                <div className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">BEP — Variable cost % per line (used by the BEP sheet)</div>
+                <div className="grid grid-cols-2 gap-3">
+                  {([
+                    ['pl_cogs', 'Cost of Goods Sold'],
+                    ['pl_operating_expense', 'Selling, Gen &amp; Admin'],
+                    ['pl_depreciation', 'Depreciation'],
+                    ['pl_finance_cost', 'Interest / Finance Cost'],
+                  ] as const).map(([key, label]) => {
+                    const current = draft.bep?.variableFractionByKey?.[key];
+                    const defaultVal = bepDefaults.variableFractionByKey?.[key] ?? 0;
+                    return (
+                      <label key={key} className="flex items-center gap-2 text-xs">
+                        <span className="w-44 text-gray-500 dark:text-gray-400" dangerouslySetInnerHTML={{ __html: label }} />
+                        <input
+                          type="number"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={current ?? defaultVal}
+                          onChange={(e) => {
+                            const v = Number(e.target.value);
+                            if (!Number.isFinite(v)) return;
+                            setBepFraction(key, Math.max(0, Math.min(1, v)));
+                          }}
+                          className="w-20 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-1 text-sm"
+                        />
+                        <span className="text-gray-400">({Math.round((current ?? defaultVal) * 100)}% variable)</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <p className="text-xs text-gray-400 mt-2">0 = fully fixed, 1 = fully variable. Defaults: COGS 100%, SG&amp;A 20%, Dep 0%, Interest 0%.</p>
+              </div>
+            </div>
+          )}
+        </Card>
       )}
 
       <div className="flex items-center justify-between gap-3">

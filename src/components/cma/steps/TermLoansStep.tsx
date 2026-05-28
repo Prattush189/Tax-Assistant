@@ -103,6 +103,21 @@ export function TermLoansStep({ draft, onChange }: Props) {
                   />
                 </Field>
               </Grid2>
+              <Grid2>
+                <Field label="Disbursement month (1 = April)" hint="Month within the first projected FY when the loan funds are drawn. Drives the monthly amortisation sheet.">
+                  <NumberInput value={loan.disbursementMonth} onChange={(v) => updateLoan(idx, { disbursementMonth: v ?? undefined })} placeholder="1" />
+                </Field>
+                <Field label="Repayment type">
+                  <select
+                    value={loan.repaymentType ?? 'equal_emi'}
+                    onChange={(e) => updateLoan(idx, { repaymentType: e.target.value as TermLoan['repaymentType'] })}
+                    className="w-full px-3 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-gray-100"
+                  >
+                    <option value="equal_emi">Equal EMI (standard)</option>
+                    <option value="equal_principal">Equal principal (declining interest)</option>
+                  </select>
+                </Field>
+              </Grid2>
             </div>
           ))}
         </div>

@@ -1283,6 +1283,35 @@ export async function aiSuggestCmaMapping(
   })) as { suggestions: Array<{ index: number; key: string | null }> };
 }
 
+export interface CmaNarrativeResponse {
+  briefProfile: string;
+  machineryDetails: string;
+  premises: string;
+  powerConnection: string;
+  rateOfInterestNotes: string;
+}
+
+/** Generate Project-Report narrative via Gemini. Server logs cost
+ *  under feature='cma_ai_narrative' and returns trimmed strings. The
+ *  client merges them into draft.projectReport via the existing
+ *  draft-update path (so the auto-save picks them up). */
+export async function generateCmaNarrative(
+  draftId: string,
+  inputs: {
+    firmName: string;
+    businessNature: string;
+    state?: string;
+    applicationContext?: string;
+    latestRevenueLacs?: number | null;
+    proposedLoanLacs?: number | null;
+  },
+): Promise<CmaNarrativeResponse> {
+  return (await authFetch(`/api/cma/drafts/${draftId}/ai-narrative`, {
+    method: 'POST',
+    body: JSON.stringify(inputs),
+  })) as CmaNarrativeResponse;
+}
+
 // ── TB → BS API ─────────────────────────────────────────────────
 
 import type { TbBsDraft } from '../components/tb-bs/lib/uiModel';
