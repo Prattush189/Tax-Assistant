@@ -371,8 +371,12 @@ expect('no-bill B after pairing', payReport.noBillB.length, 1);
 expect('headline mentions payments', /payment/i.test(payReport.summary.headline), true);
 
 // ─── payment matcher: amount alone is not enough ─────────────
-// If amounts agree but dates differ, do NOT pair — could be two
-// unrelated payments of the same value.
+// If amounts agree but dates differ by MORE THAN the ±3 day window
+// the Pass 1.5 sub-pass tolerates, do NOT pair — at that gap the
+// pair is much more likely to be two unrelated payments of the
+// same value than the bank-statement-date drift the window is
+// meant to catch. 10 days is far outside even the most generous
+// banking-clearance lag.
 const mismatchDateA = {
   accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
     transactions: [
@@ -383,13 +387,45 @@ const mismatchDateA = {
 const mismatchDateB = {
   accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
     transactions: [
-      { date: '2025-06-11', narration: 'Receipt', voucher: null, debit: 50000, credit: 0, balance: null },
+      { date: '2025-06-20', narration: 'Receipt', voucher: null, debit: 50000, credit: 0, balance: null },
     ],
   }],
 };
 const mismatchDateReport = compareLedgersByBill(mismatchDateA, 'sales', mismatchDateB, 'purchase');
-expect('no pairing on date mismatch', mismatchDateReport.summary.paymentMatchedCount, 0);
-expect('both go to no-bill', mismatchDateReport.noBillA.length + mismatchDateReport.noBillB.length, 2);
+expect('no pairing on date mismatch (10 day gap)', mismatchDateReport.summary.paymentMatchedCount, 0);
+expect('both go to no-bill (10 day gap)', mismatchDateReport.noBillA.length + mismatchDateReport.noBillB.length, 2);
+
+// ─── payment matcher: ±3 day window (Pass 1.5) ───────────────
+// Real ASSA × Interio Paradise case: customer's Tally records the
+// NEFT debit on the bank-statement-date (e.g. 2025-06-28); ASSA's
+// Dynamics AX receipts post the same payment ~2 days later
+// (2025-06-30). Same amount, neither side has the other's voucher
+// ref in its narration. Pass 1's exact-date scan misses them; the
+// ±3 day window picks them up while still respecting both-side
+// uniqueness within the (window, amount±₹1) bucket. The pair shows
+// up in paymentMatches with `dateB` populated so the CSV can render
+// both dates honestly instead of duplicating dateA into both columns.
+const windowA = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      { date: '2025-06-28', narration: 'BILL PAYMENT', voucher: null, debit: 50000, credit: 0, balance: null },
+    ],
+  }],
+};
+const windowB = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      { date: '2025-06-30', narration: 'IN5IN25062800HOJ', voucher: null, debit: 0, credit: 50000, balance: null },
+    ],
+  }],
+};
+const windowReport = compareLedgersByBill(windowA, 'sales', windowB, 'purchase');
+expect('±3d window: pair matched', windowReport.summary.paymentMatchedCount, 1);
+expect('±3d window: amountA preserved', windowReport.paymentMatches[0]?.amountA, 50000);
+expect('±3d window: amountB preserved', windowReport.paymentMatches[0]?.amountB, 50000);
+expect('±3d window: dateA in canonical date', windowReport.paymentMatches[0]?.date, '2025-06-28');
+expect('±3d window: dateB populated', windowReport.paymentMatches[0]?.dateB, '2025-06-30');
+expect('±3d window: no leftover rows', windowReport.noBillA.length + windowReport.noBillB.length, 0);
 
 // ─── 2026-05-20 payment matcher: ±₹1 rounding tolerance ─────
 // Real OSPL case: Marg books CRN-0232-00656 at ₹73,733,626 on

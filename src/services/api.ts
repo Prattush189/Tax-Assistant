@@ -2744,6 +2744,10 @@ export interface LedgerComparisonReport {
    *  informational, not used for matching. */
   paymentMatches: Array<{
     date: string;
+    /** B-side date when it differs from `date` — set by the Pass 1.5
+     *  ±3 day window sub-pass. For same-day matches it's undefined and
+     *  the renderer falls back to `date` for both sides. */
+    dateB?: string;
     amountA: number;
     amountB: number;
     diff: number;

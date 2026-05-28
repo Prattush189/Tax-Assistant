@@ -210,9 +210,13 @@ function buildCompareCsv(report: LedgerComparisonReport, labelA: string, labelB:
   for (const m of report.paymentMatches) {
     const narrA = m.bankRefA ? `${m.narrationA} [ref ${m.bankRefA}]` : m.narrationA;
     const narrB = m.bankRefB ? `${m.narrationB} [ref ${m.bankRefB}]` : m.narrationB;
+    // dateB is only populated for ±3 day window matches (Pass 1.5
+    // payment matcher sub-pass). Same-day matches (Pass 1 proper)
+    // leave it undefined → fall back to `date` so both columns show
+    // the same value the way they always have for those rows.
     rows.push([
       'payment_matched', '',
-      formatDate(m.date), formatDate(m.date),
+      formatDate(m.date), formatDate(m.dateB ?? m.date),
       String(m.amountA), String(m.amountB), String(m.diff),
       narrA, narrB,
     ]);

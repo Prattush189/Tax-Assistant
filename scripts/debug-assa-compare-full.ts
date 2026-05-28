@@ -46,6 +46,22 @@ async function main() {
   for (const m of report.amountMismatches) {
     console.log(`  ${m.bill}  A=${m.amountA} B=${m.amountB} diff=${m.diff}`);
   }
+  console.log('\n=== paymentDateMatches (Pass 2 — same date, |amount diff| > ₹1) ===');
+  for (const m of report.paymentDateMatches) {
+    console.log(`  ${m.date}  A=${m.amountA} B=${m.amountB} diff=${m.diff}`);
+  }
+  console.log('\n=== paymentBankMatches (Pass 3 — bank-anchored, ±3d or amount±10%) ===');
+  for (const m of report.paymentBankMatches) {
+    console.log(`  ${m.dateA} ↔ ${m.dateB} (gap=${m.dateDeltaDays}d) A=${m.amountA} B=${m.amountB} bank=${m.bankAnchor}`);
+  }
+  console.log('\n=== noBillA (Tally) leftovers ===');
+  for (const r of report.noBillA) {
+    console.log(`  ${r.date}  ₹${r.amount}  ${(r.narration ?? '').slice(0, 80)}`);
+  }
+  console.log('\n=== noBillB (Dynamics) leftovers ===');
+  for (const r of report.noBillB) {
+    console.log(`  ${r.date}  ₹${r.amount}  ${(r.narration ?? '').slice(0, 80)}`);
+  }
 }
 
 main().catch(err => { console.error(err); process.exit(1); });

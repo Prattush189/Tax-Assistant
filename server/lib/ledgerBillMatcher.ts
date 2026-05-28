@@ -107,7 +107,16 @@ export interface NoBillRow {
  * info, so gating on bank-ref would miss real pairs.
  */
 export interface PaymentMatchRow {
+  /** The canonical date for this pair. For exact-date matches this
+   *  equals dateB too. For ±3 day window matches it's the A side's
+   *  date and `dateB` carries the B side's date so the CSV can render
+   *  the gap honestly. */
   date: string;
+  /** B side's date, only populated when it differs from `date`
+   *  (i.e. the ±3 day window sub-pass produced the match). For exact
+   *  same-day matches this stays undefined and the CSV renderer
+   *  duplicates `date` into both columns the way it always has. */
+  dateB?: string;
   /** Side A's amount (absolute). When `diff > 0`, A and B disagree by
    *  small rounding (typical ±₹1 between Marg-style truncation and
    *  Finsys-style round-up); show both so the user can see what was
@@ -678,13 +687,29 @@ export function compareLedgersByBill(
   // Paradise reconciliation.
   //
   // Anti-collision gates:
-  //   - Exact date AND amount within ₹1 — looser tolerances make
-  //     same-day same-amount false positives plausible.
+  //   - Amount within ₹1 (kept strict regardless of date relaxation —
+  //     loose amount + loose date is where false matches explode).
   //   - Amount ≥ ₹10 — tiny rounding rows ("R OFF" ₹1.97 etc.) are
   //     too easy to collide on.
-  //   - Uniqueness on BOTH sides per (date, ₹amount) bucket. If
-  //     either side has multiple candidates, the pairing is ambiguous
-  //     and the rows stay in their original buckets for human review.
+  //   - Date is matched in TWO rounds:
+  //       Round 1 (exact, windowDays=0): same-day pairs only.
+  //       Round 2 (relaxed, windowDays=3): pairs 1–3 calendar days
+  //         apart. Catches the bank-statement-date vs ledger-posting-
+  //         date drift that's common when one side records on the
+  //         NEFT debit date and the other on the supplier's receipt-
+  //         posting date — usually 1–2 days, occasionally 3. ±3 is
+  //         the same window the Pass-3 bank-anchored payment matcher
+  //         uses, so there's precedent and tuning consistency.
+  //     The exact round runs FIRST so a same-day pair always beats a
+  //     window-day pair (consumed rows are filtered out of round 2's
+  //     candidate set automatically).
+  //   - Uniqueness on BOTH sides within the active window+amount
+  //     bucket. If either side has multiple candidates that satisfy
+  //     the constraints, the pairing is ambiguous and the rows stay
+  //     in their original buckets for human review. (The ASSA case's
+  //     26/04 ₹2,00,000 × 2 vs 28/04 ₹2,00,000 × 2 falls here — two
+  //     unidentifiable rows on each side; the uniqueness gate
+  //     correctly leaves them alone.)
   //
   // Runs BEFORE the digit-tail fallback so a perfect date+amount
   // pair beats a digit-tail-only match (the 25004485 case — the
@@ -693,15 +718,23 @@ export function compareLedgersByBill(
   // same day with the matching amount is the truer counterpart).
   const CROSS_BUCKET_AMOUNT_TOLERANCE = 1.0;
   const CROSS_BUCKET_MIN_AMOUNT = 10.0;
+  const CROSS_BUCKET_RELAXED_WINDOW_DAYS = 3;
   const consumedNoBillAIdx = new Set<number>();
   const consumedNoBillBIdx = new Set<number>();
   const consumedOnlyABills = new Set<string>();
   const consumedOnlyBBills = new Set<string>();
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const parseTsLocal = (d: string | null): number | null => {
+    if (!d) return null;
+    const t = new Date(d).getTime();
+    return Number.isFinite(t) ? t : null;
+  };
 
   // Helper: walk `onlyIn` and try to find a unique date+amount peer
-  // on the `noBill` side. Both-side uniqueness gating + index-based
-  // consumption tracking are factored out so the two passes (onlyInB
-  // × noBillA, onlyInA × noBillB) share one implementation.
+  // on the `noBill` side within ±windowDays. Both-side uniqueness
+  // gating + index-based consumption tracking are factored out so
+  // the four invocations (BA exact, AB exact, BA relaxed, AB relaxed)
+  // share one implementation.
   const crossBucketPass = (
     onlyIn: OnlySideRow[],
     noBill: FlatTx[],
@@ -711,60 +744,80 @@ export function compareLedgersByBill(
     // (we matched B's bill against A's bill-less row); 'AB' is the
     // opposite. Drives which slot of the MatchedRow the values fill.
     direction: 'BA' | 'AB',
+    // 0 = exact-date only (same-day). >0 = allow date gap up to this
+    // many calendar days. Run with 0 first, then with 3, so exact
+    // matches consume before relaxed ones can grab the same noBill row.
+    windowDays: number,
   ): number => {
     if (onlyIn.length === 0 || noBill.length === 0) return 0;
-    // Index noBill rows by date for O(1) lookup.
-    const noBillByDate = new Map<string, Array<{ idx: number; tx: FlatTx }>>();
+    // Pre-parse noBill timestamps once. Skip rows that won't qualify
+    // (no date, too small, no parseable timestamp).
+    const noBillReady: Array<{ idx: number; tx: FlatTx; ts: number }> = [];
     noBill.forEach((tx, idx) => {
       if (!tx.date || tx.absAmount < CROSS_BUCKET_MIN_AMOUNT) return;
-      if (!noBillByDate.has(tx.date)) noBillByDate.set(tx.date, []);
-      noBillByDate.get(tx.date)!.push({ idx, tx });
+      const ts = parseTsLocal(tx.date);
+      if (ts === null) return;
+      noBillReady.push({ idx, tx, ts });
     });
-    // Uniqueness gate on the onlyIn side: count (date, rounded ₹)
-    // occurrences so we can skip ambiguous buckets.
-    const onlyCountByKey = new Map<string, number>();
+    const onlyInReady: Array<{ row: OnlySideRow; ts: number }> = [];
     for (const r of onlyIn) {
       if (!r.date || r.amount < CROSS_BUCKET_MIN_AMOUNT) continue;
-      const key = `${r.date}|${Math.round(r.amount)}`;
-      onlyCountByKey.set(key, (onlyCountByKey.get(key) ?? 0) + 1);
+      const ts = parseTsLocal(r.date);
+      if (ts === null) continue;
+      onlyInReady.push({ row: r, ts });
     }
     let pairCount = 0;
-    for (const oRow of onlyIn) {
-      if (!oRow.date || oRow.amount < CROSS_BUCKET_MIN_AMOUNT) continue;
-      if (consumedOnlyBills.has(oRow.bill)) continue;
-      const oKey = `${oRow.date}|${Math.round(oRow.amount)}`;
-      // Skip if onlyIn side has multiple candidates at this (date, ₹).
-      if ((onlyCountByKey.get(oKey) ?? 0) !== 1) continue;
-      // Find noBill candidates on the same date within tolerance,
+    for (const o of onlyInReady) {
+      if (consumedOnlyBills.has(o.row.bill)) continue;
+      // Find noBill candidates within the window AND amount tolerance,
       // excluding already-consumed.
-      const candidates = (noBillByDate.get(oRow.date) ?? []).filter(c =>
-        !consumedNoBillIdx.has(c.idx)
-        && Math.abs(c.tx.absAmount - oRow.amount) <= CROSS_BUCKET_AMOUNT_TOLERANCE,
-      );
+      const candidates: Array<{ idx: number; tx: FlatTx; ts: number }> = [];
+      for (const n of noBillReady) {
+        if (consumedNoBillIdx.has(n.idx)) continue;
+        if (Math.abs(n.tx.absAmount - o.row.amount) > CROSS_BUCKET_AMOUNT_TOLERANCE) continue;
+        const gapDays = Math.abs(n.ts - o.ts) / DAY_MS;
+        if (gapDays > windowDays) continue;
+        candidates.push(n);
+      }
       // Skip if noBill side has multiple candidates — can't pick
-      // confidently between same-day same-₹ rows.
+      // confidently between same-amount near-day rows.
       if (candidates.length !== 1) continue;
       const cand = candidates[0];
+      // Uniqueness on the onlyIn side: any OTHER unprocessed onlyIn
+      // row that would also pair with this same candidate within the
+      // window+tolerance? If yes, the candidate has competing claimants
+      // → ambiguous, skip.
+      let peerCount = 0;
+      for (const o2 of onlyInReady) {
+        if (o2.row.bill === o.row.bill) continue;
+        if (consumedOnlyBills.has(o2.row.bill)) continue;
+        if (Math.abs(o2.row.amount - cand.tx.absAmount) > CROSS_BUCKET_AMOUNT_TOLERANCE) continue;
+        const gap = Math.abs(o2.ts - cand.ts) / DAY_MS;
+        if (gap > windowDays) continue;
+        peerCount += 1;
+        if (peerCount > 0) break;  // one is enough — already ambiguous
+      }
+      if (peerCount > 0) continue;
       const diff = direction === 'BA'
-        ? cand.tx.absAmount - oRow.amount    // amountA - amountB (B is onlyIn)
-        : oRow.amount - cand.tx.absAmount;   // amountA - amountB (A is onlyIn)
+        ? cand.tx.absAmount - o.row.amount    // amountA - amountB (B is onlyIn)
+        : o.row.amount - cand.tx.absAmount;   // amountA - amountB (A is onlyIn)
       const pair: MatchedRow = direction === 'BA'
         ? {
-            bill: oRow.bill,                    // bill comes from B side
+            bill: o.row.bill,                    // bill comes from B side
             dateA: cand.tx.date,
-            dateB: oRow.date,
+            dateB: o.row.date,
             amountA: cand.tx.absAmount,
-            amountB: oRow.amount,
+            amountB: o.row.amount,
             narrationA: cand.tx.narration,
-            narrationB: oRow.narration,
+            narrationB: o.row.narration,
           }
         : {
-            bill: oRow.bill,                    // bill comes from A side
-            dateA: oRow.date,
+            bill: o.row.bill,                    // bill comes from A side
+            dateA: o.row.date,
             dateB: cand.tx.date,
-            amountA: oRow.amount,
+            amountA: o.row.amount,
             amountB: cand.tx.absAmount,
-            narrationA: oRow.narration,
+            narrationA: o.row.narration,
             narrationB: cand.tx.narration,
           };
       if (Math.abs(diff) <= 1) {
@@ -772,17 +825,30 @@ export function compareLedgersByBill(
       } else {
         amountMismatches.push({ ...pair, diff });
       }
-      consumedOnlyBills.add(oRow.bill);
+      consumedOnlyBills.add(o.row.bill);
       consumedNoBillIdx.add(cand.idx);
       pairCount += 1;
     }
     return pairCount;
   };
 
-  const pairedFromB = crossBucketPass(onlyInB, noBillA, consumedOnlyBBills, consumedNoBillAIdx, 'BA');
-  const pairedFromA = crossBucketPass(onlyInA, noBillB, consumedOnlyABills, consumedNoBillBIdx, 'AB');
+  // Round 1: exact-date pairs (windowDays=0). Consumes the strongest-
+  // signal matches first so a same-day pair is never bumped by a
+  // window-day pair in round 2.
+  const exactBA = crossBucketPass(onlyInB, noBillA, consumedOnlyBBills, consumedNoBillAIdx, 'BA', 0);
+  const exactAB = crossBucketPass(onlyInA, noBillB, consumedOnlyABills, consumedNoBillBIdx, 'AB', 0);
+  // Round 2: relaxed-date pairs (±3 calendar days). Picks up the
+  // bank-statement-date vs posting-date drift cases — e.g. ASSA's
+  // 28/06 BILL PAYMENT ₹1,24,688 vs Dynamics 30/06 IN5IN25062800HOJ
+  // ₹1,24,688, where the customer's Tally records the payment on
+  // the NEFT debit day and Dynamics receipts post 2 days later.
+  // Amount stays strict (±₹1).
+  const relaxedBA = crossBucketPass(onlyInB, noBillA, consumedOnlyBBills, consumedNoBillAIdx, 'BA', CROSS_BUCKET_RELAXED_WINDOW_DAYS);
+  const relaxedAB = crossBucketPass(onlyInA, noBillB, consumedOnlyABills, consumedNoBillBIdx, 'AB', CROSS_BUCKET_RELAXED_WINDOW_DAYS);
+  const pairedFromB = exactBA + relaxedBA;
+  const pairedFromA = exactAB + relaxedAB;
   if (pairedFromA > 0 || pairedFromB > 0) {
-    console.log(`[ledgerBillMatcher] cross-bucket date+amount paired ${pairedFromB} (onlyInB↔noBillA) + ${pairedFromA} (onlyInA↔noBillB)`);
+    console.log(`[ledgerBillMatcher] cross-bucket paired ${pairedFromB} onlyInB↔noBillA (${exactBA} exact, ${relaxedBA} ±${CROSS_BUCKET_RELAXED_WINDOW_DAYS}d) + ${pairedFromA} onlyInA↔noBillB (${exactAB} exact, ${relaxedAB} ±${CROSS_BUCKET_RELAXED_WINDOW_DAYS}d)`);
     onlyInA = onlyInA.filter(r => !consumedOnlyABills.has(r.bill));
     onlyInB = onlyInB.filter(r => !consumedOnlyBBills.has(r.bill));
     noBillA = noBillA.filter((_, idx) => !consumedNoBillAIdx.has(idx));
@@ -936,7 +1002,7 @@ export function compareLedgersByBill(
     if (!byDateB.has(tx.date)) byDateB.set(tx.date, []);
     byDateB.get(tx.date)!.push({ idx, tx });
   });
-  const leftoverNoBillA: FlatTx[] = [];
+  let leftoverNoBillA: FlatTx[] = [];
   for (const a of noBillA) {
     if (!a.date || a.absAmount === 0) { leftoverNoBillA.push(a); continue; }
     const sameDay = byDateB.get(a.date) ?? [];
@@ -968,7 +1034,107 @@ export function compareLedgersByBill(
       leftoverNoBillA.push(a);
     }
   }
-  const leftoverNoBillB = noBillB.filter((_, idx) => !matchedBIdx.has(idx));
+  let leftoverNoBillB = noBillB.filter((_, idx) => !matchedBIdx.has(idx));
+
+  // ── Pass 1.5: ±3 day window, strict amount ─────────────────────────
+  //
+  // Pass 1 caught same-day same-amount pairs. Real bank reconciliations
+  // routinely leave a 1–3 day gap between the bank-debit-date (which
+  // is what Tally records: "To HDFC BANK(2735) NEFT DR-..." dated the
+  // day the customer's account was debited) and the posting-date on
+  // the supplier's side (which is what Dynamics records: "IN5IN..."
+  // dated when ASSA's receipts team posted the credit). Same amount,
+  // 1–3 days apart, no shared bill ref — Pass 1 misses them. Pass 3
+  // (bank-anchored) would catch them but only when the bank
+  // fingerprint extractor recognises the bank on at least one side;
+  // ASSA's short "HDFC BANK(2735)" form (4 digits inside parens) is
+  // below the 8-digit account-number floor that pass uses, so the
+  // anchor never registers.
+  //
+  // ASSA × Interio Paradise: 28/06 ₹1,24,688 BILL PAYMENT ↔ 30/06
+  // IN5IN25062800HOJ ₹1,24,688 (2 day gap) and 26/07 ₹50,000 BILL
+  // PAYMENT ↔ 28/07 IN5IN250726005QS ₹50,000 (2 day gap) are the
+  // canonical cases.
+  //
+  // Gates (intentionally tighter than Pass 3 since this pass doesn't
+  // require a bank anchor):
+  //   - Amount within ₹1 (kept strict — date relaxation alone, not
+  //     amount; loose-both gives too many false pairs).
+  //   - Amount ≥ ₹10 (skip tiny rows like "R OFF" ₹1.97).
+  //   - Date gap 1 to PAYMENT_WINDOW_DAYS. Gap = 0 was already
+  //     handled by Pass 1 above.
+  //   - Uniqueness on BOTH sides within the (window, amount±₹1)
+  //     bucket. Multiple candidates on either side = ambiguous, skip.
+  //     (The ASSA 26/04 ₹2,00,000 × 2 ↔ 28/04 ₹2,00,000 × 2 case
+  //     falls here — both sides have 2 rows, the uniqueness gate
+  //     correctly leaves them for review.)
+  const PAYMENT_WINDOW_DAYS = 3;
+  const PAYMENT_WINDOW_MIN_AMOUNT = 10;
+  if (leftoverNoBillA.length > 0 && leftoverNoBillB.length > 0) {
+    const dayMs = 24 * 60 * 60 * 1000;
+    const parseTsP = (d: string | null): number | null => {
+      if (!d) return null;
+      const t = new Date(d).getTime();
+      return Number.isFinite(t) ? t : null;
+    };
+    // Pre-parse timestamps once. Skip rows that disqualify upfront.
+    const bReady = leftoverNoBillB
+      .map((tx, idx) => ({ idx, tx, ts: parseTsP(tx.date) }))
+      .filter(p => p.ts !== null && p.tx.absAmount >= PAYMENT_WINDOW_MIN_AMOUNT) as Array<{ idx: number; tx: FlatTx; ts: number }>;
+    const aReady = leftoverNoBillA
+      .map((tx, i) => ({ i, tx, ts: parseTsP(tx.date) }))
+      .filter(p => p.ts !== null && p.tx.absAmount >= PAYMENT_WINDOW_MIN_AMOUNT) as Array<{ i: number; tx: FlatTx; ts: number }>;
+    const consumedAIdx = new Set<number>();
+    const consumedBIdx = new Set<number>();
+    let windowPairs = 0;
+    for (const a of aReady) {
+      if (consumedAIdx.has(a.i)) continue;
+      // Find unique B candidate within window+amount, gap > 0 (gap = 0
+      // already handled by Pass 1 — anything still in leftover failed
+      // there too, so re-considering same-day is wasted).
+      const candidates = bReady.filter(b =>
+        !consumedBIdx.has(b.idx)
+        && Math.abs(b.tx.absAmount - a.tx.absAmount) <= PAYMENT_AMOUNT_TOLERANCE
+        && Math.abs(b.ts - a.ts) / dayMs <= PAYMENT_WINDOW_DAYS
+        && Math.abs(b.ts - a.ts) / dayMs > 0,
+      );
+      if (candidates.length !== 1) continue;
+      const c = candidates[0];
+      // Uniqueness on A side: any OTHER unprocessed A row that would
+      // also pair with this B candidate within the window?
+      let peers = 0;
+      for (const a2 of aReady) {
+        if (a2.i === a.i || consumedAIdx.has(a2.i)) continue;
+        if (Math.abs(a2.tx.absAmount - c.tx.absAmount) > PAYMENT_AMOUNT_TOLERANCE) continue;
+        const gap = Math.abs(a2.ts - c.ts) / dayMs;
+        if (gap > PAYMENT_WINDOW_DAYS || gap === 0) continue;
+        peers += 1;
+        break;
+      }
+      if (peers > 0) continue;
+      paymentMatches.push({
+        date: a.tx.date!,
+        dateB: c.tx.date ?? undefined,
+        amountA: a.tx.absAmount,
+        amountB: c.tx.absAmount,
+        diff: Math.round(Math.abs(c.tx.absAmount - a.tx.absAmount) * 100) / 100,
+        narrationA: a.tx.narration,
+        narrationB: c.tx.narration,
+        bankRefA: extractBankRef(a.tx.narration),
+        bankRefB: extractBankRef(c.tx.narration),
+      });
+      consumedAIdx.add(a.i);
+      consumedBIdx.add(c.idx);
+      matchedBIdx.add(c.idx);  // legacy — keep in sync for any other consumer
+      windowPairs += 1;
+    }
+    if (windowPairs > 0) {
+      console.log(`[ledgerBillMatcher] payment matcher ±${PAYMENT_WINDOW_DAYS}d window paired ${windowPairs} additional row${windowPairs === 1 ? '' : 's'}`);
+      leftoverNoBillA = leftoverNoBillA.filter((_, i) => !consumedAIdx.has(i));
+      leftoverNoBillB = leftoverNoBillB.filter((_, i) => !consumedBIdx.has(i));
+    }
+  }
+
   // Stable sort by date for stable rendering.
   paymentMatches.sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''));
 
