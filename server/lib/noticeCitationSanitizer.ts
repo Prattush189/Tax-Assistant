@@ -56,6 +56,11 @@ export interface SanitizerReport {
   totalEntries: number;
   keptEntries: number;
   droppedEntries: number;
+  /** Statutory blockquotes attributed to a Section but lacking an
+   *  authoritative source URL nearby. These get replaced with a
+   *  visible warning so the user double-checks against the bare Act
+   *  before relying on the quoted text. */
+  unverifiedQuotations: number;
   /** True when the post-flight pass meaningfully changed the draft. */
   changed: boolean;
 }
@@ -73,14 +78,80 @@ function toRoman(n: number): string {
   return romans[n] ?? `n${n}`;
 }
 
+/**
+ * Replace blockquoted statutory text that lacks an authoritative
+ * source URL on a nearby `Source:` line with a visible verification
+ * warning. The model is instructed (in the prompt) to either attach
+ * a Source URL or paraphrase in prose; this is the automated guard
+ * for the cases where it doesn't. Returns the modified draft and the
+ * count of warnings inserted.
+ *
+ * Matches a blockquote that opens with `> "Section <N>...:` or
+ * `> "<Title>: Section <N>...` — i.e. attributed-to-a-section quotes,
+ * which are the high-risk hallucination case. Pure prose blockquotes
+ * (e.g. quoting the department's own intimation text) are not
+ * touched.
+ */
+function annotateUnverifiedStatutoryQuotations(draft: string): { text: string; warnings: number } {
+  // Identify each `> "..."` blockquote block. A block is one or more
+  // consecutive lines starting with `> `. We scan greedily, then for
+  // each block test whether (a) its content looks like a statutory
+  // quotation and (b) there's an authoritative-host URL within ~250
+  // characters AFTER the block (typically on a `Source: ...` line).
+  const blockPattern = /(^|\n)(>\s.+(?:\n>\s.+)*)/g;
+  // Heuristic for "this blockquote is quoting a statute": the first
+  // few words are some form of `Section X(Y)`, or `Rule X`, or
+  // `Article X`, or a bare `"Section X..."` opener. Quotes of the
+  // department's intimation text typically start with words like
+  // "Total tax liability", "We have processed", or directly with
+  // assessee data — those don't trip this pattern.
+  const STATUTORY_OPENER = /\b(?:section|rule|article|clause)\s*\d+/i;
+  let warnings = 0;
+  const out = draft.replace(blockPattern, (full, leading, block: string) => {
+    const content = block.replace(/^>\s?/gm, '').trim();
+    if (!STATUTORY_OPENER.test(content.slice(0, 80))) return full;
+    // Look in the surrounding context (the 250 chars after the block
+    // in the ORIGINAL draft) for an authoritative URL. We have to
+    // search the post-block window of the source text, but `replace`
+    // doesn't give us the absolute offset cheaply. Use indexOf:
+    const blockIdxInDraft = draft.indexOf(block);
+    const window = blockIdxInDraft >= 0
+      ? draft.slice(blockIdxInDraft + block.length, blockIdxInDraft + block.length + 350)
+      : '';
+    if (AUTHORITATIVE_HOST_PATTERN.test(window)) return full;
+    warnings++;
+    // Insert the warning AFTER the blockquote, leaving the original
+    // text intact so the user sees what the AI produced AND knows it
+    // isn't verified. Deleting outright would lose information the
+    // user might still find useful; flagging gives them context.
+    return `${leading}${block}\n>\n> ⚠️ **AI quotation — not verified against the bare Act.** Confirm this text against the official statute (incometaxindia.gov.in / cbic.gov.in) before relying on it.`;
+  });
+  return { text: out, warnings };
+}
+
 export function sanitizeNoticeCitations(draft: string): SanitizerResult {
-  const headingMatch = SECTION_HEADING_PATTERN.exec(draft);
+  // First pass: statutory-quotation warnings. This is independent of
+  // the case-law section and runs unconditionally.
+  const quoted = annotateUnverifiedStatutoryQuotations(draft);
+  const annotatedDraft = quoted.text;
+  const unverifiedQuotations = quoted.warnings;
+
+  const headingMatch = SECTION_HEADING_PATTERN.exec(annotatedDraft);
   if (!headingMatch) {
     return {
-      text: draft,
-      report: { totalEntries: 0, keptEntries: 0, droppedEntries: 0, changed: false },
+      text: annotatedDraft,
+      report: {
+        totalEntries: 0,
+        keptEntries: 0,
+        droppedEntries: 0,
+        unverifiedQuotations,
+        changed: unverifiedQuotations > 0,
+      },
     };
   }
+  // Re-bind draft to the annotated version so the rest of the
+  // function operates on the post-quotation-pass text.
+  draft = annotatedDraft;
 
   // Slice the document into pre-section / section / post-section.
   // The section ends at the next `## ` heading or end-of-string.
@@ -111,7 +182,13 @@ export function sanitizeNoticeCitations(draft: string): SanitizerResult {
     // sanitizer doesn't need to fight that here.
     return {
       text: draft,
-      report: { totalEntries: 0, keptEntries: 0, droppedEntries: 0, changed: false },
+      report: {
+        totalEntries: 0,
+        keptEntries: 0,
+        droppedEntries: 0,
+        unverifiedQuotations,
+        changed: unverifiedQuotations > 0,
+      },
     };
   }
 
@@ -137,7 +214,9 @@ export function sanitizeNoticeCitations(draft: string): SanitizerResult {
     }
   }
 
-  // Nothing changed → return early without mutating the draft.
+  // Nothing changed in the case-law section → return early; we may
+  // still have inserted quotation warnings above, so the `changed`
+  // flag is gated on either signal.
   if (dropped === 0) {
     return {
       text: draft,
@@ -145,7 +224,8 @@ export function sanitizeNoticeCitations(draft: string): SanitizerResult {
         totalEntries: entries.length,
         keptEntries: entries.length,
         droppedEntries: 0,
-        changed: false,
+        unverifiedQuotations,
+        changed: unverifiedQuotations > 0,
       },
     };
   }
@@ -176,6 +256,7 @@ export function sanitizeNoticeCitations(draft: string): SanitizerResult {
       totalEntries: entries.length,
       keptEntries: renumbered.length,
       droppedEntries: dropped,
+      unverifiedQuotations,
       changed: true,
     },
   };

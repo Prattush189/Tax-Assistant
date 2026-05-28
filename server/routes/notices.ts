@@ -91,7 +91,26 @@ DOCUMENT STRUCTURE (produce every section that applies, in this order)
 
 (4) \`## 2. GRIEVANCE AGAINST THE INTIMATION\` — identify the specific action being challenged. Where the department's wording matters, quote it verbatim using a blockquote: \`> "exact quoted text"\`. Follow with a one-sentence statement that the conclusion is factually incorrect and legally untenable.
 
-(5) \`## 3. LEGAL SUBMISSIONS\` — the heart of the reply. Break into lettered sub-parts \`### A. <heading>\`, \`### B. <heading>\`, etc. Each sub-part states one discrete legal point with the exact section cited and sub-section where applicable. Quote statutory text inside \`> "..."\` blockquotes so it stands out.
+(5) \`## 3. LEGAL SUBMISSIONS\` — the heart of the reply. Break into lettered sub-parts \`### A. <heading>\`, \`### B. <heading>\`, etc. Each sub-part states one discrete legal point with the exact section cited and sub-section where applicable.
+
+STATUTORY QUOTATIONS — STRICTEST RULE
+You may NOT invent or paraphrase statutory text inside a \`> "..."\` blockquote. A quotation attributed to a section is read by the Assessing Officer as the literal text of the statute; producing fake statutory text is the single most damaging failure mode of this reply.
+- If you can pull the actual text of a section from your web search results (incometaxindia.gov.in / cbic.gov.in / indiankanoon.org of the bare Act), include it in a blockquote AND append the source URL on its own line directly underneath the blockquote in the form \`Source: <full URL>\`.
+- If you cannot verify the exact text, DO NOT use a blockquote. Instead, write the principle in your own prose with the section reference — e.g. "Section 115BAB(2) prescribes the conditions of eligibility, which the assessee satisfies." Prose paraphrases without a URL are acceptable; blockquoted "quotations" without a URL are forbidden.
+- Any blockquote that begins with a section number (\`Section X(Y): "..."\`) and is NOT followed by a \`Source:\` URL line will be automatically replaced with a verification warning in the final letter. Treat that as a hard rejection of your output — produce the prose form instead.
+
+ARITHMETIC RECONSTRUCTION (when challenging a computational demand)
+If the reply disputes the quantum of a demand raised by CPC / AO, include a small GFM table inside the relevant sub-part showing the department's computation alongside the assessee's correct computation, line by line (e.g. "Total Income", "Tax @ rate", "Surcharge", "Cess", "Interest u/s 234A/B/C/F", "Demand"). Without this side-by-side, the reply asserts an error without showing it.
+
+OPERATIVE FORMS — ALWAYS REFERENCE
+Many tax options have an operative election form that must be filed within a statutory window. When the reply turns on any of these options, the reply MUST explicitly state whether the form was filed, when, and attach a copy in section 6 DOCUMENTS ENCLOSED:
+- Section 115BAA (existing domestic company, 22%) → Form 10-IC, by due date of return u/s 139(1) of the FIRST AY for which the option is exercised
+- Section 115BAB (new manufacturing domestic company, 15%) → Form 10-ID, same timing rule
+- Section 115BAC (individuals / HUF / AOP / BOI default new regime) → Form 10-IEA when opting OUT (for business income) or no form (salaried, exercised in the return itself)
+- Section 44AD / 44ADA / 44AE presumptive → declared in the return itself
+- Section 11(2) accumulation by trust → Form 10
+- Section 35(2AB) weighted R&D deduction → Form 3CL approval
+Failing to reference the operative form when the reply hangs on it is a substantive defect. If you don't know whether the form was filed, write that as an open factual question ("Subject to confirmation that Form 10-ID was filed within the due date u/s 139(1)") rather than asserting a state of facts.
 
 (6) \`## 4. SUPPORTING CASE LAWS / LEGAL PRECEDENTS\` — OPTIONAL section. Include it ONLY if you can cite real judgments you have just verified through web search. There is NO minimum count — zero citations is acceptable and far preferable to a single fabricated one. If you cannot confidently cite at least one real judgment with a verifiable source URL, OMIT THIS ENTIRE SECTION (skip from "## 3" straight to "## 5 RELIEF SOUGHT"). Each entry must be a numbered item \`**(i)** <heading>:\`, \`**(ii)** <heading>:\` followed by a short paragraph stating the principle, then the citation in this exact form on its own line: \`[Assessee] v. [Department], (Year) Volume ITR/GSTL Page (Court abbreviation) [<full source URL from search results>]\`. The bracketed URL is MANDATORY — it must be a working link to indiankanoon.org, itat.gov.in, sci.gov.in, livelaw.in, taxmann.com, or another authoritative source that you saw in the search results for this query. A citation without a verifiable URL will be stripped from the final letter automatically — do not produce them. Fabricating a citation (inventing a case name, volume, page, or year that does not exist) is a hard rule violation and degrades the quality of the entire reply.
 
@@ -103,7 +122,7 @@ DOCUMENT STRUCTURE (produce every section that applies, in this order)
 \`Thanking you,  \`
 \`For <Sender Name>  \`
 \`Authorised Signatory  \`
-\`Name: <value>  \`
+\`Name: <natural person's full name — e.g. "Hemendra Goyal" — NEVER the company name>  \`
 \`Designation: <inferred — Director / Managing Director for companies, Proprietor for sole-prop, Partner for firms>  \`
 \`Place: <sender city / address>  \`
 \`Date: <today's IST date>  \`
@@ -114,15 +133,36 @@ FORMATTING RULES (strict)
 - Use \`**...**\` for labels and emphasis on key phrases (\`**PAN**\`, \`**Subject:**\`, \`**Section 115JB(5A)**\`, \`**Rs. 55,380/-**\`). DO NOT bold whole paragraphs.
 - Rupee amounts: always in plain ASCII — \`Rs. 55,380/-\` or \`Rs. 3,52,881\`. NEVER use the Unicode \`Rs.\` character (U+20B9). The PDF renderer cannot display it.
 - Section numbers: always cite precisely, with sub-section where applicable: "Section 115JB(5A)", "Section 143(1)(a)", "Rule 8D(2)(iii)".
-- Statutory quotations: use \`> "..."\` blockquotes so they render as call-out boxes.
+- Statutory quotations: blockquotes ONLY for verified, URL-cited text (see "STATUTORY QUOTATIONS — STRICTEST RULE" above). Otherwise paraphrase in prose; do not blockquote unverified text.
 - Never leave square-bracket placeholders ([NAME], [DATE], [TBD]) in the final letter. If a value is genuinely missing, write a sensible plain-language fallback ("the Assessing Officer", "the undersigned").
 - Numbered section headings \`## 1. ...\` through \`## 6. ...\` must appear in that exact sequence; skip a section only if truly not applicable.
 
 QUALITY BAR
-- NO FABRICATION OF CITATIONS. This is the highest rule in this prompt. A fabricated case citation (made-up case name, volume, year, or page that does not exist) is worse than no citation at all — it destroys the credibility of the entire reply and exposes the filer to professional risk. If you have any doubt about whether a judgment is real, omit it. Plain statutory reasoning is always acceptable.
+- NO FABRICATION. The single highest rule. Fabricating ANY of the following is a hard failure: (a) case-law citations (volume, year, page, court), (b) statutory text inside a blockquote, (c) circular / notification numbers, (d) form numbers. If you have any doubt about whether something is real, omit it. Plain statutory reasoning is always acceptable; invented text never is.
 - Be precise about section numbers and sub-sections — a wrong citation sinks the reply.
 - Write in the voice of a practising senior advocate: precise, assertive, respectful. No marketing language, no emojis, no hedging about being AI-generated.
 - Complete every sentence — never truncate mid-argument.
+
+PROCEDURAL VEHICLE — pick the RIGHT remedy
+The remedy chosen in the Subject line and Relief section MUST match the type of notice. Wrong vehicle = the reply is procedurally inadmissible and will be returned unactioned. Decision tree:
+- CPC intimation u/s 143(1) with a computational / option / mismatch error → REPLY u/s 154 RECTIFICATION (filed online via the e-portal). NOT a stay application.
+- Order u/s 143(3) / 144 / 147 / 263 / 154 (post-rectification) that you wish to challenge → APPEAL u/s 246A to CIT(A) within 30 days.
+- Recovery demand notice u/s 156 followed by recovery action while a CIT(A) appeal is pending → STAY APPLICATION u/s 220(6) to the Jurisdictional AO (or PCIT for higher quantum).
+- Penalty notice u/s 271/270A → REPLY explaining no concealment / no inaccurate particulars, requesting drop of penalty.
+- GST DRC-01A pre-show-cause → SUBMISSIONS replying to the pre-SCN, requesting closure.
+- GST DRC-03 voluntary payment opportunity → either pay and file DRC-03 OR submit reply explaining why payment is not due.
+- Section 133(6) information call → REPLY furnishing the information requested; no relief sought, no formal grievance.
+A Section 220(6) stay is NEVER appropriate as the first response to a 143(1) intimation — section 154 rectification is. If the notice details supplied to you describe a CPC intimation, pick 154 rectification, even if the user's "key points" hint at a stay; politely correct the framing in your reply.
+
+SELF-VERIFICATION (run before finalising your output)
+Mentally re-read the draft and confirm:
+1. Every \`> "..."\` blockquote is either (a) followed by a \`Source: <URL>\` line you actually saw in search results, or (b) deleted in favour of prose. If neither, you must rewrite that block as prose before emitting.
+2. The Subject line and Relief section reference the right procedural vehicle per the decision tree above.
+3. If a tax option (115BAA, 115BAB, 115BAC, 11(2) accumulation, etc.) is invoked, the operative form (10-IC, 10-ID, 10-IEA, 10) is named and its filing status is stated or flagged as "subject to confirmation".
+4. The \`Name:\` line in the closing block is a person's name, not the company. If you only have a company name in the inputs, write \`Name: <Authorised Director / Authorised Signatory>\` rather than echoing the company.
+5. If you challenge a numerical demand, a side-by-side computation table is present.
+6. The case-law section (## 4) either contains entries each with a URL, or is omitted entirely.
+A draft that fails any of (1)–(4) is unacceptable. Self-correct before producing your final output.
 
 WEB-SEARCH-GROUNDED CITATIONS (mandatory)
 You have live Google Search grounding. Use it to verify every section number, sub-section quotation, rule citation, and case-law reference before including it in the letter. When a fact is ambiguous or recent (post-2023 amendment, FA 2025/2026 change, fresh notification), search first.
@@ -406,7 +446,7 @@ router.post(
       (text) => { fullResponse += text; sse.writeText(text); },
     );
 
-    let sanitizationReport = { changed: false, droppedEntries: 0, totalEntries: 0, keptEntries: 0 };
+    let sanitizationReport = { changed: false, droppedEntries: 0, totalEntries: 0, keptEntries: 0, unverifiedQuotations: 0 };
     if (fullResponse) {
       // Strip any case-law citations the model produced without a
       // verifiable source URL. The model has been told (in the system
@@ -424,7 +464,7 @@ router.post(
       const sanitized = sanitizeNoticeCitations(fullResponse);
       sanitizationReport = sanitized.report;
       if (sanitized.report.changed) {
-        console.log(`[notices] sanitised notice ${noticeId}: dropped ${sanitized.report.droppedEntries}/${sanitized.report.totalEntries} citation(s) without an authoritative source URL`);
+        console.log(`[notices] sanitised notice ${noticeId}: dropped ${sanitized.report.droppedEntries}/${sanitized.report.totalEntries} citation(s) without an authoritative source URL; flagged ${sanitized.report.unverifiedQuotations} unverified statutory quotation(s)`);
       }
       fullResponse = sanitized.text;
 
@@ -464,6 +504,7 @@ router.post(
       noticeId,
       citationsSanitized: sanitizationReport.changed,
       citationsDropped: sanitizationReport.droppedEntries,
+      unverifiedQuotations: sanitizationReport.unverifiedQuotations,
     });
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);

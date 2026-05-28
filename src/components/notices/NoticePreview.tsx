@@ -1,7 +1,7 @@
 import { useRef, useCallback, useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Download, Copy, Check, Trash2, Edit3 } from 'lucide-react';
+import { Download, Copy, Check, Trash2, Edit3, AlertTriangle } from 'lucide-react';
 import { LetterheadConfig } from '../../hooks/useNoticeDrafter';
 import { LoadingAnimation } from '../ui/LoadingAnimation';
 import { renderMarkdownToPdf } from '../../lib/markdownPdf';
@@ -174,6 +174,22 @@ export function NoticePreview({ content, onContentChange, isGenerating, onClear,
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
+      {/* AI verification banner — shown whenever there is content,
+          so it's visible on freshly-generated drafts AND on reopened
+          historical drafts. Wording lists the specific failure modes
+          the post-flight pass can't catch (statutory text, procedural
+          vehicle, eligibility / operative-form questions, arithmetic)
+          so reviewers know exactly what to double-check. */}
+      {content && !isGenerating && (
+        <div className="flex items-start gap-2.5 px-4 py-2.5 border-b border-amber-200 dark:border-amber-900/50 bg-amber-50/80 dark:bg-amber-950/30 shrink-0">
+          <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+          <div className="text-[12px] leading-snug text-amber-900 dark:text-amber-100">
+            <span className="font-semibold">AI-generated draft — verify before filing.</span>{' '}
+            Confirm every statutory quotation against the bare Act, every case-law citation against the linked source, the correct procedural vehicle (rectification u/s 154 vs appeal u/s 246A vs stay u/s 220(6)), eligibility for any tax option invoked, and the corresponding operative form (Form 10-IC / 10-ID / 10-IEA / 10) was filed in time. AI output is a starting point, not advice.
+          </div>
+        </div>
+      )}
+
       {/* Toolbar */}
       <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-200 dark:border-gray-700/50 shrink-0">
         <button
