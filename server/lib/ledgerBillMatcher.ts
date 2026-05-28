@@ -584,8 +584,11 @@ export function compareLedgersByBill(
   // noBill buckets — they cannot participate in bill-by-bill matching.
   const byBillA = new Map<string, FlatTx[]>();
   const byBillB = new Map<string, FlatTx[]>();
-  const noBillA: FlatTx[] = [];
-  const noBillB: FlatTx[] = [];
+  // `let` (not `const`) — the cross-bucket pass below replaces these
+  // with filtered copies after consuming pairs that matched a
+  // counterparty's onlyIn* row by date+amount.
+  let noBillA: FlatTx[] = [];
+  let noBillB: FlatTx[] = [];
   for (const t of txA) {
     const k = extractBillKey(t);
     if (!k) { noBillA.push(t); continue; }
@@ -648,6 +651,142 @@ export function compareLedgersByBill(
       const rep = representative(bRows);
       onlyInB.push({ bill, date: rep.date, amount: sumAbs(bRows), narration: rep.narration });
     }
+  }
+
+  // ── Cross-bucket date+amount pass ──────────────────────────────────
+  //
+  // After exact-key bill matching, a very common pattern leaves
+  // counterpart rows split across DIFFERENT buckets: one side carries
+  // a bill ref (lands in onlyIn*), the other side has the same
+  // economic event with NO extractable bill ref (lands in noBill*).
+  //
+  // Canonical case — ASSA ABLOY × Interio Paradise:
+  //   onlyInB:  AAGIN25005315  24/05/2025  ₹2,06,500  "" (Dynamics
+  //             invoice voucher; AAGIN is the journal-series prefix
+  //             that doesn't appear on the customer's books at all)
+  //   noBillA:  (no bill)      24/05/2025  ₹2,06,500  "By ASSA ABLOY
+  //             OPENING SOLUTIONS INDIA PRIVATE LIMITED" (Tally
+  //             journal posting that records the invoice receipt
+  //             without referencing the supplier's voucher number)
+  //
+  // Same date, same amount, almost certainly the same business event.
+  // Neither the exact-key match (different keys: AAGIN25005315 vs
+  // nothing) nor the digit-tail fallback (Tally has no key at all,
+  // can't extract a tail) nor the payment matcher (operates on
+  // noBillA × noBillB, not noBillA × onlyInB) catches them. Without
+  // this pass, 21 such pairs hide in plain sight on the Interio
+  // Paradise reconciliation.
+  //
+  // Anti-collision gates:
+  //   - Exact date AND amount within ₹1 — looser tolerances make
+  //     same-day same-amount false positives plausible.
+  //   - Amount ≥ ₹10 — tiny rounding rows ("R OFF" ₹1.97 etc.) are
+  //     too easy to collide on.
+  //   - Uniqueness on BOTH sides per (date, ₹amount) bucket. If
+  //     either side has multiple candidates, the pairing is ambiguous
+  //     and the rows stay in their original buckets for human review.
+  //
+  // Runs BEFORE the digit-tail fallback so a perfect date+amount
+  // pair beats a digit-tail-only match (the 25004485 case — the
+  // partial-payment row that the digit-tail would otherwise pair
+  // with the invoice voucher, even though the journal entry on the
+  // same day with the matching amount is the truer counterpart).
+  const CROSS_BUCKET_AMOUNT_TOLERANCE = 1.0;
+  const CROSS_BUCKET_MIN_AMOUNT = 10.0;
+  const consumedNoBillAIdx = new Set<number>();
+  const consumedNoBillBIdx = new Set<number>();
+  const consumedOnlyABills = new Set<string>();
+  const consumedOnlyBBills = new Set<string>();
+
+  // Helper: walk `onlyIn` and try to find a unique date+amount peer
+  // on the `noBill` side. Both-side uniqueness gating + index-based
+  // consumption tracking are factored out so the two passes (onlyInB
+  // × noBillA, onlyInA × noBillB) share one implementation.
+  const crossBucketPass = (
+    onlyIn: OnlySideRow[],
+    noBill: FlatTx[],
+    consumedOnlyBills: Set<string>,
+    consumedNoBillIdx: Set<number>,
+    // direction: 'BA' means onlyIn is side B and noBill is side A
+    // (we matched B's bill against A's bill-less row); 'AB' is the
+    // opposite. Drives which slot of the MatchedRow the values fill.
+    direction: 'BA' | 'AB',
+  ): number => {
+    if (onlyIn.length === 0 || noBill.length === 0) return 0;
+    // Index noBill rows by date for O(1) lookup.
+    const noBillByDate = new Map<string, Array<{ idx: number; tx: FlatTx }>>();
+    noBill.forEach((tx, idx) => {
+      if (!tx.date || tx.absAmount < CROSS_BUCKET_MIN_AMOUNT) return;
+      if (!noBillByDate.has(tx.date)) noBillByDate.set(tx.date, []);
+      noBillByDate.get(tx.date)!.push({ idx, tx });
+    });
+    // Uniqueness gate on the onlyIn side: count (date, rounded ₹)
+    // occurrences so we can skip ambiguous buckets.
+    const onlyCountByKey = new Map<string, number>();
+    for (const r of onlyIn) {
+      if (!r.date || r.amount < CROSS_BUCKET_MIN_AMOUNT) continue;
+      const key = `${r.date}|${Math.round(r.amount)}`;
+      onlyCountByKey.set(key, (onlyCountByKey.get(key) ?? 0) + 1);
+    }
+    let pairCount = 0;
+    for (const oRow of onlyIn) {
+      if (!oRow.date || oRow.amount < CROSS_BUCKET_MIN_AMOUNT) continue;
+      if (consumedOnlyBills.has(oRow.bill)) continue;
+      const oKey = `${oRow.date}|${Math.round(oRow.amount)}`;
+      // Skip if onlyIn side has multiple candidates at this (date, ₹).
+      if ((onlyCountByKey.get(oKey) ?? 0) !== 1) continue;
+      // Find noBill candidates on the same date within tolerance,
+      // excluding already-consumed.
+      const candidates = (noBillByDate.get(oRow.date) ?? []).filter(c =>
+        !consumedNoBillIdx.has(c.idx)
+        && Math.abs(c.tx.absAmount - oRow.amount) <= CROSS_BUCKET_AMOUNT_TOLERANCE,
+      );
+      // Skip if noBill side has multiple candidates — can't pick
+      // confidently between same-day same-₹ rows.
+      if (candidates.length !== 1) continue;
+      const cand = candidates[0];
+      const diff = direction === 'BA'
+        ? cand.tx.absAmount - oRow.amount    // amountA - amountB (B is onlyIn)
+        : oRow.amount - cand.tx.absAmount;   // amountA - amountB (A is onlyIn)
+      const pair: MatchedRow = direction === 'BA'
+        ? {
+            bill: oRow.bill,                    // bill comes from B side
+            dateA: cand.tx.date,
+            dateB: oRow.date,
+            amountA: cand.tx.absAmount,
+            amountB: oRow.amount,
+            narrationA: cand.tx.narration,
+            narrationB: oRow.narration,
+          }
+        : {
+            bill: oRow.bill,                    // bill comes from A side
+            dateA: oRow.date,
+            dateB: cand.tx.date,
+            amountA: oRow.amount,
+            amountB: cand.tx.absAmount,
+            narrationA: oRow.narration,
+            narrationB: cand.tx.narration,
+          };
+      if (Math.abs(diff) <= 1) {
+        matched.push(pair);
+      } else {
+        amountMismatches.push({ ...pair, diff });
+      }
+      consumedOnlyBills.add(oRow.bill);
+      consumedNoBillIdx.add(cand.idx);
+      pairCount += 1;
+    }
+    return pairCount;
+  };
+
+  const pairedFromB = crossBucketPass(onlyInB, noBillA, consumedOnlyBBills, consumedNoBillAIdx, 'BA');
+  const pairedFromA = crossBucketPass(onlyInA, noBillB, consumedOnlyABills, consumedNoBillBIdx, 'AB');
+  if (pairedFromA > 0 || pairedFromB > 0) {
+    console.log(`[ledgerBillMatcher] cross-bucket date+amount paired ${pairedFromB} (onlyInB↔noBillA) + ${pairedFromA} (onlyInA↔noBillB)`);
+    onlyInA = onlyInA.filter(r => !consumedOnlyABills.has(r.bill));
+    onlyInB = onlyInB.filter(r => !consumedOnlyBBills.has(r.bill));
+    noBillA = noBillA.filter((_, idx) => !consumedNoBillAIdx.has(idx));
+    noBillB = noBillB.filter((_, idx) => !consumedNoBillBIdx.has(idx));
   }
 
   // ── Digit-tail fallback ────────────────────────────────────────────
