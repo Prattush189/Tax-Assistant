@@ -242,6 +242,101 @@ function tallySplitMergedVchNoDebit(grid: PdfGrid): PdfGrid {
   };
 }
 
+// Tally "Detailed Ledger" / "Daily Activity Sheet" exports surface
+// Particulars and Narration as TWO separate columns instead of the
+// compact layout that fuses them. Particulars holds the contra-
+// account label ("By ASSA ABLOY..." / "To HDFC BANK(2735)"),
+// Narration holds the long description with bill references and
+// bank refs ("NEFT DR-SCBL0036046-...-BILL 25001376"). The cross-
+// party bill matcher reads the narration field to pull the BILL
+// number — without the Narration column we lose every customer-side
+// payment's reconciliation key.
+//
+// headerRules's /particulars|narration/i pattern is column-iterated
+// left-to-right with first-wins, so Particulars (the earlier column)
+// claims 'narration' and Narration falls through to skip — silently
+// dropping the BILL refs. ASSA ABLOY's Interio Paradise reconciliation
+// is the canonical case: the customer-side Tally book has both
+// columns and matching against the supplier's Dynamics AX books was
+// returning zero matches.
+//
+// Fix: when BOTH "Particulars" AND "Narration" exist as distinct
+// headers, append the Narration cell's content to the Particulars
+// cell, clear the Narration cell. The narration field then carries
+// both pieces and extractBillKey downstream sees the BILL token.
+//
+// Gate: requires both headers as exact matches. Standard Tally
+// exports with "Particulars" alone (Hotel Holiday Inn style) flow
+// through untouched — the find for "^narration$" returns -1 and the
+// function is a no-op.
+function tallyMergeParticularsNarration(grid: PdfGrid): PdfGrid {
+  const headers = grid.columnHeaders ?? [];
+  const partIdx = headers.findIndex(h => h && /^particulars$/i.test(h.trim()));
+  const narrIdx = headers.findIndex(h => h && /^narration$/i.test(h.trim()));
+  if (partIdx < 0 || narrIdx < 0 || partIdx === narrIdx) return grid;
+  // Type column is the third source — Tally's Detailed Ledger PDFs
+  // sometimes overflow narration into the Type column when the
+  // narration line is long enough to cross x-position clusters
+  // (ASSA ABLOY's NEFT references hit this on every payment row —
+  // the cell ends up "ABLOY OPENING SOLUTIONS INDIA PVT-NETBANK,
+  // MUM-HDFCN5202...-BILL 25001376 Payment", with the actual Vch
+  // Type "Payment" as the suffix). When detected (cell ends with a
+  // Vch Type token but isn't ONLY the token), the prefix is appended
+  // to the narration so the BILL <num> token survives into
+  // extractBillKey downstream. Pure-VchType cells ("Payment" /
+  // "Journal" alone) flow through untouched.
+  const typeIdx = headers.findIndex(h => h && /^(?:vch\.?\s*)?type$/i.test(h.trim()));
+  // Known Vch Type vocabulary. Anchored as suffix so we don't strip
+  // a "Payment" embedded in mid-narration text.
+  const VCH_TYPE_PURE = /^\s*(?:Payment|Journal|Purchase|Receipt|Contra|Sales|Debit\s*Note|Credit\s*Note|Sale|Rcpt|Pymt)\s*$/i;
+  const VCH_TYPE_SUFFIX = /\s(Payment|Journal|Purchase|Receipt|Contra|Sales|Debit\s*Note|Credit\s*Note|Sale|Rcpt|Pymt)\s*$/i;
+
+  console.log(`[perLedgerErpRules] Tally consolidating narration: Particulars (col ${partIdx}) ← Narration (col ${narrIdx})${typeIdx >= 0 ? ` ← Type (col ${typeIdx}, overflow prefix only)` : ''}`);
+
+  const newRows = grid.rows.map(r => {
+    const out = [...r];
+    const p = (r[partIdx] ?? '').trim();
+    const n = (r[narrIdx] ?? '').trim();
+    let merged = p && n ? `${p} ${n}` : (n || p);
+    if (typeIdx >= 0) {
+      const t = (r[typeIdx] ?? '').trim();
+      // Only treat Type as narration-overflow when (a) it isn't a
+      // bare Vch Type token AND (b) it ends with one — i.e. the
+      // "<narration> <VchType>" shape. We append everything BEFORE
+      // the trailing Vch Type to the narration; the Type cell stays
+      // as-is so the voucher role still picks up the trailing token
+      // (the existing 'voucher' mapping is content-tolerant — bill
+      // matching reads narration first, so a noisy voucher is
+      // harmless here).
+      if (t && !VCH_TYPE_PURE.test(t)) {
+        const suffix = VCH_TYPE_SUFFIX.exec(t);
+        if (suffix && suffix.index > 0) {
+          const prefix = t.slice(0, suffix.index).trim();
+          if (prefix) {
+            merged = merged ? `${merged} ${prefix}` : prefix;
+          }
+          // Replace the Type cell with JUST the Vch Type token so
+          // the downstream voucher mapping carries "Payment" /
+          // "Journal" / "Purchase" instead of the long overflow
+          // narration. Without this clean-up, voucher cells like
+          // "ABLOY OPENING SOLUTIONS INDIA PVT-NETBANK, MUM-HDFCN5
+          // 2025...-BILL PAYMENT Payment" feed extractBillKey's
+          // voucher fallback (when narration has "BILL PAYMENT"
+          // shorthand and no real bill number) and produce 75-char
+          // synthetic bill keys that bucket-collide every payment.
+          out[typeIdx] = (suffix[1] ?? '').trim();
+        }
+      }
+    }
+    if (merged) {
+      out[partIdx] = merged;
+      out[narrIdx] = '';
+    }
+    return out;
+  });
+  return { ...grid, rows: newRows };
+}
+
 const TALLY: ErpRule = {
   name: 'Tally',
   fingerprints: [
@@ -269,13 +364,20 @@ const TALLY: ErpRule = {
     'vch type',
     'vch no.',
   ],
-  // Split the merged Vch No./Debit column BEFORE headerRules run.
-  // See tallySplitMergedVchNoDebit for the rationale — the Hotel
-  // Holiday Inn 2024-25 compact layout fuses two logical columns
-  // into one cell shape ("60" / "2841 538.00" / "92,000.00 Dr") and
-  // without this split the rule either drops 'debit' (loses wizard
-  // validation) or wrongly captures Vch No as debit amounts.
-  preprocess: tallySplitMergedVchNoDebit,
+  // Two preprocess stages chained:
+  //   1. tallyMergeParticularsNarration — fold a separate "Narration"
+  //      column INTO the Particulars column when both exist (Detailed
+  //      Ledger / Daily Activity exports). No-op for the compact
+  //      single-Particulars layout.
+  //   2. tallySplitMergedVchNoDebit — split the merged "Vch No. Debit"
+  //      column into two when the extractor fused them (compact
+  //      single-account-per-page Hotel Holiday Inn export). No-op for
+  //      already-separate Vch No / Debit columns.
+  // Both stages are content-only / column-count-stable for the wide
+  // export, so they compose safely in either order; we run the
+  // Particulars merge first since it's the simpler op (no column-
+  // insertion bookkeeping).
+  preprocess: grid => tallySplitMergedVchNoDebit(tallyMergeParticularsNarration(grid)),
   // headerRules: 'reference' is listed BEFORE 'debit' so that on
   // unmerged Tally exports (with a plain "Vch No." header) the Vch
   // No column gets 'reference' first and isn't grabbed by /^debit/.
@@ -291,7 +393,25 @@ const TALLY: ErpRule = {
     { pattern: /particulars|narration/i, role: 'narration' },
     { pattern: /^date/i, role: 'date' },
   ],
-  required: ['date', 'narration', 'debit', 'credit', 'balance'],
+  // Balance is INTENTIONALLY not required. Two Tally export shapes
+  // surface in practice:
+  //   - Compact "Ledger Account" (Hotel Holiday Inn) — has a Balance
+  //     column. balance role gets assigned via headerRules; the
+  //     closing-balance pickup in mappedRowsToExtractedLedger uses it.
+  //   - Detailed Ledger / Daily Activity (ASSA ABLOY Interio
+  //     Paradise) — debit + credit + running balance live in the
+  //     Credit column only (Tally writes the running balance below
+  //     the credit number on the same row). No standalone Balance
+  //     column. Earlier the rule vetoed this layout — falling back
+  //     to the wizard which hit two further problems (Narration
+  //     column dropped to skip via first-wins, Vch No. Debit merged
+  //     cell mis-read as debit=voucher-number).
+  // applyMapping treats balance as nullable: the debit/credit-derived
+  // signed amount path is unaffected; only the running-balance delta
+  // fallback (a recovery for misclustered amount cells) doesn't fire.
+  // Net: removing balance from required lets this rule fire on
+  // balance-less exports with NO loss on balanced exports.
+  required: ['date', 'narration', 'debit', 'credit'],
 };
 
 // Finsys's wider exports (Statement of Account / Customer ledger

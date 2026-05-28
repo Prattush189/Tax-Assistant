@@ -304,6 +304,26 @@ export function normalizeBillKey(raw: string | null | undefined): string | null 
   //   - Very long numeric sequences without a prefix (account numbers,
   //     UTRs — 12+ digits without letters)
   if (/^\d{12,}$/.test(s)) return null;
+  // Reject pure-alpha keys with no digits — they're never bill
+  // numbers. Real bills have a counter (BS-123 → "BS123" has digits;
+  // OS64/25-26000216 → "OS642526000216" has digits). Pure alpha
+  // keys come from two contamination sources:
+  //   - Vch Type words flowing through the voucher fallback when the
+  //     ERP's "Type" column is mapped to voucher and the cell is the
+  //     bare class name ("Payment", "Journal", "Purchase", "Receipt",
+  //     "Contra"). Tally's Detailed Ledger export does this on every
+  //     non-bill row; using "JOURNAL" as the bill key bucket-collides
+  //     every cross-party "By <party>" journal entry into one bill.
+  //   - Narration regex capturing the WORD after "BILL"/"VOUCHER" when
+  //     no number follows ("BILL PAYMENT" / "VOUCHER PURCHASE" — Tally
+  //     bank-narration shorthand meaning "this NEFT is a bill
+  //     payment", not "PAYMENT is the bill ID"). Letting these through
+  //     puts every "BILL PAYMENT" row under the synthetic key
+  //     "PAYMENT" and they all bucket-collide on the supplier side
+  //     too. Rejecting forces the row into the no-bill bucket where
+  //     the date+amount payment matcher takes over — the correct
+  //     pairing path for these bank-NEFT rows that lack a bill number.
+  if (!/\d/.test(s)) return null;
   return s.toUpperCase();
 }
 
