@@ -603,8 +603,10 @@ export function compareLedgersByBill(
   const allBills = new Set<string>([...byBillA.keys(), ...byBillB.keys()]);
   const matched: MatchedRow[] = [];
   const amountMismatches: AmountMismatchRow[] = [];
-  const onlyInA: OnlySideRow[] = [];
-  const onlyInB: OnlySideRow[] = [];
+  // `let` (not `const`) so the digit-tail fallback below can replace
+  // these with filtered copies after consuming paired rows.
+  let onlyInA: OnlySideRow[] = [];
+  let onlyInB: OnlySideRow[] = [];
 
   for (const bill of allBills) {
     const aRows = byBillA.get(bill);
@@ -646,6 +648,108 @@ export function compareLedgersByBill(
       const rep = representative(bRows);
       onlyInB.push({ bill, date: rep.date, amount: sumAbs(bRows), narration: rep.narration });
     }
+  }
+
+  // ── Digit-tail fallback ────────────────────────────────────────────
+  //
+  // Exact key match has run; whatever didn't pair sits in onlyInA /
+  // onlyInB. Cross-ERP reconciliations often leave both sides citing
+  // the same physical bill but with DIFFERENT prefixes attached:
+  //
+  //   - Tally narration → "BILL 25004485" → key "25004485"
+  //   - Dynamics AX voucher → "AA-GIN25004485" → key "AAGIN25004485"
+  //
+  // Both clearly reference invoice counter 25004485, but the "AAGIN"
+  // is Dynamics's journal-series code (ERP-internal, doesn't appear
+  // on the counterparty's books). Exact-key matching can't pair them.
+  //
+  // Digit-tail fallback: extract the trailing 6+ digit run from each
+  // unmatched bill. If the same tail appears exactly ONCE on the A
+  // side AND exactly ONCE on the B side, pair them. The display key
+  // becomes "A ↔ B" so the user can see both forms.
+  //
+  // Anti-collision gates:
+  //   - Tail length ≥ 6. Bill counters with fewer digits are common
+  //     (BS-123, JV-99) and create cross-prefix false-positives too
+  //     easily ("BS-123" ↔ "VR-123" — different series, same counter).
+  //     6-digit counters indicate a high-volume invoicing series
+  //     where same-tail collisions across unrelated bills are
+  //     vanishingly rare.
+  //   - Uniqueness on BOTH sides. If A has two bills sharing the same
+  //     tail, or B does, we can't tell which to pair with which —
+  //     leave them in onlyIn* for human review.
+  //   - The OSPL Marg-vs-Finsys case is unaffected: both sides keep
+  //     the "OS64" series prefix so the digit-tails already matched
+  //     via exact-key. The fallback only fires when exact-key missed
+  //     in the first pass.
+  const DIGIT_TAIL_MIN = 6;
+  const digitTail = (billKey: string): string | null => {
+    // Strip our adjustment-class prefix ("CN-" / "DN-") before reading
+    // the tail so credit-note keys still pair against their bill series.
+    const stripped = billKey.replace(/^(?:CN|DN)-/, '');
+    const m = /(\d{6,})$/.exec(stripped);
+    return m ? m[1] : null;
+  };
+
+  if (onlyInA.length > 0 && onlyInB.length > 0) {
+    // Count tail occurrences on each side so we can gate on uniqueness.
+    const tailCountA = new Map<string, number>();
+    const tailCountB = new Map<string, number>();
+    for (const r of onlyInA) {
+      const t = digitTail(r.bill);
+      if (t) tailCountA.set(t, (tailCountA.get(t) ?? 0) + 1);
+    }
+    for (const r of onlyInB) {
+      const t = digitTail(r.bill);
+      if (t) tailCountB.set(t, (tailCountB.get(t) ?? 0) + 1);
+    }
+    // Index B rows by tail for O(1) lookup during the A pass.
+    const bByTail = new Map<string, OnlySideRow>();
+    for (const r of onlyInB) {
+      const t = digitTail(r.bill);
+      if (t && tailCountB.get(t) === 1) bByTail.set(t, r);
+    }
+    const consumedABills = new Set<string>();
+    const consumedBBills = new Set<string>();
+    for (const aRow of onlyInA) {
+      const t = digitTail(aRow.bill);
+      if (!t) continue;
+      if (tailCountA.get(t) !== 1) continue;       // ambiguous on A
+      const bRow = bByTail.get(t);
+      if (!bRow) continue;                          // no unique B counterpart
+      if (consumedBBills.has(bRow.bill)) continue;  // already paired (defensive)
+      const diff = aRow.amount - bRow.amount;
+      // Display key shows BOTH original bill strings so the user can
+      // see what the matcher paired (and audit if the pairing looks
+      // wrong — e.g. a coincidental 6-digit collision between two
+      // unrelated business relationships).
+      const displayBill = `${aRow.bill} ↔ ${bRow.bill}`;
+      const pair = {
+        bill: displayBill,
+        dateA: aRow.date,
+        dateB: bRow.date,
+        amountA: aRow.amount,
+        amountB: bRow.amount,
+        narrationA: aRow.narration,
+        narrationB: bRow.narration,
+      };
+      // ₹1 tolerance for matched (same paise-rounding rule the
+      // exact-key pass uses); anything bigger is a real divergence
+      // worth surfacing as a mismatch even though the bill aligned.
+      if (Math.abs(diff) <= 1) {
+        matched.push(pair);
+      } else {
+        amountMismatches.push({ ...pair, diff });
+      }
+      consumedABills.add(aRow.bill);
+      consumedBBills.add(bRow.bill);
+    }
+    if (consumedABills.size > 0) {
+      console.log(`[ledgerBillMatcher] digit-tail fallback paired ${consumedABills.size} bill${consumedABills.size === 1 ? '' : 's'} across cross-prefix keys`);
+    }
+    // Remove consumed rows from the only-in buckets.
+    onlyInA = onlyInA.filter(r => !consumedABills.has(r.bill));
+    onlyInB = onlyInB.filter(r => !consumedBBills.has(r.bill));
   }
 
   // Sort everything by bill (ascending) for stable rendering.
