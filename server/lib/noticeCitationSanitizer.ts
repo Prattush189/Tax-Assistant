@@ -21,15 +21,13 @@
  *      (indiankanoon, itat.gov.in, sci.gov.in, livelaw.in, taxmann,
  *      taxsutra, cleartax.in/lawnetwork, *.nic.in, *.gov.in).
  *   4. Drop entries without such a URL. Renumber the survivors.
- *   5. If ALL entries were dropped, replace the section body with a
- *      one-sentence fallback so the section heading isn't left
- *      orphaned.
- *
- * The sanitizer is deliberately conservative — it only modifies the
- * case-law section. Inline references in section 5 (`(see CBDT
- * Circular No. 12/2024)`) are left untouched because CBDT/CBIC
- * circulars are easier for the model to cite accurately and
- * hallucination there is rare in practice.
+ *   5. If ALL entries were dropped — OR the section body is empty /
+ *      a placeholder like "Not applicable at this stage" — strip the
+ *      entire section (heading and body) so the final letter goes
+ *      straight from section 3 to section 5. Leaving an orphan
+ *      heading or a "Not applicable" line looks unprofessional.
+ *   6. Renumber the remaining `## N. ...` headings so they stay
+ *      sequential (e.g. 5 → 4, 6 → 5) after section 4 is stripped.
  */
 
 /** Hosts we trust as evidence that the citation is real. Anything
@@ -50,17 +48,19 @@ const SECTION_HEADING_PATTERN =
  *  paren. */
 const ENTRY_MARKER_PATTERN = /\*\*\(([ivxlcdmIVXLCDM]+)\)\*\*/g;
 
+/** Body text that means "this section has no real content". When
+ *  the model emits one of these instead of obeying the prompt's
+ *  "OMIT THIS ENTIRE SECTION" instruction, we strip the section
+ *  ourselves so the letter doesn't carry a useless heading. */
+const PLACEHOLDER_BODY_PATTERN =
+  /^(?:not\s+applicable|n\.?\s*\/?\s*a|none|no\s+(?:case\s+law|precedent|citation)s?\b|nil\b|no\s+supporting\s+(?:case|precedent)s?\b)/i;
+
 /** A single sanitised entry plus diagnostic info about why it was
  *  kept or dropped. */
 export interface SanitizerReport {
   totalEntries: number;
   keptEntries: number;
   droppedEntries: number;
-  /** Statutory blockquotes attributed to a Section but lacking an
-   *  authoritative source URL nearby. These get replaced with a
-   *  visible warning so the user double-checks against the bare Act
-   *  before relying on the quoted text. */
-  unverifiedQuotations: number;
   /** True when the post-flight pass meaningfully changed the draft. */
   changed: boolean;
 }
@@ -78,80 +78,49 @@ function toRoman(n: number): string {
   return romans[n] ?? `n${n}`;
 }
 
-/**
- * Replace blockquoted statutory text that lacks an authoritative
- * source URL on a nearby `Source:` line with a visible verification
- * warning. The model is instructed (in the prompt) to either attach
- * a Source URL or paraphrase in prose; this is the automated guard
- * for the cases where it doesn't. Returns the modified draft and the
- * count of warnings inserted.
- *
- * Matches a blockquote that opens with `> "Section <N>...:` or
- * `> "<Title>: Section <N>...` — i.e. attributed-to-a-section quotes,
- * which are the high-risk hallucination case. Pure prose blockquotes
- * (e.g. quoting the department's own intimation text) are not
- * touched.
- */
-function annotateUnverifiedStatutoryQuotations(draft: string): { text: string; warnings: number } {
-  // Identify each `> "..."` blockquote block. A block is one or more
-  // consecutive lines starting with `> `. We scan greedily, then for
-  // each block test whether (a) its content looks like a statutory
-  // quotation and (b) there's an authoritative-host URL within ~250
-  // characters AFTER the block (typically on a `Source: ...` line).
-  const blockPattern = /(^|\n)(>\s.+(?:\n>\s.+)*)/g;
-  // Heuristic for "this blockquote is quoting a statute": the first
-  // few words are some form of `Section X(Y)`, or `Rule X`, or
-  // `Article X`, or a bare `"Section X..."` opener. Quotes of the
-  // department's intimation text typically start with words like
-  // "Total tax liability", "We have processed", or directly with
-  // assessee data — those don't trip this pattern.
-  const STATUTORY_OPENER = /\b(?:section|rule|article|clause)\s*\d+/i;
-  let warnings = 0;
-  const out = draft.replace(blockPattern, (full, leading, block: string) => {
-    const content = block.replace(/^>\s?/gm, '').trim();
-    if (!STATUTORY_OPENER.test(content.slice(0, 80))) return full;
-    // Look in the surrounding context (the 250 chars after the block
-    // in the ORIGINAL draft) for an authoritative URL. We have to
-    // search the post-block window of the source text, but `replace`
-    // doesn't give us the absolute offset cheaply. Use indexOf:
-    const blockIdxInDraft = draft.indexOf(block);
-    const window = blockIdxInDraft >= 0
-      ? draft.slice(blockIdxInDraft + block.length, blockIdxInDraft + block.length + 350)
-      : '';
-    if (AUTHORITATIVE_HOST_PATTERN.test(window)) return full;
-    warnings++;
-    // Insert the warning AFTER the blockquote, leaving the original
-    // text intact so the user sees what the AI produced AND knows it
-    // isn't verified. Deleting outright would lose information the
-    // user might still find useful; flagging gives them context.
-    return `${leading}${block}\n>\n> ⚠️ **AI quotation — not verified against the bare Act.** Confirm this text against the official statute (incometaxindia.gov.in / cbic.gov.in) before relying on it.`;
+/** Renumber `## 1. FOO`, `## 2. BAR`, ... headings sequentially from 1.
+ *  Used after a section is stripped so the surviving sections don't
+ *  jump from "3" to "5". Only rewrites the integer; the heading text
+ *  itself is preserved verbatim. */
+function renumberSectionHeadings(draft: string): string {
+  let counter = 0;
+  return draft.replace(/^(##\s*)(\d+)(\.\s+)/gm, (_, prefix, _n, suffix) => {
+    counter += 1;
+    return `${prefix}${counter}${suffix}`;
   });
-  return { text: out, warnings };
+}
+
+/** Remove a contiguous slice from `draft` and collapse the blank-line
+ *  gap so the surrounding sections sit flush. Used when we strip the
+ *  case-law section wholesale. */
+function spliceSection(draft: string, start: number, end: number): string {
+  const before = draft.slice(0, start).replace(/\n+$/, '');
+  const after = draft.slice(end).replace(/^\n+/, '');
+  return `${before}\n\n${after}`.replace(/\n{3,}/g, '\n\n');
 }
 
 export function sanitizeNoticeCitations(draft: string): SanitizerResult {
-  // First pass: statutory-quotation warnings. This is independent of
-  // the case-law section and runs unconditionally.
-  const quoted = annotateUnverifiedStatutoryQuotations(draft);
-  const annotatedDraft = quoted.text;
-  const unverifiedQuotations = quoted.warnings;
-
-  const headingMatch = SECTION_HEADING_PATTERN.exec(annotatedDraft);
-  if (!headingMatch) {
+  // Always run a section-heading renumber at the end. Even if the
+  // case-law section is left untouched here, the model sometimes
+  // omits section 4 entirely and emits 1, 2, 3, 5, 6 — renumbering
+  // fixes that for free.
+  const finalize = (text: string, report: SanitizerReport): SanitizerResult => {
+    const renumbered = renumberSectionHeadings(text);
     return {
-      text: annotatedDraft,
-      report: {
-        totalEntries: 0,
-        keptEntries: 0,
-        droppedEntries: 0,
-        unverifiedQuotations,
-        changed: unverifiedQuotations > 0,
-      },
+      text: renumbered,
+      report: { ...report, changed: report.changed || renumbered !== text },
     };
+  };
+
+  const headingMatch = SECTION_HEADING_PATTERN.exec(draft);
+  if (!headingMatch) {
+    return finalize(draft, {
+      totalEntries: 0,
+      keptEntries: 0,
+      droppedEntries: 0,
+      changed: false,
+    });
   }
-  // Re-bind draft to the annotated version so the rest of the
-  // function operates on the post-quotation-pass text.
-  draft = annotatedDraft;
 
   // Slice the document into pre-section / section / post-section.
   // The section ends at the next `## ` heading or end-of-string.
@@ -164,11 +133,9 @@ export function sanitizeNoticeCitations(draft: string): SanitizerResult {
     : draft.length;
 
   const sectionBody = draft.slice(afterHeading, sectionEnd);
+  const trimmedBody = sectionBody.trim();
 
-  // Split the body into entries. We collect text BEFORE the first
-  // marker as `preamble` (usually empty, just whitespace, or an
-  // intro line we keep verbatim). Each subsequent chunk is one
-  // numbered entry.
+  // Split the body into entries by Roman-numeral markers.
   const entryStarts: number[] = [];
   ENTRY_MARKER_PATTERN.lastIndex = 0;
   let m: RegExpExecArray | null;
@@ -176,20 +143,29 @@ export function sanitizeNoticeCitations(draft: string): SanitizerResult {
     entryStarts.push(m.index);
   }
 
+  // Body is empty, or it's a placeholder like "Not applicable at
+  // this stage" / "N/A" / "None". The prompt instructs the model to
+  // OMIT the section in this case; when it disobeys, we strip the
+  // section ourselves so the final letter doesn't carry dead weight.
   if (entryStarts.length === 0) {
-    // No structured entries — leave the section alone. Could be the
-    // model omitted the section content but left the heading; the
-    // sanitizer doesn't need to fight that here.
-    return {
-      text: draft,
-      report: {
+    const isPlaceholder = trimmedBody.length === 0
+      || PLACEHOLDER_BODY_PATTERN.test(trimmedBody);
+    if (isPlaceholder) {
+      return finalize(spliceSection(draft, sectionStart, sectionEnd), {
         totalEntries: 0,
         keptEntries: 0,
         droppedEntries: 0,
-        unverifiedQuotations,
-        changed: unverifiedQuotations > 0,
-      },
-    };
+        changed: true,
+      });
+    }
+    // Body has real prose (e.g. a free-form paragraph the model
+    // wrote without using Roman markers) — leave it alone.
+    return finalize(draft, {
+      totalEntries: 0,
+      keptEntries: 0,
+      droppedEntries: 0,
+      changed: false,
+    });
   }
 
   const preamble = sectionBody.slice(0, entryStarts[0]);
@@ -214,50 +190,47 @@ export function sanitizeNoticeCitations(draft: string): SanitizerResult {
     }
   }
 
-  // Nothing changed in the case-law section → return early; we may
-  // still have inserted quotation warnings above, so the `changed`
-  // flag is gated on either signal.
+  // Nothing dropped — leave the section as the model produced it.
   if (dropped === 0) {
-    return {
-      text: draft,
-      report: {
-        totalEntries: entries.length,
-        keptEntries: entries.length,
-        droppedEntries: 0,
-        unverifiedQuotations,
-        changed: unverifiedQuotations > 0,
-      },
-    };
+    return finalize(draft, {
+      totalEntries: entries.length,
+      keptEntries: entries.length,
+      droppedEntries: 0,
+      changed: false,
+    });
   }
 
-  // Renumber survivors so the user doesn't see (i) followed by (iii).
-  // We rewrite ONLY the leading `**(...)**` marker on each kept
-  // entry; the rest of the entry text passes through unchanged.
+  // Every entry dropped → strip the whole section (heading included).
+  // Leaving an empty heading or a hand-wave fallback line would look
+  // broken and might prompt the user to fill it in with citations
+  // from memory.
+  if (kept.length === 0) {
+    return finalize(spliceSection(draft, sectionStart, sectionEnd), {
+      totalEntries: entries.length,
+      keptEntries: 0,
+      droppedEntries: dropped,
+      changed: true,
+    });
+  }
+
+  // Some entries survived — renumber them so the user doesn't see
+  // (i) followed by (iii). We rewrite ONLY the leading `**(...)**`
+  // marker on each kept entry; the rest of the entry text passes
+  // through unchanged.
   const renumbered = kept.map((entry, idx) => {
     return entry.replace(/^\*\*\([ivxlcdmIVXLCDM]+\)\*\*/, `**(${toRoman(idx + 1)})**`);
   });
 
-  // If every entry was dropped, replace the section body with a
-  // one-sentence fallback. Leaving an empty heading would look broken
-  // and might prompt the user to fill it in with their own (possibly
-  // wrong) citations from memory.
-  const newSectionBody = renumbered.length === 0
-    ? '\n\nThe legal submissions above are grounded in the statutory provisions cited; no judicial precedent is relied upon in this reply.\n\n'
-    : preamble + renumbered.join('');
-
+  const newSectionBody = preamble + renumbered.join('');
   const newDraft =
     draft.slice(0, afterHeading) +
     newSectionBody +
     draft.slice(sectionEnd);
 
-  return {
-    text: newDraft,
-    report: {
-      totalEntries: entries.length,
-      keptEntries: renumbered.length,
-      droppedEntries: dropped,
-      unverifiedQuotations,
-      changed: true,
-    },
-  };
+  return finalize(newDraft, {
+    totalEntries: entries.length,
+    keptEntries: renumbered.length,
+    droppedEntries: dropped,
+    changed: true,
+  });
 }

@@ -97,7 +97,7 @@ STATUTORY QUOTATIONS — STRICTEST RULE
 You may NOT invent or paraphrase statutory text inside a \`> "..."\` blockquote. A quotation attributed to a section is read by the Assessing Officer as the literal text of the statute; producing fake statutory text is the single most damaging failure mode of this reply.
 - If you can pull the actual text of a section from your web search results (incometaxindia.gov.in / cbic.gov.in / indiankanoon.org of the bare Act), include it in a blockquote AND append the source URL on its own line directly underneath the blockquote in the form \`Source: <full URL>\`.
 - If you cannot verify the exact text, DO NOT use a blockquote. Instead, write the principle in your own prose with the section reference — e.g. "Section 115BAB(2) prescribes the conditions of eligibility, which the assessee satisfies." Prose paraphrases without a URL are acceptable; blockquoted "quotations" without a URL are forbidden.
-- Any blockquote that begins with a section number (\`Section X(Y): "..."\`) and is NOT followed by a \`Source:\` URL line will be automatically replaced with a verification warning in the final letter. Treat that as a hard rejection of your output — produce the prose form instead.
+- Any blockquote that begins with a section number (\`Section X(Y): "..."\`) MUST be followed by a \`Source:\` URL line. If you cannot supply one, do not emit the blockquote — rewrite the point in prose with the section reference instead.
 
 ARITHMETIC RECONSTRUCTION (when challenging a computational demand)
 If the reply disputes the quantum of a demand raised by CPC / AO, include a small GFM table inside the relevant sub-part showing the department's computation alongside the assessee's correct computation, line by line (e.g. "Total Income", "Tax @ rate", "Surcharge", "Cess", "Interest u/s 234A/B/C/F", "Demand"). Without this side-by-side, the reply asserts an error without showing it.
@@ -112,7 +112,7 @@ Many tax options have an operative election form that must be filed within a sta
 - Section 35(2AB) weighted R&D deduction → Form 3CL approval
 Failing to reference the operative form when the reply hangs on it is a substantive defect. If you don't know whether the form was filed, write that as an open factual question ("Subject to confirmation that Form 10-ID was filed within the due date u/s 139(1)") rather than asserting a state of facts.
 
-(6) \`## 4. SUPPORTING CASE LAWS / LEGAL PRECEDENTS\` — OPTIONAL section. Include it ONLY if you can cite real judgments you have just verified through web search. There is NO minimum count — zero citations is acceptable and far preferable to a single fabricated one. If you cannot confidently cite at least one real judgment with a verifiable source URL, OMIT THIS ENTIRE SECTION (skip from "## 3" straight to "## 5 RELIEF SOUGHT"). Each entry must be a numbered item \`**(i)** <heading>:\`, \`**(ii)** <heading>:\` followed by a short paragraph stating the principle, then the citation in this exact form on its own line: \`[Assessee] v. [Department], (Year) Volume ITR/GSTL Page (Court abbreviation) [<full source URL from search results>]\`. The bracketed URL is MANDATORY — it must be a working link to indiankanoon.org, itat.gov.in, sci.gov.in, livelaw.in, taxmann.com, or another authoritative source that you saw in the search results for this query. A citation without a verifiable URL will be stripped from the final letter automatically — do not produce them. Fabricating a citation (inventing a case name, volume, page, or year that does not exist) is a hard rule violation and degrades the quality of the entire reply.
+(6) \`## 4. SUPPORTING CASE LAWS / LEGAL PRECEDENTS\` — OPTIONAL section. Include it ONLY if you can cite real judgments you have just verified through web search. There is NO minimum count — zero citations is acceptable and far preferable to a single fabricated one. If you cannot confidently cite at least one real judgment with a verifiable source URL, OMIT THIS ENTIRE SECTION (skip from "## 3" straight to "## 5 RELIEF SOUGHT"). Do NOT emit the heading with a placeholder body such as "Not applicable", "N/A", "None", or "No case law at this stage" — that is worse than omitting the section, because it advertises the gap. Either provide a real cited judgment or leave the heading out entirely; the next section is renumbered from "## 5" to "## 4" automatically when this section is absent. Each entry must be a numbered item \`**(i)** <heading>:\`, \`**(ii)** <heading>:\` followed by a short paragraph stating the principle, then the citation in this exact form on its own line: \`Assessee v. Department, (Year) Volume ITR/GSTL Page (Court abbreviation) — [Source](<full source URL from search results>)\`. The markdown link is MANDATORY — the URL inside the parentheses must be a working link to indiankanoon.org, itat.gov.in, sci.gov.in, livelaw.in, taxmann.com, or another authoritative source that you saw in the search results for this query. Use the literal word "Source" as the link text so it renders as a compact, clickable hyperlink in the PDF. A citation without a verifiable URL will be stripped from the final letter automatically — do not produce them. Fabricating a citation (inventing a case name, volume, page, or year that does not exist) is a hard rule violation and degrades the quality of the entire reply.
 
 (7) \`## 5. RELIEF SOUGHT\` — a numbered list \`(1) (2) (3) ...\` of the exact prayers. Include precise rupee amounts wherever the notice has quantified figures (e.g. refund, interest withdrawal, demand rectification).
 
@@ -177,7 +177,7 @@ ONLY treat the following as authoritative sources — prefer these in your searc
 
 DO NOT cite blog posts, YouTube, Quora, generic Q&A sites, or unofficial summaries. If web search returns only such sources for a point, drop the citation and fall back to "well-settled rule" language.
 
-Inline citation form: when the supporting authority is an official notification, circular, or judgment URL surfaced by the search, append a short bracketed reference at the end of the relevant sentence — e.g. \`(see CBDT Circular No. 12/2024 dated 15.05.2024)\` or \`(see ITAT Mumbai, ITA No. 1234/2023 dated 02.02.2024)\`. Keep the URL out of the letter body — the bracketed reference plus precise document number is enough for the recipient to locate it.`;
+Inline citation form: when the supporting authority is an official notification, circular, or judgment URL surfaced by the search, append a short bracketed reference at the end of the relevant sentence using markdown link syntax so the URL is clickable in the rendered PDF — e.g. \`(see [CBDT Circular No. 12/2024](<full URL>) dated 15.05.2024)\` or \`(see [ITAT Mumbai, ITA No. 1234/2023](<full URL>) dated 02.02.2024)\`. The link text should be the precise document number; the URL goes inside the parentheses. If you do not have a verifiable URL for the reference, drop the link and emit just the bracketed reference as plain text.`;
 
 // ── Generate notice draft (streaming) ──
 // Accepts EITHER:
@@ -446,14 +446,16 @@ router.post(
       (text) => { fullResponse += text; sse.writeText(text); },
     );
 
-    let sanitizationReport = { changed: false, droppedEntries: 0, totalEntries: 0, keptEntries: 0, unverifiedQuotations: 0 };
+    let sanitizationReport = { changed: false, droppedEntries: 0, totalEntries: 0, keptEntries: 0 };
     if (fullResponse) {
       // Strip any case-law citations the model produced without a
-      // verifiable source URL. The model has been told (in the system
-      // prompt) that URL-less citations will be removed; this is the
-      // automated enforcement of that rule and catches the residual
-      // hallucination cases where the search-grounding signal was
-      // weak. See noticeCitationSanitizer for the precise behaviour.
+      // verifiable source URL, and strip the entire section when the
+      // model leaves it empty or as a "Not applicable" placeholder.
+      // The model has been told (in the system prompt) that URL-less
+      // citations will be removed and that the section should be
+      // omitted when no real citations exist; this is the automated
+      // enforcement of those rules. See noticeCitationSanitizer for
+      // the precise behaviour.
       //
       // The streamed text the user saw mid-generation may have
       // included a fabricated citation that gets stripped here —
@@ -464,7 +466,7 @@ router.post(
       const sanitized = sanitizeNoticeCitations(fullResponse);
       sanitizationReport = sanitized.report;
       if (sanitized.report.changed) {
-        console.log(`[notices] sanitised notice ${noticeId}: dropped ${sanitized.report.droppedEntries}/${sanitized.report.totalEntries} citation(s) without an authoritative source URL; flagged ${sanitized.report.unverifiedQuotations} unverified statutory quotation(s)`);
+        console.log(`[notices] sanitised notice ${noticeId}: dropped ${sanitized.report.droppedEntries}/${sanitized.report.totalEntries} citation(s) without an authoritative source URL`);
       }
       fullResponse = sanitized.text;
 
@@ -504,7 +506,6 @@ router.post(
       noticeId,
       citationsSanitized: sanitizationReport.changed,
       citationsDropped: sanitizationReport.droppedEntries,
-      unverifiedQuotations: sanitizationReport.unverifiedQuotations,
     });
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);

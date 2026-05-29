@@ -36,31 +36,61 @@ const PARAGRAPH_GAP = 2.5;
 // Dark navy used for headings and table headers — matches the sample reply.
 const HEADING_RGB: [number, number, number] = [30, 58, 138];
 
+interface InlineSegment {
+  text: string;
+  bold: boolean;
+  /** If set, this segment is rendered as a clickable link (blue + underlined)
+   *  pointing at this URL. Used for both `[text](url)` markdown links and
+   *  bare `https://...` URLs. */
+  url?: string;
+}
+
+/** Blue used for clickable links in the PDF. Matches typical "visited PDF link"
+ *  affordance — distinct from the navy used for headings. */
+const LINK_RGB: [number, number, number] = [30, 64, 175];
+
 /**
- * Split an inline markdown string into segments of { text, bold }.
- * Handles `**bold**` markers; ignores single-asterisk emphasis to keep the
- * output letter-like rather than italicised.
+ * Split an inline markdown string into segments. Handles:
+ *   - `**bold**` markers
+ *   - `[text](https://...)` markdown links
+ *   - bare `https://...` URLs (autolinked)
+ *
+ * Single-asterisk emphasis is intentionally ignored to keep the output
+ * letter-like rather than italicised.
  */
-function splitInlineBold(input: string): Array<{ text: string; bold: boolean }> {
-  const segments: Array<{ text: string; bold: boolean }> = [];
-  const regex = /\*\*([^*]+)\*\*/g;
+function splitInline(input: string): InlineSegment[] {
+  const out: InlineSegment[] = [];
+  // Order matters: bold first, then markdown link, then bare URL. The
+  // bare-URL branch must NOT match URLs that have already been consumed
+  // by the markdown-link branch (the link pattern eats the closing `)`,
+  // so we'll only see leftovers).
+  const pattern = /\*\*([^*]+?)\*\*|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s)\]]+)/g;
   let lastIdx = 0;
-  let match: RegExpExecArray | null;
-  while ((match = regex.exec(input)) !== null) {
-    if (match.index > lastIdx) {
-      segments.push({ text: input.slice(lastIdx, match.index), bold: false });
+  let m: RegExpExecArray | null;
+  while ((m = pattern.exec(input)) !== null) {
+    if (m.index > lastIdx) {
+      out.push({ text: input.slice(lastIdx, m.index), bold: false });
     }
-    segments.push({ text: match[1], bold: true });
-    lastIdx = match.index + match[0].length;
+    if (m[1] !== undefined) {
+      out.push({ text: m[1], bold: true });
+    } else if (m[2] !== undefined && m[3] !== undefined) {
+      out.push({ text: m[2], bold: false, url: m[3] });
+    } else if (m[4] !== undefined) {
+      out.push({ text: m[4], bold: false, url: m[4] });
+    }
+    lastIdx = m.index + m[0].length;
   }
   if (lastIdx < input.length) {
-    segments.push({ text: input.slice(lastIdx), bold: false });
+    out.push({ text: input.slice(lastIdx), bold: false });
   }
-  return segments.length > 0 ? segments : [{ text: input, bold: false }];
+  return out.length > 0 ? out : [{ text: input, bold: false }];
 }
 
 function stripInlineMarkdown(input: string): string {
-  return input.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/`([^`]+)`/g, '$1');
+  return input
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '$1')
+    .replace(/`([^`]+)`/g, '$1');
 }
 
 interface RenderState {
@@ -77,10 +107,34 @@ async function ensureSpace(state: RenderState, needed: number): Promise<void> {
   }
 }
 
-/** Render a paragraph that may contain **bold** runs. Wraps across lines. */
+/** Draw a single inline token at (x, baselineY). If `url` is set, the text is
+ *  coloured blue, underlined, and registered as a clickable link annotation
+ *  so PDF viewers expose it as a hyperlink. */
+function drawInlineToken(
+  doc: jsPDF,
+  text: string,
+  x: number,
+  baselineY: number,
+  width: number,
+  url: string | undefined,
+): void {
+  if (url) {
+    doc.setTextColor(LINK_RGB[0], LINK_RGB[1], LINK_RGB[2]);
+    doc.textWithLink(text, x, baselineY, { url });
+    doc.setDrawColor(LINK_RGB[0], LINK_RGB[1], LINK_RGB[2]);
+    doc.setLineWidth(0.2);
+    doc.line(x, baselineY + 0.6, x + width, baselineY + 0.6);
+    doc.setTextColor(20, 20, 20);
+  } else {
+    doc.text(text, x, baselineY);
+  }
+}
+
+/** Render a paragraph that may contain **bold** runs and clickable links.
+ *  Wraps across lines. */
 async function drawParagraph(state: RenderState, text: string): Promise<void> {
   const { doc, opts } = state;
-  const segments = splitInlineBold(text);
+  const segments = splitInline(text);
 
   doc.setFont(FONT_BODY, 'normal');
   doc.setFontSize(BODY_SIZE);
@@ -91,12 +145,12 @@ async function drawParagraph(state: RenderState, text: string): Promise<void> {
 
   const spaceWidth = doc.getTextWidth(' ');
 
-  const tokens: Array<{ text: string; bold: boolean }> = [];
+  const tokens: Array<{ text: string; bold: boolean; url?: string }> = [];
   for (const seg of segments) {
     const parts = seg.text.split(/(\s+)/);
     for (const p of parts) {
       if (!p) continue;
-      tokens.push({ text: p, bold: seg.bold });
+      tokens.push({ text: p, bold: seg.bold, url: seg.url });
     }
   }
 
@@ -124,7 +178,7 @@ async function drawParagraph(state: RenderState, text: string): Promise<void> {
     }
 
     // Word longer than the line: just draw it — jsPDF handles overflow visually.
-    doc.text(tok.text, x, state.y);
+    drawInlineToken(doc, tok.text, x, state.y, width, tok.url);
     x += width;
   }
 
@@ -217,11 +271,11 @@ async function drawList(state: RenderState, items: ListItem[]): Promise<void> {
     doc.setFont(FONT_BODY, 'bold');
     doc.text(item.marker, opts.margin, state.y);
 
-    const segments = splitInlineBold(item.text);
-    const tokens: Array<{ text: string; bold: boolean }> = [];
+    const segments = splitInline(item.text);
+    const tokens: Array<{ text: string; bold: boolean; url?: string }> = [];
     for (const seg of segments) {
       const parts = seg.text.split(/(\s+)/);
-      for (const p of parts) if (p) tokens.push({ text: p, bold: seg.bold });
+      for (const p of parts) if (p) tokens.push({ text: p, bold: seg.bold, url: seg.url });
     }
 
     let x = opts.margin + markerWidth;
@@ -246,7 +300,7 @@ async function drawList(state: RenderState, items: ListItem[]): Promise<void> {
         state.y += LINE_HEIGHT;
         await ensureSpace(state, LINE_HEIGHT);
       }
-      doc.text(tok.text, x, state.y);
+      drawInlineToken(doc, tok.text, x, state.y, width, tok.url);
       x += width;
     }
     state.y += LINE_HEIGHT;
