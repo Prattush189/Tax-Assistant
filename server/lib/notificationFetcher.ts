@@ -25,6 +25,7 @@ import { notificationsRepo, type NotificationCategory, type TaxNotificationCreat
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { fetchAllCbdtItems, type CbdtItem } from './cbdtScraper.js';
 import { fetchGstCouncilItems, type GstCouncilItem } from './gstCouncilScraper.js';
+import { extractGeminiVision } from './geminiVision.js';
 
 // System-job rows in api_usage are written with NULL user_id /
 // billing_user_id. user_id is FK to users(id) — a sentinel string like
@@ -492,6 +493,107 @@ function pickCbdtCategory(item: CbdtItem): NotificationCategory {
  *  Anything else (GST Council titles like "Recommendations of the
  *  56th Meeting", or "82nd Edition GSTC Newsletter ...") passes
  *  through untouched. */
+/** Detect a CBDT title that is JUST a notification identifier with no
+ *  descriptive subject — e.g. "Notification No. 68/2026-CBDT[F. No.
+ *  203/17/2025/ITA-II] / SO 2751(E)". For these the upstream API
+ *  doesn't supply a description in the title field; the actual
+ *  subject is only inside the PDF. We detect by checking whether
+ *  extractSubject() left the title unchanged (i.e. the prefix regex
+ *  found nothing to strip — the title is wholly the identifier). */
+function isBareIdentifierTitle(title: string): boolean {
+  const cleaned = title.replace(/\s+/g, ' ').trim();
+  if (!/^(?:Notification|Circular|Order|Instruction|F\.?\s*No\.?)/i.test(cleaned)) return false;
+  const subject = extractSubject(title);
+  // If extractSubject returned the same string (after our title-case
+  // normalisation), nothing got stripped → bare identifier.
+  const normalisedOriginal = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+  return subject === normalisedOriginal;
+}
+
+/** Fetch a PDF and ask Gemini vision for a single-line subject. Used
+ *  as a last-resort enrichment for items whose API title field is
+ *  just the notification identifier (no description). Returns null
+ *  on any failure — caller falls back to the original title.
+ *
+ *  Cost: one vision call per bare item, ~1-2K input + ~50 output
+ *  tokens at T2 pricing = $0.0002. A typical batch has 0-4 bare
+ *  items so the run-level overhead is well under a cent.
+ *
+ *  Token quota for this is not enforced (system-job; no human actor
+ *  to bill against). Falls through silently if vision API is down. */
+async function extractSubjectFromPdf(pdfUrl: string): Promise<string | null> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15_000);
+    let buf: Buffer;
+    try {
+      const res = await fetch(pdfUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        },
+        signal: controller.signal,
+      });
+      if (!res.ok) return null;
+      buf = Buffer.from(await res.arrayBuffer());
+    } finally {
+      clearTimeout(timer);
+    }
+    if (buf.length === 0 || buf.length > 5 * 1024 * 1024) return null; // skip > 5 MB
+    const prompt = `Read this Indian tax notification PDF and return ONE LINE describing what the notification is about (≤80 characters). Focus on the operative subject — what changes, who's affected, or which provision is being amended. Examples of good subjects:
+- "Corrigendum to Form ITR-2 notification for AY 2026-27"
+- "Approval of research association under Section 35"
+- "Amendment to Rule 114E reporting thresholds"
+
+Output ONLY the subject line. No preamble, no quotes, no notification number, no markdown.`;
+    const result = await extractGeminiVision<{ subject?: string } | string>(
+      buf,
+      'application/pdf',
+      prompt,
+      { maxTokens: 200 },
+    );
+    let text = '';
+    if (typeof result.data === 'string') text = result.data;
+    else if (result.data && typeof (result.data as { subject?: string }).subject === 'string') text = (result.data as { subject: string }).subject;
+    text = (text || '').replace(/^["'`]+|["'`]+$/g, '').replace(/\s+/g, ' ').trim();
+    if (!text || text.length < 5 || text.length > 160) return null;
+    return text;
+  } catch (err) {
+    console.warn(`[notificationFetcher] PDF subject extraction failed for ${pdfUrl}: ${(err as Error).message?.slice(0, 200)}`);
+    return null;
+  }
+}
+
+/** Bounded-concurrency enrichment of CBDT items that have bare-
+ *  identifier titles. Mutates items in place by replacing `title`
+ *  with the extracted subject for any item where the PDF read
+ *  succeeds. Items that fail (network, vision error, oversized PDF)
+ *  keep their original title — the welcome card just shows the
+ *  identifier; click-through still works. */
+async function enrichBareCbdtTitles(items: CbdtItem[]): Promise<{ enriched: number; attempted: number }> {
+  const bareItems = items.filter(it => it.pdfUrl && isBareIdentifierTitle(it.title));
+  if (bareItems.length === 0) return { enriched: 0, attempted: 0 };
+  const CONCURRENCY = 2;
+  let cursor = 0;
+  let enriched = 0;
+  const workers: Promise<void>[] = [];
+  for (let w = 0; w < Math.min(CONCURRENCY, bareItems.length); w++) {
+    workers.push((async () => {
+      while (true) {
+        const idx = cursor++;
+        if (idx >= bareItems.length) return;
+        const it = bareItems[idx];
+        const subject = await extractSubjectFromPdf(it.pdfUrl!);
+        if (subject) {
+          it.title = subject;
+          enriched += 1;
+        }
+      }
+    })());
+  }
+  await Promise.all(workers);
+  return { enriched, attempted: bareItems.length };
+}
+
 function extractSubject(title: string): string {
   const cleaned = title.replace(/\s+/g, ' ').trim();
   // Match a known prefix word, then any non-`:` content, then the
@@ -697,6 +799,19 @@ export async function fetchLatestNotifications(opts: { dryRun?: boolean; logUsag
   if (cbdtItems.length === 0 && gstItems.length === 0) {
     errors.push('Both CBDT and GST Council scrapes returned 0 items');
     return { ok: false, inserted: 0, pruned: 0, rejectedNonOfficial: 0, rejectedUrls, pregenerated: 0, pregenerateFailed: 0, inputTokens: 0, outputTokens: 0, cost: 0, errors };
+  }
+
+  // PDF-subject enrichment for CBDT items whose API title field is
+  // just the notification identifier (no description). One vision
+  // call per bare item — typically 0-4 per batch — fetches the PDF
+  // and asks Gemini for a one-line subject. Items that succeed get
+  // their `title` rewritten; failures keep the original.
+  if (apiKey) {
+    const enrichStart = Date.now();
+    const enrichResult = await enrichBareCbdtTitles(cbdtItems);
+    if (enrichResult.attempted > 0) {
+      console.log(`[notificationFetcher] PDF-subject enrichment · attempted=${enrichResult.attempted} enriched=${enrichResult.enriched} durationMs=${Date.now() - enrichStart}`);
+    }
   }
 
   // Map scraped items from both sources to the unified
