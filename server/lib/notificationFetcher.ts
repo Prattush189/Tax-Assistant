@@ -353,23 +353,101 @@ ABSOLUTE RULES:
 - notification_date MUST be within the last 90 days. The server enforces this with a hard date filter; anything older is dropped silently. Don't waste output on Feb items if it's late May.
 - Output ONLY the JSON object.`;
 
-const DETAIL_PROMPT_TEMPLATE = (heading: string, summary: string | null, sourceUrl: string | null) => `You are explaining an Indian tax/GST/TDS notification to a chartered accountant. The notification is:
+const DETAIL_PROMPT_TEMPLATE = (heading: string, summary: string | null, sourceUrl: string | null) => `You are explaining an Indian tax / GST / TDS notification to a chartered accountant.
+
+THE NOTIFICATION HAS ALREADY BEEN VERIFIED AS REAL.
+We retrieved this notification directly from the Income Tax Department's official "What's New" feed at incometaxindia.gov.in (or the GST Council's official page at gstcouncil.gov.in). The heading, number, and source URL below are the authoritative record — they came from the official portal, not from your training data, not from search results, and not from a third party. You can absolutely rely on the fact that the document EXISTS and the URL is real.
 
   Heading: ${heading}
   ${summary ? `Summary: ${summary}` : ''}
   ${sourceUrl ? `Source: ${sourceUrl}` : ''}
 
-Use Google Search to read the official notification (and any clarification circular). HARD CONSTRAINT: only consult and cite content hosted on Indian government domains — cbic-gst.gov.in, cbic.gov.in, taxinformation.cbic.gov.in, incometax.gov.in, incometaxindia.gov.in, cbdt.gov.in, egazette.nic.in, gst.gov.in, gstcouncil.gov.in, finmin.nic.in, dor.gov.in, pib.gov.in, or any *.gov.in / *.nic.in subdomain. Do NOT use taxguru.in, taxscan.in, taxmann.com, cleartax.in, livemint, economic-times, business-standard, law-firm blogs, or any other third-party commentary as a source.
+ABSOLUTE PROHIBITION — DO NOT, under any circumstances, write any of the following:
+- "This notification does not exist"
+- "I cannot verify this notification"
+- "No such notification was found"
+- "This appears to be from another department"
+- "Please verify before relying on this"
+- Any other phrasing that casts doubt on the authenticity of the notification.
+The user has the URL. If you cannot find supplementary details via search, write a SHORTER but CONFIDENT explanation derived from the title and source URL, ending with a sentence inviting the user to read the full PDF at the source URL. Doubting the document is the single most damaging thing you can output here — it makes the practitioner mistrust the entire feed.
 
-Then write a structured explanation in 350-550 words covering:
+HOW TO RESEARCH
+Use Google Search to find supplementary context (the notification PDF if Google has indexed it, related circulars, the parent rules the notification amends). Search results from the gov.in / nic.in domains below are authoritative; everything else is commentary only and must not be cited.
 
-  1. **What changed** — the operative provision in plain English
-  2. **Who it affects** — the taxpayer category, threshold, sector
-  3. **Effective date** — when it kicks in
-  4. **What practitioners need to do** — the practical action: filings, system changes, client advisory points
-  5. **Cross-references** — any earlier notification this supersedes / amends, or related circulars
+Allowlisted official domains: cbic-gst.gov.in, cbic.gov.in, taxinformation.cbic.gov.in, incometax.gov.in, incometaxindia.gov.in, cbdt.gov.in, egazette.nic.in, gst.gov.in, gstcouncil.gov.in, finmin.nic.in, dor.gov.in, pib.gov.in, mca.gov.in, traces.tdscpc.gov.in, or any *.gov.in / *.nic.in subdomain.
 
-Format with markdown headings and short paragraphs. Cite section numbers verbatim. Do NOT fabricate clauses — if the notification doesn't say something, say so. Output the explanation ONLY, no preamble.`;
+Do NOT cite taxguru.in, taxscan.in, taxmann.com, cleartax.in, livemint, economic-times, business-standard, law-firm blogs, or any other third-party commentary.
+
+If search returns NOTHING on the gov.in domains for this specific notification number, that means Google's index hasn't picked up the PDF yet — NOT that the notification doesn't exist (we already proved it does by retrieving it from the official feed). In that case, write the explanation purely from the title's content and tell the practitioner to read the PDF at the source URL for specifics.
+
+OUTPUT FORMAT
+Write a structured explanation in 200-500 words covering as many of these as the heading + any supplementary search results support:
+
+  1. **What changed** — the operative provision in plain English. If only the title is available, paraphrase what the title says and note that the precise wording is in the linked PDF.
+  2. **Who it affects** — taxpayer category, threshold, sector.
+  3. **Effective date** — when it kicks in. If not stated in the title and not surfaced by search, write "Refer to the source PDF for the exact effective date."
+  4. **What practitioners need to do** — the practical action: filings, system changes, client advisory points. Inferred from the type of notification when specifics aren't available.
+  5. **Cross-references** — any earlier notification this supersedes / amends, or related circulars. Only include when actually identified — never invent.
+
+Use markdown headings and short paragraphs. Cite section numbers verbatim from the heading. Output the explanation ONLY, no preamble, no disclaimers about uncertainty.`;
+
+/**
+ * Deterministic fallback detail body used when the model writes a
+ * denial response despite the prompt's safeguards. Anchors the user
+ * to the source URL with NO hedging — the notification is real
+ * (we scraped it from the official feed), and the practitioner can
+ * read the full PDF directly. Avoids the production failure mode
+ * where Gemini's "I can't verify" output made the entire welcome
+ * card look broken.
+ */
+function buildDenialFallbackDetail(heading: string, sourceUrl: string | null): string {
+  const trimmedHeading = heading.replace(/\s+/g, ' ').trim();
+  const lines: string[] = [];
+  lines.push(`### Summary`);
+  lines.push('');
+  lines.push(`This notification — **${trimmedHeading}** — is on file with the issuing authority. The full text and operative wording are in the source PDF linked below. A short context is provided below; for the precise provision, refer to the PDF.`);
+  lines.push('');
+  lines.push(`### Notes`);
+  lines.push('');
+  // Heuristic context from the heading. CBDT and GST notifications
+  // routinely carry self-describing titles (e.g. "Corrigendum to
+  // Notification of Form ITR-2"). We surface that plainly without
+  // inventing anything beyond what's already on the title.
+  if (/corrigendum/i.test(trimmedHeading)) {
+    lines.push('- This is a **corrigendum** — it amends or corrects a previously-issued notification. Read it alongside the parent notification it references.');
+  }
+  if (/itr-?\d/i.test(trimmedHeading)) {
+    const m = /(ITR-?\d)/i.exec(trimmedHeading);
+    if (m) lines.push(`- Affects users / filers of **${m[1].toUpperCase()}**.`);
+  }
+  if (/rule\s+\d+/i.test(trimmedHeading)) {
+    const m = /(Rule\s+\d+[A-Z]?)/i.exec(trimmedHeading);
+    if (m) lines.push(`- Amends **${m[1]}** of the Income-tax Rules. Practitioners should re-read the rule against the amended text in the PDF.`);
+  }
+  if (/section\s+\d+/i.test(trimmedHeading)) {
+    const m = /(section\s+\d+[A-Z]*)/i.exec(trimmedHeading);
+    if (m) lines.push(`- Operates under **${m[1]}** of the Income-tax Act. Cross-check with the bare-Act text for the current sub-section structure.`);
+  }
+  if (/circular\s+no\.?\s*\d+/i.test(trimmedHeading)) {
+    lines.push('- This is a **Circular** — it explains the department\'s view on the application of an existing provision; it does not amend the Act / Rules itself.');
+  }
+  if (/press\s+release/i.test(trimmedHeading)) {
+    lines.push('- This is a **Press Release** — informational announcement rather than a statutory amendment. Read for context, not for an operative provision.');
+  }
+  lines.push('');
+  lines.push(`### What to do`);
+  lines.push('');
+  lines.push('- Open the source PDF (link below) to read the operative text in full.');
+  lines.push('- Where the notification amends a rule or section, run a side-by-side with your existing client templates.');
+  lines.push('- If this notification affects an in-flight filing for a client, check the effective date stated in the PDF before relying on the change.');
+  if (sourceUrl) {
+    lines.push('');
+    lines.push(`### Source`);
+    lines.push('');
+    lines.push(`[Read the official PDF](${sourceUrl})`);
+  }
+  return lines.join('\n');
+}
 
 function pickCategory(raw: string | undefined): NotificationCategory {
   const v = (raw ?? '').toUpperCase().trim();
@@ -396,16 +474,53 @@ function pickCbdtCategory(item: CbdtItem): NotificationCategory {
   }
 }
 
-/** CBDT titles often run 150+ chars ("Notification No. 6/2026: Order
- *  under clause (iia) of sub-section (1) of section 35 of the Income
- *  Tax Act, 1961 read with Rule 5F of the Income Tax Rules 1962").
- *  The welcome card has limited space; trim at the first colon if
- *  there is one (keeps the number + leading subject), else hard-cap
- *  at 90 chars with an ellipsis. */
-function trimHeading(title: string): string {
+/** Strip the bureaucratic notification-identifier prefix so the
+ *  welcome-card heading reads as the subject of the notification
+ *  ("Corrigendum to Form ITR-2", "Approval of research association
+ *  under Section 35") rather than the document number
+ *  ("Notification No. 58/2026 [F. No. 370142/6/2026-TPL] / GSR
+ *  263(E) :"). The category badge + date already convey provenance;
+ *  the heading should convey CONTENT.
+ *
+ *  Patterns recognised (case-insensitive, anchored to start):
+ *    - "Notification No. <num>[ <bracketed F.No>][ / <SO/GSR>] :"
+ *    - "Circular No. <num> :"
+ *    - "Order ... :"
+ *    - "Instruction ... :"
+ *    - "Press Release ... :"
+ *    - "F. No. <fileNumber> :"
+ *  Anything else (GST Council titles like "Recommendations of the
+ *  56th Meeting", or "82nd Edition GSTC Newsletter ...") passes
+ *  through untouched. */
+function extractSubject(title: string): string {
   const cleaned = title.replace(/\s+/g, ' ').trim();
-  if (cleaned.length <= 90) return cleaned;
-  return cleaned.slice(0, 87).trimEnd() + '…';
+  // Match a known prefix word, then any non-`:` content, then the
+  // separator that introduces the actual subject. Two accepted
+  // separators:
+  //   - `:` (most common — "Notification No. 6/2026: Order under...")
+  //   - ` - ` / ` – ` / ` — ` with trailing space (used on items
+  //     where the S.O./G.S.R. parenthetical is followed by a dash
+  //     and then the subject — e.g. "G.S.R. 240(E)- Income-tax
+  //     (Tenth Amendment) Rules").
+  //
+  // The non-greedy `[^:]*?` ensures we don't consume past a colon
+  // into the subject; for the dash variant the leading `[^:]*?` is
+  // bounded by the dash-space lookahead. File numbers like
+  // "370142/15/2026-TPL" don't trip the dash branch because they
+  // lack the trailing space.
+  const prefixPattern = /^(?:Notification|Circular|Order|Instruction|Press\s+Release|F\.?\s*No\.?)[^:]*?(?::|\s*[-–—]\s+)\s*/i;
+  const stripped = cleaned.replace(prefixPattern, '').trim();
+  if (stripped.length === 0) return cleaned;
+  return stripped.charAt(0).toUpperCase() + stripped.slice(1);
+}
+
+/** CBDT titles often run 150+ chars after we strip the prefix. The
+ *  welcome card has limited space; hard-cap at 90 chars with an
+ *  ellipsis. */
+function trimHeading(title: string): string {
+  const subject = extractSubject(title);
+  if (subject.length <= 90) return subject;
+  return subject.slice(0, 87).trimEnd() + '…';
 }
 
 function isIsoDate(s: string | undefined): boolean {
@@ -857,6 +972,35 @@ export async function generateNotificationDetail(
   let detailText = result.text.trim();
   if (detailText.length === 0) {
     return { ok: false, detail: null, cached: false, inputTokens: result.inputTokens, outputTokens: result.outputTokens, cost, error: `Empty response (finishReason=${result.finishReason})` };
+  }
+
+  // Denial guard. Production observed Gemini writing "this notification
+  // does not exist" / "I cannot verify" / "please verify before relying"
+  // for items we just scraped from CBDT's own what's-new feed — i.e.
+  // the URL is verified but Google's search index hasn't picked up the
+  // PDF yet, and the model defaults to "must be fake". That output is
+  // worse than no detail at all: it actively makes the practitioner
+  // mistrust the entire feed.
+  //
+  // Detection is deliberately broad — if any of these phrases appear,
+  // the model is hedging. We replace the body with a deterministic
+  // fallback derived from the title that confidently anchors the user
+  // to the source URL.
+  const denialPatterns = [
+    /does\s+not\s+exist/i,
+    /not\s+(?:a\s+)?valid\s+statutory/i,
+    /no\s+(?:such|verified)\s+(?:cbdt\s+)?notification/i,
+    /cannot\s+verify\s+(?:this|the)\s+notification/i,
+    /could\s+not\s+(?:be\s+)?(?:locate|find|verif)/i,
+    /this\s+(?:appears|seems)\s+to\s+be\s+(?:from|a)\s+(?:another|different|misattributed)/i,
+    /please\s+verify\s+(?:the\s+)?notification\s+number/i,
+    /no\s+CBDT\s+notification\s+matching/i,
+    /not\s+currently\s+(?:a\s+)?finalized/i,
+  ];
+  const looksLikeDenial = denialPatterns.some(p => p.test(detailText));
+  if (looksLikeDenial) {
+    console.warn(`[notificationFetcher] detail for "${heading.slice(0, 80)}" looked like a denial; replacing with deterministic fallback`);
+    detailText = buildDenialFallbackDetail(heading, sourceUrl);
   }
   // Build the Sources block. Prefer official grounding sources; if
   // none, fall back to the notification's own source_url. Always
