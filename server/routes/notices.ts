@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
 import { pickChatProvider } from '../lib/chatProvider.js';
+import { referenceUrlsBlock } from '../lib/officialReferenceUrls.js';
 import { SseWriter } from '../lib/sseStream.js';
 import { sanitizeNoticeCitations } from '../lib/noticeCitationSanitizer.js';
 
@@ -177,7 +178,9 @@ ONLY treat the following as authoritative sources — prefer these in your searc
 
 DO NOT cite blog posts, YouTube, Quora, generic Q&A sites, or unofficial summaries. If web search returns only such sources for a point, drop the citation and fall back to "well-settled rule" language.
 
-Inline citation form: when the supporting authority is an official notification, circular, or judgment URL surfaced by the search, append a short bracketed reference at the end of the relevant sentence using markdown link syntax so the URL is clickable in the rendered PDF — e.g. \`(see [CBDT Circular No. 12/2024](<full URL>) dated 15.05.2024)\` or \`(see [ITAT Mumbai, ITA No. 1234/2023](<full URL>) dated 02.02.2024)\`. The link text should be the precise document number; the URL goes inside the parentheses. If you do not have a verifiable URL for the reference, drop the link and emit just the bracketed reference as plain text.`;
+Inline citation form: when the supporting authority is an official notification, circular, or judgment URL surfaced by the search, append a short bracketed reference at the end of the relevant sentence using markdown link syntax so the URL is clickable in the rendered PDF — e.g. \`(see [CBDT Circular No. 12/2024](<full URL>) dated 15.05.2024)\` or \`(see [ITAT Mumbai, ITA No. 1234/2023](<full URL>) dated 02.02.2024)\`. The link text should be the precise document number; the URL goes inside the parentheses. If you do not have a verifiable URL for the reference, drop the link and emit just the bracketed reference as plain text.
+
+${referenceUrlsBlock('notice')}`;
 
 // ── Generate notice draft (streaming) ──
 // Accepts EITHER:

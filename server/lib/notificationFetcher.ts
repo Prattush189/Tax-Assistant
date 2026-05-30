@@ -24,6 +24,7 @@ import { GEMINI_API_KEYS, GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, costForMod
 import { notificationsRepo, type NotificationCategory, type TaxNotificationCreateInput } from '../db/repositories/notificationsRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { fetchAllCbdtItems, type CbdtItem } from './cbdtScraper.js';
+import { fetchGstCouncilItems, type GstCouncilItem } from './gstCouncilScraper.js';
 
 // System-job rows in api_usage are written with NULL user_id /
 // billing_user_id. user_id is FK to users(id) — a sentinel string like
@@ -533,21 +534,31 @@ export async function fetchLatestNotifications(opts: { dryRun?: boolean; logUsag
   // pregeneration does, and that path checks `apiKey` itself.
 
   const startedAt = Date.now();
-  // Direct scrape — no Gemini list call. The cbdtScraper hits the
-  // same Liferay search endpoint the live page uses, so we get the
-  // exact same items the SPA shows (notifications, circulars, press
-  // releases, miscellaneous). Cost: ZERO LLM tokens for the list
-  // step. Pre-generation (per-item detail) still uses Gemini.
-  let cbdtItems: CbdtItem[];
-  try {
-    cbdtItems = await fetchAllCbdtItems(40);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    errors.push(`CBDT scrape failed: ${msg}`);
-    return { ok: false, inserted: 0, pruned: 0, rejectedNonOfficial: 0, rejectedUrls, pregenerated: 0, pregenerateFailed: 0, inputTokens: 0, outputTokens: 0, cost: 0, errors };
-  }
+  // Direct scrape — no Gemini list call. We hit two sources in
+  // parallel: incometaxindia.gov.in's Liferay search (notifications,
+  // circulars, press releases, miscellaneous) and gstcouncil.gov.in's
+  // server-rendered what's-new table (GST newsletters, circulars,
+  // appointments). Both produce verifiable PDF URLs. Cost: ZERO LLM
+  // tokens for the list step. Pre-generation (per-item detail) still
+  // uses Gemini.
+  //
+  // TRACES (TDS notifications at traces.tdscpc.gov.in) is a Flutter
+  // app and not scrapeable without reverse-engineering Dart bundles.
+  // CBDT covers most TDS-relevant items via §194-series notifications
+  // and Circulars; the TRACES-specific items (CPC clarifications) are
+  // a known gap.
+  const [cbdtResult, gstResult] = await Promise.allSettled([
+    fetchAllCbdtItems(40),
+    fetchGstCouncilItems(),
+  ]);
+  let cbdtItems: CbdtItem[] = [];
+  let gstItems: GstCouncilItem[] = [];
+  if (cbdtResult.status === 'fulfilled') cbdtItems = cbdtResult.value;
+  else errors.push(`CBDT scrape failed: ${cbdtResult.reason instanceof Error ? cbdtResult.reason.message : String(cbdtResult.reason)}`);
+  if (gstResult.status === 'fulfilled') gstItems = gstResult.value;
+  else errors.push(`GST Council scrape failed: ${gstResult.reason instanceof Error ? gstResult.reason.message : String(gstResult.reason)}`);
   const durationMs = Date.now() - startedAt;
-  console.log(`[notificationFetcher] scraped ${cbdtItems.length} item(s) from CBDT in ${durationMs}ms`);
+  console.log(`[notificationFetcher] scraped ${cbdtItems.length} CBDT + ${gstItems.length} GST item(s) in ${durationMs}ms`);
 
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
@@ -568,23 +579,34 @@ export async function fetchLatestNotifications(opts: { dryRun?: boolean; logUsag
     }
   }
 
-  if (cbdtItems.length === 0) {
-    errors.push('CBDT scrape returned 0 items — check API availability or endpoint changes');
+  if (cbdtItems.length === 0 && gstItems.length === 0) {
+    errors.push('Both CBDT and GST Council scrapes returned 0 items');
     return { ok: false, inserted: 0, pruned: 0, rejectedNonOfficial: 0, rejectedUrls, pregenerated: 0, pregenerateFailed: 0, inputTokens: 0, outputTokens: 0, cost: 0, errors };
   }
 
-  // Map scraped CBDT items to the TaxNotificationCreateInput shape.
-  // Skip items lacking a PDF URL (they're not actionable for CAs who
-  // want to read the actual notification).
+  // Map scraped items from both sources to the unified
+  // TaxNotificationCreateInput shape. Skip items lacking a PDF URL
+  // (they're not actionable for CAs who want to read the actual
+  // notification).
   const items: TaxNotificationCreateInput[] = [];
-  const rejectedNonOfficial = 0; // direct scrape — every URL is on incometaxindia.gov.in
+  const rejectedNonOfficial = 0; // direct scrape — every URL is on a verified gov domain
   for (const it of cbdtItems) {
     if (!it.pdfUrl) continue;
     items.push({
       category: pickCbdtCategory(it),
       heading: trimHeading(it.title),
-      summary: null, // CBDT API doesn't supply a summary; we leave it null
+      summary: null,
       notificationDate: it.dateModified ? it.dateModified.slice(0, 10) : null,
+      sourceUrl: it.pdfUrl,
+    });
+  }
+  for (const it of gstItems) {
+    if (!it.pdfUrl) continue;
+    items.push({
+      category: 'GST',
+      heading: trimHeading(it.title),
+      summary: null,
+      notificationDate: it.dateModified || null,
       sourceUrl: it.pdfUrl,
     });
   }

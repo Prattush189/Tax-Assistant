@@ -3,6 +3,7 @@ import { Router, Response } from 'express';
 import { GEMINI_T1_INPUT_COST, GEMINI_T1_OUTPUT_COST, GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST, GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, GEMINI_API_KEYS } from '../lib/gemini.js';
 import { selectTier, confirmUsed, getActiveKeyIndex } from '../lib/searchQuota.js';
 import { streamGeminiChat } from '../lib/geminiChat.js';
+import { referenceUrlsBlock } from '../lib/officialReferenceUrls.js';
 import { chatRepo } from '../db/repositories/chatRepo.js';
 import { messageRepo } from '../db/repositories/messageRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
@@ -85,7 +86,9 @@ Inline citation form: when a search result is the basis for a specific number or
 HANDLING ATTACHED DOCUMENTS:
 - If the user attaches a document and asks a vague question, your response MUST focus on the attached document's content.
 - Describe what the document contains, highlight key information, and invite the user to ask specific questions.
-- Do NOT ignore the attachment and answer a generic tax question instead.`;
+- Do NOT ignore the attachment and answer a generic tax question instead.
+
+${referenceUrlsBlock('chat')}`;
 
 const MAX_HISTORY_MESSAGES = 6; // 3 turns — keeps context tight, reduces tokens
 

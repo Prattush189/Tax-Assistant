@@ -8,6 +8,8 @@
 //      JSON output with severity-tagged observations citing Indian Income
 //      Tax Act / GST sections (no fabricated section numbers).
 
+import { referenceUrlsBlock } from './officialReferenceUrls.js';
+
 export const LEDGER_EXTRACT_PROMPT = `You are reading an Indian accounting ledger (Tally / Busy / Marg style) for an audit-grade scrutiny. Extract EVERY account head and EVERY transaction line.
 
 Return ONLY a JSON object. No markdown fences. No prose.
@@ -267,7 +269,9 @@ ABSOLUTE RULES:
 - The summary fields (highCount/warnCount/infoCount) count ONLY observations
   YOU emit. The merge step combines your output with the deterministic flags
   and recomputes the global totals.
-- Output only the JSON object — no commentary.`;
+- Output only the JSON object — no commentary.
+
+${referenceUrlsBlock('ledger')}`;
 
 export const LEDGER_SCRUTINY_USER_PROMPT_HEAD = `=== LEDGER DATA (extracted) ===
 
