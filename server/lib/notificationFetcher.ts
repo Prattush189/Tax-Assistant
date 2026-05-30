@@ -115,18 +115,37 @@ export function isOfficialSource(url: string): boolean {
  * Timeout: 8 seconds per request via AbortController. Long enough for
  * gov.in sites which are sometimes slow.
  *
- * Acceptance: 2xx and 3xx (some PDF links 301 redirect to a CDN). Any
- * other status, network error, or timeout drops the item.
+ * Acceptance — calibrated against actual gov.in behaviour observed in
+ * production logs (2026-05-30):
+ *   - PDF-shaped URLs (path ends in `.pdf` or contains `/pdf/`): we
+ *     want a real document, so require 2xx/3xx. Strict.
+ *   - Everything else (listing pages — `.aspx`, `.html`, directories):
+ *     gov.in IIS sites frequently respond 403/405/406 to HEAD from
+ *     non-browser clients, even though the URL is real and a browser
+ *     gets a 200. We accept ANY response other than 404 — network
+ *     errors and 404s drop the item; all other statuses keep it.
+ *   - User-Agent set to a plain browser string so picky servers don't
+ *     reject the request outright as scraper.
  *
- * Some servers reject HEAD with 405; on that specific status we retry
- * with GET (range 0-0) so we don't accidentally drop a real URL just
- * because the host doesn't speak HEAD.
+ * Retries: HEAD → GET (range 0-0) on 405/403/406. Some servers refuse
+ * HEAD entirely but accept GET.
+ *
+ * Earlier (over-strict) behaviour killed every listing-page URL the
+ * model emitted, dropping the entire batch to zero items. The model
+ * legitimately uses listing pages when a direct PDF isn't surfaced by
+ * search grounding — the prompt allows this.
  */
 async function urlHeadFilter<T extends { sourceUrl: string }>(items: T[]): Promise<T[]> {
   if (items.length === 0) return [];
   const TIMEOUT_MS = 8_000;
   const CONCURRENCY = 6;
+  const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
   const surviving: T[] = [];
+
+  const isPdfLike = (url: string): boolean => {
+    const lower = url.toLowerCase();
+    return lower.endsWith('.pdf') || lower.includes('/pdf/');
+  };
 
   const checkOne = async (it: T): Promise<boolean> => {
     const url = it.sourceUrl;
@@ -134,11 +153,13 @@ async function urlHeadFilter<T extends { sourceUrl: string }>(items: T[]): Promi
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
       try {
+        const headers: Record<string, string> = { 'User-Agent': BROWSER_UA };
+        if (method === 'GET') headers.Range = 'bytes=0-0';
         return await fetch(url, {
           method,
           redirect: 'follow',
           signal: controller.signal,
-          headers: method === 'GET' ? { Range: 'bytes=0-0' } : undefined,
+          headers,
         });
       } catch {
         return null;
@@ -147,9 +168,20 @@ async function urlHeadFilter<T extends { sourceUrl: string }>(items: T[]): Promi
       }
     };
     let res = await tryFetch('HEAD');
-    if (res && res.status === 405) res = await tryFetch('GET');
-    if (!res) return false;
-    return res.status >= 200 && res.status < 400;
+    if (res && (res.status === 405 || res.status === 403 || res.status === 406)) {
+      res = await tryFetch('GET');
+    }
+    if (!res) return false;          // network error / DNS / timeout → drop
+    if (res.status === 404) return false; // explicitly "this page doesn't exist" → drop
+    if (isPdfLike(url)) {
+      // PDF target: we want a real document, not a "we don't allow
+      // direct access" page. Require 2xx/3xx.
+      return res.status >= 200 && res.status < 400;
+    }
+    // Listing-page target: anything other than 404 is good enough
+    // (403/405/410/500 from gov.in usually means the server has a
+    // crawler block, not that the URL is invalid).
+    return true;
   };
 
   // Hand-rolled concurrency cap — runs CONCURRENCY workers that pull

@@ -42,11 +42,36 @@ const AUTHORITATIVE_HOST_PATTERN =
 const SECTION_HEADING_PATTERN =
   /^##\s*\d+\.\s*SUPPORTING\s+CASE\s+LAWS(?:\s*\/\s*LEGAL\s+PRECEDENTS)?\s*$/im;
 
-/** Roman-numeral marker `**(i)** ...`, `**(ii)** ...`, etc. Used to
- *  split the section into entries. We accept upper / lower case and
- *  with or without the trailing colon-and-space after the close
- *  paren. */
-const ENTRY_MARKER_PATTERN = /\*\*\(([ivxlcdmIVXLCDM]+)\)\*\*/g;
+/** Entry marker used to split the case-law section into individual
+ *  citation entries. The prompt instructs the model to emit
+ *  `**(i)**`, `**(ii)**`, etc. — bold Roman numerals in parentheses
+ *  — but in practice the model often drops the bold markers (PDF
+ *  renderings of plain `(i)` and `**(i)**` look identical to a
+ *  busy reviewer, so the model treats them as interchangeable).
+ *  An earlier strict-bold regex caused every plain-numeral draft to
+ *  see ZERO entries → the URL-host check never applied per-entry →
+ *  citations without URLs slipped through. Real failure case (notice
+ *  reply 2026-05): the model emitted `(i) Mistake Apparent…` and
+ *  `(ii) Concessional Tax Regime…` plain. The (ii) Mahalaxmi
+ *  Infrastructure citation carried no URL but stayed in the final
+ *  PDF because the entry splitter found nothing to split.
+ *
+ *  We accept BOTH `**(i)**` (bold) and `(i)` (plain) forms. The
+ *  marker must sit at the start of a line (lookbehind requires
+ *  string start or a preceding newline) AND be followed by
+ *  whitespace then non-whitespace (list-item shape) — both gates
+ *  rule out false positives like "see Section 4(i) of the Act"
+ *  inline inside a paragraph. */
+const ENTRY_MARKER_PATTERN =
+  /(?<=^|\n)[ \t]*(?:\*\*)?\(([ivxlcdmIVXLCDM]+)\)(?:\*\*)?[ \t]+(?=\S)/g;
+
+/** Renumbering regex — matches the leading marker on a kept entry so
+ *  we can rewrite it to a sequential lowercase Roman numeral. Accepts
+ *  the same bold-optional shape the splitter recognises. The match
+ *  is replaced with the canonical `**(i)**` form, normalising the
+ *  final letter regardless of what the model emitted. */
+const ENTRY_MARKER_REPLACE_PATTERN =
+  /^[ \t]*(?:\*\*)?\(([ivxlcdmIVXLCDM]+)\)(?:\*\*)?/;
 
 /** Body text that means "this section has no real content". When
  *  the model emits one of these instead of obeying the prompt's
@@ -218,7 +243,7 @@ export function sanitizeNoticeCitations(draft: string): SanitizerResult {
   // marker on each kept entry; the rest of the entry text passes
   // through unchanged.
   const renumbered = kept.map((entry, idx) => {
-    return entry.replace(/^\*\*\([ivxlcdmIVXLCDM]+\)\*\*/, `**(${toRoman(idx + 1)})**`);
+    return entry.replace(ENTRY_MARKER_REPLACE_PATTERN, `**(${toRoman(idx + 1)})**`);
   });
 
   const newSectionBody = preamble + renumbered.join('');
