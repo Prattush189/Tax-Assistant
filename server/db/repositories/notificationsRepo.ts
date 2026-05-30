@@ -54,12 +54,19 @@ const stmts = {
   // chat user to see the SAME set, so the list query returns the latest
   // batch by fetched_at — bounded by `limit` so older runs don't bleed in
   // when a refresh dropped a category to zero.
+  // 2026-05-30: sort by notification_date DESC first so the newest
+  // items lead the welcome card, regardless of category. Previous
+  // ordering grouped by category which surfaced 5-month-old GST
+  // notifications above the same week's CBDT items — confusing for
+  // CAs in ITR season who want the latest stuff at the top.
+  // Category ordering survives only as a secondary key to keep
+  // same-day items grouped cleanly.
   listLatest: db.prepare(
     `SELECT * FROM tax_notifications
      WHERE fetched_at = (SELECT MAX(fetched_at) FROM tax_notifications)
      ORDER BY
-       CASE category WHEN 'GST' THEN 1 WHEN 'TDS' THEN 2 WHEN 'INCOME_TAX' THEN 3 ELSE 4 END,
        notification_date DESC NULLS LAST,
+       CASE category WHEN 'INCOME_TAX' THEN 1 WHEN 'TDS' THEN 2 WHEN 'GST' THEN 3 ELSE 4 END,
        heading
      LIMIT ?`,
   ),

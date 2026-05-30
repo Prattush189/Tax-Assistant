@@ -102,6 +102,78 @@ export function isOfficialSource(url: string): boolean {
   return OFFICIAL_DOMAINS.some(d => host === d || host.endsWith('.' + d));
 }
 
+/**
+ * HEAD-request validation pass. Verifies that each item's source_url
+ * actually resolves to a real document. Catches the failure mode where
+ * the model invents a plausible-shaped PDF path on a real host (e.g.
+ * `https://cbic-gst.gov.in/pdf/notification/cgst-99-2026.pdf` when no
+ * notification 99/2026 exists yet).
+ *
+ * Concurrency: 6 in-flight requests at a time. Polite to government
+ * hosts, fast enough that a 20-item batch finishes in ~5-10 seconds.
+ *
+ * Timeout: 8 seconds per request via AbortController. Long enough for
+ * gov.in sites which are sometimes slow.
+ *
+ * Acceptance: 2xx and 3xx (some PDF links 301 redirect to a CDN). Any
+ * other status, network error, or timeout drops the item.
+ *
+ * Some servers reject HEAD with 405; on that specific status we retry
+ * with GET (range 0-0) so we don't accidentally drop a real URL just
+ * because the host doesn't speak HEAD.
+ */
+async function urlHeadFilter<T extends { sourceUrl: string }>(items: T[]): Promise<T[]> {
+  if (items.length === 0) return [];
+  const TIMEOUT_MS = 8_000;
+  const CONCURRENCY = 6;
+  const surviving: T[] = [];
+
+  const checkOne = async (it: T): Promise<boolean> => {
+    const url = it.sourceUrl;
+    const tryFetch = async (method: 'HEAD' | 'GET'): Promise<Response | null> => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+      try {
+        return await fetch(url, {
+          method,
+          redirect: 'follow',
+          signal: controller.signal,
+          headers: method === 'GET' ? { Range: 'bytes=0-0' } : undefined,
+        });
+      } catch {
+        return null;
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+    let res = await tryFetch('HEAD');
+    if (res && res.status === 405) res = await tryFetch('GET');
+    if (!res) return false;
+    return res.status >= 200 && res.status < 400;
+  };
+
+  // Hand-rolled concurrency cap — runs CONCURRENCY workers that pull
+  // from a shared queue, so 6 requests are in flight at any time.
+  let cursor = 0;
+  const workers: Promise<void>[] = [];
+  for (let w = 0; w < Math.min(CONCURRENCY, items.length); w++) {
+    workers.push((async () => {
+      while (true) {
+        const idx = cursor++;
+        if (idx >= items.length) return;
+        const ok = await checkOne(items[idx]);
+        if (ok) surviving.push(items[idx]);
+        else console.warn(`[notificationFetcher] HEAD-check failed for ${items[idx].sourceUrl}`);
+      }
+    })());
+  }
+  await Promise.all(workers);
+
+  // Preserve original order rather than the racy completion order.
+  const survivingSet = new Set(surviving);
+  return items.filter(it => survivingSet.has(it));
+}
+
 const FETCH_PROMPT = `You are a tax/GST/TDS news researcher for an Indian chartered-accountant SaaS.
 
 Your job: produce a JSON list of recent (last 90 days) notifications, circulars, and instructions issued by Indian tax authorities. Aim for 12-20 items. Use Google Search aggressively — these notifications are issued weekly across multiple categories, so 12-20 is the realistic count, not 1-2.
@@ -132,12 +204,34 @@ WHERE TO LOOK — the official notification listing pages on each authority's si
 
 For each authority, scan the most-recent 10-20 entries on the listing page and pull the ones dated within 90 days.
 
-WHAT QUALIFIES (include):
+MANDATORY PRE-FLIGHT CHECK — DO THIS FIRST, BEFORE ANY OTHER SEARCH.
+
+Before searching for anything else, you MUST run these specific searches and include any results that fall within the 90-day window:
+
+  PRE-FLIGHT 1 — ITR forms for the current Assessment Year.
+  Search EACH of these queries and include EVERY notification you find:
+    - site:incometaxindia.gov.in "ITR-1" notification 2026
+    - site:incometaxindia.gov.in "ITR-2" notification 2026
+    - site:incometaxindia.gov.in "ITR-3" notification 2026
+    - site:incometaxindia.gov.in "ITR-4" notification 2026
+    - site:incometaxindia.gov.in "ITR-5" notification 2026
+    - site:incometaxindia.gov.in "ITR-6" notification 2026
+    - site:incometaxindia.gov.in "ITR-7" notification 2026
+    - site:incometaxindia.gov.in "Income Tax Amendment Rules" 2026 (forms are often notified as Rules amendments that schedule the forms — e.g. "Income Tax (Eighth Amendment) Rules, 2026")
+  ITR forms for AY 2026-27 are typically notified between February and April 2026. If your search finds nothing for the current AY, search the previous AY ("ITR-2" notification 2025) — if THAT exists, the current-year version probably exists too and you missed it; search harder.
+  CRITICAL: An ITR-form notification dated within the 90-day window MUST appear in your output. A welcome list that omits it during ITR season is broken. If you genuinely cannot find one after exhausting the searches above, INCLUDE A NOTE as the first item: { "category": "INCOME_TAX", "heading": "No ITR form notification found in 90-day window — confirm CBDT release status manually", "summary": "Pre-flight search returned no ITR form notification for the current AY. Either the form has not been released yet or grounding failed to surface it.", "notification_date": null, "source_url": "https://incometaxindia.gov.in/Pages/communications/notifications.aspx" }. Do NOT silently omit. The server treats absence as a bug.
+
+  PRE-FLIGHT 2 — TDS / TCS rate or threshold notification.
+  Search "site:incometaxindia.gov.in TDS notification 2026" and include any §194-series rate change or threshold notification within 90 days.
+
+WHAT ELSE QUALIFIES (include after the pre-flight items):
   - Numbered Notifications (e.g. "Notification No. 12/2026-Central Tax")
   - Numbered Circulars (e.g. "Circular No. 234/26/2026-GST")
   - Instructions, Order, Office Memorandum issued by CBDT/CBIC
   - GST Council resolution or circular
   - Income Tax Department notifications under §139, §194-series, §195, §44AB rules etc.
+  - **AIS / Form 26AS / TIS** clarifications and reporting-format changes
+  - **Faceless assessment / DRI / DGGI** procedural notifications
   - Customs tariff and exemption notifications affecting traders/importers
 
 WHAT TO SKIP:
@@ -169,10 +263,21 @@ OUTPUT — STRICT JSON, no markdown fences, no prose:
 
 TARGET: 12-20 items in the JSON. Indian tax authorities issue notifications WEEKLY across multiple categories — a 90-day window across GST + TDS + Income Tax + Customs reliably yields well over 20 candidates. If your draft has fewer than 8 items, search more listing pages (you've likely missed Customs, GST Council, or older Income Tax notifications). Returning only 1-2 items means the search was too narrow, not that few notifications exist.
 
+CATEGORY BALANCE.
+Aim for roughly: 4-6 Income Tax (CBDT), 4-6 GST (CBIC), 2-3 TDS (CBDT 194-series), 2-3 Customs/Other. If your draft is more than 50% one category, you've under-searched the others. ITR season (Feb-Apr) and TDS rate-change months are CBDT-heavy; non-season months tilt toward GST. NEVER produce a list that is 75%+ Customs — that means search-grounding latched onto a single press batch.
+
+VERIFY BEFORE EMITTING.
+For each item, run an additional grounded search confirming that:
+  (a) the notification number you cite appears on the official listing page in the form you wrote,
+  (b) the notification_date matches what the listing page shows for that number,
+  (c) the source_url actually contains the notification heading text.
+If any of (a)-(c) can't be confirmed, OMIT that item. Better to return 10 verified items than 18 with 3 fabricated. The downstream system has no way to detect a plausible-but-fake notification number — you are the only line of defence.
+
 ABSOLUTE RULES:
 - Every source_url MUST be on a government domain. The server rejects items whose URL is not on the allowlist; a non-official URL means one fewer notification reaches the user.
 - TDS items can be CBDT rate-change circulars, §194-series threshold revisions, or Finance-Act-implementing notifications. These DO exist almost every month.
 - Do NOT invent URLs. If grounding can't surface the listing-page or PDF URL, omit that item — but then keep searching for more.
+- notification_date MUST be within the last 90 days. The server enforces this with a hard date filter; anything older is dropped silently. Don't waste output on Feb items if it's late May.
 - Output ONLY the JSON object.`;
 
 const DETAIL_PROMPT_TEMPLATE = (heading: string, summary: string | null, sourceUrl: string | null) => `You are explaining an Indian tax/GST/TDS notification to a chartered accountant. The notification is:
@@ -416,10 +521,79 @@ export async function fetchLatestNotifications(opts: { dryRun?: boolean; logUsag
   if (rejectedNonOfficial > 0) {
     console.warn(`[notificationFetcher] dropped ${rejectedNonOfficial} item(s) with non-official source URLs: ${rejectedUrls.join(', ')}${rejectedNonOfficial > rejectedUrls.length ? ', …' : ''}`);
   }
-  if (items.length === 0) {
-    errors.push(`Parsed ${parsed.items.length} items but none had a usable heading + official source URL (${rejectedNonOfficial} rejected for non-official source)`);
+
+  // ── Server-side validation layer (2, 3, 4 from the 2026-05-30 fix) ──
+  //
+  // The prompt asks the model to honour these rules, but production
+  // output proves it ignores them sometimes — items dated 4+ months
+  // ago slipped through, and Customs press batches clustered four
+  // items on a single date. These are belt-and-suspenders filters
+  // that enforce the same rules deterministically.
+  //
+  //   (a) 90-day window. Hard cutoff against `Date.now() − 90 days`
+  //       in IST. Items with no parseable date are kept (rare; the
+  //       UI shows "no date" gracefully).
+  //   (b) Anti-clustering. Max 2 items per (category, date) tuple.
+  //       Stops Customs-style 4-on-one-date padding.
+  //   (c) URL HEAD-resolve check. Each source_url is fetched with
+  //       method HEAD (cheap; no body downloaded). A non-2xx / 3xx
+  //       response drops the item — catches the case where the model
+  //       invented a plausible-shaped PDF path on an official host.
+  //       Concurrency-capped at 6 to be polite to gov.in hosts.
+  const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
+  const cutoffMs = Date.now() - NINETY_DAYS_MS;
+  const dateFiltered: TaxNotificationCreateInput[] = [];
+  let droppedForAge = 0;
+  for (const it of items) {
+    if (it.notificationDate) {
+      const t = Date.parse(it.notificationDate + 'T00:00:00+05:30');
+      if (Number.isFinite(t) && t < cutoffMs) {
+        droppedForAge += 1;
+        continue;
+      }
+    }
+    dateFiltered.push(it);
+  }
+  if (droppedForAge > 0) {
+    console.warn(`[notificationFetcher] dropped ${droppedForAge} item(s) older than 90 days`);
+  }
+
+  // Anti-clustering: max 2 per (category, date) tuple. Within a bucket,
+  // the order we iterate is the order the model emitted, so items 1-2
+  // (likely the model's "best" picks) are kept.
+  const clusterCounts = new Map<string, number>();
+  const declustered: TaxNotificationCreateInput[] = [];
+  let droppedForCluster = 0;
+  for (const it of dateFiltered) {
+    const key = `${it.category}|${it.notificationDate ?? '∅'}`;
+    const n = clusterCounts.get(key) ?? 0;
+    if (n >= 2) {
+      droppedForCluster += 1;
+      continue;
+    }
+    clusterCounts.set(key, n + 1);
+    declustered.push(it);
+  }
+  if (droppedForCluster > 0) {
+    console.warn(`[notificationFetcher] dropped ${droppedForCluster} item(s) for (category, date) clustering (max 2 per tuple)`);
+  }
+
+  // URL HEAD-resolve check. Concurrency=6 to stay polite. 8-second
+  // timeout per request via AbortController. Each request that fails
+  // (non-2xx/3xx, network error, timeout) drops the item.
+  const resolved = await urlHeadFilter(declustered);
+  const droppedForBadUrl = declustered.length - resolved.length;
+  if (droppedForBadUrl > 0) {
+    console.warn(`[notificationFetcher] dropped ${droppedForBadUrl} item(s) whose source_url failed HEAD check`);
+  }
+
+  const finalItems = resolved;
+  if (finalItems.length === 0) {
+    errors.push(`Parsed ${parsed.items.length} items but none survived validation (rejectedNonOfficial=${rejectedNonOfficial}, droppedForAge=${droppedForAge}, droppedForCluster=${droppedForCluster}, droppedForBadUrl=${droppedForBadUrl})`);
     return { ok: false, inserted: 0, pruned: 0, rejectedNonOfficial, rejectedUrls, pregenerated: 0, pregenerateFailed: 0, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, cost: totalCost, errors };
   }
+  items.length = 0;
+  items.push(...finalItems);
 
   if (opts.dryRun) {
     console.log(`[notificationFetcher] DRY RUN — would insert ${items.length} items (${rejectedNonOfficial} rejected for non-official source):`);

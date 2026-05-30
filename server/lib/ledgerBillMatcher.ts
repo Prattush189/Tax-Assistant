@@ -1310,6 +1310,46 @@ export function compareLedgersByBill(
     }
   }
 
+  // ── Amount-only cross-bucket: second-chance pass ───────────────────
+  //
+  // The first amount-only pass ran right after digit-tail, but at that
+  // point noBillA / noBillB still contained rows that would later be
+  // consumed by Pass 1 / Pass 1.5. Those then-unconsumed rows
+  // duplicated amounts and tripped the uniqueness gate, causing
+  // amount-only to skip pairings that would now be unambiguous.
+  //
+  // Canonical case — ASSA × Interio Paradise:
+  //   onlyInB:   AAGINJA25002044  08/04/2025  ₹1,24,688
+  //   noBillA:   28/06/2025       ₹1,24,688   "BILL PAYMENT"
+  //              01/06/2025       ₹1,24,688   "By ASSA ABLOY (NEW)"
+  //
+  // First amount-only pass saw TWO ₹1,24,688 rows on the A side →
+  // ambiguous → skip. Then Pass 1.5 paired the 28/06 row with
+  // Dynamics 30/06 IN5IN25062800HOJ ₹1,24,688 (2-day gap). After
+  // that, only the 01/06 row remained on the A side. This second
+  // amount-only pass now sees ONE ₹1,24,688 on each side → pair.
+  //
+  // The pass shares the helper `amountOnlyPass` defined above. Inputs
+  // are the POST-Pass-1.5 leftoverNoBillA / leftoverNoBillB and the
+  // already-filtered onlyInA / onlyInB. Sort is run after this pass
+  // so the new entries land in stable order.
+  if (onlyInA.length + onlyInB.length > 0 && leftoverNoBillA.length + leftoverNoBillB.length > 0) {
+    const second2BA = amountOnlyPass(onlyInB, leftoverNoBillA, 'BA');
+    const second2AB = amountOnlyPass(onlyInA, leftoverNoBillB, 'AB');
+    const second2Total = second2BA.count + second2AB.count;
+    if (second2Total > 0) {
+      console.log(`[ledgerBillMatcher] amount-only cross-bucket SECOND PASS (after payment ±${PAYMENT_WINDOW_DAYS}d) paired ${second2BA.count} onlyInB↔leftoverNoBillA + ${second2AB.count} onlyInA↔leftoverNoBillB`);
+      onlyInA = onlyInA.filter(r => !second2AB.consumedOnly.has(r.bill));
+      onlyInB = onlyInB.filter(r => !second2BA.consumedOnly.has(r.bill));
+      leftoverNoBillA = leftoverNoBillA.filter((_, idx) => !second2BA.consumedNoBill.has(idx));
+      leftoverNoBillB = leftoverNoBillB.filter((_, idx) => !second2AB.consumedNoBill.has(idx));
+      // Re-sort onlyIn buckets since they may have shrunk.
+      onlyInA.sort(byBillSort);
+      onlyInB.sort(byBillSort);
+      amountOnlyMatches.sort(byBillSort);
+    }
+  }
+
   // Stable sort by date for stable rendering.
   paymentMatches.sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''));
 
