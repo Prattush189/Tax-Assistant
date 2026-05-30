@@ -137,10 +137,45 @@ export function isOfficialSource(url: string): boolean {
  */
 async function urlHeadFilter<T extends { sourceUrl: string }>(items: T[]): Promise<T[]> {
   if (items.length === 0) return [];
-  const TIMEOUT_MS = 8_000;
+  const TIMEOUT_MS = 15_000;
   const CONCURRENCY = 6;
   const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
   const surviving: T[] = [];
+
+  // Known-good listing pages enumerated in FETCH_PROMPT. The model
+  // points to one of these when search grounding doesn't surface a
+  // direct PDF URL — that's the explicit fallback we tell it to use.
+  // These URLs can't be fabricated (the model didn't invent them; the
+  // prompt did), so we skip the HEAD check entirely. Some of these
+  // hosts are slow or have firewalls that intermittently drop
+  // requests from the deploy server, which would otherwise cause
+  // legitimate items to be dropped — production proved this on
+  // 2026-05-30.
+  const ALWAYS_VALID_URLS: ReadonlySet<string> = new Set([
+    'https://incometaxindia.gov.in/Pages/communications/notifications.aspx',
+    'https://incometaxindia.gov.in/Pages/communications/circulars.aspx',
+    'https://incometax.gov.in/iec/foportal/latest-news',
+    'https://cbic-gst.gov.in/cgst-notifications.html',
+    'https://cbic-gst.gov.in/igst-notifications.html',
+    'https://cbic-gst.gov.in/cgst-rate-notifications.html',
+    'https://www.cbic.gov.in/entities/notification',
+    'https://cbic.gov.in/entities/notification',
+    'https://taxinformation.cbic.gov.in/',
+    'https://taxinformation.cbic.gov.in',
+    'https://egazette.gov.in/',
+    'https://egazette.gov.in',
+    'https://egazette.nic.in/',
+    'https://egazette.nic.in',
+    'https://dor.gov.in/notifications',
+    'https://gstcouncil.gov.in/',
+    'https://gstcouncil.gov.in',
+  ]);
+  const isKnownListingPage = (url: string): boolean => {
+    // Normalise trailing slash so the set match doesn't fail on a
+    // missing/extra "/".
+    const stripped = url.replace(/\/+$/, '');
+    return ALWAYS_VALID_URLS.has(url) || ALWAYS_VALID_URLS.has(stripped) || ALWAYS_VALID_URLS.has(stripped + '/');
+  };
 
   const isPdfLike = (url: string): boolean => {
     const lower = url.toLowerCase();
@@ -149,6 +184,10 @@ async function urlHeadFilter<T extends { sourceUrl: string }>(items: T[]): Promi
 
   const checkOne = async (it: T): Promise<boolean> => {
     const url = it.sourceUrl;
+    // Short-circuit known listing pages — they're in the prompt, so
+    // the model isn't fabricating them. Skips the slow gov.in HEAD
+    // round-trip entirely.
+    if (isKnownListingPage(url)) return true;
     const tryFetch = async (method: 'HEAD' | 'GET'): Promise<Response | null> => {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
