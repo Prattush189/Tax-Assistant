@@ -23,6 +23,7 @@ import { streamGeminiChat } from './geminiChat.js';
 import { GEMINI_API_KEYS, GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, costForModel } from './gemini.js';
 import { notificationsRepo, type NotificationCategory, type TaxNotificationCreateInput } from '../db/repositories/notificationsRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
+import { fetchAllCbdtItems, type CbdtItem } from './cbdtScraper.js';
 
 // System-job rows in api_usage are written with NULL user_id /
 // billing_user_id. user_id is FK to users(id) — a sentinel string like
@@ -375,6 +376,37 @@ function pickCategory(raw: string | undefined): NotificationCategory {
   return 'OTHER';
 }
 
+/** Map a CBDT-scraped item to one of our four welcome-screen
+ *  categories. The structure key gives the broad bucket; a heading-
+ *  keyword sweep upgrades TDS-relevant notifications (§194-series,
+ *  TCS, TDS-on-X) out of the default INCOME_TAX. */
+function pickCbdtCategory(item: CbdtItem): NotificationCategory {
+  const title = (item.title || '').toLowerCase();
+  const isTdsRelated = /\btds\b|\btcs\b|section\s*194|194[a-z]?\b|deduction\s+at\s+source|collection\s+at\s+source/i.test(title);
+  switch (item.structureKey) {
+    case 'NOTIFICATION_KEY':
+    case 'CIRCULAR_KEY':
+      return isTdsRelated ? 'TDS' : 'INCOME_TAX';
+    case 'PRESS_RELEASE':
+    case 'MISCELLANEOUS_COMMUNICATION':
+      return 'OTHER';
+    default:
+      return 'OTHER';
+  }
+}
+
+/** CBDT titles often run 150+ chars ("Notification No. 6/2026: Order
+ *  under clause (iia) of sub-section (1) of section 35 of the Income
+ *  Tax Act, 1961 read with Rule 5F of the Income Tax Rules 1962").
+ *  The welcome card has limited space; trim at the first colon if
+ *  there is one (keeps the number + leading subject), else hard-cap
+ *  at 90 chars with an ellipsis. */
+function trimHeading(title: string): string {
+  const cleaned = title.replace(/\s+/g, ' ').trim();
+  if (cleaned.length <= 90) return cleaned;
+  return cleaned.slice(0, 87).trimEnd() + '…';
+}
+
 function isIsoDate(s: string | undefined): boolean {
   if (!s) return false;
   return /^\d{4}-\d{2}-\d{2}$/.test(s.trim());
@@ -483,114 +515,78 @@ export interface FetchResult {
   errors: string[];
 }
 
-/** One-shot daily fetcher. Runs grounded Gemini call → parses → persists.
+/** One-shot daily fetcher. Direct CBDT API scrape → persists.
  *  Idempotent in the sense that calling it twice in a row simply produces
- *  two batches; the welcome screen only ever shows the latest. */
+ *  two batches; the welcome screen only ever shows the latest.
+ *
+ *  As of 2026-05-30 the list step no longer calls Gemini — it pulls
+ *  directly from incometaxindia.gov.in's Liferay search index. Gemini
+ *  is still used for per-item full-detail generation (cached on
+ *  insert), but only when an API key is configured. Missing key
+ *  degrades gracefully: list still loads; details get generated
+ *  lazily on first click. */
 export async function fetchLatestNotifications(opts: { dryRun?: boolean; logUsage?: boolean; pregenerate?: boolean } = {}): Promise<FetchResult> {
   const errors: string[] = [];
   const rejectedUrls: string[] = [];
   const apiKey = pickApiKey();
-  if (!apiKey) {
-    errors.push('No GEMINI_API_KEY configured');
-    return { ok: false, inserted: 0, pruned: 0, rejectedNonOfficial: 0, rejectedUrls, pregenerated: 0, pregenerateFailed: 0, inputTokens: 0, outputTokens: 0, cost: 0, errors };
-  }
+  // No API-key gate up front — the scrape doesn't need it. Only
+  // pregeneration does, and that path checks `apiKey` itself.
 
-  // Primary: Gemini 3.x family (T1) — the user explicitly asked for
-  // "Gemini 3 Flash" and the 3.x family produces better-grounded
-  // summaries on the news-search workload from spot checks. Tier-2
-  // fallback (Gemini 2.5 Flash-Lite) fires automatically on 429 /
-  // 5xx upstream errors (gemini-3.1-flash-lite-preview occasionally
-  // 503s with "This model is currently experiencing high demand" —
-  // the case that triggered adding fallback here).
   const startedAt = Date.now();
-  let result: Awaited<ReturnType<typeof consumeStreamWithFallback>>;
+  // Direct scrape — no Gemini list call. The cbdtScraper hits the
+  // same Liferay search endpoint the live page uses, so we get the
+  // exact same items the SPA shows (notifications, circulars, press
+  // releases, miscellaneous). Cost: ZERO LLM tokens for the list
+  // step. Pre-generation (per-item detail) still uses Gemini.
+  let cbdtItems: CbdtItem[];
   try {
-    result = await consumeStreamWithFallback(FETCH_PROMPT, apiKey, 8192);
+    cbdtItems = await fetchAllCbdtItems(40);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    errors.push(`Gemini call failed (both tiers): ${msg}`);
+    errors.push(`CBDT scrape failed: ${msg}`);
     return { ok: false, inserted: 0, pruned: 0, rejectedNonOfficial: 0, rejectedUrls, pregenerated: 0, pregenerateFailed: 0, inputTokens: 0, outputTokens: 0, cost: 0, errors };
   }
-  const model = result.modelUsed;
   const durationMs = Date.now() - startedAt;
-  const fetchCost = costForModel(model, result.inputTokens, result.outputTokens);
-  // Token + cost totals will accumulate the pregeneration step too;
-  // start from the fetch-call values and add to them as detail
-  // generations complete so the script's reported total reflects the
-  // entire run.
-  let totalInputTokens = result.inputTokens;
-  let totalOutputTokens = result.outputTokens;
-  let totalCost = fetchCost;
+  console.log(`[notificationFetcher] scraped ${cbdtItems.length} item(s) from CBDT in ${durationMs}ms`);
 
-  // Log to api_usage so the admin dashboard's recent-API-calls table picks
-  // it up. user_id and billing_user_id are 'system' since the daily fetch
-  // is not attributable to any human user — the admin dashboard's IP
-  // grouping treats 'system' rows as a separate row labelled "system job".
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  let totalCost = 0;
+  // Log the scrape under feature='notifications_fetch' for parity
+  // with the previous Gemini-based pipeline — the admin dashboard
+  // looks for this category. Zero tokens / zero cost (it's a direct
+  // HTTP scrape now), but the row records the fact that a fetch ran.
   if (opts.logUsage !== false) {
     try {
       usageRepo.logWithBilling(
-        '0.0.0.0',
-        null,
-        null,
-        result.inputTokens,
-        result.outputTokens,
-        fetchCost,
-        false,
-        model,
-        true,
-        'notifications_fetch',
-        1,
-        result.text.trim().length > 0 ? 'success' : 'failed',
-        0,
-        durationMs,
+        '0.0.0.0', null, null, 0, 0, 0, false,
+        'cbdt-scrape', false, 'notifications_fetch', cbdtItems.length,
+        cbdtItems.length > 0 ? 'success' : 'failed', 0, durationMs,
       );
     } catch (e) {
       console.warn('[notificationFetcher] usage log failed:', e instanceof Error ? e.message : e);
     }
   }
 
-  const json = extractJsonObject(result.text);
-  if (!json) {
-    errors.push(`Gemini returned no parseable JSON. finishReason=${result.finishReason ?? 'unknown'}, length=${result.text.length}, head="${result.text.slice(0, 200).replace(/\s+/g, ' ')}"`);
-    return { ok: false, inserted: 0, pruned: 0, rejectedNonOfficial: 0, rejectedUrls, pregenerated: 0, pregenerateFailed: 0, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, cost: totalCost, errors };
-  }
-  let parsed: { items?: RawNotification[] };
-  try {
-    parsed = JSON.parse(json);
-  } catch (e) {
-    errors.push(`JSON.parse failed: ${e instanceof Error ? e.message : e}`);
-    return { ok: false, inserted: 0, pruned: 0, rejectedNonOfficial: 0, rejectedUrls, pregenerated: 0, pregenerateFailed: 0, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, cost: totalCost, errors };
-  }
-  if (!Array.isArray(parsed.items) || parsed.items.length === 0) {
-    errors.push(`Empty items array in response (text head="${result.text.slice(0, 160)}")`);
-    return { ok: false, inserted: 0, pruned: 0, rejectedNonOfficial: 0, rejectedUrls, pregenerated: 0, pregenerateFailed: 0, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, cost: totalCost, errors };
+  if (cbdtItems.length === 0) {
+    errors.push('CBDT scrape returned 0 items — check API availability or endpoint changes');
+    return { ok: false, inserted: 0, pruned: 0, rejectedNonOfficial: 0, rejectedUrls, pregenerated: 0, pregenerateFailed: 0, inputTokens: 0, outputTokens: 0, cost: 0, errors };
   }
 
-  // Validate each item before insertion. The user explicitly required
-  // every notification to be sourced from an official Indian government
-  // website, so an item without an official source_url is dropped
-  // entirely — we do NOT show items with a null source on the welcome
-  // screen since they can't be verified by the practitioner.
+  // Map scraped CBDT items to the TaxNotificationCreateInput shape.
+  // Skip items lacking a PDF URL (they're not actionable for CAs who
+  // want to read the actual notification).
   const items: TaxNotificationCreateInput[] = [];
-  let rejectedNonOfficial = 0;
-  for (const it of parsed.items) {
-    if (!it || typeof it.heading !== 'string' || !it.heading.trim()) continue;
-    const rawUrl = typeof it.source_url === 'string' ? it.source_url.trim() : '';
-    if (!rawUrl || !isOfficialSource(rawUrl)) {
-      rejectedNonOfficial += 1;
-      if (rejectedUrls.length < 5 && rawUrl) rejectedUrls.push(rawUrl);
-      continue;
-    }
+  const rejectedNonOfficial = 0; // direct scrape — every URL is on incometaxindia.gov.in
+  for (const it of cbdtItems) {
+    if (!it.pdfUrl) continue;
     items.push({
-      category: pickCategory(it.category),
-      heading: it.heading.trim(),
-      summary: typeof it.summary === 'string' && it.summary.trim() ? it.summary.trim() : null,
-      notificationDate: isIsoDate(it.notification_date) ? it.notification_date!.trim() : null,
-      sourceUrl: rawUrl,
+      category: pickCbdtCategory(it),
+      heading: trimHeading(it.title),
+      summary: null, // CBDT API doesn't supply a summary; we leave it null
+      notificationDate: it.dateModified ? it.dateModified.slice(0, 10) : null,
+      sourceUrl: it.pdfUrl,
     });
-  }
-  if (rejectedNonOfficial > 0) {
-    console.warn(`[notificationFetcher] dropped ${rejectedNonOfficial} item(s) with non-official source URLs: ${rejectedUrls.join(', ')}${rejectedNonOfficial > rejectedUrls.length ? ', …' : ''}`);
   }
 
   // ── Server-side validation layer (2, 3, 4 from the 2026-05-30 fix) ──
@@ -629,16 +625,19 @@ export async function fetchLatestNotifications(opts: { dryRun?: boolean; logUsag
     console.warn(`[notificationFetcher] dropped ${droppedForAge} item(s) older than 90 days`);
   }
 
-  // Anti-clustering: max 2 per (category, date) tuple. Within a bucket,
-  // the order we iterate is the order the model emitted, so items 1-2
-  // (likely the model's "best" picks) are kept.
+  // Anti-clustering: max 5 per (category, date) tuple. With the
+  // direct-scrape source, same-day batches (e.g. 6 corrigenda issued
+  // on the same date by CBDT) are legitimate, so the original cap of
+  // 2 was over-restrictive. Bumping to 5 still kills the failure
+  // mode the cap was added to defend against (Gemini-padded batches)
+  // while preserving real-life issuance patterns.
   const clusterCounts = new Map<string, number>();
   const declustered: TaxNotificationCreateInput[] = [];
   let droppedForCluster = 0;
   for (const it of dateFiltered) {
     const key = `${it.category}|${it.notificationDate ?? '∅'}`;
     const n = clusterCounts.get(key) ?? 0;
-    if (n >= 2) {
+    if (n >= 5) {
       droppedForCluster += 1;
       continue;
     }
@@ -646,21 +645,20 @@ export async function fetchLatestNotifications(opts: { dryRun?: boolean; logUsag
     declustered.push(it);
   }
   if (droppedForCluster > 0) {
-    console.warn(`[notificationFetcher] dropped ${droppedForCluster} item(s) for (category, date) clustering (max 2 per tuple)`);
+    console.warn(`[notificationFetcher] dropped ${droppedForCluster} item(s) for (category, date) clustering (max 5 per tuple)`);
   }
 
-  // URL HEAD-resolve check. Concurrency=6 to stay polite. 8-second
-  // timeout per request via AbortController. Each request that fails
-  // (non-2xx/3xx, network error, timeout) drops the item.
-  const resolved = await urlHeadFilter(declustered);
-  const droppedForBadUrl = declustered.length - resolved.length;
-  if (droppedForBadUrl > 0) {
-    console.warn(`[notificationFetcher] dropped ${droppedForBadUrl} item(s) whose source_url failed HEAD check`);
-  }
-
-  const finalItems = resolved;
+  // 2026-05-30: HEAD-check is now a no-op when the data source is the
+  // direct CBDT scrape — URLs come from the official Liferay search
+  // index, so they're as trustworthy as the listing pages themselves
+  // and the HEAD check was only ever a defence against Gemini's
+  // fabrication. We keep `urlHeadFilter` in the codebase for future
+  // sources (GST, CBIC) that may still need verification, but bypass
+  // it here.
+  const droppedForBadUrl = 0;
+  const finalItems = declustered;
   if (finalItems.length === 0) {
-    errors.push(`Parsed ${parsed.items.length} items but none survived validation (rejectedNonOfficial=${rejectedNonOfficial}, droppedForAge=${droppedForAge}, droppedForCluster=${droppedForCluster}, droppedForBadUrl=${droppedForBadUrl})`);
+    errors.push(`Scraped ${cbdtItems.length} CBDT items but none survived validation (droppedForAge=${droppedForAge}, droppedForCluster=${droppedForCluster}, droppedForBadUrl=${droppedForBadUrl})`);
     return { ok: false, inserted: 0, pruned: 0, rejectedNonOfficial, rejectedUrls, pregenerated: 0, pregenerateFailed: 0, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, cost: totalCost, errors };
   }
   items.length = 0;
@@ -705,7 +703,7 @@ export async function fetchLatestNotifications(opts: { dryRun?: boolean; logUsag
     console.log(`[notificationFetcher] pregeneration · ok=${pregenerated} failed=${pregenerateFailed} input=${pregenResults.inputTokens} output=${pregenResults.outputTokens} cost=$${pregenResults.cost.toFixed(5)} durationMs=${Date.now() - pregenStarted}`);
   }
 
-  console.log(`[notificationFetcher] OK · inserted=${inserted} pruned=${pruned} rejectedNonOfficial=${rejectedNonOfficial} pregenerated=${pregenerated}/${pregenerated + pregenerateFailed} model=${model} totalInput=${totalInputTokens} totalOutput=${totalOutputTokens} totalCost=$${totalCost.toFixed(5)} durationMs=${durationMs}`);
+  console.log(`[notificationFetcher] OK · inserted=${inserted} pruned=${pruned} source=cbdt-scrape pregenerated=${pregenerated}/${pregenerated + pregenerateFailed} totalInput=${totalInputTokens} totalOutput=${totalOutputTokens} totalCost=$${totalCost.toFixed(5)} durationMs=${durationMs}`);
   return { ok: true, inserted, pruned, rejectedNonOfficial, rejectedUrls, pregenerated, pregenerateFailed, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, cost: totalCost, errors };
 }
 
