@@ -427,6 +427,72 @@ expect('±3d window: dateA in canonical date', windowReport.paymentMatches[0]?.d
 expect('±3d window: dateB populated', windowReport.paymentMatches[0]?.dateB, '2025-06-30');
 expect('±3d window: no leftover rows', windowReport.noBillA.length + windowReport.noBillB.length, 0);
 
+// ─── bulk-pair: symmetric N×N within ±3d window ──────────────
+// Real ASSA case: Tally records 2 ₹2,00,000 BILL PAYMENT rows on
+// 26/04 (different NEFT refs), Dynamics records 2 ₹2,00,000 receipts
+// on 28/04 (different IN5IN refs). Pass 1.5's uniqueness gate skips
+// (2 candidates on each side at the same amount) but the totals
+// clearly tie up — both ₹4 lakh outflows match both ₹4 lakh inflows
+// within the bank-clearance window. The bulk-pair pass clusters by
+// date proximity, sees a balanced 2-2 cluster in the (200000, ±3d)
+// bucket, and pairs them in date-sorted index order.
+//
+// Critically, an UNRELATED Dynamics ₹2,00,000 row that's well
+// outside the window (here: a 23/05 entry) must NOT block the
+// bulk-pair on the in-window 28/04 cluster — the per-cluster gate
+// isolates it from the count check.
+const bulkA = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      { date: '2025-04-26', narration: 'BILL PAYMENT 408795', voucher: null, debit: 200000, credit: 0, balance: null },
+      { date: '2025-04-26', narration: 'BILL PAYMENT 408945', voucher: null, debit: 200000, credit: 0, balance: null },
+    ],
+  }],
+};
+const bulkB = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      { date: '2025-04-28', narration: 'IN5IN25042600AZQ', voucher: null, debit: 0, credit: 200000, balance: null },
+      { date: '2025-04-28', narration: 'IN5IN25042801MPV', voucher: null, debit: 0, credit: 200000, balance: null },
+      { date: '2025-05-23', narration: 'IN5IN25052301QT2-UNRELATED', voucher: null, debit: 0, credit: 200000, balance: null },
+    ],
+  }],
+};
+const bulkReport = compareLedgersByBill(bulkA, 'sales', bulkB, 'purchase');
+expect('bulk-pair: 2 pairs matched', bulkReport.summary.paymentMatchedCount, 2);
+expect('bulk-pair: no leftover A', bulkReport.noBillA.length, 0);
+expect('bulk-pair: B unrelated row stays as leftover', bulkReport.noBillB.length, 1);
+expect('bulk-pair: leftover B is the 23/05 unrelated row', bulkReport.noBillB[0]?.date, '2025-05-23');
+expect('bulk-pair: amountA all 200000', bulkReport.paymentMatches.every(p => p.amountA === 200000), true);
+expect('bulk-pair: dateB populated (different dates)', bulkReport.paymentMatches[0]?.dateB, '2025-04-28');
+
+// ─── bulk-pair must NOT fire on unbalanced clusters ───────────
+// If A has 2 ₹50,000 rows on 10/04 but B has 3 ₹50,000 rows on
+// 12/04, the cluster is unbalanced (2 vs 3 within window) and
+// bulk-pair must skip — pairing 2 out of 3 arbitrarily would
+// mis-attribute one of B's rows. Those rows must fall through to
+// the noBill bucket for human review.
+const unbalancedA = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      { date: '2025-04-10', narration: 'A1', voucher: null, debit: 50000, credit: 0, balance: null },
+      { date: '2025-04-10', narration: 'A2', voucher: null, debit: 50000, credit: 0, balance: null },
+    ],
+  }],
+};
+const unbalancedB = {
+  accounts: [{ name: 'X', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 0,
+    transactions: [
+      { date: '2025-04-12', narration: 'B1', voucher: null, debit: 0, credit: 50000, balance: null },
+      { date: '2025-04-12', narration: 'B2', voucher: null, debit: 0, credit: 50000, balance: null },
+      { date: '2025-04-12', narration: 'B3', voucher: null, debit: 0, credit: 50000, balance: null },
+    ],
+  }],
+};
+const unbalReport = compareLedgersByBill(unbalancedA, 'sales', unbalancedB, 'purchase');
+expect('bulk-pair: unbalanced cluster → no pairs', unbalReport.summary.paymentMatchedCount, 0);
+expect('bulk-pair: all 5 rows go to no-bill', unbalReport.noBillA.length + unbalReport.noBillB.length, 5);
+
 // ─── 2026-05-20 payment matcher: ±₹1 rounding tolerance ─────
 // Real OSPL case: Marg books CRN-0232-00656 at ₹73,733,626 on
 // 31/07/2025, Finsys books a BANK OF BARODA cheque receipt at

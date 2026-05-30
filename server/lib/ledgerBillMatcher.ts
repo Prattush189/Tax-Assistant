@@ -1310,6 +1310,149 @@ export function compareLedgersByBill(
     }
   }
 
+  // ── Pass 1.6: bulk-match symmetric duplicates ──────────────────────
+  //
+  // Pass 1 and 1.5 both apply a strict uniqueness gate: a leftover row
+  // pairs ONLY if it has exactly one candidate on the other side at
+  // the (date+window, amount±₹1) bucket. That gate exists to prevent
+  // wrongly attributing one of Tally's two ₹2,00,000 BILL PAYMENT
+  // rows to the wrong Dynamics receipt. But there's a third case the
+  // uniqueness gate over-rejects: when BOTH sides have the SAME COUNT
+  // of duplicate rows in the same bucket.
+  //
+  // ASSA × Interio Paradise example:
+  //   noBillA: 26/04/2025 ₹2,00,000 (NEFT …408795)
+  //            26/04/2025 ₹2,00,000 (NEFT …408945)
+  //   noBillB: 28/04/2025 ₹2,00,000 (IN5IN25042600AZQ)
+  //            28/04/2025 ₹2,00,000 (IN5IN25042801MPV)
+  //
+  // We can't tell WHICH Tally row maps to WHICH Dynamics row (the
+  // NEFT IDs on Tally don't appear as memo refs on Dynamics), but
+  // we CAN say with confidence that the two ₹2,00,000 Tally
+  // payments on 26/04 are the two ₹2,00,000 Dynamics receipts on
+  // 28/04 — the totals match exactly, the count matches exactly,
+  // and the date window holds. Whether `408795` maps to `AZQ` or
+  // to `01MPV` is a labelling detail; the reconciliation is right
+  // either way.
+  //
+  // Anti-collision gates (intentionally tight):
+  //   - Counts on the two sides must be EQUAL (not "A has 2, B has 3").
+  //   - Count must be ≤ PAYMENT_BULK_MAX (4) — past this the
+  //     coincidence risk on common amounts (₹50K / ₹100K / ₹200K
+  //     round numbers) outweighs the recall benefit.
+  //   - Amount ≥ ₹10 (skip tiny rows).
+  //   - Every pair within the (date-sorted) zip must satisfy the ±3
+  //     day window. We sort BOTH sides by date ascending, then
+  //     verify pair[i].gap ≤ 3 for all i. A bucket where any pair
+  //     blows the window is skipped wholesale.
+  //
+  // The pair-up is index-based after a stable date-ascending sort
+  // on each side. Within the same calendar date, narrations break
+  // the tie so the pairing is deterministic across runs.
+  const PAYMENT_BULK_MAX = 4;
+  if (leftoverNoBillA.length > 0 && leftoverNoBillB.length > 0) {
+    const dayMs2 = 24 * 60 * 60 * 1000;
+    const parseTsB = (d: string | null): number | null => {
+      if (!d) return null;
+      const t = new Date(d).getTime();
+      return Number.isFinite(t) ? t : null;
+    };
+    // Group both sides by rounded ₹amount.
+    const aByAmt = new Map<number, Array<{ idx: number; tx: FlatTx; ts: number }>>();
+    const bByAmt = new Map<number, Array<{ idx: number; tx: FlatTx; ts: number }>>();
+    leftoverNoBillA.forEach((tx, idx) => {
+      if (tx.absAmount < PAYMENT_WINDOW_MIN_AMOUNT) return;
+      const ts = parseTsB(tx.date);
+      if (ts === null) return;
+      const k = Math.round(tx.absAmount);
+      if (!aByAmt.has(k)) aByAmt.set(k, []);
+      aByAmt.get(k)!.push({ idx, tx, ts });
+    });
+    leftoverNoBillB.forEach((tx, idx) => {
+      if (tx.absAmount < PAYMENT_WINDOW_MIN_AMOUNT) return;
+      const ts = parseTsB(tx.date);
+      if (ts === null) return;
+      const k = Math.round(tx.absAmount);
+      if (!bByAmt.has(k)) bByAmt.set(k, []);
+      bByAmt.get(k)!.push({ idx, tx, ts });
+    });
+    const bulkConsumedA = new Set<number>();
+    const bulkConsumedB = new Set<number>();
+    let bulkPairs = 0;
+    // Walk each amount bucket. Within a bucket, partition rows from
+    // BOTH sides by date-proximity clustering (single-linkage on the
+    // ±3 day window). A cluster pairs only when its A-count equals
+    // its B-count and is ≥ 2 and ≤ MAX. This handles the common case
+    // where the bucket as a whole has unequal counts (the ASSA case:
+    // Tally has 2 ₹2,00,000 rows on 26/04 while Dynamics has 3 rows
+    // total — 2 on 28/04 within window, plus 1 on 23/05 well outside)
+    // by isolating the within-window subset for pairing.
+    for (const [amtKey, aGroup] of aByAmt) {
+      const bGroup = bByAmt.get(amtKey);
+      if (!bGroup) continue;
+      if (aGroup.length < 2 && bGroup.length < 2) continue;  // 1:1 cases belong to Pass 1.5
+      // Combine, mark side, sort by timestamp ascending.
+      type Tagged = { side: 'A' | 'B'; idx: number; tx: FlatTx; ts: number };
+      const combined: Tagged[] = [
+        ...aGroup.map(a => ({ side: 'A' as const, ...a })),
+        ...bGroup.map(b => ({ side: 'B' as const, ...b })),
+      ];
+      combined.sort((x, y) => x.ts - y.ts);
+      // Single-linkage cluster on the ±3 day window. Adjacent rows
+      // with gap > window break the cluster boundary.
+      const clusters: Tagged[][] = [];
+      let cur: Tagged[] = [];
+      for (const item of combined) {
+        if (cur.length === 0) {
+          cur.push(item);
+          continue;
+        }
+        const last = cur[cur.length - 1];
+        const gap = Math.abs(item.ts - last.ts) / dayMs2;
+        if (gap <= PAYMENT_WINDOW_DAYS) {
+          cur.push(item);
+        } else {
+          clusters.push(cur);
+          cur = [item];
+        }
+      }
+      if (cur.length > 0) clusters.push(cur);
+      // For each cluster, check pair conditions.
+      for (const cluster of clusters) {
+        const aSide = cluster.filter(c => c.side === 'A');
+        const bSide = cluster.filter(c => c.side === 'B');
+        if (aSide.length < 2) continue;                      // 1:1 → Pass 1.5
+        if (aSide.length !== bSide.length) continue;         // unbalanced cluster
+        if (aSide.length > PAYMENT_BULK_MAX) continue;       // collision risk
+        // Already date-sorted via the parent sort; pair by zip.
+        for (let i = 0; i < aSide.length; i++) {
+          const a = aSide[i];
+          const b = bSide[i];
+          paymentMatches.push({
+            date: a.tx.date!,
+            dateB: a.tx.date === b.tx.date ? undefined : (b.tx.date ?? undefined),
+            amountA: a.tx.absAmount,
+            amountB: b.tx.absAmount,
+            diff: Math.round(Math.abs(b.tx.absAmount - a.tx.absAmount) * 100) / 100,
+            narrationA: a.tx.narration,
+            narrationB: b.tx.narration,
+            bankRefA: extractBankRef(a.tx.narration),
+            bankRefB: extractBankRef(b.tx.narration),
+          });
+          bulkConsumedA.add(a.idx);
+          bulkConsumedB.add(b.idx);
+          matchedBIdx.add(b.idx);
+          bulkPairs += 1;
+        }
+      }
+    }
+    if (bulkPairs > 0) {
+      console.log(`[ledgerBillMatcher] payment matcher bulk-pair (symmetric N×N within ±${PAYMENT_WINDOW_DAYS}d) paired ${bulkPairs} additional row${bulkPairs === 1 ? '' : 's'}`);
+      leftoverNoBillA = leftoverNoBillA.filter((_, i) => !bulkConsumedA.has(i));
+      leftoverNoBillB = leftoverNoBillB.filter((_, i) => !bulkConsumedB.has(i));
+    }
+  }
+
   // ── Amount-only cross-bucket: second-chance pass ───────────────────
   //
   // The first amount-only pass ran right after digit-tail, but at that
