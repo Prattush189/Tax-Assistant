@@ -152,6 +152,7 @@ function fmtINR(n: number): string {
  *   - amount_mismatch       : same bill, amounts differ
  *   - matched               : same bill, amounts agree
  *   - payment_matched       : no bill, paired by date + amount ±₹1
+ *   - amount_matched        : bill on one side, journal on other, amount unique on both sides (date can differ — gap printed inline)
  *   - payment_date_matched  : no bill, same date, amounts differ (review)
  *   - payment_bank_matched  : no bill, bank anchor + date≤3d OR amount≤10% (loose, review)
  *   - only_in_<labelA>      : bill only in side A's ledger
@@ -249,6 +250,25 @@ function buildCompareCsv(report: LedgerComparisonReport, labelA: string, labelB:
     const narrB = `${basis} ${m.bankRefB ? `[ref ${m.bankRefB}] ` : ''}${m.narrationB}`;
     rows.push([
       'payment_bank_matched', '',
+      formatDate(m.dateA), formatDate(m.dateB),
+      String(m.amountA), String(m.amountB), String(m.diff),
+      narrA, narrB,
+    ]);
+  }
+  // Amount-only matches — bill on one side, journal-entry narration on
+  // the other, same amount within ±₹1 and unique on both sides at that
+  // amount. Date gap can be large (often 30–60 days for invoice-vs-
+  // late-journal-entry pairs); we prefix the narration with the explicit
+  // gap so the reviewer sees instantly why the system is confident in
+  // the pair despite the date drift.
+  for (const m of report.amountOnlyMatches) {
+    const gapTag = m.dateGapDays === 0
+      ? '[amount-matched, same date]'
+      : `[amount-matched, ${m.dateGapDays}d apart]`;
+    const narrA = `${gapTag} ${m.narrationA}`.trim();
+    const narrB = `${gapTag} ${m.narrationB}`.trim();
+    rows.push([
+      'amount_matched', m.bill,
       formatDate(m.dateA), formatDate(m.dateB),
       String(m.amountA), String(m.amountB), String(m.diff),
       narrA, narrB,
@@ -883,6 +903,7 @@ export function LedgerCompareView() {
             <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3 text-center">
               <Stat label="Bills matched" value={report.summary.matchedCount} tone="ok" />
               <Stat label="Payments matched" value={report.summary.paymentMatchedCount} tone="ok" />
+              <Stat label="Amount-matched (date differs)" value={report.summary.amountOnlyMatchedCount} tone={report.summary.amountOnlyMatchedCount ? 'warn' : 'ok'} />
               <Stat label="Date-matched payments (review)" value={report.summary.paymentDateMatchedCount} tone={report.summary.paymentDateMatchedCount ? 'warn' : 'ok'} />
               <Stat label="Bank-matched payments (review)" value={report.summary.paymentBankMatchedCount} tone={report.summary.paymentBankMatchedCount ? 'warn' : 'ok'} />
               <Stat label="Amount mismatches" value={report.summary.amountMismatchCount} tone={report.summary.amountMismatchCount ? 'warn' : 'ok'} />
@@ -965,6 +986,29 @@ export function LedgerCompareView() {
               { header: 'Diff', align: 'right', cell: (r) => r.diff > 0 ? fmtINR(r.diff) : '—' },
               { header: `${labelA} bank ref`, cell: (r) => r.bankRefA || '—' },
               { header: `${labelB} bank ref`, cell: (r) => r.bankRefB || '—' },
+              { header: `${labelA} narration`, cell: (r) => r.narrationA },
+              { header: `${labelB} narration`, cell: (r) => r.narrationB },
+            ]}
+          />
+
+          {/* Amount-only matches — bill on one side, journal entry on
+            * the other, same amount within ±₹1 AND unique on both
+            * sides at that amount. Date may differ significantly
+            * (canonical case: invoice issued on supplier's date, then
+            * recorded as a journal entry on the customer's books
+            * weeks later when accounting catches up). The date-gap
+            * column makes the drift visible at a glance so the
+            * reviewer can sanity-check before signing off. */}
+          <ReportTable
+            title="Amount matched — bill on one side, journal on the other (review the date gap)"
+            rows={report.amountOnlyMatches}
+            columns={[
+              { header: 'Bill', cell: (r) => r.bill },
+              { header: `${labelA} date`, cell: (r) => formatDate(r.dateA) || '—' },
+              { header: `${labelB} date`, cell: (r) => formatDate(r.dateB) || '—' },
+              { header: 'Gap', align: 'right', cell: (r) => r.dateGapDays === 0 ? 'same day' : `${r.dateGapDays}d` },
+              { header: `${labelA} amount`, align: 'right', cell: (r) => fmtINR(r.amountA) },
+              { header: `${labelB} amount`, align: 'right', cell: (r) => fmtINR(r.amountB) },
               { header: `${labelA} narration`, cell: (r) => r.narrationA },
               { header: `${labelB} narration`, cell: (r) => r.narrationB },
             ]}

@@ -2750,6 +2750,10 @@ export interface LedgerComparisonReport {
      *  matched a known anchor from earlier matches; either dates were
      *  within ±3 days OR amounts within ±10% / ₹10K cap. */
     paymentBankMatchedCount: number;
+    /** Pairs matched by AMOUNT ALONE (one side has bill, other has
+     *  only journal entry; unique amount on both sides; no date
+     *  constraint). Catches invoice-vs-late-journal-entry pairs. */
+    amountOnlyMatchedCount: number;
     noBillCountA: number;
     noBillCountB: number;
     grossA: number;
@@ -2819,6 +2823,23 @@ export interface LedgerComparisonReport {
     narrationB: string;
     bankRefA: string | null;
     bankRefB: string | null;
+  }>;
+  /** Cross-bucket pairs matched by amount alone — one side has a
+   *  bill key (`bill`), the other had no extractable ref. Same
+   *  amount on both sides (±₹1), unique at that amount on both
+   *  sides, no date constraint other than ≤ 365 day gap. `dateGapDays`
+   *  is surfaced explicitly so the reviewer can sanity-check at a
+   *  glance how far apart the postings were. */
+  amountOnlyMatches: Array<{
+    bill: string;
+    dateA: string | null;
+    dateB: string | null;
+    dateGapDays: number;
+    amountA: number;
+    amountB: number;
+    diff: number;
+    narrationA: string;
+    narrationB: string;
   }>;
   noBillA: Array<{ date: string | null; amount: number; narration: string }>;
   noBillB: Array<{ date: string | null; amount: number; narration: string }>;

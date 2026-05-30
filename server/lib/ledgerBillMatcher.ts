@@ -132,6 +132,47 @@ export interface PaymentMatchRow {
   bankRefB: string | null;
 }
 
+/**
+ * Cross-bucket pair matched by AMOUNT ALONE — one side carries a bill
+ * key (lands in onlyIn*), the other side has only a journal-entry
+ * narration without a bill ref (noBill*), and their amounts agree
+ * within ±₹1 with no other competing rows at that amount on either
+ * side. Date is NOT constrained — this pass catches invoice-vs-late-
+ * journal-entry pairs where the customer records the supplier's bill
+ * weeks or months after issue.
+ *
+ * Real ASSA × Interio Paradise case: Dynamics's `AAGINJA25002044`
+ * invoice dated 08/04/2025 ₹1,24,688 ↔ Tally's "By ASSA ABLOY..."
+ * journal entry dated 01/06/2025 ₹1,24,688 (54-day gap because the
+ * customer's bookkeeping ran behind). Cross-bucket ±3d and digit-tail
+ * can't catch this — the only signal that survives is the amount
+ * being exactly equal AND unique on both sides at that value. The
+ * uniqueness gate is what keeps this safe: if two unrelated ₹1,24,688
+ * payments existed anywhere in the unmatched pool, we'd skip rather
+ * than guess.
+ *
+ * Surfaced as its OWN bucket (status `amount_matched` in the CSV) so
+ * the user can eyeball the date gap and verify. The date gap is
+ * carried explicitly in `dateGapDays` for at-a-glance review.
+ */
+export interface AmountOnlyMatchRow {
+  /** Bill key from whichever side has it (always the onlyIn side). */
+  bill: string;
+  dateA: string | null;
+  dateB: string | null;
+  /** |dateB − dateA| in calendar days. 0 means the dates accidentally
+   *  agreed (rare — would have been caught by earlier passes), > 3
+   *  is the typical case for this bucket. */
+  dateGapDays: number;
+  amountA: number;
+  amountB: number;
+  /** |amountA − amountB|, in rupees. Always ≤ ₹1 (rounding tolerance);
+   *  larger values are excluded by the matching gate. */
+  diff: number;
+  narrationA: string;
+  narrationB: string;
+}
+
 /** Bank-anchored payment match (Pass 3) — looser than PaymentMatchRow.
  *  The two passes above (date+amount±₹1 and unique-date) consumed the
  *  clean cases; this pass picks up pairs where neither date nor amount
@@ -192,6 +233,13 @@ export interface LedgerCompareReport {
      *  number learned from the matched-payment set; one of date (±3
      *  days) or amount (±10% / ₹10K cap) had to agree, but not both. */
     paymentBankMatchedCount: number;
+    /** Pairs from the amount-only cross-bucket pass — same amount,
+     *  unique on both sides, NO date constraint. Catches invoice-vs-
+     *  late-journal-entry pairs (customer booked the supplier's
+     *  invoice weeks/months after issue). Surfaced as its own bucket
+     *  because the date gap is visually significant; user reviews to
+     *  confirm. */
+    amountOnlyMatchedCount: number;
     /** Counts AFTER both payment-matcher passes consume pairs — i.e.
      *  rows that remain genuinely one-sided with no bill reference
      *  and no same-day counterpart. */
@@ -216,6 +264,7 @@ export interface LedgerCompareReport {
   paymentMatches: PaymentMatchRow[];
   paymentDateMatches: PaymentMatchRow[];
   paymentBankMatches: PaymentBankMatchRow[];
+  amountOnlyMatches: AmountOnlyMatchRow[];
   noBillA: NoBillRow[];
   noBillB: NoBillRow[];
   balanceCheck: {
@@ -957,6 +1006,131 @@ export function compareLedgersByBill(
     onlyInB = onlyInB.filter(r => !consumedBBills.has(r.bill));
   }
 
+  // ── Amount-only cross-bucket pass ──────────────────────────────────
+  //
+  // Final cross-bucket attempt: same shape as the exact-date and ±3d
+  // passes above (onlyIn × noBill), but with NO date constraint at
+  // all. Catches invoice-vs-late-journal-entry pairs where the
+  // customer recorded the supplier's bill weeks or months after it
+  // was issued — a common pattern in SME bookkeeping.
+  //
+  // ASSA × Interio Paradise example: Dynamics's `AAGINJA25002044`
+  // invoice dated 08/04/2025 ₹1,24,688 ↔ Tally's "By ASSA ABLOY..."
+  // journal entry dated 01/06/2025 ₹1,24,688 (54-day gap). The
+  // earlier passes can't reach this — exact-date / ±3d don't apply,
+  // digit-tail has no Tally key to compare against. The remaining
+  // signal is: amount agrees exactly, unique on BOTH sides at that
+  // amount within the unmatched pool.
+  //
+  // Anti-collision gates (tighter than the date-constrained passes,
+  // since we're giving up the date axis):
+  //   - Amount ≥ ₹100. Higher floor than the ₹10 used elsewhere
+  //     because losing the date constraint makes collisions on
+  //     tiny round numbers (₹10 / ₹50 / ₹100) too easy.
+  //   - Amount within ±₹1 (kept strict — never relax both axes).
+  //   - Uniqueness on BOTH sides at the (rounded ₹amount) bucket.
+  //     Multiple rows at the same amount on either side → ambiguous,
+  //     skip. This is the primary safety: if two unrelated bills
+  //     happen to share an amount, neither pairs.
+  //   - Date gap ≤ 365 days. Pairs more than a year apart are
+  //     almost certainly unrelated payments, regardless of amount.
+  //
+  // Surfaced as its own bucket (`amountOnlyMatches`) with explicit
+  // `dateGapDays` so the user can see at a glance how far apart the
+  // dates are and verify the pair is correct.
+  const AMOUNT_ONLY_MIN_AMOUNT = 100;
+  const AMOUNT_ONLY_MAX_GAP_DAYS = 365;
+  const AMOUNT_ONLY_TOLERANCE = 1.0;
+  const amountOnlyMatches: AmountOnlyMatchRow[] = [];
+
+  // Helper that consumes one direction (onlyIn × noBill). Shared by
+  // both BA and AB invocations below.
+  const amountOnlyPass = (
+    onlyIn: OnlySideRow[],
+    noBill: FlatTx[],
+    direction: 'BA' | 'AB',
+  ): { consumedOnly: Set<string>; consumedNoBill: Set<number>; count: number } => {
+    const consumedOnly = new Set<string>();
+    const consumedNoBill = new Set<number>();
+    if (onlyIn.length === 0 || noBill.length === 0) {
+      return { consumedOnly, consumedNoBill, count: 0 };
+    }
+    // Bucket both sides by rounded ₹amount. Uniqueness on each side
+    // is checked simply by bucket size = 1.
+    const onlyByAmount = new Map<number, OnlySideRow[]>();
+    const noBillByAmount = new Map<number, Array<{ idx: number; tx: FlatTx }>>();
+    for (const r of onlyIn) {
+      if (r.amount < AMOUNT_ONLY_MIN_AMOUNT) continue;
+      const k = Math.round(r.amount);
+      if (!onlyByAmount.has(k)) onlyByAmount.set(k, []);
+      onlyByAmount.get(k)!.push(r);
+    }
+    noBill.forEach((tx, idx) => {
+      if (tx.absAmount < AMOUNT_ONLY_MIN_AMOUNT) return;
+      const k = Math.round(tx.absAmount);
+      if (!noBillByAmount.has(k)) noBillByAmount.set(k, []);
+      noBillByAmount.get(k)!.push({ idx, tx });
+    });
+    let count = 0;
+    for (const [amountKey, oRows] of onlyByAmount) {
+      if (oRows.length !== 1) continue;                  // ambiguous on onlyIn side
+      const cands = noBillByAmount.get(amountKey) ?? [];
+      if (cands.length !== 1) continue;                  // ambiguous on noBill side
+      const oRow = oRows[0];
+      const cand = cands[0];
+      // ±₹1 tolerance — bucket is rounded ₹ so verify fine-grained.
+      const diff = Math.abs(cand.tx.absAmount - oRow.amount);
+      if (diff > AMOUNT_ONLY_TOLERANCE) continue;
+      // Date-gap bound: skip pairs more than a year apart.
+      const tsA = oRow.date ? new Date(oRow.date).getTime() : NaN;
+      const tsB = cand.tx.date ? new Date(cand.tx.date).getTime() : NaN;
+      let gapDays = 0;
+      if (Number.isFinite(tsA) && Number.isFinite(tsB)) {
+        gapDays = Math.round(Math.abs(tsB - tsA) / (24 * 60 * 60 * 1000));
+        if (gapDays > AMOUNT_ONLY_MAX_GAP_DAYS) continue;
+      }
+      const row: AmountOnlyMatchRow = direction === 'BA'
+        ? {
+            bill: oRow.bill,
+            dateA: cand.tx.date,
+            dateB: oRow.date,
+            dateGapDays: gapDays,
+            amountA: cand.tx.absAmount,
+            amountB: oRow.amount,
+            diff,
+            narrationA: cand.tx.narration,
+            narrationB: oRow.narration,
+          }
+        : {
+            bill: oRow.bill,
+            dateA: oRow.date,
+            dateB: cand.tx.date,
+            dateGapDays: gapDays,
+            amountA: oRow.amount,
+            amountB: cand.tx.absAmount,
+            diff,
+            narrationA: oRow.narration,
+            narrationB: cand.tx.narration,
+          };
+      amountOnlyMatches.push(row);
+      consumedOnly.add(oRow.bill);
+      consumedNoBill.add(cand.idx);
+      count += 1;
+    }
+    return { consumedOnly, consumedNoBill, count };
+  };
+
+  const amountBA = amountOnlyPass(onlyInB, noBillA, 'BA');
+  const amountAB = amountOnlyPass(onlyInA, noBillB, 'AB');
+  const amountOnlyTotal = amountBA.count + amountAB.count;
+  if (amountOnlyTotal > 0) {
+    console.log(`[ledgerBillMatcher] amount-only cross-bucket paired ${amountBA.count} onlyInB↔noBillA + ${amountAB.count} onlyInA↔noBillB`);
+    onlyInA = onlyInA.filter(r => !amountAB.consumedOnly.has(r.bill));
+    onlyInB = onlyInB.filter(r => !amountBA.consumedOnly.has(r.bill));
+    noBillA = noBillA.filter((_, idx) => !amountBA.consumedNoBill.has(idx));
+    noBillB = noBillB.filter((_, idx) => !amountAB.consumedNoBill.has(idx));
+  }
+
   // Sort everything by bill (ascending) for stable rendering.
   const byBillSort = (a: { bill: string }, b: { bill: string }) =>
     a.bill < b.bill ? -1 : a.bill > b.bill ? 1 : 0;
@@ -964,6 +1138,7 @@ export function compareLedgersByBill(
   amountMismatches.sort(byBillSort);
   onlyInA.sort(byBillSort);
   onlyInB.sort(byBillSort);
+  amountOnlyMatches.sort(byBillSort);
 
   // Payment matcher — pair leftover no-bill rows on each side by
   // date + amount (with ±₹1 tolerance). Many real reconciliations
@@ -1383,6 +1558,7 @@ export function compareLedgersByBill(
     paymentMatchedCount: paymentMatches.length,
     paymentDateMatchedCount: paymentDateMatches.length,
     paymentBankMatchedCount: paymentBankMatches.length,
+    amountOnlyMatchedCount: amountOnlyMatches.length,
     noBillCountA: leftoverNoBillA.length,
     noBillCountB: leftoverNoBillB.length,
     netDifference: netA - netB,
@@ -1400,6 +1576,7 @@ export function compareLedgersByBill(
       paymentMatchedCount: paymentMatches.length,
       paymentDateMatchedCount: paymentDateMatches.length,
       paymentBankMatchedCount: paymentBankMatches.length,
+      amountOnlyMatchedCount: amountOnlyMatches.length,
       // Counts reflect rows REMAINING after ALL THREE payment-matcher
       // passes consumed pairs. The "noBill" buckets are
       // genuinely-one-sided rows with no bill ref, no twin payment
@@ -1417,6 +1594,7 @@ export function compareLedgersByBill(
     paymentMatches,
     paymentDateMatches,
     paymentBankMatches,
+    amountOnlyMatches,
     noBillA: leftoverNoBillA.map(t => ({ date: t.date, amount: t.absAmount, narration: t.narration })),
     noBillB: leftoverNoBillB.map(t => ({ date: t.date, amount: t.absAmount, narration: t.narration })),
     balanceCheck: {
@@ -1434,6 +1612,7 @@ function buildHeadline(s: {
   paymentMatchedCount: number;
   paymentDateMatchedCount: number;
   paymentBankMatchedCount: number;
+  amountOnlyMatchedCount: number;
   noBillCountA: number; noBillCountB: number;
   netDifference: number;
 }): string {
@@ -1448,6 +1627,9 @@ function buildHeadline(s: {
     const extras: string[] = [];
     if (s.paymentMatchedCount > 0) {
       extras.push(`${s.paymentMatchedCount} payment${s.paymentMatchedCount === 1 ? '' : 's'} matched by date+amount`);
+    }
+    if (s.amountOnlyMatchedCount > 0) {
+      extras.push(`${s.amountOnlyMatchedCount} matched by amount alone (date differs) to review`);
     }
     if (s.paymentDateMatchedCount > 0) {
       extras.push(`${s.paymentDateMatchedCount} more matched by date with amount diff to review`);
@@ -1465,6 +1647,9 @@ function buildHeadline(s: {
   const tail: string[] = [];
   if (s.paymentMatchedCount > 0) {
     tail.push(`${s.paymentMatchedCount} payment${s.paymentMatchedCount === 1 ? '' : 's'} matched by date+amount`);
+  }
+  if (s.amountOnlyMatchedCount > 0) {
+    tail.push(`${s.amountOnlyMatchedCount} matched by amount alone (date differs) to review`);
   }
   if (s.paymentDateMatchedCount > 0) {
     tail.push(`${s.paymentDateMatchedCount} more matched by date with amount diff to review`);

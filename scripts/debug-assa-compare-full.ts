@@ -54,6 +54,10 @@ async function main() {
   for (const m of report.paymentBankMatches) {
     console.log(`  ${m.dateA} ↔ ${m.dateB} (gap=${m.dateDeltaDays}d) A=${m.amountA} B=${m.amountB} bank=${m.bankAnchor}`);
   }
+  console.log('\n=== amountOnlyMatches (NEW — amount agrees, dates differ) ===');
+  for (const m of report.amountOnlyMatches) {
+    console.log(`  ${m.bill}  ${m.dateA} ↔ ${m.dateB} (gap=${m.dateGapDays}d) A=${m.amountA} B=${m.amountB}`);
+  }
   console.log('\n=== noBillA (Tally) leftovers ===');
   for (const r of report.noBillA) {
     console.log(`  ${r.date}  ₹${r.amount}  ${(r.narration ?? '').slice(0, 80)}`);
