@@ -528,10 +528,27 @@ async function extractSubjectFromPdf(pdfUrl: string): Promise<string | null> {
     const timer = setTimeout(() => controller.abort(), 15_000);
     let buf: Buffer;
     try {
+      // gov.in's WAF returns 403 on direct PDF downloads from
+      // datacenter IPs when the request lacks a same-origin Referer.
+      // Browsers include it automatically (the user clicked from
+      // what-s-new); we need to set it explicitly. Derive the
+      // origin from the PDF URL so this works for both
+      // incometaxindia.gov.in and gstcouncil.gov.in PDFs without a
+      // separate lookup table.
+      const referer = (() => {
+        try {
+          const u = new URL(pdfUrl);
+          return `${u.protocol}//${u.host}/what-s-new`;
+        } catch { return undefined; }
+      })();
       const res = await fetch(pdfUrl, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          'Accept': 'application/pdf,application/octet-stream,*/*',
+          'Accept-Language': 'en-IN,en;q=0.9',
+          ...(referer ? { Referer: referer } : {}),
         },
+        redirect: 'follow',
         signal: controller.signal,
       });
       if (!res.ok) {
