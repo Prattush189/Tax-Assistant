@@ -539,24 +539,38 @@ async function extractSubjectFromPdf(pdfUrl: string): Promise<string | null> {
       clearTimeout(timer);
     }
     if (buf.length === 0 || buf.length > 5 * 1024 * 1024) return null; // skip > 5 MB
-    const prompt = `Read this Indian tax notification PDF and return ONE LINE describing what the notification is about (≤80 characters). Focus on the operative subject — what changes, who's affected, or which provision is being amended. Examples of good subjects:
+    // extractGeminiVision forces responseMimeType: 'application/json'
+    // so we MUST ask the model for JSON — otherwise the safeParseJson
+    // step throws on a plain-text response and the function returns
+    // null silently. Earlier prompts asking for "one line, no
+    // markdown" did exactly this. Wrap the answer in a single-field
+    // JSON object so the parse always succeeds.
+    const prompt = `Read this Indian tax notification PDF and identify what it's about. Return STRICT JSON in this exact shape, no markdown fences, no prose around it:
+
+{"subject": "<one descriptive line, max 80 characters>"}
+
+The "subject" value must describe the operative provision in plain English — what changes, who's affected, which rule / section / form is amended. Examples of good subjects:
 - "Corrigendum to Form ITR-2 notification for AY 2026-27"
 - "Approval of research association under Section 35"
 - "Amendment to Rule 114E reporting thresholds"
+- "Notification of Sovereign Wealth Fund under Section 10(23FE)"
 
-Output ONLY the subject line. No preamble, no quotes, no notification number, no markdown.`;
-    const result = await extractGeminiVision<{ subject?: string } | string>(
+Do NOT include the notification number, file number, S.O. number, "Notification No. ...", or the word "Notification" / "Circular" anywhere in the subject. Just the subject of the operative provision.`;
+    const result = await extractGeminiVision<{ subject?: unknown }>(
       buf,
       'application/pdf',
       prompt,
       { maxTokens: 200 },
     );
-    let text = '';
-    if (typeof result.data === 'string') text = result.data;
-    else if (result.data && typeof (result.data as { subject?: string }).subject === 'string') text = (result.data as { subject: string }).subject;
-    text = (text || '').replace(/^["'`]+|["'`]+$/g, '').replace(/\s+/g, ' ').trim();
+    const subjectValue = result.data?.subject;
+    let text = typeof subjectValue === 'string' ? subjectValue : '';
+    text = text.replace(/^["'`]+|["'`]+$/g, '').replace(/\s+/g, ' ').trim();
+    // Strip a leading "Notification No. X/YYYY..." prefix in case the
+    // model embedded one despite the instruction not to. Reuse the
+    // same prefix regex as extractSubject.
+    text = text.replace(/^(?:Notification|Circular|Order|Instruction|F\.?\s*No\.?)[^:]*?(?::|\s*[-–—]\s+)\s*/i, '').trim();
     if (!text || text.length < 5 || text.length > 160) return null;
-    return text;
+    return text.charAt(0).toUpperCase() + text.slice(1);
   } catch (err) {
     console.warn(`[notificationFetcher] PDF subject extraction failed for ${pdfUrl}: ${(err as Error).message?.slice(0, 200)}`);
     return null;
