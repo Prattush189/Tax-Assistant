@@ -522,6 +522,7 @@ function isBareIdentifierTitle(title: string): boolean {
  *  Token quota for this is not enforced (system-job; no human actor
  *  to bill against). Falls through silently if vision API is down. */
 async function extractSubjectFromPdf(pdfUrl: string): Promise<string | null> {
+  const startedAt = Date.now();
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 15_000);
@@ -533,12 +534,23 @@ async function extractSubjectFromPdf(pdfUrl: string): Promise<string | null> {
         },
         signal: controller.signal,
       });
-      if (!res.ok) return null;
+      if (!res.ok) {
+        console.warn(`[notificationFetcher] PDF fetch returned HTTP ${res.status} for ${pdfUrl}`);
+        return null;
+      }
       buf = Buffer.from(await res.arrayBuffer());
     } finally {
       clearTimeout(timer);
     }
-    if (buf.length === 0 || buf.length > 5 * 1024 * 1024) return null; // skip > 5 MB
+    if (buf.length === 0) {
+      console.warn(`[notificationFetcher] PDF was 0 bytes: ${pdfUrl}`);
+      return null;
+    }
+    if (buf.length > 5 * 1024 * 1024) {
+      console.warn(`[notificationFetcher] PDF too large (${buf.length} bytes), skipping enrichment: ${pdfUrl}`);
+      return null;
+    }
+    console.log(`[notificationFetcher] PDF fetched ${buf.length} bytes in ${Date.now() - startedAt}ms for ${pdfUrl}`);
     // extractGeminiVision forces responseMimeType: 'application/json'
     // so we MUST ask the model for JSON — otherwise the safeParseJson
     // step throws on a plain-text response and the function returns
@@ -556,20 +568,33 @@ The "subject" value must describe the operative provision in plain English — w
 - "Notification of Sovereign Wealth Fund under Section 10(23FE)"
 
 Do NOT include the notification number, file number, S.O. number, "Notification No. ...", or the word "Notification" / "Circular" anywhere in the subject. Just the subject of the operative provision.`;
-    const result = await extractGeminiVision<{ subject?: unknown }>(
-      buf,
-      'application/pdf',
-      prompt,
-      { maxTokens: 200 },
-    );
+    let result;
+    try {
+      result = await extractGeminiVision<{ subject?: unknown }>(
+        buf,
+        'application/pdf',
+        prompt,
+        { maxTokens: 200 },
+      );
+    } catch (visionErr) {
+      console.warn(`[notificationFetcher] Gemini vision threw for ${pdfUrl}: ${(visionErr as Error).message?.slice(0, 300)}`);
+      return null;
+    }
     const subjectValue = result.data?.subject;
     let text = typeof subjectValue === 'string' ? subjectValue : '';
+    if (!text) {
+      console.warn(`[notificationFetcher] Vision returned no subject field for ${pdfUrl}. data keys: ${Object.keys(result.data ?? {}).join(',')}`);
+      return null;
+    }
     text = text.replace(/^["'`]+|["'`]+$/g, '').replace(/\s+/g, ' ').trim();
     // Strip a leading "Notification No. X/YYYY..." prefix in case the
     // model embedded one despite the instruction not to. Reuse the
     // same prefix regex as extractSubject.
     text = text.replace(/^(?:Notification|Circular|Order|Instruction|F\.?\s*No\.?)[^:]*?(?::|\s*[-–—]\s+)\s*/i, '').trim();
-    if (!text || text.length < 5 || text.length > 160) return null;
+    if (!text || text.length < 5 || text.length > 160) {
+      console.warn(`[notificationFetcher] Vision subject too short/long after cleanup (${text.length} chars): "${text.slice(0, 100)}" for ${pdfUrl}`);
+      return null;
+    }
     return text.charAt(0).toUpperCase() + text.slice(1);
   } catch (err) {
     console.warn(`[notificationFetcher] PDF subject extraction failed for ${pdfUrl}: ${(err as Error).message?.slice(0, 200)}`);
