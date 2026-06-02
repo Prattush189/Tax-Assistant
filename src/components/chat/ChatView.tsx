@@ -77,19 +77,33 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
   const suppressClickRef = useRef(false);
 
   useEffect(() => {
-    const el = marqueeRef.current;
-    if (!el || notifications.length === 0) return;
+    if (notifications.length === 0) return;
     let raf = 0;
     let last = performance.now();
-    const PX_PER_SEC = 30; // ~30px/s — slow enough to read mid-card
+    let accum = 0; // sub-pixel accumulator; flushed once it exceeds 1px
+    const PX_PER_SEC = 50; // ~50px/s — visible idle drift; user can drag faster
     const tick = (now: number) => {
-      const dt = Math.min(100, now - last); // ms; clamp on tab-resume jumps
-      last = now;
-      const half = el.scrollWidth / 2;
-      if (!dragStateRef.current.dragging && half > 0) {
-        let next = el.scrollLeft + (PX_PER_SEC * dt) / 1000;
-        if (next >= half) next -= half;
-        el.scrollLeft = next;
+      const el = marqueeRef.current;
+      if (el) {
+        const dt = Math.min(100, now - last);
+        last = now;
+        const half = el.scrollWidth / 2;
+        if (!dragStateRef.current.dragging && half > 0) {
+          // scrollLeft is rounded to integer pixels in most browsers,
+          // so a 50 px/s drift (~0.8 px/frame) would round to 0 and
+          // never advance. Accumulate sub-pixel delta and flush whole
+          // pixels into scrollLeft as they appear.
+          accum += (PX_PER_SEC * dt) / 1000;
+          const whole = Math.floor(accum);
+          if (whole > 0) {
+            accum -= whole;
+            let next = el.scrollLeft + whole;
+            if (next >= half) next -= half;
+            el.scrollLeft = next;
+          }
+        }
+      } else {
+        last = now;
       }
       raf = requestAnimationFrame(tick);
     };
@@ -259,7 +273,7 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
                   <div
                     ref={marqueeRef}
                     className="flex gap-3 overflow-x-auto scrollbar-hide select-none cursor-grab active:cursor-grabbing"
-                    style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+                    style={{ scrollbarWidth: 'none', msOverflowStyle: 'none', scrollBehavior: 'auto' }}
                     onPointerDown={e => {
                       const el = marqueeRef.current;
                       if (!el) return;
