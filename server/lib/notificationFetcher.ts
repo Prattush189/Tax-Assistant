@@ -25,6 +25,7 @@ import { notificationsRepo, type NotificationCategory, type TaxNotificationCreat
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { fetchAllCbdtItems, type CbdtItem } from './cbdtScraper.js';
 import { fetchGstCouncilItems, type GstCouncilItem } from './gstCouncilScraper.js';
+import { fetchEfilingItems, type EfilingItem } from './efilingPortalScraper.js';
 
 // System-job rows in api_usage are written with NULL user_id /
 // billing_user_id. user_id is FK to users(id) — a sentinel string like
@@ -865,18 +866,22 @@ export async function fetchLatestNotifications(opts: { dryRun?: boolean; logUsag
   // CBDT covers most TDS-relevant items via §194-series notifications
   // and Circulars; the TRACES-specific items (CPC clarifications) are
   // a known gap.
-  const [cbdtResult, gstResult] = await Promise.allSettled([
+  const [cbdtResult, gstResult, efilingResult] = await Promise.allSettled([
     fetchAllCbdtItems(40),
     fetchGstCouncilItems(),
+    fetchEfilingItems(),
   ]);
   let cbdtItems: CbdtItem[] = [];
   let gstItems: GstCouncilItem[] = [];
+  let efilingItems: EfilingItem[] = [];
   if (cbdtResult.status === 'fulfilled') cbdtItems = cbdtResult.value;
   else errors.push(`CBDT scrape failed: ${cbdtResult.reason instanceof Error ? cbdtResult.reason.message : String(cbdtResult.reason)}`);
   if (gstResult.status === 'fulfilled') gstItems = gstResult.value;
   else errors.push(`GST Council scrape failed: ${gstResult.reason instanceof Error ? gstResult.reason.message : String(gstResult.reason)}`);
+  if (efilingResult.status === 'fulfilled') efilingItems = efilingResult.value;
+  else errors.push(`e-Filing portal scrape failed: ${efilingResult.reason instanceof Error ? efilingResult.reason.message : String(efilingResult.reason)}`);
   const durationMs = Date.now() - startedAt;
-  console.log(`[notificationFetcher] scraped ${cbdtItems.length} CBDT + ${gstItems.length} GST item(s) in ${durationMs}ms`);
+  console.log(`[notificationFetcher] scraped ${cbdtItems.length} CBDT + ${gstItems.length} GST + ${efilingItems.length} e-Filing item(s) in ${durationMs}ms`);
 
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
@@ -897,8 +902,8 @@ export async function fetchLatestNotifications(opts: { dryRun?: boolean; logUsag
     }
   }
 
-  if (cbdtItems.length === 0 && gstItems.length === 0) {
-    errors.push('Both CBDT and GST Council scrapes returned 0 items');
+  if (cbdtItems.length === 0 && gstItems.length === 0 && efilingItems.length === 0) {
+    errors.push('CBDT, GST Council, and e-Filing portal scrapes all returned 0 items');
     return { ok: false, inserted: 0, pruned: 0, rejectedNonOfficial: 0, rejectedUrls, pregenerated: 0, pregenerateFailed: 0, inputTokens: 0, outputTokens: 0, cost: 0, errors };
   }
 
@@ -939,6 +944,23 @@ export async function fetchLatestNotifications(opts: { dryRun?: boolean; logUsag
       summary: null,
       notificationDate: it.dateModified || null,
       sourceUrl: it.pdfUrl,
+    });
+  }
+  // e-Filing portal items — ITR utility releases, AIS clarifications,
+  // and other e-filing-portal-specific announcements that CBDT's
+  // notification stream doesn't capture. Categorise as INCOME_TAX
+  // (the portal is operated by ITD) and use the row's source URL
+  // (anchor href, or the latest-news page itself) as source_url. The
+  // title is already a descriptive sentence — trimHeading just caps
+  // its length.
+  for (const it of efilingItems) {
+    if (!it.url) continue;
+    items.push({
+      category: 'INCOME_TAX',
+      heading: trimHeading(it.title),
+      summary: null,
+      notificationDate: it.dateModified || null,
+      sourceUrl: it.url,
     });
   }
 
