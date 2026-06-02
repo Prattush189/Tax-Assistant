@@ -71,8 +71,8 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
   const marqueeRef = useRef<HTMLDivElement | null>(null);
   // Refs (not state) for live drag bookkeeping — re-rendering every
   // frame during a drag would tank performance.
-  const dragStateRef = useRef<{ dragging: boolean; startX: number; startScroll: number; hovering: boolean; movedPx: number; }>({
-    dragging: false, startX: 0, startScroll: 0, hovering: false, movedPx: 0,
+  const dragStateRef = useRef<{ dragging: boolean; startX: number; startScroll: number; movedPx: number; }>({
+    dragging: false, startX: 0, startScroll: 0, movedPx: 0,
   });
   const suppressClickRef = useRef(false);
 
@@ -86,7 +86,7 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
       const dt = Math.min(100, now - last); // ms; clamp on tab-resume jumps
       last = now;
       const half = el.scrollWidth / 2;
-      if (!dragStateRef.current.dragging && !dragStateRef.current.hovering && half > 0) {
+      if (!dragStateRef.current.dragging && half > 0) {
         let next = el.scrollLeft + (PX_PER_SEC * dt) / 1000;
         if (next >= half) next -= half;
         el.scrollLeft = next;
@@ -255,8 +255,6 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
                     maskImage: 'linear-gradient(to right, transparent, black 4%, black 96%, transparent)',
                     WebkitMaskImage: 'linear-gradient(to right, transparent, black 4%, black 96%, transparent)',
                   }}
-                  onMouseEnter={() => { dragStateRef.current.hovering = true; }}
-                  onMouseLeave={() => { dragStateRef.current.hovering = false; }}
                 >
                   <div
                     ref={marqueeRef}
