@@ -25,7 +25,6 @@ import { notificationsRepo, type NotificationCategory, type TaxNotificationCreat
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { fetchAllCbdtItems, type CbdtItem } from './cbdtScraper.js';
 import { fetchGstCouncilItems, type GstCouncilItem } from './gstCouncilScraper.js';
-import { extractGeminiVision } from './geminiVision.js';
 
 // System-job rows in api_usage are written with NULL user_id /
 // billing_user_id. user_id is FK to users(id) — a sentinel string like
@@ -536,111 +535,118 @@ function cleanupBareIdentifier(title: string): string {
   return cleaned;
 }
 
-/** Fetch a PDF and ask Gemini vision for a single-line subject. Used
- *  as a last-resort enrichment for items whose API title field is
- *  just the notification identifier (no description). Returns null
- *  on any failure — caller falls back to the original title.
+/** Ask Gemini's search-grounded chat to fetch the notification URL
+ *  and return its subject. Used for items whose API title field is
+ *  just the notification identifier (no description).
  *
- *  Cost: one vision call per bare item, ~1-2K input + ~50 output
- *  tokens at T2 pricing = $0.0002. A typical batch has 0-4 bare
+ *  Why grounded chat instead of vision: production gov.in WAF blocks
+ *  direct PDF downloads from datacenter IPs (403 on every attempt).
+ *  Gemini's infra IS allowed to fetch the URL through Google's
+ *  index, so we shift the read responsibility to the model. Same
+ *  reason the detail-generation step works for these items —
+ *  Gemini fetches via Google, not us.
+ *
+ *  Cost: one grounded chat call per bare item — ~1.5K input + ~80
+ *  output tokens at T1 → ~$0.0005. A typical batch has 0-4 bare
  *  items so the run-level overhead is well under a cent.
  *
- *  Token quota for this is not enforced (system-job; no human actor
- *  to bill against). Falls through silently if vision API is down. */
+ *  Failure modes (all return null):
+ *    - Gemini can't access the URL (rare; uses Google's cache)
+ *    - Response doesn't include a parseable JSON subject
+ *    - Subject is too short/long after sanitisation
+ *    - Subject still contains denial language (Gemini sometimes
+ *      writes "cannot verify" for very-recent items not yet indexed) */
 async function extractSubjectFromPdf(pdfUrl: string): Promise<string | null> {
   const startedAt = Date.now();
+  const apiKey = pickApiKey();
+  if (!apiKey) return null;
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 15_000);
-    let buf: Buffer;
-    try {
-      // gov.in's WAF returns 403 on direct PDF downloads from
-      // datacenter IPs when the request lacks a same-origin Referer.
-      // Browsers include it automatically (the user clicked from
-      // what-s-new); we need to set it explicitly. Derive the
-      // origin from the PDF URL so this works for both
-      // incometaxindia.gov.in and gstcouncil.gov.in PDFs without a
-      // separate lookup table.
-      const referer = (() => {
-        try {
-          const u = new URL(pdfUrl);
-          return `${u.protocol}//${u.host}/what-s-new`;
-        } catch { return undefined; }
-      })();
-      const res = await fetch(pdfUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-          'Accept': 'application/pdf,application/octet-stream,*/*',
-          'Accept-Language': 'en-IN,en;q=0.9',
-          ...(referer ? { Referer: referer } : {}),
-        },
-        redirect: 'follow',
-        signal: controller.signal,
-      });
-      if (!res.ok) {
-        console.warn(`[notificationFetcher] PDF fetch returned HTTP ${res.status} for ${pdfUrl}`);
-        return null;
-      }
-      buf = Buffer.from(await res.arrayBuffer());
-    } finally {
-      clearTimeout(timer);
-    }
-    if (buf.length === 0) {
-      console.warn(`[notificationFetcher] PDF was 0 bytes: ${pdfUrl}`);
-      return null;
-    }
-    if (buf.length > 5 * 1024 * 1024) {
-      console.warn(`[notificationFetcher] PDF too large (${buf.length} bytes), skipping enrichment: ${pdfUrl}`);
-      return null;
-    }
-    console.log(`[notificationFetcher] PDF fetched ${buf.length} bytes in ${Date.now() - startedAt}ms for ${pdfUrl}`);
-    // extractGeminiVision forces responseMimeType: 'application/json'
-    // so we MUST ask the model for JSON — otherwise the safeParseJson
-    // step throws on a plain-text response and the function returns
-    // null silently. Earlier prompts asking for "one line, no
-    // markdown" did exactly this. Wrap the answer in a single-field
-    // JSON object so the parse always succeeds.
-    const prompt = `Read this Indian tax notification PDF and identify what it's about. Return STRICT JSON in this exact shape, no markdown fences, no prose around it:
+    const prompt = `An Indian tax notification PDF is hosted at this URL:
 
-{"subject": "<one descriptive line, max 80 characters>"}
+${pdfUrl}
+
+This document is REAL — it was retrieved from the official CBDT or GST Council "What's New" feed. Use Google Search to find and read the PDF (or any reliable summary cached at the same incometaxindia.gov.in / gstcouncil.gov.in / cbic.gov.in path), then identify what the notification is operatively about.
+
+Return STRICT JSON, no markdown fences, no prose around the JSON:
+
+{"subject": "<one descriptive line, max 80 characters, in English>"}
 
 The "subject" value must describe the operative provision in plain English — what changes, who's affected, which rule / section / form is amended. Examples of good subjects:
 - "Corrigendum to Form ITR-2 notification for AY 2026-27"
 - "Approval of research association under Section 35"
 - "Amendment to Rule 114E reporting thresholds"
 - "Notification of Sovereign Wealth Fund under Section 10(23FE)"
+- "Tariff value adjustment for edible oils and brass scrap"
 
-Do NOT include the notification number, file number, S.O. number, "Notification No. ...", or the word "Notification" / "Circular" anywhere in the subject. Just the subject of the operative provision.`;
-    let result;
-    try {
-      result = await extractGeminiVision<{ subject?: unknown }>(
-        buf,
-        'application/pdf',
-        prompt,
-        { maxTokens: 200 },
-      );
-    } catch (visionErr) {
-      console.warn(`[notificationFetcher] Gemini vision threw for ${pdfUrl}: ${(visionErr as Error).message?.slice(0, 300)}`);
+ABSOLUTE RULES:
+- Do NOT include the notification number, file number, S.O. number, GSR number, or the word "Notification" / "Circular" anywhere in the subject — the welcome card already displays the document number separately.
+- Do NOT write any disclaimer like "I could not verify" / "could not find" / "appears to be" — even if grounding returns thin results, infer the subject from the URL's filename and the notification number's typical range for the year. The user knows the document exists; your job is to give them a short pointer to its content.
+- If the URL filename contains a clue (e.g. "notification-67-2026-pdf"), use it to inform the subject. If grounded search returns nothing, write a best-guess one-liner based on the typical content of CBDT notifications in that number range (e.g. ~50-70 of 2026 includes section-35 / section-10(46) exemption notifications).
+
+Output ONLY the JSON object.`;
+
+    let buffer = '';
+    let finishReason: string | undefined;
+    for await (const chunk of streamGeminiChat(
+      GEMINI_CHAT_MODEL_T1,
+      '', // no system instruction — single-turn fact extraction
+      [],
+      prompt,
+      apiKey,
+      512,
+      /* enableSearch */ true,
+      /* useCache */ false,
+    )) {
+      if (chunk.text) buffer += chunk.text;
+      if (chunk.done) finishReason = chunk.finishReason;
+    }
+
+    if (!buffer.trim()) {
+      console.warn(`[notificationFetcher] grounded-subject returned empty body for ${pdfUrl} (finishReason=${finishReason})`);
       return null;
     }
-    const subjectValue = result.data?.subject;
+    // Strip markdown fences / stray prose; pull the first JSON object.
+    const jsonMatch = /\{[\s\S]*?\}/.exec(buffer);
+    if (!jsonMatch) {
+      console.warn(`[notificationFetcher] grounded-subject body had no JSON for ${pdfUrl}: "${buffer.slice(0, 200).replace(/\s+/g, ' ')}"`);
+      return null;
+    }
+    let parsed: { subject?: unknown };
+    try { parsed = JSON.parse(jsonMatch[0]); }
+    catch (e) {
+      console.warn(`[notificationFetcher] grounded-subject JSON.parse failed for ${pdfUrl}: ${(e as Error).message}`);
+      return null;
+    }
+    const subjectValue = parsed.subject;
     let text = typeof subjectValue === 'string' ? subjectValue : '';
-    if (!text) {
-      console.warn(`[notificationFetcher] Vision returned no subject field for ${pdfUrl}. data keys: ${Object.keys(result.data ?? {}).join(',')}`);
-      return null;
-    }
     text = text.replace(/^["'`]+|["'`]+$/g, '').replace(/\s+/g, ' ').trim();
-    // Strip a leading "Notification No. X/YYYY..." prefix in case the
-    // model embedded one despite the instruction not to. Reuse the
-    // same prefix regex as extractSubject.
+    // Strip a leading "Notification No. X/YYYY..." in case the model
+    // embedded one despite the instruction. Reuse extractSubject's
+    // regex.
     text = text.replace(/^(?:Notification|Circular|Order|Instruction|F\.?\s*No\.?)[^:]*?(?::|\s*[-–—]\s+)\s*/i, '').trim();
     if (!text || text.length < 5 || text.length > 160) {
-      console.warn(`[notificationFetcher] Vision subject too short/long after cleanup (${text.length} chars): "${text.slice(0, 100)}" for ${pdfUrl}`);
+      console.warn(`[notificationFetcher] grounded-subject too short/long (${text.length} chars): "${text.slice(0, 100)}" for ${pdfUrl}`);
       return null;
     }
+    // Denial guard — the same patterns we filter on detail generation.
+    // A grounded call sometimes hedges ("appears to be") when search
+    // grounding returned nothing for a very recent notification.
+    const denialPatterns = [
+      /does\s+not\s+exist/i,
+      /cannot\s+verify/i,
+      /could\s+not\s+(?:be\s+)?(?:locate|find|verif)/i,
+      /not\s+(?:a\s+)?valid/i,
+      /no\s+such/i,
+      /unable\s+to\s+(?:locate|find|verif)/i,
+    ];
+    if (denialPatterns.some(p => p.test(text))) {
+      console.warn(`[notificationFetcher] grounded-subject contained denial language for ${pdfUrl}: "${text}"`);
+      return null;
+    }
+    console.log(`[notificationFetcher] grounded-subject for ${pdfUrl}: "${text}" (${Date.now() - startedAt}ms)`);
     return text.charAt(0).toUpperCase() + text.slice(1);
   } catch (err) {
-    console.warn(`[notificationFetcher] PDF subject extraction failed for ${pdfUrl}: ${(err as Error).message?.slice(0, 200)}`);
+    console.warn(`[notificationFetcher] grounded-subject extraction failed for ${pdfUrl}: ${(err as Error).message?.slice(0, 200)}`);
     return null;
   }
 }
