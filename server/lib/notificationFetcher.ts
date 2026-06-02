@@ -510,6 +510,32 @@ function isBareIdentifierTitle(title: string): boolean {
   return subject === normalisedOriginal;
 }
 
+/** Cleanup a bare identifier title to a readable short form when we
+ *  can't extract the actual subject (e.g. gov.in WAF blocks PDF
+ *  downloads from our VPS so the enrichment step can't reach the
+ *  document). Produces forms like "CBDT Notification 66/2026" /
+ *  "CBDT Circular 4/2026" — the user still sees what the
+ *  notification is identified as without the noise of file numbers
+ *  and S.O. codes.
+ *
+ *  When the title doesn't match any known shape, returns the
+ *  trimmed original. */
+function cleanupBareIdentifier(title: string): string {
+  const cleaned = title.replace(/\s+/g, ' ').trim();
+  // "Notification No. 66/2026-CBDT[F. No. ...]" → "CBDT Notification 66/2026"
+  let m = /^Notification\s+No\.?\s*(\d+)\s*\/\s*(\d{4})\s*-?\s*(CBDT|CBIC|MCA|SEBI|RBI|DGFT)/i.exec(cleaned);
+  if (m) return `${m[3].toUpperCase()} Notification ${m[1]}/${m[2]}`;
+  // "Notification No. 6/2026: ..." → "Notification 6/2026" (only when
+  // there's no other description we surfaced earlier).
+  m = /^Notification\s+No\.?\s*(\d+)\s*\/\s*(\d{4})/i.exec(cleaned);
+  if (m) return `Notification ${m[1]}/${m[2]}`;
+  // "Circular No. 4/2026 ..." → "Circular 4/2026"
+  m = /^Circular\s+No\.?\s*(\d+)\s*\/\s*(\d{4})/i.exec(cleaned);
+  if (m) return `Circular ${m[1]}/${m[2]}`;
+  // "Order ..." / "F. No. ..." → leave as-is (rare and varied shapes)
+  return cleaned;
+}
+
 /** Fetch a PDF and ask Gemini vision for a single-line subject. Used
  *  as a last-resort enrichment for items whose API title field is
  *  just the notification identifier (no description). Returns null
@@ -672,13 +698,26 @@ function extractSubject(title: string): string {
   return stripped.charAt(0).toUpperCase() + stripped.slice(1);
 }
 
-/** CBDT titles often run 150+ chars after we strip the prefix. The
- *  welcome card has limited space; hard-cap at 90 chars with an
- *  ellipsis. */
+/** Welcome-card heading pipeline. Three stages:
+ *    1. Try to strip the notification-identifier prefix (extractSubject)
+ *       so we surface the actual subject when the source title has one.
+ *    2. If the title was bare (no subject after the identifier), clean
+ *       up the noisy file-number/SO portion to a short readable form
+ *       like "CBDT Notification 66/2026". This is the path triggered
+ *       when PDF-subject enrichment is unavailable (e.g. gov.in WAF
+ *       blocking direct PDF downloads from the deploy server).
+ *    3. Hard-cap at 90 chars.
+ *
+ *  This guarantees the welcome card ALWAYS shows readable text — even
+ *  when both the source API and the PDF-fetch enrichment fail to
+ *  provide a real subject. */
 function trimHeading(title: string): string {
-  const subject = extractSubject(title);
-  if (subject.length <= 90) return subject;
-  return subject.slice(0, 87).trimEnd() + '…';
+  let heading = extractSubject(title);
+  if (isBareIdentifierTitle(title)) {
+    heading = cleanupBareIdentifier(title);
+  }
+  if (heading.length <= 90) return heading;
+  return heading.slice(0, 87).trimEnd() + '…';
 }
 
 function isIsoDate(s: string | undefined): boolean {
