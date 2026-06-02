@@ -199,15 +199,40 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
                   or ask any question about Income Tax, GST, Deductions, or Financial Planning below.
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full text-left">
-                  {notifications.map(n => {
+                // Horizontally auto-scrolling marquee replacing the
+                // 2-column grid. The track duplicates the item list so
+                // a -50% translate loops seamlessly; speed scales with
+                // item count (~6s per card) so a longer list doesn't
+                // race past. Hovering anywhere on the strip pauses the
+                // animation so a user can read / click cards.
+                <div
+                  className="relative w-full overflow-hidden group/marquee"
+                  style={{
+                    maskImage: 'linear-gradient(to right, transparent, black 4%, black 96%, transparent)',
+                    WebkitMaskImage: 'linear-gradient(to right, transparent, black 4%, black 96%, transparent)',
+                  }}
+                >
+                  <style>{`
+                    @keyframes notif-marquee {
+                      from { transform: translateX(0); }
+                      to   { transform: translateX(-50%); }
+                    }
+                    .notif-marquee-track {
+                      animation: notif-marquee ${Math.max(30, notifications.length * 6)}s linear infinite;
+                    }
+                    .group\\/marquee:hover .notif-marquee-track {
+                      animation-play-state: paused;
+                    }
+                  `}</style>
+                  <div className="flex gap-3 w-max notif-marquee-track">
+                  {[...notifications, ...notifications].map((n, idx) => {
                     const isPending = pendingNotificationId === n.id;
                     return (
                       <button
-                        key={n.id}
+                        key={`${n.id}-${idx}`}
                         onClick={() => handleNotificationClick(n)}
                         disabled={pendingNotificationId !== null}
-                        className="p-4 bg-white dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700/50 rounded-xl text-left hover:border-emerald-400 dark:hover:border-emerald-600 hover:shadow-md transition-all group disabled:opacity-50 disabled:cursor-wait"
+                        className="shrink-0 w-72 p-4 bg-white dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700/50 rounded-xl text-left hover:border-emerald-400 dark:hover:border-emerald-600 hover:shadow-md transition-all group disabled:opacity-50 disabled:cursor-wait"
                       >
                         <div className="flex items-start gap-3">
                           <div className="w-8 h-8 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 flex items-center justify-center shrink-0 group-hover:bg-emerald-100 dark:group-hover:bg-emerald-900/30 transition-colors">
@@ -257,6 +282,7 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
                       </button>
                     );
                   })}
+                  </div>
                 </div>
               )}
             </div>
