@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Upload, FileText, Loader2, ExternalLink } from 'lucide-react';
 import { useChatManager } from '../../hooks/useChatManager';
@@ -61,6 +61,41 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
   const [notifications, setNotifications] = useState<TaxNotificationListItem[]>([]);
   const [notificationsLoading, setNotificationsLoading] = useState(true);
   const [pendingNotificationId, setPendingNotificationId] = useState<string | null>(null);
+
+  // Marquee scroll state. The ticker is a native overflow-x-auto
+  // container; a requestAnimationFrame loop ticks `scrollLeft` forward
+  // each frame to produce the auto-scroll, and pointer events let the
+  // user grab and drag the strip manually. The list is duplicated in
+  // the markup, so once `scrollLeft` crosses half the track width we
+  // reset to 0 for a seamless loop.
+  const marqueeRef = useRef<HTMLDivElement | null>(null);
+  // Refs (not state) for live drag bookkeeping — re-rendering every
+  // frame during a drag would tank performance.
+  const dragStateRef = useRef<{ dragging: boolean; startX: number; startScroll: number; hovering: boolean; movedPx: number; }>({
+    dragging: false, startX: 0, startScroll: 0, hovering: false, movedPx: 0,
+  });
+  const suppressClickRef = useRef(false);
+
+  useEffect(() => {
+    const el = marqueeRef.current;
+    if (!el || notifications.length === 0) return;
+    let raf = 0;
+    let last = performance.now();
+    const PX_PER_SEC = 30; // ~30px/s — slow enough to read mid-card
+    const tick = (now: number) => {
+      const dt = Math.min(100, now - last); // ms; clamp on tab-resume jumps
+      last = now;
+      const half = el.scrollWidth / 2;
+      if (!dragStateRef.current.dragging && !dragStateRef.current.hovering && half > 0) {
+        let next = el.scrollLeft + (PX_PER_SEC * dt) / 1000;
+        if (next >= half) next -= half;
+        el.scrollLeft = next;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [notifications.length]);
 
   useEffect(() => {
     let cancelled = false;
@@ -175,18 +210,22 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
              `min-h-full` keeps the empty / loading state balanced
              when content is short, but lets it grow naturally when
              there are many cards so all of them are scrollable. */
-          <div className="min-h-full flex flex-col items-center text-center max-w-2xl mx-auto space-y-8 py-12">
-            <div className="w-20 h-20 rounded-2xl bg-emerald-50 dark:bg-emerald-900/20 flex items-center justify-center">
-              <img src="/logoAI.png" alt="Smartbiz AI" className="w-14 h-14 object-contain" />
+          <div className="min-h-full flex flex-col items-center py-12 space-y-8">
+            <div className="flex flex-col items-center text-center max-w-2xl space-y-6">
+              <div className="w-20 h-20 rounded-2xl bg-emerald-50 dark:bg-emerald-900/20 flex items-center justify-center">
+                <img src="/logoAI.png" alt="Smartbiz AI" className="w-14 h-14 object-contain" />
+              </div>
+              <div className="space-y-3">
+                <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white">
+                  Welcome to Smartbiz AI
+                </h2>
+                <p className="text-gray-500 dark:text-gray-400 text-base sm:text-lg">
+                  Latest GST, TDS, and Income Tax notifications — click any item for a detailed explanation.
+                </p>
+              </div>
             </div>
-            <div className="space-y-3">
-              <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white">
-                Welcome to Smartbiz AI
-              </h2>
-              <p className="text-gray-500 dark:text-gray-400 text-base sm:text-lg max-w-lg mx-auto">
-                Latest GST, TDS, and Income Tax notifications — click any item for a detailed explanation.
-              </p>
-            </div>
+            {/* Marquee breaks out of the centered max-w-2xl column above
+               so the ticker spans the full chat-area width. */}
             <div className="w-full">
               {notificationsLoading ? (
                 <div className="flex items-center justify-center gap-2 py-12 text-sm text-gray-500 dark:text-gray-400">
@@ -200,71 +239,107 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
                 </div>
               ) : (
                 // Horizontally auto-scrolling marquee replacing the
-                // 2-column grid. The track duplicates the item list so
-                // a -50% translate loops seamlessly; speed scales with
-                // item count (~6s per card) so a longer list doesn't
-                // race past. Hovering anywhere on the strip pauses the
-                // animation so a user can read / click cards.
+                // 2-column grid. Uses native overflow-x scroll driven
+                // by a requestAnimationFrame loop (see marqueeRef
+                // useEffect above) so the same `scrollLeft` value
+                // accepts both auto-scroll and pointer drag — no
+                // double-source-of-truth between CSS transform and
+                // user scroll. The item list is duplicated in the
+                // markup; the rAF loop resets to 0 once scrollLeft
+                // passes half the track width, giving an infinite
+                // seamless loop. Hovering pauses auto-scroll; clicking
+                // and dragging temporarily takes over.
                 <div
-                  className="relative w-full overflow-hidden group/marquee"
+                  className="relative w-full overflow-hidden"
                   style={{
                     maskImage: 'linear-gradient(to right, transparent, black 4%, black 96%, transparent)',
                     WebkitMaskImage: 'linear-gradient(to right, transparent, black 4%, black 96%, transparent)',
                   }}
+                  onMouseEnter={() => { dragStateRef.current.hovering = true; }}
+                  onMouseLeave={() => { dragStateRef.current.hovering = false; }}
                 >
-                  <style>{`
-                    @keyframes notif-marquee {
-                      from { transform: translateX(0); }
-                      to   { transform: translateX(-50%); }
-                    }
-                    .notif-marquee-track {
-                      animation: notif-marquee ${Math.max(30, notifications.length * 6)}s linear infinite;
-                    }
-                    .group\\/marquee:hover .notif-marquee-track {
-                      animation-play-state: paused;
-                    }
-                  `}</style>
-                  <div className="flex gap-3 w-max notif-marquee-track">
+                  <div
+                    ref={marqueeRef}
+                    className="flex gap-3 overflow-x-auto scrollbar-hide select-none cursor-grab active:cursor-grabbing"
+                    style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+                    onPointerDown={e => {
+                      const el = marqueeRef.current;
+                      if (!el) return;
+                      dragStateRef.current.dragging = true;
+                      dragStateRef.current.startX = e.clientX;
+                      dragStateRef.current.startScroll = el.scrollLeft;
+                      dragStateRef.current.movedPx = 0;
+                      el.setPointerCapture(e.pointerId);
+                    }}
+                    onPointerMove={e => {
+                      if (!dragStateRef.current.dragging) return;
+                      const el = marqueeRef.current;
+                      if (!el) return;
+                      const dx = e.clientX - dragStateRef.current.startX;
+                      dragStateRef.current.movedPx = Math.max(dragStateRef.current.movedPx, Math.abs(dx));
+                      el.scrollLeft = dragStateRef.current.startScroll - dx;
+                      // Loop math when dragging past either edge.
+                      const half = el.scrollWidth / 2;
+                      if (half > 0) {
+                        if (el.scrollLeft < 0) el.scrollLeft += half;
+                        else if (el.scrollLeft >= half) el.scrollLeft -= half;
+                      }
+                    }}
+                    onPointerUp={e => {
+                      if (!dragStateRef.current.dragging) return;
+                      dragStateRef.current.dragging = false;
+                      // If the pointer travelled > 5px, suppress the
+                      // synthetic click that follows pointerup so a
+                      // drag-to-scroll gesture doesn't accidentally
+                      // open a notification.
+                      suppressClickRef.current = dragStateRef.current.movedPx > 5;
+                      try { marqueeRef.current?.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+                    }}
+                    onPointerCancel={() => { dragStateRef.current.dragging = false; }}
+                  >
                   {[...notifications, ...notifications].map((n, idx) => {
                     const isPending = pendingNotificationId === n.id;
                     return (
                       <button
                         key={`${n.id}-${idx}`}
-                        onClick={() => handleNotificationClick(n)}
+                        onClick={() => {
+                          if (suppressClickRef.current) {
+                            suppressClickRef.current = false;
+                            return;
+                          }
+                          handleNotificationClick(n);
+                        }}
                         disabled={pendingNotificationId !== null}
-                        className="shrink-0 w-72 p-4 bg-white dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700/50 rounded-xl text-left hover:border-emerald-400 dark:hover:border-emerald-600 hover:shadow-md transition-all group disabled:opacity-50 disabled:cursor-wait"
+                        className="shrink-0 w-[26rem] px-4 py-2.5 bg-white dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700/50 rounded-lg text-left hover:border-emerald-400 dark:hover:border-emerald-600 hover:shadow-md transition-all group disabled:opacity-50 disabled:cursor-wait"
                       >
-                        <div className="flex items-start gap-3">
-                          <div className="w-8 h-8 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 flex items-center justify-center shrink-0 group-hover:bg-emerald-100 dark:group-hover:bg-emerald-900/30 transition-colors">
+                        <div className="flex items-center gap-3">
+                          <div className="w-7 h-7 rounded-md bg-emerald-50 dark:bg-emerald-900/20 flex items-center justify-center shrink-0 group-hover:bg-emerald-100 dark:group-hover:bg-emerald-900/30 transition-colors">
                             {isPending ? (
-                              <Loader2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 animate-spin" />
+                              <Loader2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 animate-spin" />
                             ) : (
-                              <FileText className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                              <FileText className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
                             )}
                           </div>
-                          <div className="flex-1 min-w-0 space-y-1">
-                            <div className="flex items-center gap-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-0.5">
                               <span className={cn(
-                                'text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded',
+                                'text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded',
                                 CATEGORY_BADGE[n.category],
                               )}>
                                 {CATEGORY_LABEL[n.category]}
                               </span>
                               {n.notificationDate && (
-                                <span className="text-[11px] text-gray-500 dark:text-gray-500">
+                                <span className="text-[10px] text-gray-500 dark:text-gray-500 whitespace-nowrap">
                                   {formatNotificationDate(n.notificationDate)}
                                 </span>
                               )}
                               {n.hasDetail && (
-                                <span className="text-[10px] text-emerald-600 dark:text-emerald-400" title="Detailed explanation already cached — click for instant answer">
+                                <span className="text-[10px] text-emerald-600 dark:text-emerald-400 whitespace-nowrap" title="Detailed explanation already cached — click for instant answer">
                                   ✓ ready
                                 </span>
                               )}
                             </div>
-                            <p className="text-sm font-medium text-gray-700 dark:text-gray-300 group-hover:text-emerald-700 dark:group-hover:text-emerald-300 transition-colors line-clamp-2">{n.heading}</p>
-                            {n.summary && (
-                              <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2">{n.summary}</p>
-                            )}
+                            <p className="text-sm font-medium text-gray-700 dark:text-gray-300 group-hover:text-emerald-700 dark:group-hover:text-emerald-300 transition-colors truncate">{n.heading}</p>
                           </div>
                           {n.sourceUrl && (
                             <a
@@ -272,7 +347,7 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
                               target="_blank"
                               rel="noopener noreferrer"
                               onClick={e => e.stopPropagation()}
-                              className="text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 mt-0.5"
+                              className="text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 shrink-0"
                               title="Open source notification"
                             >
                               <ExternalLink className="w-3.5 h-3.5" />

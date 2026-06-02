@@ -203,3 +203,9 @@ input[type="number"] {
 .dark .markdown-body tr:nth-child(even) {
   background-color: rgba(17, 24, 39, 0.4);
 }
+
+/* Hide native scrollbar on the welcome-screen notification marquee.
+   The strip is driven by JS scrollLeft + drag handlers; we don't want
+   the OS scrollbar to render under the cards. */
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
