@@ -256,6 +256,34 @@ const RULES: Rule[] = [
     subcategory: 'CDM / ATM',
     direction: 'credit',
   },
+  // Broad catch-all per user direction (2026-06): "wherever the word
+  // cash or deposit appears in a narration, in any format, classify
+  // it as Cash Deposit." Direction-locked to credit because Cash
+  // Deposit is semantically an INFLOW — a debit row containing
+  // "cash" is almost always a withdrawal / cash-out, which is a
+  // different bucket and would mislead the dashboard if filed here.
+  //
+  // The specific channel-aware rules above (counter, CDM/CAM) still
+  // own precise subcategory tagging because rule order is top-down;
+  // this rule only fires when neither of them matched. Bank-charge
+  // rules earlier in the table (`cash-txn-charges`, `cash-deposit
+  // charges`) are direction-agnostic and would still fire on debit
+  // cash-deposit-CHARGE rows because they run before this catch-all.
+  //
+  // Word-boundary anchor on `cash` so a counterparty named
+  // "CASHFREE" / "Cashpoor Pvt Ltd" doesn't false-positive.
+  // `\bdeposit` (no trailing \b) also matches "deposits" / "deposited"
+  // / "depositor" — all legitimate variants of the same intent.
+  // "Deposit Insurance Corporation" (DICGC) refunds are rare on
+  // ordinary CA / SB statements; if one shows up it'll land here,
+  // which is reasonable (it IS a deposit-related credit).
+  {
+    name: 'cash-or-deposit-broad',
+    pattern: /\bcash\b|\bdeposit/i,
+    category: 'Cash Deposit',
+    subcategory: 'Other',
+    direction: 'credit',
+  },
 
   // ─── Cloud / SaaS (Business Expenses · Software) ──────────────
   // Match BEFORE the generic e-commerce / AMAZON rules so AWS doesn't
