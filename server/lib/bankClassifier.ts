@@ -336,7 +336,12 @@ const RULES: Rule[] = [
   // defaulted to "Other" in the ICICI sample.
   {
     name: 'trfr-internal',
-    pattern: /^trfr\s+(?:from|to)\s*:/i,
+    // 2026-06: not start-anchored. ICICI emits "CHEQUE 615 TRFR TO:
+    // NAKETA GOYAL" where the cheque-issue prefix sits before the
+    // TRFR token. The substring match is safe because TRFR FROM:/TO:
+    // followed by a colon is too specific to false-match on benign
+    // text. (`\b` keeps it from biting into "TRANSFR" etc.)
+    pattern: /\btrfr\s+(?:from|to)\s*:/i,
     category: 'Transfers',
     subcategory: null,
   },
@@ -584,7 +589,14 @@ const RULES: Rule[] = [
   // re-tagging is one click away if the user wants a different bucket.
   {
     name: 'transfer-wire',
-    pattern: /^(?:neft[-\s]?cr|neft[-\s]?dr|neft-[a-z]|imps[-/]|rtgs[-/]|mtfr\/|mmt\/imps\/|^trf\b)/i,
+    // 2026-06: optional "MOBILE BANKING " prefix — ICICI prefixes
+    // every IMPS/NEFT/MMT row with this when the txn was initiated
+    // via the iMobile / net-banking app. The original anchor missed
+    // all 20+ of these in the v3 ICICI sample. The prefix is the
+    // only legitimate boilerplate that appears before the wire-type
+    // token; the start-anchor still keeps narrations that merely
+    // *mention* MMT/IMPS in the middle from hijacking the rule.
+    pattern: /^(?:mobile\s+banking\s+)?(?:neft[-\s]?cr|neft[-\s]?dr|neft-[a-z]|imps[-/]|rtgs[-/]|mtfr\/|mmt\/imps\/|trf\b)/i,
     category: 'Transfers',
     subcategory: null,
   },
