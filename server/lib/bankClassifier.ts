@@ -149,7 +149,12 @@ const RULES: Rule[] = [
   // the customer). "Int.Pd:" = interest paid by bank to customer
   // (always Cr). Direction-anchored so a misformatted line doesn't
   // get filed wrong.
-  { name: 'int-collected', pattern: /int\.coll\b|loan interest|od interest/i, category: 'Bank Interest (Dr)', subcategory: 'Loan Interest', direction: 'debit' },
+  // `Int.Pd` is normally the bank PAYING interest to the customer
+  // (savings credit). But on a CC / OD / loan account the same string
+  // can appear as a DEBIT — it's the periodic interest CHARGE on the
+  // line. Detect both: debit → Bank Interest (Dr), credit handled by
+  // the `int-paid` rule below.
+  { name: 'int-collected', pattern: /int\.coll\b|int\.pd\b|loan interest|od interest/i, category: 'Bank Interest (Dr)', subcategory: 'Loan Interest', direction: 'debit' },
   // J&K Bank narrations for loan-account interest charges. "MARGIN
   // TERM LOAN" / standalone "MARGIN" / "PART PERIOD INTEREST" are all
   // periodic interest debits on a Cash Credit / Term Loan account.
@@ -257,10 +262,19 @@ const RULES: Rule[] = [
     // CAM / CDM narrations: "CAM/25271OAR/CASH DEP-Other/02-10-25/5228".
     // The "CASH DEP" segment is the tell; the CAM prefix is the
     // machine identifier (Cash Acceptor Machine).
+    //
+    // 2026-06: NOT direction-locked. ICICI CAM rows sometimes get
+    // extracted in the wrong column by vision OCR (the narration
+    // says "CASH DEP" but the row landed in the debit column). The
+    // narration is the authoritative signal — if it says CASH DEP,
+    // it WAS a deposit. The validateDirectionCategory pass will
+    // auto-flip a debit row tagged Cash Deposit to Cash Withdrawal
+    // when the row's direction column says debit, so we don't lose
+    // either way. Without this change, ~10 rows in the ICICI sample
+    // fell through to "Other".
     pattern: /\bcam\b.*\bcash\s*dep|\bcdm\b|cash\s*deposit\s*machine|cash\s*acceptor/i,
     category: 'Cash Deposit',
     subcategory: 'CDM / ATM',
-    direction: 'credit',
   },
   // Broad catch-all per user direction (2026-06): "wherever the word
   // cash or deposit appears in a narration, in any format, classify
@@ -521,6 +535,28 @@ const RULES: Rule[] = [
   { name: 'hdfc-ergo', pattern: /hdfc\s*ergo/i, category: 'Insurance', subcategory: 'Premium', direction: 'debit' },
   { name: 'icici-lombard', pattern: /icici\s*lombard/i, category: 'Insurance', subcategory: 'Premium', direction: 'debit' },
 
+  // ─── Cheque return / reject — bank-side rejection codes ──────
+  // ICICI emits bare `REJECT:` (no "charges" suffix) and `RTNCHG-`
+  // (cheque return charge) on the debit side. The earlier `rejection`
+  // rule required the word "Rejection" / "Return" with a "Charges"
+  // suffix; these spare-form variants slipped through to "Other".
+  { name: 'reject-bare', pattern: /^reject:\d+:|^rtnchg-?\d|return\s*charge/i, category: 'Bank Charges', subcategory: 'Rejection' },
+
+  // ─── ICICI BIL/INFT, BIL/NEFT — net-banking transfer prefix ──
+  // "BIL/INFT/<ref>/<NAME>" — internal funds transfer between own
+  // ICICI accounts. "BIL/NEFT/<ref>/<NAME>" — NEFT via net-banking.
+  // Both belong in Transfers. Listed BEFORE the BIL/BPAY rules
+  // because rule order is top-down and BIL/BPAY is direction-locked
+  // to a telecom merchant pattern — they don't overlap.
+  { name: 'bil-inft', pattern: /^bil\/inft\//i, category: 'Transfers', subcategory: null },
+  { name: 'bil-neft', pattern: /^bil\/neft\//i, category: 'Transfers', subcategory: null },
+
+  // ─── Cheque clearing — CLG/CHEQUE/<no>/... ────────────────────
+  // J&K Bank's cheque-clearing narration. Direction-agnostic — could
+  // be an outward cheque debit OR an inward cheque credit; either way
+  // it's a Transfers row.
+  { name: 'clg-cheque', pattern: /^clg\/(?:cheque|chq)\//i, category: 'Transfers', subcategory: null },
+
   // ─── Transfers (UPI / NEFT / IMPS / RTGS / mTFR) ──────────────
   // Generic transfer rule fires LAST in this group so all the
   // specific charge / EMI / GST / salary anchors above win first.
@@ -538,32 +574,48 @@ const RULES: Rule[] = [
   // name). The fallback path (return null → AI) handles the rest.
   // Implementation: only fire when narration is a clean transfer
   // pattern with NO business-expense markers.
+  // 2026-06: NEFT / IMPS / RTGS / MMT / TRFR are wire/branch transfers
+  // and almost always belong in Transfers regardless of counterparty.
+  // The earlier per-rule prefix did "personal vs business" gating to
+  // keep vendor payments in Business Expenses, but in practice that
+  // dropped clean transfers like `NEFT-JAKAN1...-BEING WANI PROP...`
+  // (6-word counterparty) into "Other" because the heuristic punted
+  // to AI and AI defaulted to Other. Wire transfers always = Transfers;
+  // re-tagging is one click away if the user wants a different bucket.
   {
-    name: 'transfer-personal',
-    // The pattern matches transfer prefixes; the category function
-    // applies a heuristic on the counterparty text to decide whether
-    // it's clearly personal. When it's not clear, return null and
-    // let AI take it.
-    pattern: /^(?:upi[-/]|neft[-\s]?cr|neft[-\s]?dr|imps[-/]|rtgs[-/]|mtfr\/|mmt\/imps\/|^by cash\b|^trf\b)/i,
+    name: 'transfer-wire',
+    pattern: /^(?:neft[-\s]?cr|neft[-\s]?dr|neft-[a-z]|imps[-/]|rtgs[-/]|mtfr\/|mmt\/imps\/|^trf\b)/i,
+    category: 'Transfers',
+    subcategory: null,
+  },
+  // UPI keeps the personal-vs-business heuristic since UPI to a
+  // business merchant is more often a Business Expense / Personal
+  // Shopping than a true Transfer. Only fires on UPI prefix; wire
+  // transfers above already handled NEFT/IMPS/RTGS.
+  {
+    name: 'transfer-upi-personal',
+    pattern: /^upi[-/]/i,
     category: (input) => {
-      // Only auto-classify as Transfers when the counterparty looks
-      // like a personal name / VPA. Business-looking counterparties
-      // (ALL CAPS company names, "ENTERPRISES" / "TRADERS" / "PVT
-      // LTD" suffixes) need AI judgment.
       const cp = extractCounterparty(input.narration) ?? '';
-      if (!cp) return null; // can't tell — punt to AI
-      if (/(?:enterprises|traders|pvt|ltd|llp|limited|industries|company|corporation|services|solutions|llp)\b/i.test(cp)) {
-        return null; // looks like a business — AI handles it
+      if (!cp) return null;
+      if (/(?:enterprises|traders|pvt|ltd|llp|limited|industries|company|corporation|services|solutions)\b/i.test(cp)) {
+        return null; // business-looking — punt to AI
       }
-      // VPAs (lowercase + @) are almost always personal
       if (/@(?:ok[a-z]+|paytm|ybl|axl|upi|airtel|ibl|hdfc|sbi|icici)/i.test(cp)) {
         return 'Transfers';
       }
-      // Short name (1-3 words, mostly title-case) = personal
       const words = cp.split(/\s+/).filter(Boolean);
       if (words.length <= 3) return 'Transfers';
-      return null; // ambiguous
+      return null;
     },
+    subcategory: null,
+  },
+  // "BY CASH" credit was already caught by the cash-deposit-counter
+  // rule far earlier; this catches the rare bare "BY CASH" debit lines.
+  {
+    name: 'transfer-bycash',
+    pattern: /^by cash\b/i,
+    category: 'Transfers',
     subcategory: null,
   },
 ];

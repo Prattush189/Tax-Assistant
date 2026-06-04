@@ -2359,6 +2359,23 @@ export async function deleteBankStatementCondition(id: string): Promise<void> {
   await authFetch(`/api/bank-statements/conditions/${id}`, { method: 'DELETE' });
 }
 
+/** Re-run the deterministic classifier against an already-ingested
+ *  statement. Useful after a classifier deploy: stale categories
+ *  from earlier rule versions get refreshed without re-uploading the
+ *  PDF. Rows that the user has manually re-tagged (user_override = 1)
+ *  are left alone. */
+export async function reclassifyBankStatement(id: string): Promise<{ success: boolean; scanned: number; updated: number }> {
+  return authFetch(`/api/bank-statements/${id}/reclassify`, { method: 'POST' });
+}
+
+/** Re-apply the user's current bank-statement conditions as a
+ *  post-extraction visibility filter against the stored rows. Used
+ *  when the user adds/edits/removes a condition without wanting to
+ *  re-upload. */
+export async function reapplyBankStatementConditions(id: string): Promise<{ success: boolean; hidden: number; total: number }> {
+  return authFetch(`/api/bank-statements/${id}/reapply-conditions`, { method: 'POST' });
+}
+
 // ── Ledger Scrutiny API ───────────────────────────────────────────────────
 
 export type LedgerScrutinySeverity = 'info' | 'warn' | 'high';

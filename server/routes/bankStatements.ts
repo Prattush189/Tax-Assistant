@@ -5,11 +5,12 @@ import multer, { MulterError } from 'multer';
 import Papa from 'papaparse';
 import { extractVisionWithFallback } from '../lib/visionFallback.js';
 import { getPdfPageCount, splitPdfByPages, PDF_VISION_CHUNK_THRESHOLD } from '../lib/pdfChunker.js';
+import { applyConditionsToStatement } from '../lib/bankConditionFilter.js';
 import type { GeminiJsonResult } from '../lib/geminiJson.js';
 import { callBankEnrichment } from '../lib/bankEnrichmentClient.js';
 import { getBreakerStatus } from '../lib/circuitBreaker.js';
 import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_CATEGORIES, buildConditionsBlock, countWords, MAX_CONDITION_WORDS, type BankStatementCategory } from '../lib/bankStatementPrompt.js';
-import { classifyWithLearning, extractCounterpartyAndReference, extractNarrationFingerprint, markRecurring, unifyAmbiguousCounterparties, validateDirectionCategory, applyRetailBusinessPromotion } from '../lib/bankClassifier.js';
+import { classifyWithLearning, classifyRow, extractCounterpartyAndReference, extractNarrationFingerprint, markRecurring, unifyAmbiguousCounterparties, validateDirectionCategory, applyRetailBusinessPromotion } from '../lib/bankClassifier.js';
 import { learnedClassificationsRepo } from '../db/repositories/learnedClassificationsRepo.js';
 import { lookupAiClassification, recordAiClassification } from '../lib/bankAiClassificationCache.js';
 import { extractBankMetadata } from '../lib/bankStatementMetadata.js';
@@ -768,6 +769,10 @@ function serializeTransaction(row: ReturnType<typeof bankTransactionRepo.listByS
     // fingerprint when counterparty extraction returned null. Legacy
     // rows pre-Phase-2 stay null; the UI handles both cases.
     fingerprint: row.fingerprint,
+    // 2026-06 — visibility flag set by the post-extraction condition
+    // filter. UI default: hide these rows from the main grid; surface
+    // a "Show hidden (N)" toggle.
+    hiddenByCondition: row.hidden_by_condition === 1,
   };
 }
 
@@ -980,6 +985,60 @@ router.delete('/conditions/:conditionId', (req: AuthRequest, res: Response) => {
   res.json({ success: true });
 });
 
+// POST /api/bank-statements/:id/reclassify — re-run the deterministic
+// classifier (the same anchors used at upload time) against every row
+// of this statement. Rows that the user has manually overridden
+// (user_override = 1) are left alone. Rows whose computed category
+// differs from the stored one get updated in place. Useful after a
+// classifier deploy: stale "Cash Withdrawal" tags on credit "By Cash"
+// rows get flipped to "Cash Deposit" without re-uploading the PDF.
+//
+// Direction-validator runs after the per-row classify so mistakes
+// stay self-healing (debit + Cash Deposit auto-flips to Cash
+// Withdrawal, etc., matching the upload path exactly).
+router.post('/:id/reclassify', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const stmt = bankStatementRepo.findByIdForUser(req.params.id, req.user.id);
+  if (!stmt) { res.status(404).json({ error: 'Statement not found' }); return; }
+  const result = bankTransactionRepo.reclassifyStatement(stmt.id, (row) => {
+    const r = classifyRow({
+      narration: row.narration ?? '',
+      type: row.amount >= 0 ? 'credit' : 'debit',
+      amount: Math.abs(row.amount),
+    });
+    if (!r) return null;
+    // Apply the direction-mismatch flip / demote pass to the single
+    // row by wrapping it in a one-element array (the validator
+    // mutates in place and returns a count).
+    const candidate = { type: row.amount >= 0 ? 'credit' as const : 'debit' as const, category: r.category, subcategory: r.subcategory };
+    validateDirectionCategory([candidate]);
+    return { category: candidate.category, subcategory: candidate.subcategory };
+  });
+  res.json({ success: true, ...result });
+});
+
+// POST /api/bank-statements/:id/reapply-conditions — re-run the
+// post-extraction filter against the user's CURRENT conditions list.
+// Useful after the user adds/edits/removes a condition: the stored
+// rows don't change, only their hidden_by_condition flag, so this is
+// cheap (one AI batch per 150 rows) and fully reversible.
+router.post('/:id/reapply-conditions', async (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const stmt = bankStatementRepo.findByIdForUser(req.params.id, req.user.id);
+  if (!stmt) { res.status(404).json({ error: 'Statement not found' }); return; }
+  const conditions = bankStatementConditionRepo.listByUser(req.user.id);
+  try {
+    const hidden = await applyConditionsToStatement(
+      stmt.id,
+      conditions.map((c) => ({ id: c.id, text: c.text })),
+    );
+    res.json({ success: true, hidden, total: bankTransactionRepo.listByStatement(stmt.id).length });
+  } catch (err) {
+    console.warn('[bank-statements] reapply-conditions failed:', err instanceof Error ? err.message : err);
+    res.status(500).json({ error: 'Failed to re-apply conditions' });
+  }
+});
+
 // GET /api/bank-statements/:id — detail + transactions
 router.get('/:id', (req: AuthRequest, res: Response) => {
   if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
@@ -1048,11 +1107,19 @@ router.post(
     const quota = enforceQuota(req, res);
     if (!quota.ok) return;
 
-    // Load free-form parsing conditions for this user once and prepend them to
-    // every prompt path (TSV chunks, vision, CSV). Empty string when the user
-    // has none.
+    // 2026-06: User conditions are NO LONGER prepended to the
+    // extraction or enrichment prompts. The previous architecture
+    // asked the model to "skip rows matching X" mid-extraction, which
+    // produced silently-corrupted output: the AI obeyed inconsistently
+    // (skipped some rows, kept others) AND rewrote the next row's
+    // amount to make balance reconcile (a ₹1,500 credit became ₹1,480
+    // after a ₹20 debit was skipped). Extraction must be a FAITHFUL
+    // copy of the PDF; conditions apply as a post-extraction filter
+    // against the stored rows (see `applyConditionsToStatement` below).
+    // We still LOAD the conditions here because the post-extraction
+    // pass needs them.
     const userConditions = bankStatementConditionRepo.listByUser(req.user.id);
-    const conditionsBlock = buildConditionsBlock(userConditions);
+    const conditionsBlock = ''; // empty — conditions no longer injected into prompts
 
     const isCsv = !req.file && typeof req.body?.csvText === 'string';
 
@@ -2041,6 +2108,27 @@ INPUT_ROWS — TSV, one row per line, columns narration<TAB>type<TAB>amount:
         console.error('[bank-statements] Failed to log cost:', err);
       }
 
+      // 2026-06: post-extraction filter pass. Conditions are no
+      // longer injected into the extraction prompt (the AI was
+      // corrupting amounts to keep balances reconciled across
+      // skipped rows). Instead, we now apply them deterministically
+      // against the stored, faithful rows AFTER insertion. Each
+      // matching row gets hidden_by_condition=1; the row itself stays
+      // in the table so balances reconcile and the user can toggle
+      // visibility. Failures here are non-fatal — the rows just stay
+      // visible. Done before the listByStatement call below so the
+      // returned payload already carries the hidden flag.
+      if (userConditions.length > 0) {
+        try {
+          const hiddenCount = await applyConditionsToStatement(
+            placeholder.id,
+            userConditions.map((c) => ({ id: c.id, text: c.text })),
+          );
+          console.log(`[bank-statements] post-extraction filter: ${hiddenCount} of ${txCount} rows hidden by user conditions`);
+        } catch (err) {
+          console.warn('[bank-statements] post-extraction filter failed:', err instanceof Error ? err.message : err);
+        }
+      }
       const transactions = bankTransactionRepo.listByStatement(placeholder.id).map(serializeTransaction);
       const warning = (res.locals as Record<string, unknown>).analyzerWarning as string | undefined;
       // Reconciliation banner. The vision path now derives every

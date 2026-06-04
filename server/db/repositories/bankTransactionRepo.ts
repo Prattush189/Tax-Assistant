@@ -16,6 +16,11 @@ export interface BankTransactionRow {
   user_override: number;
   sort_index: number;
   fingerprint: string | null;
+  /** 1 if a user condition flagged this row as hidden by the
+   *  post-extraction filter pass. Default 0. The row stays in the
+   *  table either way; callers filter on this flag at display /
+   *  export time. */
+  hidden_by_condition: number;
 }
 
 export interface BankTransactionInput {
@@ -77,12 +82,37 @@ const stmts = {
   deleteByStatement: db.prepare(
     'DELETE FROM bank_transactions WHERE statement_id = ?'
   ),
+  // Bulk-update the hidden_by_condition flag for one statement. Used
+  // by applyConditionsToStatement after the AI filter pass — clears
+  // every row to 0, then sets the flagged subset to 1 in one
+  // transaction so re-applying conditions is idempotent.
+  clearHidden: db.prepare(
+    'UPDATE bank_transactions SET hidden_by_condition = 0 WHERE statement_id = ?'
+  ),
+  setHidden: db.prepare(
+    'UPDATE bank_transactions SET hidden_by_condition = 1 WHERE id = ? AND statement_id = ?'
+  ),
+  countHidden: db.prepare(
+    'SELECT COUNT(*) AS n FROM bank_transactions WHERE statement_id = ? AND hidden_by_condition = 1'
+  ),
   // updateCategory scopes by statement_id joined to user_id — callers pass both
   updateCategory: db.prepare(
     `UPDATE bank_transactions
         SET category = ?, subcategory = ?, user_override = 1
       WHERE id = ?
         AND statement_id IN (SELECT id FROM bank_statements WHERE id = ? AND user_id = ?)`
+  ),
+  // Re-classify path: overwrite category/subcategory for a row WITHOUT
+  // setting user_override. Used by POST /:id/reclassify so previously
+  // mis-tagged rows from older classifier deploys can be corrected
+  // without nuking the user's manual overrides (which we skip — see
+  // the WHERE user_override = 0 guard).
+  reclassifyRow: db.prepare(
+    `UPDATE bank_transactions
+        SET category = ?, subcategory = ?
+      WHERE id = ?
+        AND statement_id = ?
+        AND user_override = 0`
   ),
 };
 
@@ -156,5 +186,53 @@ export const bankTransactionRepo = {
   hasPriorStatementForBillingUser(billingUserId: string, excludeStatementId: string): boolean {
     const row = stmts.hasPriorStatement.get(billingUserId, excludeStatementId) as { has_prior: number };
     return row.has_prior === 1;
+  },
+
+  /**
+   * Re-apply the user's conditions: clear every row's hidden flag,
+   * then set the flag on the ids the AI filter returned. Wrapped in
+   * a single transaction so a partial failure rolls back cleanly.
+   */
+  replaceHiddenSet(statementId: string, hiddenIds: string[]): void {
+    const apply = db.transaction(() => {
+      stmts.clearHidden.run(statementId);
+      for (const id of hiddenIds) stmts.setHidden.run(id, statementId);
+    });
+    apply();
+  },
+
+  countHidden(statementId: string): number {
+    const row = stmts.countHidden.get(statementId) as { n: number };
+    return row.n;
+  },
+
+  /**
+   * Re-classify every non-user-override row of one statement using
+   * the caller-supplied classifier callback. Returns counts of rows
+   * scanned / updated. Wrapped in a transaction so a mid-flight crash
+   * leaves the DB in a consistent state.
+   *
+   * `classify` is passed in (not imported) so this repo keeps zero
+   * runtime dependency on the classifier module — keeps the dep graph
+   * pointing one way (route → repo → db).
+   */
+  reclassifyStatement(
+    statementId: string,
+    classify: (row: BankTransactionRow) => { category: string; subcategory: string | null } | null,
+  ): { scanned: number; updated: number } {
+    const rows = stmts.listByStatement.all(statementId) as BankTransactionRow[];
+    let updated = 0;
+    const apply = db.transaction(() => {
+      for (const r of rows) {
+        if (r.user_override === 1) continue;
+        const result = classify(r);
+        if (!result) continue;
+        if (result.category === r.category && result.subcategory === r.subcategory) continue;
+        stmts.reclassifyRow.run(result.category, result.subcategory, r.id, statementId);
+        updated++;
+      }
+    });
+    apply();
+    return { scanned: rows.length, updated };
   },
 };

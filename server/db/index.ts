@@ -695,6 +695,14 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_obs_account_id ON ledger_observat
     // fingerprint lets the planner scan only matching rows.
     db.exec("CREATE INDEX IF NOT EXISTS idx_bank_tx_fingerprint ON bank_transactions(fingerprint, statement_id)");
   }
+  // 2026-06: `hidden_by_condition` flag — set to 1 by the
+  // post-extraction filter pass when a row matches one of the user's
+  // free-form bank-statement conditions ("ignore UPI under 500", etc.).
+  // Default 0; the row stays in the table either way so source-of-
+  // truth extraction is uncorrupted and toggling visibility is cheap.
+  if (!txCols.includes('hidden_by_condition')) {
+    db.exec("ALTER TABLE bank_transactions ADD COLUMN hidden_by_condition INTEGER NOT NULL DEFAULT 0");
+  }
 }
 
 // Add model + search tracking columns to api_usage
