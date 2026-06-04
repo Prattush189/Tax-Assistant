@@ -21,13 +21,26 @@
 import { PDFDocument } from 'pdf-lib';
 
 /**
- * Threshold and chunk size are tuned for the worst real-world case
- * (ICICI savings accounts that pack ~25-30 rows per page on a 4-column
- * layout). Splitting at 30 pages × 30 rows ≈ 900 rows → ~45K output
- * tokens per chunk, well below the 64K cap.
+ * Threshold and chunk size are tuned for what Gemini 2.5 Flash-Lite
+ * RELIABLY parses without truncation, not just what fits under the
+ * raw 64K output cap. 2.5 emits malformed JSON well before it hits
+ * MAX_TOKENS — production log on 2026-06-04 showed "Failed to parse
+ * AI response" on a 21-page ICICI dump that should have fit (~400
+ * rows × 50 tokens ≈ 20K output tokens). The model's structured-
+ * output reliability degrades long before the hard token limit.
+ *
+ * Tightening to 10-page chunks (~250 rows ≈ 12K output tokens)
+ * keeps 2.5 well inside its reliable parsing window. Cost impact is
+ * minimal — each chunk pays the prompt-cache hit on the static
+ * STATIC_PREFIX, and 2.5 at $0.10/$0.40 per 1M is 3.75× cheaper than
+ * 3.1 fallback. Proactively splitting means every chunk attempts 2.5
+ * first; only the rare hard chunk pays the 3.1 premium.
+ *
+ * Threshold of 12 pages means single-call still wins on small
+ * statements (5-10 pages — typical SB/CA) where there's no parse risk.
  */
-export const PDF_VISION_CHUNK_PAGES = 30;
-export const PDF_VISION_CHUNK_THRESHOLD = 40;
+export const PDF_VISION_CHUNK_PAGES = 10;
+export const PDF_VISION_CHUNK_THRESHOLD = 12;
 
 /**
  * Count the number of pages in a PDF buffer. Wraps pdf-lib's load +
