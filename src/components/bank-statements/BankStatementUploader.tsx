@@ -543,7 +543,7 @@ export function BankStatementUploader({ manager }: Props) {
           />
         ) : (
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-            PDF up to 10 MB — or a CSV / Excel export from your bank
+            PDF up to 25 MB — or a CSV / Excel export from your bank
           </p>
         )}
       </div>

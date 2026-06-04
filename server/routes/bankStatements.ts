@@ -40,7 +40,7 @@ const ALLOWED_MIME_TYPES = [
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+  limits: { fileSize: 25 * 1024 * 1024 }, // 25 MB
   fileFilter: (_req, file, cb) => {
     if ((ALLOWED_MIME_TYPES as readonly string[]).includes(file.mimetype)) {
       cb(null, true);
