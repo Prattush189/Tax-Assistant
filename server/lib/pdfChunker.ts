@@ -21,26 +21,34 @@
 import { PDFDocument } from 'pdf-lib';
 
 /**
- * Threshold and chunk size are tuned for what Gemini 2.5 Flash-Lite
- * RELIABLY parses without truncation, not just what fits under the
- * raw 64K output cap. 2.5 emits malformed JSON well before it hits
- * MAX_TOKENS — production log on 2026-06-04 showed "Failed to parse
- * AI response" on a 21-page ICICI dump that should have fit (~400
- * rows × 50 tokens ≈ 20K output tokens). The model's structured-
- * output reliability degrades long before the hard token limit.
+ * 2026-06: rolled BACK aggressive chunking after empirical evidence
+ * that smaller chunks made extraction WORSE on the user's 21-page
+ * ICICI statement:
  *
- * Tightening to 10-page chunks (~250 rows ≈ 12K output tokens)
- * keeps 2.5 well inside its reliable parsing window. Cost impact is
- * minimal — each chunk pays the prompt-cache hit on the static
- * STATIC_PREFIX, and 2.5 at $0.10/$0.40 per 1M is 3.75× cheaper than
- * 3.1 fallback. Proactively splitting means every chunk attempts 2.5
- * first; only the rare hard chunk pays the 3.1 premium.
+ *   v3 (single-pass, 21 pages)  → 363 rows, closing matched PDF cover
+ *   v5 (chunked at 10 pages)    → 268 rows, closing off by ₹10.81
  *
- * Threshold of 12 pages means single-call still wins on small
- * statements (5-10 pages — typical SB/CA) where there's no parse risk.
+ * Each chunk reconciles within itself (balance continuity passes),
+ * but the union is missing rows. The hypothesis: when the model only
+ * sees a 7-10 page slice, it produces fewer rows per page than when
+ * it sees the full statement (less context, harder to anchor row
+ * detection against opening/closing balances printed on cover).
+ *
+ * New strategy (simplest possible):
+ *   - Threshold 50 pages: anything ≤ 50 goes through single-pass.
+ *     A typical 25-row-per-page dense statement → 1,250 rows → ~62K
+ *     output tokens, right at the 64K cap. 50 is the largest pdf
+ *     size that fits in one 3.1 Flash-Lite call without truncation.
+ *   - Chunk size 30 pages: when we DO chunk (>50 page PDFs), each
+ *     chunk has enough cross-row context that the under-extraction
+ *     pattern doesn't trigger.
+ *
+ * This matches the v3 extraction shape that actually reconciled to
+ * the bank's printed closing balance, and keeps the rare >50-page
+ * case from blowing past the output cap.
  */
-export const PDF_VISION_CHUNK_PAGES = 10;
-export const PDF_VISION_CHUNK_THRESHOLD = 12;
+export const PDF_VISION_CHUNK_PAGES = 30;
+export const PDF_VISION_CHUNK_THRESHOLD = 50;
 
 /**
  * Count the number of pages in a PDF buffer. Wraps pdf-lib's load +

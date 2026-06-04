@@ -1,34 +1,38 @@
 /**
- * Two-tier vision extractor.
+ * Single-tier vision extractor — Gemini 3.1 Flash-Lite Preview only.
  *
- *   Primary  : Gemini 2.5 Flash-Lite — cheapest in the line-up
- *              ($0.10 in / $0.40 out per 1M). Handles most Indian
- *              bank/ledger PDFs cleanly.
- *   Fallback : Gemini 3.1 Flash-Lite Preview — different family
- *              ($0.25 in / $1.50 out, 2.5×/3.75× pricier). Rescues
- *              what 2.5 can't parse (dense / image-only / 20+ page
- *              ICICI-style PDFs).
+ * 2026-06: removed the 2.5 Flash-Lite primary tier. Production
+ * telemetry across June showed 2.5 was failing on virtually every
+ * dense Indian bank statement (parse errors, missed rows, MAX_TOKENS
+ * truncation), and every failure burned the 2.5 call BEFORE the 3.1
+ * fallback ran. Net token cost ended up HIGHER than calling 3.1
+ * directly, while extraction quality regressed (each new run dropped
+ * more rows than the last on the user's ICICI statement: 450 → 363 →
+ * 268 across versions). User direction: "simplest solution, least
+ * tokens, 2.5 keeps failing."
  *
- * Order flipped 2026-05 (was T1 → T2). Vision was the only path in
- * the codebase that called T1 first, costing ~3× per upload across
- * every statement even though T2 succeeds on the vast majority. The
- * `looksValid` callback (empty-array detector at the caller) plus the
- * MAX_TOKENS / parse-error fallback below catch the dense-PDF cases
- * that originally motivated T1-first and route them to T1 transparently.
+ * 3.1 Flash-Lite Preview at $0.25 in / $1.50 out per 1M is pricier
+ * per-token than 2.5 but reliably succeeds in one shot — no wasted
+ * primary call, no fallback overhead, no chunk-stitching drift. The
+ * function name and signature stay so callers don't change.
+ *
+ * The `looksValid` and `onFallback` options are preserved for source
+ * compatibility but `onFallback` is now never invoked.
  */
 
 import { extractGeminiVision } from './geminiVision.js';
-import { GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2 } from './gemini.js';
+import { GEMINI_CHAT_MODEL_T1 } from './gemini.js';
 import type { GeminiJsonResult, GeminiJsonOptions } from './geminiJson.js';
 
 export interface VisionFallbackOptions {
   maxTokens?: number;
   recordAttempt?: GeminiJsonOptions['recordAttempt'];
-  /** Fires once when the call drops from primary to fallback. */
+  /** Preserved for source compat with old call-sites. Never fires now
+   *  that there's no tier-1 → tier-2 fallback (only one tier). */
   onFallback?: (input: { from: string; to: string }) => void;
-  /** Optional sanity check on the parse — if returns false, treat as
-   *  failed and try fallback. Useful when a model returns syntactically-
-   *  valid JSON with empty arrays. */
+  /** Optional sanity check on the parse. With a single tier, a false
+   *  return now bubbles up as an error to the caller — there is no
+   *  fallback to try. */
   looksValid?: (data: unknown) => boolean;
 }
 
@@ -38,28 +42,13 @@ export async function extractVisionWithFallback<T = unknown>(
   prompt: string,
   opts: VisionFallbackOptions = {},
 ): Promise<GeminiJsonResult<T>> {
-  // Tier 1: Gemini 2.5 Flash-Lite (cheap primary).
-  try {
-    const result = await extractGeminiVision<T>(buffer, mimeType, prompt, {
-      maxTokens: opts.maxTokens,
-      recordAttempt: opts.recordAttempt,
-      model: GEMINI_CHAT_MODEL_T2,
-    });
-    if (opts.looksValid && !opts.looksValid(result.data)) {
-      // Internal — caller catches this and falls through to tier 2.
-      throw new Error('Primary vision parse passed schema but looksValid returned false');
-    }
-    return result;
-  } catch (err) {
-    console.warn('[visionFallback] 2.5 Flash-Lite failed, falling back to 3.1:', (err as Error).message?.slice(0, 200));
-    try { opts.onFallback?.({ from: GEMINI_CHAT_MODEL_T2, to: GEMINI_CHAT_MODEL_T1 }); }
-    catch (e) { console.warn('[visionFallback] onFallback hook threw:', (e as Error).message); }
-  }
-
-  // Tier 2: Gemini 3.1 Flash-Lite Preview (pricier rescue tier).
-  return extractGeminiVision<T>(buffer, mimeType, prompt, {
+  const result = await extractGeminiVision<T>(buffer, mimeType, prompt, {
     maxTokens: opts.maxTokens,
     recordAttempt: opts.recordAttempt,
     model: GEMINI_CHAT_MODEL_T1,
   });
+  if (opts.looksValid && !opts.looksValid(result.data)) {
+    throw new Error('Vision parse passed schema but looksValid returned false');
+  }
+  return result;
 }
