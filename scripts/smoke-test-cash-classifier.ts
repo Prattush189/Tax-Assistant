@@ -29,14 +29,33 @@ const cases: Case[] = [
   { narration: 'CAM/25271OAR/CASH DEP-Other/02-10-25/5228', type: 'credit', expectCategory: 'Cash Deposit', expectSubcategory: 'CDM / ATM' },
   { narration: 'CDM deposit at branch',                     type: 'credit', expectCategory: 'Cash Deposit', expectSubcategory: 'CDM / ATM' },
 
-  // Negative cases — these MUST NOT classify as Cash Deposit:
-  // Debit-direction cash withdrawals should fall through (not match this rule).
-  { narration: 'CASH PAID:SELF 3476 DELHI', type: 'debit', expectNullClassification: true },
-  { narration: 'CASH WDL/14-06-25',         type: 'debit', expectNullClassification: true },
+  // Cash withdrawal rules (2026-06): debit-direction cash rows now have
+  // their own Cash Withdrawal category instead of falling through to AI.
+  { narration: 'CASH PAID:SELF 3476 DELHI',                  type: 'debit',  expectCategory: 'Cash Withdrawal', expectSubcategory: 'Counter' },
+  { narration: 'CASH WDL/14-06-25',                          type: 'debit',  expectCategory: 'Cash Withdrawal', expectSubcategory: 'ATM / CDM' },
+  { narration: 'CAM/34761HRY/CASH WDL/11-04-25',             type: 'debit',  expectCategory: 'Cash Withdrawal', expectSubcategory: 'ATM / CDM' },
   // Cash-deposit-CHARGES (counter fee) is Bank Charges, not Cash Deposit.
   // Existing rule handles this, but verify the new rule doesn't grab it.
-  { narration: 'Cash Deposit Charges',      type: 'debit', expectCategory: 'Bank Charges', expectSubcategory: 'Cash Txn' },
-  { narration: 'CashDep Chgs',              type: 'debit', expectCategory: 'Bank Charges', expectSubcategory: 'Cash Txn' },
+  { narration: 'Cash Deposit Charges',                       type: 'debit',  expectCategory: 'Bank Charges', expectSubcategory: 'Cash Txn' },
+  { narration: 'CashDep Chgs',                               type: 'debit',  expectCategory: 'Bank Charges', expectSubcategory: 'Cash Txn' },
+  // 2026-06: spaceless ICICI / HDFC charge labels — these previously
+  // missed the cash-txn-charges regex because it required spaces.
+  { narration: 'CashTxnChgs-Branch-Dec25+GST',               type: 'debit',  expectCategory: 'Bank Charges', expectSubcategory: 'Cash Txn' },
+  { narration: 'CashDepChgs',                                type: 'debit',  expectCategory: 'Bank Charges', expectSubcategory: 'Cash Txn' },
+
+  // ICICI 5-segment UPI format — `transfer-personal` rule should fire
+  // via the new `upi-icici-2nd-seg` counterparty pattern. Counterparty
+  // is a personal-looking VPA local-part or short name → Transfers.
+  { narration: 'UPI/ahlamfarooq36-2/UPI/AXIS BANK/545722638994/ICI7357b1518bc44a999604e46e3810a83c/', type: 'debit',  expectCategory: 'Transfers' },
+  { narration: 'UPI/iddyakhan713@ok/UPI/Jammu and Kashm/509377881329/ICI14da96dd17f943d0ba5ca296c6daadcf/', type: 'debit',  expectCategory: 'Transfers' },
+  { narration: 'UPI/MOHSIN NAY/wanimohsin161@U/UPI/Jammu and/605845207468/IClc3256395aa8413f809488902fe5db5c/', type: 'credit', expectCategory: 'Transfers' },
+
+  // TRFR FROM:/TO: internal transfer rule (J&K / ICICI).
+  { narration: 'TRFR FROM:THE WANI FOOTWEAR',                type: 'credit', expectCategory: 'Transfers' },
+  { narration: 'TRFR TO:PARTY NAME LTD',                     type: 'debit',  expectCategory: 'Transfers' },
+
+  // MMT/IMPS — ICICI's IMPS prefix.
+  { narration: 'MMT/IMPS/509523467771/irham shaf/JAKA0HKADAL', type: 'debit', expectCategory: 'Transfers' },
 ];
 
 let passed = 0;

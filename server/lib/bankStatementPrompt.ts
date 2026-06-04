@@ -46,6 +46,7 @@ export const BANK_STATEMENT_CATEGORIES = [
   'Personal',
   'Transfers',
   'Cash Deposit',
+  'Cash Withdrawal',
   'Investments',
   'Loan EMI',
   'Taxes Paid',
@@ -100,6 +101,12 @@ export const BANK_STATEMENT_SUBCATEGORIES: Record<BankStatementCategory, string[
   // an AI-judged category). Subcategories let the dashboard split
   // counter vs machine deposits if the user wants.
   'Cash Deposit': ['Counter', 'CDM / ATM', 'Cheque', 'Other'],
+  // Cash Withdrawal mirrors Cash Deposit on the outflow side: counter
+  // withdrawals ("CASH PAID:Self", "BY CASH" debit), ATM/CDM cash
+  // withdrawals ("CAM/.../CASH WDL", "ATM WDL"), and self-cheque
+  // withdrawals. Added 2026-06 after the ICICI sample showed large
+  // ₹50k withdrawals defaulting to "Other".
+  'Cash Withdrawal': ['Counter', 'ATM / CDM', 'Cheque', 'Other'],
   Investments: ['SIP', 'MF', 'Stocks', 'FD'],
   'Loan EMI': ['Home', 'Car', 'Business', 'Personal'],
   'Taxes Paid': ['Advance Tax', 'Self Assessment'],

@@ -4,6 +4,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
 import Papa from 'papaparse';
 import { extractVisionWithFallback } from '../lib/visionFallback.js';
+import { getPdfPageCount, splitPdfByPages, PDF_VISION_CHUNK_THRESHOLD } from '../lib/pdfChunker.js';
 import type { GeminiJsonResult } from '../lib/geminiJson.js';
 import { callBankEnrichment } from '../lib/bankEnrichmentClient.js';
 import { getBreakerStatus } from '../lib/circuitBreaker.js';
@@ -1187,6 +1188,61 @@ router.post(
         // same helper since they're inherently single-page.
         const fullPrompt = `${conditionsBlock}${BANK_STATEMENT_PROMPT}`;
         {
+          // 2026-06: For PDFs above PDF_VISION_CHUNK_THRESHOLD pages
+          // (default 40), split into page-range chunks before vision.
+          // Single-pass extraction blows past Gemini's 64K output cap
+          // on dense >100-page statements (154-page ICICI dump was the
+          // trigger). Each chunk fits cleanly under the cap; we merge
+          // the per-chunk transaction arrays into one ExtractedStatement.
+          // Non-PDF uploads (image/jpeg, etc.) skip chunking and use
+          // the original single-call path.
+          let pdfPageCount: number | null = null;
+          if (mimeType === 'application/pdf') {
+            pdfPageCount = await getPdfPageCount(req.file.buffer);
+          }
+          const shouldChunk = pdfPageCount !== null && pdfPageCount > PDF_VISION_CHUNK_THRESHOLD;
+          if (shouldChunk) {
+            console.log(`[bank-statements] ${pdfPageCount}-page PDF exceeds chunk threshold (${PDF_VISION_CHUNK_THRESHOLD}); splitting`);
+            const chunks = await splitPdfByPages(req.file.buffer);
+            console.log(`[bank-statements] split into ${chunks.length} chunk(s)`);
+            const allTransactions: ExtractedStatement['transactions'] = [];
+            let mergedHead: ExtractedStatement | null = null;
+            let totalInputTokens = 0;
+            let totalOutputTokens = 0;
+            let modelUsedLast = '';
+            for (let i = 0; i < chunks.length; i++) {
+              const c = chunks[i]!;
+              const chunkResult = await extractVisionWithFallback<ExtractedStatement>(
+                c.buffer,
+                mimeType,
+                fullPrompt,
+                {
+                  maxTokens: 65_536,
+                  looksValid: (data) => {
+                    const txns = (data as { transactions?: unknown })?.transactions;
+                    return Array.isArray(txns) && txns.length > 0;
+                  },
+                },
+              );
+              totalInputTokens += chunkResult.inputTokens;
+              totalOutputTokens += chunkResult.outputTokens;
+              modelUsedLast = chunkResult.modelUsed;
+              if (i === 0) mergedHead = chunkResult.data;
+              if (Array.isArray(chunkResult.data?.transactions)) {
+                allTransactions.push(...chunkResult.data.transactions);
+              }
+              console.log(`[bank-statements] chunk ${i + 1}/${chunks.length} (pages ${c.startPage}-${c.endPage}): ${chunkResult.data?.transactions?.length ?? 0} rows`);
+            }
+            extracted = {
+              ...(mergedHead ?? {} as ExtractedStatement),
+              transactions: allTransactions,
+            };
+            (res.locals as Record<string, unknown>).geminiUsages = [{
+              inputTokens: totalInputTokens,
+              outputTokens: totalOutputTokens,
+              modelUsed: modelUsedLast,
+            }];
+          } else {
           const visionResult = await extractVisionWithFallback<ExtractedStatement>(
             req.file.buffer,
             mimeType,
@@ -1215,24 +1271,23 @@ router.post(
             },
           );
           extracted = visionResult.data;
-          // Defence in depth: if BOTH tiers returned an empty
-          // transactions array, we'd silently persist a blank
-          // statement. Treat that as an extraction failure so the
-          // UI shows a useful error instead of a 0-row table the
-          // user has to puzzle over. The caller already handles
-          // errors with retry / "split the PDF" guidance.
-          if (!extracted || !Array.isArray(extracted.transactions) || extracted.transactions.length === 0) {
-            console.warn(`[bank-statements] vision returned 0 transactions for ${filename} (${req.file.size} bytes, mime=${mimeType}). Both tiers ran. Likely too large/dense — recommend the text path or splitting the PDF.`);
-            res.status(422).json({
-              error: 'AI vision could not extract any transactions from this PDF. The file may be too large or dense for vision OCR — try the column-mapping flow (the PDF has selectable text) or split it into smaller chunks.',
-            });
-            return;
-          }
           (res.locals as Record<string, unknown>).geminiUsages = [{
             inputTokens: visionResult.inputTokens,
             outputTokens: visionResult.outputTokens,
             modelUsed: visionResult.modelUsed,
           }];
+          } // end else (single-call vision path)
+          // Both branches converge here: chunked merge OR single-call
+          // result have populated `extracted` with the unified
+          // ExtractedStatement shape and geminiUsages telemetry.
+          // The "0 transactions" defence below covers BOTH paths.
+          if (!extracted || !Array.isArray(extracted.transactions) || extracted.transactions.length === 0) {
+            console.warn(`[bank-statements] vision returned 0 transactions for ${filename} (${req.file.size} bytes, mime=${mimeType}). Likely too large/dense — recommend the text path or splitting the PDF.`);
+            res.status(422).json({
+              error: 'AI vision could not extract any transactions from this PDF. The file may be too large or dense for vision OCR — try the column-mapping flow (the PDF has selectable text) or split it into smaller chunks.',
+            });
+            return;
+          }
           // Vision returns SLIM rows: { date, narration, type, balance }
           // only. The categorization fields (category / subcategory /
           // counterparty / reference) are emitted by the server-side
@@ -1515,7 +1570,12 @@ router.post(
 Rules:
 - The array MUST be the same length and order as INPUT_ROWS. No skipping, no reordering.
 - category ∈ {${BANK_STATEMENT_CATEGORIES.map(c => `"${c}"`).join(',')}}.
+- DIRECTION DISCIPLINE (CRITICAL — wrong direction = wrong answer):
+   * type="credit" rows can ONLY be: Business Income, Salary, Rent Received, Interest Income, Bank Interest (Cr), Dividends, Cash Deposit, Transfers, Personal, Other.
+   * type="debit" rows can ONLY be: Business Expenses, Cash Withdrawal, Loan EMI, Bank Charges, Bank Interest (Dr), GST Payments, TDS, Taxes Paid, Investments, Insurance, Mobile Charges, Electricity Charges, Water Charges, Transfers, Personal, Other.
+   * NEVER tag a debit row as "Cash Deposit" or "Business Income". NEVER tag a credit row as "Cash Withdrawal" or "Business Expenses". The type column tells you the direction — read it first.
 - Upstream already handled bank charges, EMI, salary, GST, TDS, and well-known merchants. You see only UPI/NEFT/IMPS/RTGS to ambiguous counterparties, cheques, cash, local POS.
+- Any narration containing "cash" or "deposit" in any form → credit rows go to "Cash Deposit" (subcategory "Other"); debit rows go to "Cash Withdrawal" (subcategory "Other").
 - ENTERPRISES/TRADERS/PVT LTD/LIMITED/LLP/15-digit GSTIN → "Business Expenses" (debit) / "Business Income" (credit).
 - Clear personal name OR grocery/local-shop pattern → "Personal" with subcategory "Shopping".
 - Genuinely ambiguous → "Other" with null subcategory.
@@ -2202,8 +2262,15 @@ router.get('/:id/export.csv', (req: AuthRequest, res: Response) => {
       t.counterparty ?? '',
       t.reference ?? '',
       t.amount >= 0 ? 'Credit' : 'Debit',
-      Math.abs(t.amount),
-      t.balance ?? '',
+      // Round to paise — raw floats leak precision noise like
+      // 349.99999999999955 / 200.00000000000006 into the export
+      // when amount = (balance - prev_balance) on a liability /
+      // CC-style account where the running balance is computed in
+      // float. Math.round(x * 100) / 100 caps at 2 dp without
+      // turning the number into a string (Papa.unparse handles
+      // numeric formatting itself).
+      Math.round(Math.abs(t.amount) * 100) / 100,
+      t.balance == null ? '' : Math.round(t.balance * 100) / 100,
       t.category,
       t.subcategory ?? '',
       t.is_recurring ? 'Yes' : 'No',

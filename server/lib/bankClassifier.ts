@@ -107,7 +107,13 @@ const RULES: Rule[] = [
   // Cash transaction charges (separate from cash deposit/withdrawal
   // counter ops themselves — those are Transfers if recorded as
   // credit/debit lines).
-  { name: 'cash-txn-charges', pattern: /cash deposit charges|cashdep chgs|cash txn chgs/i, category: 'Bank Charges', subcategory: 'Cash Txn' },
+  //
+  // 2026-06 update: ICICI / HDFC frequently emit these labels with NO
+  // spaces ("CashTxnChgs-Branch-Dec25+GST", "CashDepChgs", "CashChgs").
+  // The original space-separated patterns missed every one of them in
+  // the user's ICICI sample. Both forms — spaced and spaceless — now
+  // share a single regex group via `\s*` between tokens.
+  { name: 'cash-txn-charges', pattern: /cash\s*deposit\s*charges|cash\s*dep\s*chgs|cash\s*txn\s*chgs|cash\s*chgs/i, category: 'Bank Charges', subcategory: 'Cash Txn' },
 
   // POS / SoundBox rentals (recurring fixed fees)
   { name: 'pos-rental', pattern: /pos rental/i, category: 'Bank Charges', subcategory: 'POS Rental' },
@@ -283,6 +289,42 @@ const RULES: Rule[] = [
     category: 'Cash Deposit',
     subcategory: 'Other',
     direction: 'credit',
+  },
+
+  // ─── Cash Withdrawal (debit side, mirror of Cash Deposit) ─────
+  // ATM / CDM cash withdrawal narrations: "CAM/34761HRY/CASH WDL/...",
+  // "ATM WDL", "ATM CASH WITHDRAWAL". CAM = Cash Acceptor Machine but
+  // ICICI also routes WDL (withdrawal) lines through the same CAM
+  // prefix, so the WDL token is the tell.
+  {
+    name: 'cash-withdrawal-atm-cdm',
+    pattern: /\bcam\b.*\bcash\s*wdl|\batm\b.*\bcash\s*(?:wdl|withdrawal)|cash\s*wdl|cash\s*withdrawal/i,
+    category: 'Cash Withdrawal',
+    subcategory: 'ATM / CDM',
+    direction: 'debit',
+  },
+  // Counter / self-cheque cash withdrawals: "CASH PAID:Self 3476 DELHI",
+  // "CASH PAID-SELF", "BY CASH" (debit). Direction-locked so a credit
+  // "BY CASH" still falls to the Cash Deposit counter rule above.
+  {
+    name: 'cash-withdrawal-counter',
+    pattern: /^cash\s*paid\b|cash\s*paid\s*[:\-]\s*self|self\s*cheque|self\s*chq|^by\s+cash\b/i,
+    category: 'Cash Withdrawal',
+    subcategory: 'Counter',
+    direction: 'debit',
+  },
+
+  // ─── TRFR FROM: / TRFR TO: (J&K Bank-style internal transfer) ──
+  // "TRFR FROM:THE WANI FOOTWEAR" / "TRFR TO:PARTY NAME". Direction-
+  // agnostic: the type column says credit/debit and the rule simply
+  // tags it as Transfers — counterparty is extracted from the segment
+  // after the colon. Without this rule a clean ₹1,00,000 transfer-in
+  // defaulted to "Other" in the ICICI sample.
+  {
+    name: 'trfr-internal',
+    pattern: /^trfr\s+(?:from|to)\s*:/i,
+    category: 'Transfers',
+    subcategory: null,
   },
 
   // ─── Cloud / SaaS (Business Expenses · Software) ──────────────
@@ -502,7 +544,7 @@ const RULES: Rule[] = [
     // applies a heuristic on the counterparty text to decide whether
     // it's clearly personal. When it's not clear, return null and
     // let AI take it.
-    pattern: /^(?:upi[-/]|neft[-\s]?cr|neft[-\s]?dr|imps[-/]|rtgs[-/]|mtfr\/|^by cash\b|^trf\b)/i,
+    pattern: /^(?:upi[-/]|neft[-\s]?cr|neft[-\s]?dr|imps[-/]|rtgs[-/]|mtfr\/|mmt\/imps\/|^by cash\b|^trf\b)/i,
     category: (input) => {
       // Only auto-classify as Transfers when the counterparty looks
       // like a personal name / VPA. Business-looking counterparties
@@ -538,6 +580,26 @@ const COUNTERPARTY_PATTERNS: Array<{ name: string; pattern: RegExp; group: numbe
   { name: 'upi-vpa', pattern: /upi\/\w+\/[^/]*\/([\w.\-]+@[\w]+)/i, group: 1 },
   { name: 'upi-vpa-from', pattern: /\bfrom:\s*([\w.\-]+@[\w]+)/i, group: 1 },
   { name: 'upi-vpa-to', pattern: /\bto:\s*([\w.\-]+@[\w]+)/i, group: 1 },
+
+  // ICICI 5-segment UPI format:
+  //   UPI/<vpa-or-name>/<remark>/<BANK>/<RRN>/<icici-internal-ref>
+  // The 2nd segment is the counterparty — it's either a VPA local-part
+  // (no @, e.g. "ahlamfarooq36-2") or a NAME ("MOHSIN NAY"). Anchored
+  // to "upi/" prefix and a digit-only RRN (10+ digits) in the 5th
+  // segment so the pattern doesn't false-positive on older 4-segment
+  // formats handled by `upi-name` below. Added 2026-06 after the
+  // ICICI sample showed ~half of all rows falling through to "Other"
+  // because the original `upi-vpa` pattern looked for "@" in the 4th
+  // segment (which on ICICI is the RRN, not the VPA).
+  // 2nd segment is the counterparty: a VPA local-part ("iddyakhan713@ok"),
+  // a bare name with possible spaces ("MOHSIN NAY"), or a VPA-prefix
+  // ("ahlamfarooq36-2"). Captured as anything-but-slash up to 60 chars.
+  // The RRN-anchor (`\d{10,}` somewhere later in the string) keeps us
+  // honest — it ensures we only fire on real ICICI-style UPI rows, not
+  // on a stray "UPI/Hi/..." comment.
+  { name: 'upi-icici-2nd-seg', pattern: /^upi\/([^/]{2,60})\/[\s\S]*?\d{10,}/i, group: 1 },
+
+  // 4-segment format with a leading numeric ref: "UPI/123456/<note>/<NAME>"
   { name: 'upi-name', pattern: /upi[-/]\d+\/[^/]+\/([A-Za-z][A-Za-z .'&-]{2,40})/i, group: 1 },
 
   // NEFT / IMPS / RTGS: "NEFT-<IFSC>-<NAME>-<REF>" or "...-<NAME>-...".
@@ -546,6 +608,15 @@ const COUNTERPARTY_PATTERNS: Array<{ name: string; pattern: RegExp; group: numbe
 
   // mTFR (JKBank's mobile transfer prefix): "mTFR/<phone>/<NAME>"
   { name: 'mtfr-name', pattern: /mtfr\/\d+\/([A-Za-z][A-Za-z0-9 .'&-]{2,50})/i, group: 1 },
+
+  // MMT / IMPS (ICICI's MoneyMultiplier / IMPS): "MMT/IMPS/<RRN>/<name>/<IFSC>"
+  { name: 'mmt-imps', pattern: /mmt\/imps\/\d+\/([A-Za-z][A-Za-z .'&-]{1,40})/i, group: 1 },
+
+  // TRFR FROM:<NAME> / TRFR TO:<NAME> — bank's internal transfer
+  // narration (also seen as "TRANSFER FROM:" on some formats). The
+  // name segment may include uppercase letters, digits, spaces, and
+  // common punctuation.
+  { name: 'trfr-name', pattern: /trfr\s+(?:from|to)\s*:\s*([A-Za-z][A-Za-z0-9 .'&-]{1,60})/i, group: 1 },
 
   // POS / merchant: "POS XXXXX MERCHANT" or "DEBIT-POS-MERCHANT"
   { name: 'pos-merchant', pattern: /pos[\s-]+\d*\s*([A-Za-z][A-Za-z0-9 .'&-]{2,40})/i, group: 1 },
@@ -1128,10 +1199,24 @@ const INFLOW_ONLY_CATEGORIES = new Set<string>([
   'Bank Interest (Cr)', 'Dividends', 'Rent Received',
 ]);
 const OUTFLOW_ONLY_CATEGORIES = new Set<string>([
-  'Business Expenses', 'Loan EMI', 'Bank Charges', 'Bank Interest (Dr)',
-  'GST Payments', 'TDS', 'Taxes Paid', 'Investments', 'Insurance',
-  'Mobile Charges', 'Electricity Charges', 'Water Charges',
+  'Business Expenses', 'Cash Withdrawal', 'Loan EMI', 'Bank Charges',
+  'Bank Interest (Dr)', 'GST Payments', 'TDS', 'Taxes Paid',
+  'Investments', 'Insurance', 'Mobile Charges',
+  'Electricity Charges', 'Water Charges',
 ]);
+
+// 2026-06: when the AI returns a category in the wrong direction, the
+// intent is usually obvious — a debit row tagged Cash Deposit was meant
+// to be Cash Withdrawal; a credit row tagged Business Expenses was
+// meant to be Business Income. Mapping these pairs preserves user
+// signal instead of dropping every mistake to "Other" where the
+// dashboard can't show it.
+const DIRECTION_FLIP_PAIRS: Record<string, string> = {
+  'Cash Deposit': 'Cash Withdrawal',
+  'Cash Withdrawal': 'Cash Deposit',
+  'Business Income': 'Business Expenses',
+  'Business Expenses': 'Business Income',
+};
 
 /**
  * Detect the "retail business current account" pattern and promote
@@ -1225,17 +1310,30 @@ export function validateDirectionCategory<T extends {
   category: string;
   subcategory: string | null;
 }>(rows: T[]): number {
-  let demoted = 0;
+  let changed = 0;
   for (const r of rows) {
-    let bad = false;
-    if (r.type === 'debit' && INFLOW_ONLY_CATEGORIES.has(r.category)) bad = true;
-    if (r.type === 'credit' && OUTFLOW_ONLY_CATEGORIES.has(r.category)) bad = true;
-    if (bad) {
+    const bad =
+      (r.type === 'debit'  && INFLOW_ONLY_CATEGORIES.has(r.category)) ||
+      (r.type === 'credit' && OUTFLOW_ONLY_CATEGORIES.has(r.category));
+    if (!bad) continue;
+    // Prefer flipping to the obvious symmetric counterpart so a credit
+    // accidentally tagged "Business Expenses" becomes "Business Income"
+    // instead of disappearing into "Other". Only the four pairs in
+    // DIRECTION_FLIP_PAIRS are safe — pairs like Salary↔(nothing
+    // sensible) stay demoted. Subcategory is dropped because the AI's
+    // subcategory was chosen for the wrong-direction category and is
+    // unlikely to be right for the flipped one.
+    const flipped = DIRECTION_FLIP_PAIRS[r.category];
+    if (flipped) {
+      console.warn(`[bank-classifier] direction/category mismatch: ${r.type} row tagged "${r.category}" — flipped to "${flipped}"`);
+      r.category = flipped;
+      r.subcategory = null;
+    } else {
       console.warn(`[bank-classifier] direction/category mismatch: ${r.type} row tagged "${r.category}" — demoted to Other`);
       r.category = 'Other';
       r.subcategory = null;
-      demoted++;
     }
+    changed++;
   }
-  return demoted;
+  return changed;
 }
