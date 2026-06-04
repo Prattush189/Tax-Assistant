@@ -2,6 +2,7 @@ import {
   Briefcase, Wallet, Home, Percent, Coins, Receipt, FileMinus,
   ShoppingBag, User, ArrowLeftRight, TrendingUp, Banknote, Landmark, HelpCircle,
   CreditCard, ArrowDownToDot, ArrowUpFromDot, Shield, Smartphone, Lightbulb, Droplets,
+  PiggyBank, HandCoins,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -20,6 +21,8 @@ export const BANK_STATEMENT_CATEGORIES = [
   'Business Expenses',
   'Personal',
   'Transfers',
+  'Cash Deposit',
+  'Cash Withdrawal',
   'Investments',
   'Loan EMI',
   'Taxes Paid',
@@ -46,6 +49,8 @@ export const CATEGORY_META: Record<BankStatementCategory, { color: string; bg: s
   'Business Expenses':  { color: 'text-orange-700 dark:text-orange-400',   bg: 'bg-orange-50 dark:bg-orange-900/20',   icon: ShoppingBag },
   Personal:             { color: 'text-gray-700 dark:text-gray-400',       bg: 'bg-gray-100 dark:bg-gray-800/40',      icon: User },
   Transfers:            { color: 'text-slate-700 dark:text-slate-400',     bg: 'bg-slate-100 dark:bg-slate-800/40',    icon: ArrowLeftRight },
+  'Cash Deposit':       { color: 'text-green-700 dark:text-green-400',     bg: 'bg-green-50 dark:bg-green-900/20',     icon: PiggyBank },
+  'Cash Withdrawal':    { color: 'text-orange-700 dark:text-orange-400',   bg: 'bg-orange-50 dark:bg-orange-900/20',   icon: HandCoins },
   Investments:          { color: 'text-violet-700 dark:text-violet-400',   bg: 'bg-violet-50 dark:bg-violet-900/20',   icon: TrendingUp },
   'Loan EMI':           { color: 'text-amber-700 dark:text-amber-400',     bg: 'bg-amber-50 dark:bg-amber-900/20',     icon: Banknote },
   'Taxes Paid':         { color: 'text-red-700 dark:text-red-400',         bg: 'bg-red-50 dark:bg-red-900/20',         icon: Landmark },
