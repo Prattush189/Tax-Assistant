@@ -45,6 +45,14 @@ def main() -> None:
     # constructor + LOG_LEVEL env both needed depending on version.
     os.environ.setdefault("PPOCR_LOG_LEVEL", "ERROR")
     os.environ.setdefault("FLAGS_logtostderr", "1")
+    # Disable Paddle's new PIR loader on paddlepaddle 3.x — at 3.3 it
+    # still has unfinished ConvertPirAttribute paths that crash on
+    # certain model attribute types (ArrayAttribute<DoubleAttribute>
+    # in the angle-classifier model). Setting these env vars BEFORE
+    # `import paddle` (transitively, via paddleocr) forces the
+    # legacy / IR-free loader path, which works on every 2.6+ build.
+    os.environ.setdefault("FLAGS_enable_pir_api", "0")
+    os.environ.setdefault("FLAGS_enable_pir_in_executor", "0")
 
     try:
         from paddleocr import PaddleOCR
@@ -55,24 +63,27 @@ def main() -> None:
             2,
         )
 
-    # use_textline_orientation=True handles slightly-rotated scans
-    # (replaced use_angle_cls in PaddleOCR 3.x — old name was a
-    # deprecation warning in 3.0, removed in 3.6+).
-    # lang='en' covers Indian English bank statements. Hindi / Marathi
-    # could be added per-bank later, but the printed transaction grid
-    # is always English even on Hindi-titled forms.
-    # show_log= was removed in PaddleOCR 3.x; logging is controlled
-    # via the PPOCR_LOG_LEVEL env var set at the top of main().
-    ocr = PaddleOCR(use_textline_orientation=True, lang="en")
+    # Construct PaddleOCR with the right kwargs for the installed
+    # major version. 3.x renamed use_angle_cls → use_textline_orientation
+    # and dropped show_log. 2.x has neither rename and accepts show_log.
+    # Try the 3.x form first; on TypeError (unknown kwarg) fall back to
+    # the 2.x form.
+    try:
+        ocr = PaddleOCR(use_textline_orientation=True, lang="en")
+    except TypeError:
+        ocr = PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
 
     try:
         # PaddleOCR 3.x renamed the entry point to .predict(); 2.x
-        # used .ocr(). Try the new name first, fall back to the old.
-        # Both accept a PDF path directly (since 2.6).
+        # used .ocr(cls=True). Try the new name first, fall back.
         if hasattr(ocr, "predict"):
-            results = ocr.predict(input=pdf_path)
+            try:
+                results = ocr.predict(input=pdf_path)
+            except TypeError:
+                # Some 3.x builds expect positional arg, not input=.
+                results = ocr.predict(pdf_path)
         else:
-            results = ocr.ocr(pdf_path)
+            results = ocr.ocr(pdf_path, cls=True)
     except Exception as e:  # noqa: BLE001 — surface any OCR-internal crash
         emit_error(f"OCR failed: {type(e).__name__}: {e}", 3)
 

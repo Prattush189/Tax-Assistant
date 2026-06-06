@@ -46,24 +46,38 @@ apt-get install -y libgl1 libglib2.0-0 || {
   echo -e "${YELLOW}apt-get install failed — you may need to install libgl1 and libglib2.0-0 manually${NC}"
 }
 
-# 3. PaddleOCR (with --break-system-packages on newer pip versions
-#    that enforce PEP 668)
-echo "Installing paddlepaddle + paddleocr (~500 MB, may take a few minutes)..."
+# 3. PaddleOCR (pinned to the stable 2.x combo)
+#
+# Why pinned: paddlepaddle 3.x + paddleocr 3.x crash on certain model
+# attribute types during model load with a PIR (Paddle IR) error:
+#     NotImplementedError: ConvertPirAttribute2RuntimeAttribute not
+#     support [pir::ArrayAttribute<pir::DoubleAttribute>]
+# This is unfinished migration code in the 3.x stack. The 2.6.2 +
+# 2.7.3 combo predates PIR and runs cleanly on the same CPU-only path.
+# Revisit when paddlepaddle 3.4+ ships the missing PIR attribute
+# converters.
+#
+# Uninstall any previously-installed 3.x version first so we don't
+# end up with two paddlepaddle/paddleocr installs racing each other.
 PIP_FLAGS=""
 if pip3 --help | grep -q -- '--break-system-packages'; then
   PIP_FLAGS="--break-system-packages"
 fi
-pip3 install $PIP_FLAGS paddlepaddle paddleocr
+echo "Removing any prior paddlepaddle / paddleocr install..."
+pip3 uninstall -y $PIP_FLAGS paddlepaddle paddleocr paddlex 2>/dev/null || true
+echo "Installing paddlepaddle 2.6.2 + paddleocr 2.7.3 (~500 MB, may take a few minutes)..."
+pip3 install $PIP_FLAGS "paddlepaddle==2.6.2" "paddleocr==2.7.3"
 
 # 4. Warm-up: trigger first-run model download
 echo "Warming up — downloading OCR model weights (~250 MB)..."
 python3 - <<'PYEOF'
 import os
 os.environ['PPOCR_LOG_LEVEL'] = 'ERROR'
+os.environ['FLAGS_enable_pir_api'] = '0'
+os.environ['FLAGS_enable_pir_in_executor'] = '0'
 from paddleocr import PaddleOCR
-# PaddleOCR 3.x: use_textline_orientation replaces use_angle_cls;
-# show_log was removed (use PPOCR_LOG_LEVEL env var instead).
-PaddleOCR(use_textline_orientation=True, lang='en')
+# paddleocr 2.7.3 uses use_angle_cls + show_log (2.x API).
+PaddleOCR(use_angle_cls=True, lang='en', show_log=False)
 print('models warm')
 PYEOF
 
