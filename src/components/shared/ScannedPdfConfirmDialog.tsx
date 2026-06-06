@@ -5,6 +5,12 @@ interface Props {
   /** Short label used in the heading, e.g. "statement", "notice". */
   documentLabel: string;
   confirmLabel?: string;
+  /** When true, show the OCR-pipeline copy (free local extraction, takes
+   *  30-90 s) instead of the AI-vision copy (paid, fast). Bank-statement
+   *  uploads opt in because the server routes scanned PDFs through
+   *  PaddleOCR before falling back to vision. Other call sites (notice,
+   *  ledger) keep the original AI-vision copy. */
+  useOcr?: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 }
@@ -12,12 +18,13 @@ interface Props {
 /**
  * Shared "this PDF has no readable text" confirmation dialog. Used
  * by bank-statement / ledger / notice uploads to warn the user before
- * routing the upload to the AI vision path.
+ * routing the upload to the OCR or AI-vision path.
  *
- * Vision runs on Gemini 3.1 Flash-Lite Preview (primary) → 2.5
- * Flash-Lite (fallback) and uses roughly 1.5×–2× the tokens a wizard-
- * mapped digital PDF / CSV would. The warning gives the user a
- * chance to back out and upload a digital export instead.
+ * Two flavours of copy:
+ *   - useOcr=true (bank-statement): server-side PaddleOCR pipeline
+ *     handles the file. Free locally, takes 30-90s, no token cost.
+ *   - useOcr=false (default — ledger / notice): AI vision processes
+ *     the file, ~1.5×–2× the tokens of a wizard-mapped digital export.
  *
  * Skips for: digital PDFs (text path used directly), images (no
  * alternative path exists, user already knows it's an image).
@@ -25,10 +32,12 @@ interface Props {
 export function ScannedPdfConfirmDialog({
   filename,
   documentLabel,
-  confirmLabel = 'Continue with AI vision',
+  confirmLabel,
+  useOcr = false,
   onCancel,
   onConfirm,
 }: Props) {
+  const finalConfirmLabel = confirmLabel ?? (useOcr ? 'Continue with OCR' : 'Continue with AI vision');
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 max-w-lg w-full p-5 shadow-xl">
@@ -40,14 +49,27 @@ export function ScannedPdfConfirmDialog({
             <h2 className="text-base font-semibold text-gray-900 dark:text-gray-50">
               This {documentLabel} has no readable text
             </h2>
-            <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">
-              The file appears to be scanned or has an unusual layout. AI vision can read it,
-              but uses a bit more of your token quota than a digital export with a clean column structure.
-            </p>
-            <p className="mt-2 text-sm text-amber-700 dark:text-amber-300">
-              Heads up: AI vision uses roughly 1.5×–2× more tokens than a readable PDF or CSV.
-              Upload a digital export if you want to keep token usage minimal.
-            </p>
+            {useOcr ? (
+              <>
+                <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">
+                  The file appears to be scanned. We'll run OCR locally to read it — no AI vision tokens used.
+                </p>
+                <p className="mt-2 text-sm text-amber-700 dark:text-amber-300">
+                  Heads up: OCR typically takes 30-90 seconds for a 20-page statement. The page can be closed during processing — your statement will be ready when you come back.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">
+                  The file appears to be scanned or has an unusual layout. AI vision can read it,
+                  but uses a bit more of your token quota than a digital export with a clean column structure.
+                </p>
+                <p className="mt-2 text-sm text-amber-700 dark:text-amber-300">
+                  Heads up: AI vision uses roughly 1.5×–2× more tokens than a readable PDF or CSV.
+                  Upload a digital export if you want to keep token usage minimal.
+                </p>
+              </>
+            )}
             <p className="mt-2 text-xs font-mono text-gray-500 dark:text-gray-400 break-all">
               {filename}
             </p>
@@ -67,7 +89,7 @@ export function ScannedPdfConfirmDialog({
             className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium"
           >
             <FileText className="w-4 h-4" />
-            {confirmLabel}
+            {finalConfirmLabel}
           </button>
         </div>
       </div>

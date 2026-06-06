@@ -123,7 +123,10 @@ export function BankStatementUploader({ manager }: Props) {
   // PDF has no text layer and we'd route to AI vision — at which point
   // the cost difference vs digital PDFs is large enough to warrant a
   // confirmation step.
-  const [pendingScannedPdf, setPendingScannedPdf] = useState<File | null>(null);
+  // 2026-06: pendingScannedPdf removed — scanned PDFs route straight
+  // to the OCR pipeline without a confirm step. State kept in commit
+  // history for one cycle in case we need to re-introduce a different
+  // gate (e.g. for very large scans).
   const [pdfTooLarge, setPdfTooLarge] = useState<{ file: File; pageCount: number } | null>(null);
 
   // Pull batch progress off the in-flight statement (the placeholder
@@ -387,7 +390,11 @@ export function BankStatementUploader({ manager }: Props) {
             setPdfTooLarge({ file, pageCount });
             return;
           }
-          setPendingScannedPdf(file);
+          // 2026-06: scanned PDFs now route directly to the OCR
+          // pipeline (PaddleOCR + cheap text-LLM) — no token cost
+          // surprise, so no confirm dialog needed. The user already
+          // chose to upload this file; we just process it.
+          void analyzeRawFile(file);
           return;
         }
 
@@ -421,7 +428,9 @@ export function BankStatementUploader({ manager }: Props) {
           setPdfTooLarge({ file, pageCount });
           return;
         }
-        setPendingScannedPdf(file);
+        // No-text-layer PDF — route directly to OCR (no confirm
+        // dialog; OCR is free server-side).
+        void analyzeRawFile(file);
         return;
       } catch (err) {
         if (err instanceof PdfPasswordError) {
@@ -642,18 +651,10 @@ export function BankStatementUploader({ manager }: Props) {
           }}
         />
       )}
-      {pendingScannedPdf && (
-        <ScannedPdfConfirmDialog
-          filename={pendingScannedPdf.name}
-          documentLabel="statement"
-          onCancel={() => setPendingScannedPdf(null)}
-          onConfirm={() => {
-            const file = pendingScannedPdf;
-            setPendingScannedPdf(null);
-            void analyzeRawFile(file);
-          }}
-        />
-      )}
+      {/* ScannedPdfConfirmDialog removed 2026-06: scanned PDFs now
+          route directly to the OCR pipeline (free server-side), so
+          no confirm step is needed. The state + dialog block can be
+          deleted once we're confident no path needs it. */}
       {pdfTooLarge && (
         <PdfTooLargeDialog
           filename={pdfTooLarge.file.name}
