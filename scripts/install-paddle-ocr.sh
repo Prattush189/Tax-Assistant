@@ -61,7 +61,9 @@ python3 - <<'PYEOF'
 import os
 os.environ['PPOCR_LOG_LEVEL'] = 'ERROR'
 from paddleocr import PaddleOCR
-PaddleOCR(use_angle_cls=True, lang='en', show_log=False)
+# PaddleOCR 3.x: use_textline_orientation replaces use_angle_cls;
+# show_log was removed (use PPOCR_LOG_LEVEL env var instead).
+PaddleOCR(use_textline_orientation=True, lang='en')
 print('models warm')
 PYEOF
 
