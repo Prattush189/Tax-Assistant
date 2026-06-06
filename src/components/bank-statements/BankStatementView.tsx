@@ -184,7 +184,7 @@ export function BankStatementView({ manager }: Props) {
               <div className="min-w-0 flex-1">
                 <p className="font-semibold text-gray-900 dark:text-gray-100">Analyzing your statement…</p>
                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                  The server keeps running even if you close this tab — just come back here to see the result.
+                  Scanned PDFs use OCR and may take 30-90 seconds. The server keeps running even if you close this tab — just come back here to see the result.
                 </p>
               </div>
               <button

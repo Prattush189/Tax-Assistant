@@ -534,13 +534,18 @@ export function BankStatementUploader({ manager }: Props) {
               : 'Drop your bank statement here'}
         </p>
         {manager.isAnalyzing || chunksTotal > 0 ? (
-          <AnalyzeProgressBar
-            progress={manager.analyzeProgress ?? { completed: 0, total: 0 }}
-            chunksDone={chunksDone}
-            chunksTotal={chunksTotal}
-            startedAt={analyzeStartedAt.current ?? undefined}
-            providerFallback={inFlight?.providerFallback}
-          />
+          <>
+            <AnalyzeProgressBar
+              progress={manager.analyzeProgress ?? { completed: 0, total: 0 }}
+              chunksDone={chunksDone}
+              chunksTotal={chunksTotal}
+              startedAt={analyzeStartedAt.current ?? undefined}
+              providerFallback={inFlight?.providerFallback}
+            />
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+              Scanned PDFs use OCR — extraction can take 30-90 seconds.
+            </p>
+          </>
         ) : (
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
             PDF up to 25 MB — or a CSV / Excel export from your bank

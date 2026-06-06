@@ -6,6 +6,8 @@ import Papa from 'papaparse';
 import { extractVisionWithFallback } from '../lib/visionFallback.js';
 import { getPdfPageCount, splitPdfByPages, PDF_VISION_CHUNK_THRESHOLD } from '../lib/pdfChunker.js';
 import { applyConditionsToStatement } from '../lib/bankConditionFilter.js';
+import { extractPdfTextWithPaddleOcr } from '../lib/paddleOcr.js';
+import { structureOcrTextIntoRows } from '../lib/paddleStructurer.js';
 import type { GeminiJsonResult } from '../lib/geminiJson.js';
 import { callBankEnrichment } from '../lib/bankEnrichmentClient.js';
 import { getBreakerStatus } from '../lib/circuitBreaker.js';
@@ -1249,12 +1251,57 @@ router.post(
       if (req.file) {
         filename = req.file.originalname;
         mimeType = req.file.mimetype;
-        // Vision path — Gemini 3.1 Flash-Lite Preview → 2.5 Flash-Lite
-        // fallback. Single call replaces the earlier 6-batch chunking +
-        // merge logic. Image uploads (jpeg/png/webp) flow through the
-        // same helper since they're inherently single-page.
+
+        // 2026-06: PaddleOCR-first pipeline for scanned PDFs. The
+        // column-mapping wizard (browser-side) handles all text PDFs
+        // — anything reaching this route is already image-only or
+        // wizard-failed. PaddleOCR is free (local CPU, no API tokens)
+        // and emits row-aligned text that a cheap Gemini text call
+        // structures into rows. Saves ~45% per upload vs Gemini
+        // Vision and removes the under-extraction failure mode we
+        // saw on dense statements (vision dropping rows under output
+        // density pressure).
+        //
+        // PDF-only — images (jpeg/png/webp) skip OCR and go straight
+        // to vision (single image, vision is the right tool there).
+        // Any PaddleOCR failure (not installed, timeout, parse error)
+        // is caught and falls back to vision so uploads never break
+        // entirely while the operator debugs the OCR pipeline.
+        let extractedFromOcr = false;
+        if (mimeType === 'application/pdf') {
+          try {
+            const ocrStart = Date.now();
+            console.log(`[bank-statements] PaddleOCR start: ${filename} (${req.file.size} bytes)`);
+            const ocr = await extractPdfTextWithPaddleOcr(req.file.buffer);
+            console.log(`[bank-statements] PaddleOCR done: ${ocr.pages.length} pages in ${ocr.durationMs}ms`);
+            const structured = await structureOcrTextIntoRows(ocr.pages);
+            console.log(`[bank-statements] structurer: ${structured.transactions.length} rows · in=${structured.inputTokens} out=${structured.outputTokens}`);
+            extracted = {
+              transactions: structured.transactions.map((r) => ({
+                date: r.date,
+                narration: r.narration,
+                type: r.type,
+                balance: r.balance,
+              })),
+            } as ExtractedStatement;
+            (res.locals as Record<string, unknown>).geminiUsages = [{
+              inputTokens: structured.inputTokens,
+              outputTokens: structured.outputTokens,
+              modelUsed: structured.modelUsed,
+            }];
+            extractedFromOcr = true;
+            const totalMs = Date.now() - ocrStart;
+            console.log(`[bank-statements] OCR pipeline total: ${totalMs}ms (${(totalMs / Math.max(1, ocr.pages.length)).toFixed(0)}ms/page)`);
+          } catch (err) {
+            console.warn(`[bank-statements] PaddleOCR path failed, falling back to vision: ${(err as Error).message?.slice(0, 200)}`);
+          }
+        }
+
+        // Vision fallback path — runs ONLY when PaddleOCR isn't
+        // available / failed, or when the upload is a single image
+        // (jpeg/png/webp) where OCR adds no value over direct vision.
         const fullPrompt = `${conditionsBlock}${BANK_STATEMENT_PROMPT}`;
-        {
+        if (!extractedFromOcr) {
           // 2026-06: For PDFs above PDF_VISION_CHUNK_THRESHOLD pages
           // (default 40), split into page-range chunks before vision.
           // Single-pass extraction blows past Gemini's 64K output cap
@@ -1343,13 +1390,13 @@ router.post(
             outputTokens: visionResult.outputTokens,
             modelUsed: visionResult.modelUsed,
           }];
-          } // end else (single-call vision path)
-          // Both branches converge here: chunked merge OR single-call
-          // result have populated `extracted` with the unified
-          // ExtractedStatement shape and geminiUsages telemetry.
-          // The "0 transactions" defence below covers BOTH paths.
+          } // end else (single-call vision path) — also closes if (!extractedFromOcr)
+          // Convergence point: extracted is populated by whichever
+          // path ran (PaddleOCR + structurer, chunked vision, or
+          // single-call vision). The "0 transactions" defence covers
+          // ALL paths.
           if (!extracted || !Array.isArray(extracted.transactions) || extracted.transactions.length === 0) {
-            console.warn(`[bank-statements] vision returned 0 transactions for ${filename} (${req.file.size} bytes, mime=${mimeType}). Likely too large/dense — recommend the text path or splitting the PDF.`);
+            console.warn(`[bank-statements] extraction returned 0 transactions for ${filename} (${req.file.size} bytes, mime=${mimeType}). Likely too large/dense — recommend the text path or splitting the PDF.`);
             res.status(422).json({
               error: 'AI vision could not extract any transactions from this PDF. The file may be too large or dense for vision OCR — try the column-mapping flow (the PDF has selectable text) or split it into smaller chunks.',
             });

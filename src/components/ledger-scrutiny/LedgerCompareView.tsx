@@ -29,6 +29,7 @@ import {
   type LedgerType,
 } from '../../services/api';
 import { cn, formatDate } from '../../lib/utils';
+import { buildCompareWorkbook } from './lib/ledgerCompareExcel';
 
 // ── Tab-survival state persistence ─────────────────────────────────────
 //
@@ -295,6 +296,13 @@ function downloadCsv(filename: string, csv: string): void {
   // it, but narrations can contain special chars) render correctly
   // without a per-cell encoding prompt.
   const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  downloadBlob(filename, blob);
+}
+
+/** Trigger a browser download for any Blob (used for both CSV and the
+ *  multi-sheet XLSX workbook). Mirrors the download-and-revoke dance
+ *  in `downloadCsv` so Safari / older Firefox don't drop the click. */
+function downloadBlob(filename: string, blob: Blob): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -879,19 +887,44 @@ export function LedgerCompareView() {
                   Side A ({LEDGER_TYPE_LABELS[report.summary.typeA]}) {report.summary.totalA.toLocaleString('en-IN')} txns · Side B ({LEDGER_TYPE_LABELS[report.summary.typeB]}) {report.summary.totalB.toLocaleString('en-IN')} txns
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  const csv = buildCompareCsv(report, labelA, labelB);
-                  const today = new Date().toISOString().slice(0, 10);
-                  downloadCsv(`ledger-compare-${labelA}-vs-${labelB}-${today}.csv`, csv);
-                }}
-                className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-lg bg-white dark:bg-gray-900/60 border border-gray-300 dark:border-gray-700 hover:border-emerald-400 dark:hover:border-emerald-600 text-gray-800 dark:text-gray-100 shrink-0"
-                title="Download every match, mismatch, and unmatched row as one CSV — Excel-friendly with status column."
-              >
-                <Download className="w-4 h-4" />
-                Export CSV
-              </button>
+              {/* Two download options:
+                * - Excel (5-sheet workbook): Matched (clean), Matched
+                *   (with notes), Unmatched, Can't match — each row
+                *   sits in the sheet matching its review effort. The
+                *   "with notes" sheet carries a "Match basis" column
+                *   so the reviewer knows what condition the pair
+                *   satisfied (date drift / bulk-attribution / etc).
+                * - CSV (single flat table): one row per item with a
+                *   Status column. Older format kept for users who
+                *   already have Excel filters / pivots tuned to it. */}
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const blob = await buildCompareWorkbook(report, labelA, labelB);
+                    const today = new Date().toISOString().slice(0, 10);
+                    downloadBlob(`ledger-compare-${labelA}-vs-${labelB}-${today}.xlsx`, blob);
+                  }}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
+                  title="Download as a 5-sheet Excel workbook: Summary, Matched (clean), Matched (with notes), Unmatched, Can’t match."
+                >
+                  <Download className="w-4 h-4" />
+                  Export Excel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const csv = buildCompareCsv(report, labelA, labelB);
+                    const today = new Date().toISOString().slice(0, 10);
+                    downloadCsv(`ledger-compare-${labelA}-vs-${labelB}-${today}.csv`, csv);
+                  }}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-lg bg-white dark:bg-gray-900/60 border border-gray-300 dark:border-gray-700 hover:border-emerald-400 dark:hover:border-emerald-600 text-gray-800 dark:text-gray-100"
+                  title="Download every match, mismatch, and unmatched row as one CSV — Excel-friendly with status column."
+                >
+                  <Download className="w-4 h-4" />
+                  CSV
+                </button>
+              </div>
             </div>
             {/* 8-tile grid: bills matched (clean), payments matched
               * (tight date+amount±₹1), payment date matches (loose —
