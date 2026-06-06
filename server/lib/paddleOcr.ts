@@ -20,7 +20,7 @@
  */
 
 import { spawn } from 'child_process';
-import { writeFileSync, unlinkSync, mkdirSync, existsSync } from 'fs';
+import { writeFileSync, readFileSync, unlinkSync, mkdirSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import crypto from 'crypto';
@@ -64,25 +64,31 @@ export async function extractPdfTextWithPaddleOcr(
   }
   const tmpDir = path.join(tmpdir(), 'paddle-ocr');
   mkdirSync(tmpDir, { recursive: true });
-  const tmpFile = path.join(tmpDir, `${crypto.randomBytes(8).toString('hex')}.pdf`);
-  writeFileSync(tmpFile, pdfBuffer);
+  const stem = crypto.randomBytes(8).toString('hex');
+  const pdfPath = path.join(tmpDir, `${stem}.pdf`);
+  const outPath = path.join(tmpDir, `${stem}.json`);
+  writeFileSync(pdfPath, pdfBuffer);
 
   const started = Date.now();
   try {
-    return await runPython(tmpFile, started);
+    return await runPython(pdfPath, outPath, started);
   } finally {
-    try { unlinkSync(tmpFile); } catch { /* best-effort cleanup */ }
+    // Best-effort cleanup of both the input PDF and the JSON output.
+    try { unlinkSync(pdfPath); } catch { /* ignore */ }
+    try { unlinkSync(outPath); } catch { /* ignore */ }
   }
 }
 
-function runPython(pdfPath: string, started: number): Promise<PaddleOcrResult> {
+function runPython(pdfPath: string, outPath: string, started: number): Promise<PaddleOcrResult> {
   return new Promise((resolve, reject) => {
-    const py = spawn(PYTHON_BIN, [SCRIPT_PATH, pdfPath], {
-      stdio: ['ignore', 'pipe', 'pipe'],
+    const py = spawn(PYTHON_BIN, [SCRIPT_PATH, pdfPath, outPath], {
+      // PaddleOCR / paddlepaddle / opencv chatter to stdout is
+      // discarded — the worker writes its JSON to outPath instead.
+      // We keep stderr piped so an early exit (e.g. import error)
+      // still gives us a useful message to log.
+      stdio: ['ignore', 'ignore', 'pipe'],
     });
-    let stdout = '';
     let stderr = '';
-    py.stdout.on('data', (d) => { stdout += d.toString(); });
     py.stderr.on('data', (d) => { stderr += d.toString(); });
 
     const killTimer = setTimeout(() => {
@@ -93,8 +99,8 @@ function runPython(pdfPath: string, started: number): Promise<PaddleOcrResult> {
     py.on('close', (code) => {
       clearTimeout(killTimer);
       if (code !== 0) {
-        // Try to extract the error JSON the worker writes to stderr
-        // before falling back to the raw stderr tail.
+        // Try to extract the structured error JSON the worker writes
+        // to stderr; fall back to the raw stderr tail otherwise.
         let msg = stderr.slice(0, 500);
         try {
           const parsed = JSON.parse(stderr.split('\n').find((l) => l.trim().startsWith('{')) ?? '{}');
@@ -103,10 +109,21 @@ function runPython(pdfPath: string, started: number): Promise<PaddleOcrResult> {
         reject(new Error(`PaddleOCR exited ${code}: ${msg}`));
         return;
       }
+      if (!existsSync(outPath)) {
+        reject(new Error(`PaddleOCR exited 0 but wrote no output file at ${outPath}`));
+        return;
+      }
+      let raw: string;
       try {
-        const parsed = JSON.parse(stdout) as { pages?: unknown };
+        raw = readFileSync(outPath, 'utf-8');
+      } catch (e) {
+        reject(new Error(`PaddleOCR output read failed: ${(e as Error).message}`));
+        return;
+      }
+      try {
+        const parsed = JSON.parse(raw) as { pages?: unknown };
         if (!Array.isArray(parsed.pages)) {
-          reject(new Error(`PaddleOCR returned malformed output: ${stdout.slice(0, 200)}`));
+          reject(new Error(`PaddleOCR returned malformed output: ${raw.slice(0, 200)}`));
           return;
         }
         resolve({
@@ -120,9 +137,6 @@ function runPython(pdfPath: string, started: number): Promise<PaddleOcrResult> {
 
     py.on('error', (err) => {
       clearTimeout(killTimer);
-      // ENOENT here means PYTHON_BIN doesn't exist on the host — the
-      // most common failure mode on a fresh VPS. Phrase the message
-      // so the operator immediately knows what to install.
       const isMissingPython = (err as NodeJS.ErrnoException).code === 'ENOENT';
       reject(new Error(
         isMissingPython

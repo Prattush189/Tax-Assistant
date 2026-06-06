@@ -3,12 +3,19 @@
 PaddleOCR worker for scanned bank-statement PDFs.
 
 Invoked by server/lib/paddleOcr.ts as a one-shot subprocess:
-    python3 ocr_worker.py <path-to-pdf>
+    python3 ocr_worker.py <path-to-pdf> <path-to-output-json>
 
-Reads the PDF, runs PaddleOCR page-by-page, prints a single JSON line
-to stdout:
+Reads the PDF, runs PaddleOCR page-by-page, writes a JSON file at the
+second-argument path:
 
     {"pages": ["page-1 text\\n...", "page-2 text\\n...", ...]}
+
+Output goes to a sidecar file (not stdout) because PaddleOCR 2.7.3 and
+its transitive deps (paddlepaddle, opencv, fire) print log lines /
+download progress / Paddle warnings to stdout during init and inference.
+That would contaminate the JSON and trip the Node wrapper's parser.
+Using a tempfile path makes the worker immune to whatever PaddleOCR
+chooses to print.
 
 Non-zero exit codes signal hard failures; the Node wrapper translates
 these into surfaced errors and may fall back to the Gemini Vision path.
@@ -33,10 +40,11 @@ def emit_error(message: str, code: int) -> None:
 
 
 def main() -> None:
-    if len(sys.argv) < 2:
-        emit_error("usage: ocr_worker.py <pdf-path>", 1)
+    if len(sys.argv) < 3:
+        emit_error("usage: ocr_worker.py <pdf-path> <output-json-path>", 1)
 
     pdf_path = sys.argv[1]
+    output_path = sys.argv[2]
     if not os.path.isfile(pdf_path):
         emit_error(f"file not found: {pdf_path}", 1)
 
@@ -161,10 +169,15 @@ def main() -> None:
 
         pages.append("\n".join(lines))
 
-    # Single-line JSON so the Node wrapper can parse without worrying
-    # about partial reads on the pipe buffer.
-    sys.stdout.write(json.dumps({"pages": pages}))
-    sys.stdout.flush()
+    # Write to the sidecar file the Node wrapper passes in. Avoids
+    # contamination from any PaddleOCR / paddlepaddle / opencv chatter
+    # on stdout. Atomic-ish: write to <path>.tmp then rename so a
+    # crash mid-write doesn't leave a half-truncated file the wrapper
+    # would JSON.parse on.
+    tmp_out = output_path + ".tmp"
+    with open(tmp_out, "w", encoding="utf-8") as fh:
+        json.dump({"pages": pages}, fh)
+    os.replace(tmp_out, output_path)
 
 
 if __name__ == "__main__":
