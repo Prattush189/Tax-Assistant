@@ -65,8 +65,16 @@ if pip3 --help | grep -q -- '--break-system-packages'; then
 fi
 echo "Removing any prior paddlepaddle / paddleocr install..."
 pip3 uninstall -y $PIP_FLAGS paddlepaddle paddleocr paddlex 2>/dev/null || true
+# Also remove numpy 2.x leftover from a previous 3.x install — the
+# opencv-python 4.6 wheel that paddleocr 2.7.3 pins was compiled
+# against numpy 1.x ABI; mixing them produces:
+#   RuntimeError: module compiled against ABI version 0x1000009
+#                  but this version of numpy is 0x2000000
+#   ImportError: numpy.core.multiarray failed to import
+# Pin numpy<2 explicitly so the prebuilt opencv loads cleanly.
+pip3 uninstall -y $PIP_FLAGS numpy 2>/dev/null || true
 echo "Installing paddlepaddle 2.6.2 + paddleocr 2.7.3 (~500 MB, may take a few minutes)..."
-pip3 install $PIP_FLAGS "paddlepaddle==2.6.2" "paddleocr==2.7.3"
+pip3 install $PIP_FLAGS "numpy<2" "paddlepaddle==2.6.2" "paddleocr==2.7.3"
 
 # 4. Warm-up: trigger first-run model download
 echo "Warming up — downloading OCR model weights (~250 MB)..."
