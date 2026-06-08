@@ -1625,9 +1625,27 @@ export function applyMapping(
         // Swap + flip.
         { amount: -sign * b, balance: m,
           err: errFor(-sign * b, m), kind: 'swap+flip' },
+        // 2026-06: delta-derived amount. The flip/swap candidates
+        // only catch column-confusion bugs. They DON'T catch the
+        // case where the printed amount is fundamentally wrong (a
+        // carry-forward placeholder from a wrapped narration landed
+        // on this row, J&K Bank MS HIGHBRAND ELECTRO scenario where
+        // amount=48,000 but real movement = 2,000). The bank's
+        // printed running balance is ground truth; the delta IS the
+        // real amount. Always exact (err=0) when both balances are
+        // correct — so it wins whenever asIs is wildly wrong.
+        { amount: pending.balance - lastBalance!, balance: pending.balance,
+          err: 0, kind: 'delta' },
       ];
       let best = asIs;
       for (const c of candidates) if (c.err < best.err) best = c;
+      // Gate: original gate (`asIs.err > 1 && best.err < 0.05`)
+      // applied to flip/swap. The delta candidate has err=0 by
+      // construction, so it would ALWAYS beat asIs when asIs.err > 0.
+      // To prevent it from over-correcting rows where the printed
+      // amount has tiny rounding diffs from balance-delta (paisa
+      // shifts on interest calcs etc.), require asIs.err > 1 before
+      // adopting delta. That keeps the 1₹+ "real bug" gate intact.
       if (asIs.err > 1 && best.err < 0.05 && best !== asIs) {
         amount = best.amount;
         pending.balance = best.balance;
