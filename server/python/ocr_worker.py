@@ -81,19 +81,70 @@ def main() -> None:
     except TypeError:
         ocr = PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
 
+    # PaddleOCR 2.7.3's `ocr.ocr(pdf_path)` returns a list of ONE page
+    # result on multi-page PDFs — page 1 only — silently dropping
+    # every subsequent page. Production log on 2026-06-06: a 28-page
+    # J&K Bank statement returned only 21 transactions (page 1) of
+    # ~500. The fix is to rasterize the PDF page-by-page in Python
+    # ourselves and feed each page IMAGE to OCR. That guarantees
+    # every page is processed regardless of which PaddleOCR build
+    # is installed.
+    #
+    # We use pdf2image (Python binding to Poppler's pdftoppm) — a
+    # peer of the `pdftotext` binary already on the VPS, so no
+    # additional system package needed beyond `poppler-utils` which
+    # the install script ensures is present.
     try:
-        # PaddleOCR 3.x renamed the entry point to .predict(); 2.x
-        # used .ocr(cls=True). Try the new name first, fall back.
-        if hasattr(ocr, "predict"):
-            try:
-                results = ocr.predict(input=pdf_path)
-            except TypeError:
-                # Some 3.x builds expect positional arg, not input=.
-                results = ocr.predict(pdf_path)
+        from pdf2image import convert_from_path
+    except ImportError as e:
+        emit_error(
+            f"pdf2image not installed: {e}. "
+            f"Run: pip3 install pdf2image  (and apt-get install poppler-utils)",
+            2,
+        )
+
+    # 200 DPI is the sweet spot for printed bank-statement scans:
+    # high enough that PaddleOCR's recogniser reads digits cleanly,
+    # low enough that a 50-page PDF doesn't OOM at ~25 MB per image.
+    # `fmt='png'` keeps it lossless (JPEG artefacts blur digit
+    # separators on dense layouts and cause `1` ↔ `7` confusion).
+    try:
+        page_images = convert_from_path(pdf_path, dpi=200, fmt="png")
+    except Exception as e:  # noqa: BLE001
+        emit_error(f"PDF rasterization failed: {type(e).__name__}: {e}. Is poppler-utils installed?", 3)
+
+    # OCR each page in sequence. We deliberately don't parallelise —
+    # PaddleOCR holds shared model state that isn't thread-safe in
+    # 2.7.3, and the bottleneck is the recogniser inference (CPU
+    # bound, would just contend on cores anyway). Sequential is the
+    # safe, predictable path.
+    import numpy as np  # local import — heavy, only needed here
+
+    results = []
+    for page_img in page_images:
+        # PaddleOCR accepts a numpy array (HxWx3 uint8 RGB). PIL's
+        # Image.convert('RGB') guarantees the right shape regardless
+        # of source colourspace.
+        arr = np.array(page_img.convert("RGB"))
+        try:
+            if hasattr(ocr, "predict"):
+                # 3.x style
+                try:
+                    page_res = ocr.predict(input=arr)
+                except TypeError:
+                    page_res = ocr.predict(arr)
+            else:
+                # 2.x style
+                page_res = ocr.ocr(arr, cls=True)
+        except Exception as e:  # noqa: BLE001
+            emit_error(f"OCR failed on a page: {type(e).__name__}: {e}", 3)
+        # `ocr.ocr()` returns [page_result] (a one-element wrapper
+        # list) when called on a single image. Unwrap so the loop
+        # below sees a flat list of page_results across all pages.
+        if isinstance(page_res, list) and len(page_res) == 1:
+            results.append(page_res[0])
         else:
-            results = ocr.ocr(pdf_path, cls=True)
-    except Exception as e:  # noqa: BLE001 — surface any OCR-internal crash
-        emit_error(f"OCR failed: {type(e).__name__}: {e}", 3)
+            results.append(page_res)
 
     pages = []
     for page_result in results:

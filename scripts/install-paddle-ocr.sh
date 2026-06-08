@@ -41,9 +41,15 @@ else
 fi
 
 # 2. OS-level libs
-echo "Installing OS dependencies (libgl1, libglib2.0-0)..."
-apt-get install -y libgl1 libglib2.0-0 || {
-  echo -e "${YELLOW}apt-get install failed — you may need to install libgl1 and libglib2.0-0 manually${NC}"
+# poppler-utils is required by the pdf2image Python lib (it wraps
+# Poppler's pdftoppm command-line tool to rasterize PDF pages into
+# images). Without it, the OCR worker can only process page 1 of
+# multi-page PDFs — observed 2026-06-06 where a 28-page J&K Bank
+# statement returned just 21 of ~500 transactions because PaddleOCR
+# 2.7.3's ocr.ocr(pdf_path) silently drops pages 2+.
+echo "Installing OS dependencies (libgl1, libglib2.0-0, poppler-utils)..."
+apt-get install -y libgl1 libglib2.0-0 poppler-utils || {
+  echo -e "${YELLOW}apt-get install failed — you may need to install libgl1, libglib2.0-0, and poppler-utils manually${NC}"
 }
 
 # 3. PaddleOCR (pinned to the stable 2.x combo)
@@ -73,8 +79,13 @@ pip3 uninstall -y $PIP_FLAGS paddlepaddle paddleocr paddlex 2>/dev/null || true
 #   ImportError: numpy.core.multiarray failed to import
 # Pin numpy<2 explicitly so the prebuilt opencv loads cleanly.
 pip3 uninstall -y $PIP_FLAGS numpy 2>/dev/null || true
-echo "Installing paddlepaddle 2.6.2 + paddleocr 2.7.3 (~500 MB, may take a few minutes)..."
-pip3 install $PIP_FLAGS "numpy<2" "paddlepaddle==2.6.2" "paddleocr==2.7.3"
+echo "Installing paddlepaddle 2.6.2 + paddleocr 2.7.3 + pdf2image (~500 MB, may take a few minutes)..."
+# pdf2image: Python binding around Poppler's pdftoppm — used by the
+# OCR worker to rasterize each PDF page into a PIL Image that
+# PaddleOCR processes one at a time. Without it the worker can only
+# OCR page 1 of multi-page PDFs (PaddleOCR's own PDF iterator stops
+# after page 1 in 2.7.3).
+pip3 install $PIP_FLAGS "numpy<2" "paddlepaddle==2.6.2" "paddleocr==2.7.3" pdf2image
 
 # 4. Warm-up: trigger first-run model download
 echo "Warming up — downloading OCR model weights (~250 MB)..."
