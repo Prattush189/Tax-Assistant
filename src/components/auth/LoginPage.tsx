@@ -22,13 +22,20 @@ const features = [
 ];
 
 export function LoginPage({ onSwitchToSignup, onNeedsVerification, onForgotPassword }: LoginPageProps) {
-  const { login } = useAuth();
+  const { login, completeLoginOtp } = useAuth();
   // `identifier` may be email OR phone — server dispatches on the '@' sign
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // 2FA second-step state. When `pendingLoginToken` is set, the form
+  // swaps to the OTP entry view. Cleared on a successful verify or on
+  // the user clicking "Back".
+  const [pendingLoginToken, setPendingLoginToken] = useState<string | null>(null);
+  const [emailMasked, setEmailMasked] = useState<string>('');
+  const [otpCode, setOtpCode] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -39,9 +46,30 @@ export function LoginPage({ onSwitchToSignup, onNeedsVerification, onForgotPassw
       const result = await login(identifier, password);
       if (result.needsEmailVerification) {
         onNeedsVerification?.(result.email ?? identifier);
+        return;
+      }
+      if (result.requiresOtp && result.pendingLoginToken) {
+        setPendingLoginToken(result.pendingLoginToken);
+        setEmailMasked(result.emailMasked ?? '');
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleOtpSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pendingLoginToken) return;
+    setError('');
+    setIsSubmitting(true);
+    try {
+      await completeLoginOtp(pendingLoginToken, otpCode.trim());
+      // Auth context now has the user; App's auth-check will route
+      // away from this page automatically.
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Code verification failed');
     } finally {
       setIsSubmitting(false);
     }
@@ -109,8 +137,14 @@ export function LoginPage({ onSwitchToSignup, onNeedsVerification, onForgotPassw
           </div>
 
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }}>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">Welcome back</h1>
-            <p className="text-gray-500 dark:text-gray-400 mb-8">Sign in to your account to continue</p>
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">
+              {pendingLoginToken ? 'Enter verification code' : 'Welcome back'}
+            </h1>
+            <p className="text-gray-500 dark:text-gray-400 mb-8">
+              {pendingLoginToken
+                ? `We sent a 6-digit code to ${emailMasked || 'your email'}. It expires in 10 minutes.`
+                : 'Sign in to your account to continue'}
+            </p>
           </motion.div>
 
           {error && (
@@ -123,6 +157,44 @@ export function LoginPage({ onSwitchToSignup, onNeedsVerification, onForgotPassw
             </motion.div>
           )}
 
+          {pendingLoginToken ? (
+            // ── OTP step (only shown when 2FA is enabled on this account) ────────
+            <form onSubmit={handleOtpSubmit} className="space-y-5">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Verification code</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="\d*"
+                  autoComplete="one-time-code"
+                  autoFocus
+                  value={otpCode}
+                  onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  className="w-full px-4 py-3 text-center text-2xl tracking-[0.5em] font-mono bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500"
+                  placeholder="000000"
+                  maxLength={6}
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={isSubmitting || otpCode.length < 4}
+                className="w-full py-3 px-4 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-700 hover:to-emerald-600 text-white font-medium rounded-xl shadow-sm disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+              >
+                {isSubmitting ? 'Verifying…' : 'Sign in'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingLoginToken(null);
+                  setOtpCode('');
+                  setError('');
+                }}
+                className="w-full py-2 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+              >
+                Use a different account
+              </button>
+            </form>
+          ) : (
           <form onSubmit={handleSubmit} className="space-y-5">
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Email or phone</label>
@@ -188,6 +260,7 @@ export function LoginPage({ onSwitchToSignup, onNeedsVerification, onForgotPassw
               )}
             </motion.button>
           </form>
+          )}
 
           {/* Divider */}
           <motion.div

@@ -109,6 +109,13 @@ if (!colNames.includes('inviter_id')) {
   db.exec("ALTER TABLE users ADD COLUMN inviter_id TEXT");
   db.exec("CREATE INDEX IF NOT EXISTS idx_users_inviter_id ON users(inviter_id)");
 }
+// 2026-06: per-user 2FA toggle. When 1, every login requires a fresh
+// 6-digit OTP delivered to the account email after password check.
+// Default 0 (off) — existing accounts behave exactly as before until
+// the user opts in via Settings.
+if (!colNames.includes('require_login_otp')) {
+  db.exec("ALTER TABLE users ADD COLUMN require_login_otp INTEGER NOT NULL DEFAULT 0");
+}
 // Single-session column kept for legacy migrations; the authoritative
 // store is the user_sessions table below (multi-session, up to 5
 // concurrent devices per user).

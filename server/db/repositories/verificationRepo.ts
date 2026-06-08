@@ -16,11 +16,13 @@ import db from '../index.js';
  *   5. After 5 failed attempts the route treats the code as expired.
  */
 
+export type VerificationPurpose = 'signup' | 'resend' | 'reset' | 'login';
+
 export interface VerificationCodeRow {
   id: string;
   user_id: string;
   code_hash: string;
-  purpose: 'signup' | 'resend' | 'reset';
+  purpose: VerificationPurpose;
   attempts: number;
   expires_at: string;
   consumed_at: string | null;
@@ -51,7 +53,7 @@ const stmts = {
 export const verificationRepo = {
   create(
     userId: string,
-    purpose: 'signup' | 'resend' | 'reset',
+    purpose: VerificationPurpose,
     codeHash: string,
     ttlSeconds: number,
   ): VerificationCodeRow {
@@ -62,7 +64,7 @@ export const verificationRepo = {
       .get(id) as VerificationCodeRow;
   },
 
-  findActive(userId: string, purpose: 'signup' | 'resend' | 'reset'): VerificationCodeRow | undefined {
+  findActive(userId: string, purpose: VerificationPurpose): VerificationCodeRow | undefined {
     return stmts.findActive.get(userId, purpose) as VerificationCodeRow | undefined;
   },
 

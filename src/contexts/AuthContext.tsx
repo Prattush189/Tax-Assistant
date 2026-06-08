@@ -16,6 +16,9 @@ interface User {
   trial_ends_at?: string;
   /** ISO timestamp when the current paid plan expires; null if no active sub. */
   plan_expires_at?: string | null;
+  /** 2FA opt-in. When true, every login emails a 6-digit OTP that the
+   *  user must enter before tokens are issued. Toggled in Settings. */
+  require_login_otp?: boolean;
 }
 
 export interface SignupResult {
@@ -29,6 +32,14 @@ export interface LoginResult {
   /** Set when login is blocked pending email verification (password-based only). */
   needsEmailVerification?: boolean;
   email?: string;
+  /** Set when the user has opted into 2FA and the server has just sent
+   *  an OTP to their email. The caller must collect the code and POST
+   *  it to `/api/auth/verify-login-otp` via `completeLoginOtp` before
+   *  the user is signed in. */
+  requiresOtp?: boolean;
+  pendingLoginToken?: string;
+  emailMasked?: string;
+  otpTtlSeconds?: number;
 }
 
 interface AuthContextType {
@@ -38,6 +49,9 @@ interface AuthContextType {
   /** Accepts email OR phone as the identifier. Returns a hint when the user
    *  still needs to verify their email — callers should route to the OTP page. */
   login: (identifier: string, password: string) => Promise<LoginResult>;
+  /** Step 2 of the email-OTP login flow. Called only when the
+   *  preceding `login()` returned `requiresOtp: true`. */
+  completeLoginOtp: (pendingLoginToken: string, code: string) => Promise<void>;
   loginWithGoogle: (idToken: string) => Promise<void>;
   loginWithSso: (accessToken: string, refreshToken: string, user: User) => void;
   /** Returns `{ needsEmailVerification: true, email }` instead of setting the
@@ -148,6 +162,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         method: 'POST',
         body: JSON.stringify({ identifier, password }),
       });
+      // 2FA branch — server sent an OTP instead of tokens. Caller's
+      // job to collect the code and call completeLoginOtp.
+      if (data?.requiresOtp) {
+        return {
+          requiresOtp: true,
+          pendingLoginToken: data.pendingLoginToken,
+          emailMasked: data.emailMasked,
+          otpTtlSeconds: data.otpTtlSeconds,
+        };
+      }
       localStorage.setItem(TOKEN_KEY, data.accessToken);
       localStorage.setItem(REFRESH_KEY, data.refreshToken);
       setUser(data.user);
@@ -159,6 +183,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       throw err;
     }
+  };
+
+  /** Step 2 of the 2FA login flow. Caller passes the pendingLoginToken
+   *  it got from `login()`'s `requiresOtp` response, plus the 6-digit
+   *  code the user typed. On success, the user is signed in. */
+  const completeLoginOtp = async (pendingLoginToken: string, code: string): Promise<void> => {
+    const data = await apiFetch('/api/auth/verify-login-otp', {
+      method: 'POST',
+      body: JSON.stringify({ pendingLoginToken, code }),
+    });
+    localStorage.setItem(TOKEN_KEY, data.accessToken);
+    localStorage.setItem(REFRESH_KEY, data.refreshToken);
+    setUser(data.user);
   };
 
   const loginWithGoogle = async (code: string) => {
@@ -226,6 +263,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isAuthenticated: !!user,
         isLoading,
         login,
+        completeLoginOtp,
         loginWithGoogle,
         loginWithSso,
         signup,

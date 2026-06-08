@@ -91,6 +91,7 @@ export function toUserResponse(u: {
   books_paid_enabled?: number | null;
   created_at?: string | null;
   plan_expires_at?: string | null;
+  require_login_otp?: number | null;
 }) {
   const createdAt = u.created_at ?? new Date().toISOString();
   return {
@@ -103,6 +104,8 @@ export function toUserResponse(u: {
     books_paid_enabled: u.books_paid_enabled === 1,
     trial_ends_at: getTrialEndsAt(createdAt),
     plan_expires_at: u.plan_expires_at ?? null,
+    // 2FA opt-in flag — UI uses this to render the Settings toggle state.
+    require_login_otp: u.require_login_otp === 1,
   };
 }
 
@@ -442,6 +445,125 @@ router.post('/login', authLimiter, async (req: Request, res: Response) => {
     return;
   }
 
+  // 2026-06: 2FA gate. If the user has require_login_otp = 1, do NOT
+  // issue session tokens yet. Instead, generate a fresh 6-digit OTP,
+  // store its hash via verificationRepo, email it, and respond with a
+  // short-lived pendingLoginToken the client uses in the follow-up
+  // `/verify-login-otp` POST. The token is a signed JWT carrying only
+  // the user id and a 10-minute expiry — no session permissions until
+  // the OTP is verified.
+  //
+  // Existing OTP-on-email-verification flow (email_verified === 0) is
+  // a separate concern and runs ABOVE this block — that gate already
+  // returned 403 if needsEmailVerification fires. So we only reach
+  // here for an account whose email IS verified but who has opted
+  // into 2FA. Mailer-not-configured edge case is handled by failing
+  // closed: refuse the login attempt with a clear error so the user
+  // isn't locked out silently. Admin can disable the flag from the
+  // DB if SMTP is down.
+  if (user.require_login_otp === 1) {
+    if (!mailerConfigured) {
+      res.status(503).json({
+        error: 'Login OTP is required for this account but the email service is currently unavailable. Try again in a few minutes or contact support.',
+      });
+      return;
+    }
+    const code = generateOtpCode();
+    const codeHash = await bcrypt.hash(code, 10);
+    verificationRepo.create(user.id, 'login', codeHash, OTP_TTL_SECONDS);
+    const sendResult = await sendOtpEmail(user.email, code);
+    if (!sendResult.ok) {
+      console.warn('[auth] login-OTP email send failed:', sendResult.error);
+      res.status(503).json({
+        error: 'Failed to send the login verification email. Try again in a minute.',
+      });
+      return;
+    }
+    const pendingLoginToken = jwt.sign(
+      { id: user.id, kind: 'login-otp' },
+      JWT_SECRET,
+      { expiresIn: `${OTP_TTL_SECONDS}s` },
+    );
+    // Mask the email for safer UI display ("p******@gmail.com").
+    const masked = (() => {
+      const [local, domain] = user.email.split('@');
+      if (!local || !domain) return user.email;
+      const head = local.slice(0, 1);
+      return `${head}${'*'.repeat(Math.max(1, local.length - 1))}@${domain}`;
+    })();
+    res.json({
+      requiresOtp: true,
+      pendingLoginToken,
+      emailMasked: masked,
+      otpTtlSeconds: OTP_TTL_SECONDS,
+    });
+    return;
+  }
+
+  const tokens = loginAndIssueTokens(user, req);
+  notifyAssistOfLogin({
+    userId: user.id,
+    email: user.email,
+    ipAddress: ((req.headers['x-forwarded-for'] as string) ?? req.ip ?? '').toString().split(',')[0].trim() || null,
+    role: user.role,
+  });
+  res.json({
+    ...tokens,
+    user: toUserResponse(user),
+  });
+});
+
+// POST /api/auth/verify-login-otp — second step of the 2FA login flow.
+// The client posts `{ pendingLoginToken, code }`; we validate the JWT,
+// look up the latest unused login-purpose verification row, compare
+// the user-supplied code via bcrypt, and on success issue the actual
+// session tokens. On failure we increment the attempt counter; after
+// OTP_MAX_ATTEMPTS the row is treated as consumed (forces the user
+// to re-send by retrying password login).
+router.post('/verify-login-otp', authLimiter, async (req: Request, res: Response) => {
+  const { pendingLoginToken, code } = req.body ?? {};
+  if (typeof pendingLoginToken !== 'string' || typeof code !== 'string') {
+    res.status(400).json({ error: 'pendingLoginToken and code are required' });
+    return;
+  }
+  const normalised = code.trim();
+  if (!/^\d{4,8}$/.test(normalised)) {
+    res.status(400).json({ error: 'Enter the 6-digit code from your email' });
+    return;
+  }
+  let payload: { id: string; kind?: string };
+  try {
+    payload = jwt.verify(pendingLoginToken, JWT_SECRET) as { id: string; kind?: string };
+  } catch {
+    res.status(401).json({ error: 'Verification link expired — sign in again' });
+    return;
+  }
+  if (payload.kind !== 'login-otp') {
+    res.status(401).json({ error: 'Invalid verification token' });
+    return;
+  }
+  const user = userRepo.findById(payload.id);
+  if (!user) {
+    res.status(401).json({ error: 'Account not found' });
+    return;
+  }
+  const row = verificationRepo.findActive(user.id, 'login');
+  if (!row) {
+    res.status(410).json({ error: 'Verification code expired — sign in again' });
+    return;
+  }
+  if (row.attempts >= OTP_MAX_ATTEMPTS) {
+    verificationRepo.markConsumed(row.id);
+    res.status(429).json({ error: 'Too many wrong attempts — sign in again to receive a new code' });
+    return;
+  }
+  const ok = await bcrypt.compare(normalised, row.code_hash);
+  if (!ok) {
+    verificationRepo.incrementAttempts(row.id);
+    res.status(401).json({ error: 'Incorrect code' });
+    return;
+  }
+  verificationRepo.markConsumed(row.id);
   const tokens = loginAndIssueTokens(user, req);
   notifyAssistOfLogin({
     userId: user.id,
@@ -650,6 +772,37 @@ router.patch('/email', authMiddleware, async (req: AuthRequest, res: Response) =
 });
 
 // PATCH /api/auth/password (protected) — change password
+// PATCH /api/auth/settings/require-login-otp — toggle the per-user
+// 2FA flag. Body: { enabled: boolean }. The user must be authenticated
+// (their existing session) to flip this. Turning it ON takes effect
+// on the NEXT login; the current session keeps working until the
+// refresh / next sign-in. Turning it OFF takes effect immediately.
+router.patch('/settings/require-login-otp', authMiddleware, (req: AuthRequest, res: Response) => {
+  const { enabled } = req.body ?? {};
+  if (typeof enabled !== 'boolean') {
+    res.status(400).json({ error: '`enabled` must be a boolean' });
+    return;
+  }
+  const user = userRepo.findById(req.user!.id);
+  if (!user) {
+    res.status(404).json({ error: 'User not found' });
+    return;
+  }
+  // Refuse to turn ON if the account has no usable email (phone-only
+  // accounts can't receive the OTP). Phone-only accounts are
+  // identifiable by an email that looks like the synthetic
+  // "user-<digits>@phone.local" pattern userRepo creates for them.
+  if (enabled && /@phone\.local$/i.test(user.email)) {
+    res.status(400).json({
+      error: 'This account has no email on file. Add an email under Profile before enabling email OTP login.',
+    });
+    return;
+  }
+  userRepo.setRequireLoginOtp(user.id, enabled);
+  const fresh = userRepo.findById(user.id)!;
+  res.json({ success: true, user: toUserResponse(fresh) });
+});
+
 router.patch('/password', authMiddleware, async (req: AuthRequest, res: Response) => {
   const { currentPassword, newPassword } = req.body;
 

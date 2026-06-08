@@ -20,6 +20,7 @@ export interface UserRow {
   inviter_id: string | null;          // pool owner for shared-plan members
   itr_enabled: number;                // 0 | 1 — grants ITR tab without admin role
   books_paid_enabled: number;         // 0 | 1 — grants TB → Statements + CMA Report (admins always have)
+  require_login_otp: number;          // 0 | 1 — when 1, every login emails a fresh OTP after password check
   session_token: string | null;       // random token per login — single-session enforcement
   plan_expires_at: string | null;           // ISO timestamp — paid plan expiry; NULL = no paid sub
   razorpay_subscription_id: string | null;  // active Razorpay subscription ID
@@ -174,6 +175,13 @@ export const userRepo = {
 
   updatePlan(id: string, plan: 'free' | 'pro' | 'enterprise'): void {
     stmts.updatePlan.run(plan, id);
+  },
+
+  /** Toggle the per-user "require OTP via email on every login" flag.
+   *  Used by Settings → Security. The user must be authenticated to
+   *  hit the route that calls this. */
+  setRequireLoginOtp(id: string, enabled: boolean): void {
+    db.prepare('UPDATE users SET require_login_otp = ? WHERE id = ?').run(enabled ? 1 : 0, id);
   },
 
   /** Upgrade plan and set when it expires (used after Razorpay payment verified). */

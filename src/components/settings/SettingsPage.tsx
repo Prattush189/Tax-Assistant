@@ -3,7 +3,7 @@ import {
   User, Mail, Lock, Trash2, AlertTriangle, Check, Sliders, PenTool,
   CreditCard, MessageSquare, Paperclip, Lightbulb, FileText, FileSignature,
   ScrollText, Landmark, BookOpenCheck, Users, TrendingUp, Clock, Download, CheckCircle2, XCircle, Hourglass,
-  MapPin, Pencil, Building2, Loader2, Monitor,
+  MapPin, Pencil, Building2, Loader2, Monitor, ShieldCheck,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import {
@@ -11,6 +11,7 @@ import {
   updateAccountEmail,
   updateAccountPassword,
   deleteAccount,
+  setRequireLoginOtp,
   fetchUserUsage,
   fetchUserLicense,
   fetchPaymentHistory,
@@ -338,6 +339,70 @@ const INDIAN_STATES = [
 
 const billingInputCls = "w-full px-3 py-2 bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 text-gray-800 dark:text-gray-100 text-sm placeholder:text-gray-400";
 const billingLabelCls = "block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1";
+
+// ── TwoFactorToggle ───────────────────────────────────────────────────────────
+//
+// Renders the on/off switch for the "require email OTP on every sign-in"
+// setting. Reads the current value from useAuth().user.require_login_otp,
+// PATCH-es the server when toggled, then refreshes the user so the
+// new value sticks across reloads.
+//
+// Disabling: takes effect immediately. Enabling: the current session
+// stays signed-in (no forced logout) but the NEXT login will require
+// an OTP. We show a small line of helper copy explaining that.
+
+function TwoFactorToggle() {
+  const { user, refreshUser } = useAuth();
+  const enabled = !!user?.require_login_otp;
+  const [pending, setPending] = useState(false);
+  const handleToggle = async () => {
+    if (pending) return;
+    setPending(true);
+    try {
+      await setRequireLoginOtp(!enabled);
+      await refreshUser();
+      toast.success(!enabled
+        ? 'Two-factor login enabled — you\'ll get a code by email next sign-in.'
+        : 'Two-factor login disabled.',
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update setting');
+    } finally {
+      setPending(false);
+    }
+  };
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium text-gray-800 dark:text-gray-100">
+          {enabled ? 'Enabled' : 'Disabled'}
+        </p>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+          {enabled
+            ? `A 6-digit code will be emailed to ${user?.email ?? 'your account email'} on every sign-in.`
+            : 'Adds an extra step to every login. Your account email will receive a one-time code.'}
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={handleToggle}
+        disabled={pending}
+        aria-pressed={enabled}
+        className={cn(
+          'relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:opacity-50 disabled:cursor-wait',
+          enabled ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-gray-700',
+        )}
+      >
+        <span
+          className={cn(
+            'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition-transform',
+            enabled ? 'translate-x-5' : 'translate-x-0',
+          )}
+        />
+      </button>
+    </div>
+  );
+}
 
 // ── BillingDetailsSection ─────────────────────────────────────────────────────
 
@@ -923,6 +988,14 @@ export function SettingsPage() {
               icon={Monitor}
             >
               <SessionsSection buttonPrimary={buttonPrimary} />
+            </Section>
+
+            <Section
+              title="Two-factor authentication"
+              description="Require a one-time code from your email on every sign-in. The code is sent to the email on this account."
+              icon={ShieldCheck}
+            >
+              <TwoFactorToggle />
             </Section>
 
             <Section

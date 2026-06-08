@@ -1399,6 +1399,53 @@ export function applyMapping(
   // source is available.
   let lastBalance: number | null = null;
 
+  // 2026-06: Bank statements often print the OPENING BALANCE on a
+  // bare row before the first transaction — balance column populated,
+  // date / narration / debit / credit all empty (J&K Bank, ICICI CC,
+  // PNB OD all do this). Without seeding `lastBalance` from it, the
+  // first transaction's amount can't be sanity-checked against the
+  // balance trajectory, so a wrapped-narration carry-forward
+  // placeholder (J&K Bank's MS HIGHBRAND ELECTRO scenario: amount
+  // `48,000` floats onto a phantom row above the real `2,000` debit)
+  // sails through as a real transaction and inflates the totals.
+  //
+  // Scan the first few rows of the grid for an opening-balance
+  // signature and seed `lastBalance` from it. Bail out the moment we
+  // see a real transaction row — we don't want to overwrite
+  // `lastBalance` with a mid-statement balance value that happens to
+  // pre-date the first transaction we kept.
+  if (kind === 'bank') {
+    for (let rIdx = 0; rIdx < Math.min(grid.rows.length, 20); rIdx++) {
+      const row = grid.rows[rIdx];
+      const cell = (role: ColumnRole) => {
+        const i = colByRole.get(role);
+        return i === undefined ? '' : (row[i] ?? '').trim();
+      };
+      const dateRaw = cell('date');
+      const balanceRaw = cell('balance');
+      const debitRaw = cell('debit');
+      const creditRaw = cell('credit');
+      // Real transaction row → stop scanning. We've passed the opening.
+      if (parseDate(dateRaw, inferredYear ?? undefined) || debitRaw || creditRaw) break;
+      const bal = parseNumber(balanceRaw);
+      if (bal == null) continue;
+      // CC/OD account: balance prints `<num>Dr` (overdraft owed) or
+      // `<num>Cr` (credit). Apply the same sign convention the main
+      // loop uses at line ~1722 so the sanity check downstream gets
+      // a comparable lastBalance value.
+      let signed = bal;
+      if (/\bcr\.?\s*$/i.test(balanceRaw)) signed = -Math.abs(signed);
+      else if (/\bdr\.?\s*$/i.test(balanceRaw)) signed = Math.abs(signed);
+      // For a J&K Bank CC account the printed balance is `-12,79,294.23Dr`
+      // — parseNumber returns the negative as-is. Force the sign to
+      // negative when "Dr" is on the suffix since that's the canonical
+      // overdraft direction the downstream classifier expects.
+      if (/\bdr\.?\s*$/i.test(balanceRaw) && signed > 0) signed = -signed;
+      lastBalance = signed;
+      break;
+    }
+  }
+
   const flushPending = () => {
     if (!pending) return;
     // Resolve final amount(s). Three cases:

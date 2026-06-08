@@ -2368,6 +2368,17 @@ export async function reclassifyBankStatement(id: string): Promise<{ success: bo
   return authFetch(`/api/bank-statements/${id}/reclassify`, { method: 'POST' });
 }
 
+/** Toggle the per-user "require OTP via email on every login" flag.
+ *  Server-side: PATCH /api/auth/settings/require-login-otp. The change
+ *  takes effect on the user's NEXT sign-in — the current session keeps
+ *  working. */
+export async function setRequireLoginOtp(enabled: boolean): Promise<{ success: boolean; user: unknown }> {
+  return authFetch('/api/auth/settings/require-login-otp', {
+    method: 'PATCH',
+    body: JSON.stringify({ enabled }),
+  });
+}
+
 /** Re-apply the user's current bank-statement conditions as a
  *  post-extraction visibility filter against the stored rows. Used
  *  when the user adds/edits/removes a condition without wanting to
