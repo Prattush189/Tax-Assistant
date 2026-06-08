@@ -1399,22 +1399,34 @@ export function applyMapping(
   // source is available.
   let lastBalance: number | null = null;
 
-  // 2026-06: Bank statements often print the OPENING BALANCE on a
-  // bare row before the first transaction — balance column populated,
-  // date / narration / debit / credit all empty (J&K Bank, ICICI CC,
-  // PNB OD all do this). Without seeding `lastBalance` from it, the
-  // first transaction's amount can't be sanity-checked against the
-  // balance trajectory, so a wrapped-narration carry-forward
-  // placeholder (J&K Bank's MS HIGHBRAND ELECTRO scenario: amount
-  // `48,000` floats onto a phantom row above the real `2,000` debit)
-  // sails through as a real transaction and inflates the totals.
+  // 2026-06: Seed `lastBalance` from the OPENING BALANCE printed at
+  // the top of bank statements so the first-row sanity-check has a
+  // reference point.
   //
-  // Scan the first few rows of the grid for an opening-balance
-  // signature and seed `lastBalance` from it. Bail out the moment we
-  // see a real transaction row — we don't want to overwrite
-  // `lastBalance` with a mid-statement balance value that happens to
-  // pre-date the first transaction we kept.
+  // Pass 1 (preferred): find a BARE balance row — balance populated,
+  //   date / debit / credit all empty. This is the canonical opening
+  //   balance signature (J&K Bank, ICICI CC, PNB OD).
+  //
+  // Pass 2 (fallback): if pdfjs already merged the opening into row 1
+  //   along with a phantom amount (the J&K Bank wrapped-narration
+  //   scenario: `mTFR/.../MS HIGHBRAND ELECTRO` wraps to two lines
+  //   and the 48,000 carry-forward placeholder gets glued to the
+  //   merged row), scan ANY cell of the first ~10 grid rows for the
+  //   FIRST balance-shaped value (`<num>Dr` / `<num>Cr` / signed
+  //   decimal) and use that.
+  //
+  // Pass 2 risks picking up the wrong balance if pdfjs left the
+  // opening label out entirely AND the first balance-shaped cell IS
+  // a transaction's running balance. In that case we'd seed with a
+  // post-tx value, which makes the sanity check think the first
+  // transaction has zero amount — at which point the explicit
+  // zero-delta phantom-drop below kicks in and we lose the row.
+  // That's an acceptable failure mode: losing one real first-row
+  // transaction is far better than keeping a ₹48,000 phantom that
+  // distorts every dashboard tile.
+  let openingFromBareRow = false;
   if (kind === 'bank') {
+    // Pass 1: bare opening-balance row.
     for (let rIdx = 0; rIdx < Math.min(grid.rows.length, 20); rIdx++) {
       const row = grid.rows[rIdx];
       const cell = (role: ColumnRole) => {
@@ -1425,24 +1437,42 @@ export function applyMapping(
       const balanceRaw = cell('balance');
       const debitRaw = cell('debit');
       const creditRaw = cell('credit');
-      // Real transaction row → stop scanning. We've passed the opening.
       if (parseDate(dateRaw, inferredYear ?? undefined) || debitRaw || creditRaw) break;
       const bal = parseNumber(balanceRaw);
       if (bal == null) continue;
-      // CC/OD account: balance prints `<num>Dr` (overdraft owed) or
-      // `<num>Cr` (credit). Apply the same sign convention the main
-      // loop uses at line ~1722 so the sanity check downstream gets
-      // a comparable lastBalance value.
       let signed = bal;
       if (/\bcr\.?\s*$/i.test(balanceRaw)) signed = -Math.abs(signed);
       else if (/\bdr\.?\s*$/i.test(balanceRaw)) signed = Math.abs(signed);
-      // For a J&K Bank CC account the printed balance is `-12,79,294.23Dr`
-      // — parseNumber returns the negative as-is. Force the sign to
-      // negative when "Dr" is on the suffix since that's the canonical
-      // overdraft direction the downstream classifier expects.
       if (/\bdr\.?\s*$/i.test(balanceRaw) && signed > 0) signed = -signed;
       lastBalance = signed;
+      openingFromBareRow = true;
       break;
+    }
+    // Pass 2: ANY balance-shaped cell in the first 10 grid rows.
+    // Only runs when Pass 1 didn't find a bare row.
+    if (!openingFromBareRow) {
+      const BAL_RE = /^[-]?[\d,]+\.\d{1,2}\s*(?:dr|cr)?$/i;
+      outer: for (let rIdx = 0; rIdx < Math.min(grid.rows.length, 10); rIdx++) {
+        const row = grid.rows[rIdx];
+        for (const rawCell of row) {
+          const cellTxt = (rawCell ?? '').trim();
+          if (!cellTxt) continue;
+          if (!BAL_RE.test(cellTxt)) continue;
+          const parsed = parseNumber(cellTxt);
+          if (parsed == null) continue;
+          // Reject implausibly-small "balance" candidates that are
+          // really transaction amounts captured ahead of the opening
+          // balance (e.g. cell `120.00` in a narration column). Real
+          // CC / savings account opening balances exceed ₹100.
+          if (Math.abs(parsed) < 100) continue;
+          let signed = parsed;
+          if (/\bcr\.?\s*$/i.test(cellTxt)) signed = -Math.abs(signed);
+          else if (/\bdr\.?\s*$/i.test(cellTxt)) signed = Math.abs(signed);
+          if (/\bdr\.?\s*$/i.test(cellTxt) && signed > 0) signed = -signed;
+          lastBalance = signed;
+          break outer;
+        }
+      }
     }
   }
 
@@ -1609,6 +1639,38 @@ export function applyMapping(
       pending = null;
       return;
     }
+
+    // 2026-06: zero-delta phantom drop. Bank statements occasionally
+    // attach a stray amount cell to the opening-balance row (J&K
+    // Bank's wrapped-narration MS HIGHBRAND ELECTRO scenario where
+    // ₹48,000 floats up onto the opening line). If our printed
+    // balance matches the seeded `lastBalance` exactly and yet we
+    // have a non-zero amount, the row must be a phantom — a real
+    // transaction with that amount would move the balance.
+    //
+    // Only triggers on the FIRST transaction we'd emit (pending.balance
+    // matches lastBalance EXACTLY and out is empty); subsequent
+    // identical-balance rows are valid same-instant reversal pairs
+    // (e.g. NACH presentment + return) that the dedup pass later
+    // handles separately.
+    //
+    // Bank-only — Tally ledgers legitimately produce same-balance
+    // rows when an entry is offset by an immediate counter-entry.
+    if (
+      kind === 'bank'
+      && out.length === 0
+      && lastBalance != null
+      && pending.balance != null
+      && Math.abs(pending.balance - lastBalance) < 0.05
+      && Math.abs(amount) >= 100
+    ) {
+      stats.skippedNoAmount += 1;
+      // lastBalance already equals pending.balance, leave it unchanged
+      // so the next row's sanity-check uses the correct anchor.
+      pending = null;
+      return;
+    }
+
     out.push({
       date: pending.date,
       narration: pending.narration || '',
