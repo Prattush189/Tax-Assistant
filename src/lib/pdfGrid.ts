@@ -1774,11 +1774,54 @@ export function applyMapping(
     // every ledger's opening and re-introduce the false-positive
     // §269SS / RECON_BREAK observations that fix targeted.
     if (kind === 'bank') {
-      const SUBTOTAL_MARKER = /\b(grand\s+total|sub[- ]?total|page\s+total|carr(?:y|ied)\s+forward|brought\s+forward|opening\s+balance|closing\s+balance|c\.?\s*\/\.?\s*f\.?|b\.?\s*\/\.?\s*f\.?|^\s*total\b)/i;
+      // 2026-06: Expanded marker to cover J&K Bank CC statement (cc204
+      // case) footer + banner phrases. The bank prints a per-page
+      // footer block (`Effective Available Amount`, `Funds in
+      // clearing`, `Total available Amount`, `FFD Contribution`,
+      // `Unless the constituent notifies the bank...`) AND a page
+      // header banner (`Transaction Details`, `Page X of Y`,
+      // `TYPE: CASH CREDIT SCHEME`, `STATEMENT OF ACCOUNT FOR THE
+      // PERIOD`, `Printed By NNNN (NNNN)`). Without filtering each of
+      // these gets parsed as a date-less transaction row, the wizard
+      // then runs the balance-delta fallback on it, and a ~₹15-Lakh
+      // phantom amount lands on each one (the row's "balance" cell
+      // captures a partial number from the surrounding text — often
+      // just "6" or "0" — and the delta vs the previous real
+      // balance becomes the phantom amount).
+      //
+      // Observed effect on cc204.pdf (167 pages): inflated INFLOW &
+      // OUTFLOW each by ~₹6.7 Cr vs the bank's printed Grand Total
+      // of ₹39.5 L / ₹39.4 L.
+      const SUBTOTAL_MARKER = /\b(grand\s+total|sub[- ]?total|page\s+total|carr(?:y|ied)\s+forward|brought\s+forward|opening\s+balance|closing\s+balance|c\.?\s*\/\.?\s*f\.?|b\.?\s*\/\.?\s*f\.?|^\s*total\b|effective\s+available\s+amount|total\s+available\s+amount|funds\s+in\s+clearing|ffd\s+contribution|unless\s+the\s+constituent|transaction\s+details|statement\s+of\s+account\s+for\s+the\s+period|printed\s+by\s+\d|^page\s+\d+\s+of\s+\d|type\s*:\s*cash\s+credit|cash\s+credit\s+scheme|interest\s+rate\s*:|no\s+nomination|^a\/c\s+no|^ifsc\s+code|^micr\s+code|^phone\s+code)/i;
+      // Strictly unambiguous markers — fire even when a date is
+      // present (because pdfjs's y-band clustering on J&K Bank CC
+      // pages fuses the "Page Total:" footer row with the next
+      // page's first transaction date, producing a grid row that has
+      // a date AND the Page Total values). These tokens never appear
+      // in legitimate transaction narrations.
+      const UNAMBIGUOUS_MARKER = /\b(page\s+total|grand\s+total|effective\s+available\s+amount|total\s+available\s+amount|funds\s+in\s+clearing|ffd\s+contribution|unless\s+the\s+constituent)\b/i;
       const haystack = `${narr} ${voucher ?? ''} ${reference ?? ''}`.trim();
-      if (!date && SUBTOTAL_MARKER.test(haystack)) {
+      // J&K Bank CC pages split "Page Total :" across two adjacent
+      // pdfjs cells ("Page" in the narration column, "Total:" in the
+      // skip column), so the marker isn't visible in the narration-
+      // alone haystack. Build a wider haystack from every cell of
+      // the raw row so the marker fires regardless of column split.
+      const rowHaystack = row.map(c => (c ?? '').trim()).filter(Boolean).join(' ');
+      if ((!date && SUBTOTAL_MARKER.test(haystack)) || UNAMBIGUOUS_MARKER.test(haystack) || UNAMBIGUOUS_MARKER.test(rowHaystack)) {
         // Flush whatever was pending so this row's stray numbers
         // don't bleed into the previous transaction's pending block.
+        flushPending();
+        stats.skippedNoAmount += 1;
+        continue;
+      }
+      // Implausible-balance guard. On J&K Bank CC pages, the
+      // balance-column value picked up from a footer fragment is
+      // often a 1-2 digit residue ("6", "10"). Real CC balances on
+      // this account are ₹15-Lakh-scale (the customer's credit
+      // line). Any balance value below ₹100 on a date-less row is
+      // almost certainly extracted noise — drop the row before the
+      // balance-delta fallback can turn it into a ₹15L phantom.
+      if (!date && balance != null && Math.abs(balance) < 100) {
         flushPending();
         stats.skippedNoAmount += 1;
         continue;
