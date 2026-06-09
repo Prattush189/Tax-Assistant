@@ -414,6 +414,59 @@ const TALLY: ErpRule = {
   required: ['date', 'narration', 'debit', 'credit'],
 };
 
+// Tally Compact (No-Narration) — the Tally "Ledger Report" daybook
+// variant emitted by ICAI / Shree Banke style accounting setups.
+// Same headers as Tally proper (Date | Vch Type | Vch No. | Debit |
+// Credit | Balance) but NO separate Particulars / Narration column —
+// the Vch Type cell ("Sales" / "Purchase" / "Receipt") carries the
+// row's description.
+//
+// Why a separate rule instead of dropping narration from TALLY.required:
+// the wider Tally exports (ASSA ABLOY Interio Paradise, Hotel Holiday
+// Inn) DO have a Particulars column and benefit from the narration-
+// required gate (false-positive prevention if that column got dropped
+// to skip during extraction). This compact variant has the same
+// fingerprints, runs AFTER Tally proper, and only catches files
+// where Tally's required check fails because narration is genuinely
+// absent. Fingerprint includes "ledger report" which Tally's daybook
+// variant always emits; full Tally accounts use "Ledger Account".
+const TALLY_COMPACT: ErpRule = {
+  name: 'Tally Compact',
+  fingerprints: [
+    // "Ledger Report" subtitle is the discriminating signal — full
+    // Tally accounts use "Ledger Account". This is the only fingerprint
+    // for TALLY_COMPACT because shared Tally tokens like "vch type" /
+    // "vch no." would cause this rule to fire on every Tally PDF
+    // (since RULES.find() stops at first hit and the wider Tally
+    // exports legitimately have narration).
+    //
+    // TALLY_COMPACT is positioned BEFORE TALLY in the RULES list so
+    // a PDF whose subtitle says "Ledger Report" lands here first and
+    // the narration-less mapping completes cleanly. Wider Tally
+    // accounts (subtitle "Ledger Account") miss this fingerprint,
+    // fall through to TALLY proper, and use the narration-required
+    // path as before.
+    'ledger report',
+  ],
+  // Reuse Tally's preprocess hooks — they cover the merged
+  // "Vch No. Debit" case (which CAN happen on this layout too) and
+  // are no-ops on already-split grids.
+  preprocess: grid => tallySplitMergedVchNoDebit(tallyMergeParticularsNarration(grid)),
+  headerRules: [
+    { pattern: /balance/i, role: 'balance' },
+    { pattern: /^(?:vch\.?\s*)?no\.?\b/i, role: 'reference' },
+    { pattern: /^(?:vch\.?\s*)?type\b|voucher\s*type/i, role: 'voucher' },
+    { pattern: /^debit/i, role: 'debit' },
+    { pattern: /^credit/i, role: 'credit' },
+    // Particulars / Narration still mapped when present, just not
+    // required. Catches the rare row where Tally Compact includes a
+    // Particulars column but the rest of the layout still matches.
+    { pattern: /particulars|narration/i, role: 'narration' },
+    { pattern: /^date/i, role: 'date' },
+  ],
+  required: ['date', 'debit', 'credit'],
+};
+
 // Finsys's wider exports (Statement of Account / Customer ledger
 // variant — OSPL Future Energy is the canonical case) collapse the
 // "Date | Vch.No. | Particulars" header trio into a single column at
@@ -676,7 +729,11 @@ const DYNAMICS_AX: ErpRule = {
 // listed before TALLY for the same defensive reason ("Customer -
 // internal account statement" contains the substring "account
 // statement" which Tally exports also use in their banner).
-const RULES: ErpRule[] = [MARG, BUSY, FINSYS, DYNAMICS_AX, TALLY];
+// Order matters — first matching rule wins. TALLY_COMPACT is placed
+// BEFORE TALLY because its discriminating fingerprint ("ledger report"
+// subtitle) is unique to the no-Narration variant; wider Tally
+// exports use "ledger account" and fall through to TALLY proper.
+const RULES: ErpRule[] = [MARG, BUSY, FINSYS, DYNAMICS_AX, TALLY_COMPACT, TALLY];
 
 export interface DetectedErpMapping {
   erp: string;
