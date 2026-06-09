@@ -15,6 +15,21 @@ export function formatINR(amount: number): string {
   }).format(amount);
 }
 
+/** Show paise IF the amount has a non-zero fractional part, otherwise
+ *  no decimals. Right format for transaction-row amounts where most
+ *  rows are whole-rupee (₹2,000) but a handful are paisa-precise
+ *  (₹5.90 CHRGS, ₹28,966.32 NEFT). Rounding the paisa rows hides
+ *  small bank-fee values and makes ₹0.50 look like ₹1. */
+export function formatINRSmart(amount: number): string {
+  const hasFraction = Math.abs(amount % 1) > 0.0049;
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    minimumFractionDigits: hasFraction ? 2 : 0,
+    maximumFractionDigits: hasFraction ? 2 : 0,
+  }).format(amount);
+}
+
 /** Full Indian-format with paise — for headline numbers where the
  *  user is reconciling against a bank/ledger statement and even a
  *  rupee of drift matters. Compact L/Cr formatting hides up to ₹50K

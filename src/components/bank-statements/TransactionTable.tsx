@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Repeat, CheckCircle2, Brain, X, Search } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { BankTransaction } from '../../services/api';
-import { formatINR, formatDate } from '../../lib/utils';
+import { formatINR, formatINRSmart, formatDate } from '../../lib/utils';
 import { BankStatementManager } from '../../hooks/useBankStatementManager';
 import { BANK_STATEMENT_CATEGORIES, CATEGORY_META, BankStatementCategory } from './lib/categories';
 
@@ -76,10 +76,13 @@ export function TransactionTable({ transactions, manager }: Props) {
         t.category,
         t.subcategory,
         t.date,
-        // amount as plain integer + comma-formatted INR both, so
-        // "135000" and "1,35,000" both match.
+        // amount in three forms: plain integer, plain paisa-precise,
+        // and comma-formatted INR. So "135000", "5.90", and
+        // "1,35,000" all match.
         String(Math.round(Math.abs(t.amount))),
+        Math.abs(t.amount).toFixed(2),
         formatINR(Math.abs(t.amount)),
+        formatINRSmart(Math.abs(t.amount)),
       ]
         .filter((v): v is string => typeof v === 'string' && v.length > 0)
         .join(' ')
@@ -336,7 +339,7 @@ export function TransactionTable({ transactions, manager }: Props) {
                     )}
                   </td>
                   <td className={`px-4 py-2.5 whitespace-nowrap text-right font-medium ${isCredit ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                    {isCredit ? '+' : '−'}{formatINR(Math.abs(t.amount))}
+                    {isCredit ? '+' : '−'}{formatINRSmart(Math.abs(t.amount))}
                   </td>
                   <td className="px-4 py-2.5">
                     <select
@@ -350,7 +353,7 @@ export function TransactionTable({ transactions, manager }: Props) {
                     </select>
                   </td>
                   <td className="px-4 py-2.5 whitespace-nowrap text-right text-gray-500 dark:text-gray-400">
-                    {t.balance != null ? formatINR(t.balance) : '—'}
+                    {t.balance != null ? formatINRSmart(t.balance) : '—'}
                   </td>
                 </tr>
               );
