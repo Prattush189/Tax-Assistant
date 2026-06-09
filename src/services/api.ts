@@ -2315,17 +2315,23 @@ export async function downloadBankStatementCsv(id: string, suggestedName: string
   }
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
-  try {
-    const safeName = suggestedName.replace(/[^a-z0-9_-]+/gi, '_') || 'statement';
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${safeName}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-  } finally {
-    URL.revokeObjectURL(url);
-  }
+  const safeName = suggestedName.replace(/[^a-z0-9_-]+/gi, '_') || 'statement';
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${safeName}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Defer revoke. a.click() only queues the browser's download
+  // dispatch — it doesn't actually fetch the blob synchronously. If
+  // we revoke in a `finally` right after click(), the revoke can fire
+  // BEFORE the browser starts reading the blob, producing a silent
+  // failure that "goes away on reload" (the reload re-runs the
+  // handler and a fresh blob URL is created). A short delay holds the
+  // URL alive long enough for the download to actually start; the
+  // memory cost is microscopic and the GC reclaims the blob once the
+  // last reference drops.
+  setTimeout(() => URL.revokeObjectURL(url), 5_000);
 }
 
 export async function fetchBankStatementRules(): Promise<{ rules: BankStatementRule[] }> {

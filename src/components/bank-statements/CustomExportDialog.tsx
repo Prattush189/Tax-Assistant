@@ -108,7 +108,10 @@ export function CustomExportDialog({ transactions, filenameBase, onClose }: Prop
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      // Defer revoke — a.click() only queues the download; revoking
+      // immediately races the browser fetching the blob and produces
+      // intermittent silent failures.
+      window.setTimeout(() => URL.revokeObjectURL(url), 5000);
       onClose();
     } finally {
       setExporting(false);
