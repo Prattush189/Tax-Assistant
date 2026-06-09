@@ -1399,82 +1399,6 @@ export function applyMapping(
   // source is available.
   let lastBalance: number | null = null;
 
-  // 2026-06: Seed `lastBalance` from the OPENING BALANCE printed at
-  // the top of bank statements so the first-row sanity-check has a
-  // reference point.
-  //
-  // Pass 1 (preferred): find a BARE balance row — balance populated,
-  //   date / debit / credit all empty. This is the canonical opening
-  //   balance signature (J&K Bank, ICICI CC, PNB OD).
-  //
-  // Pass 2 (fallback): if pdfjs already merged the opening into row 1
-  //   along with a phantom amount (the J&K Bank wrapped-narration
-  //   scenario: `mTFR/.../MS HIGHBRAND ELECTRO` wraps to two lines
-  //   and the 48,000 carry-forward placeholder gets glued to the
-  //   merged row), scan ANY cell of the first ~10 grid rows for the
-  //   FIRST balance-shaped value (`<num>Dr` / `<num>Cr` / signed
-  //   decimal) and use that.
-  //
-  // Pass 2 risks picking up the wrong balance if pdfjs left the
-  // opening label out entirely AND the first balance-shaped cell IS
-  // a transaction's running balance. In that case we'd seed with a
-  // post-tx value, which makes the sanity check think the first
-  // transaction has zero amount — at which point the explicit
-  // zero-delta phantom-drop below kicks in and we lose the row.
-  // That's an acceptable failure mode: losing one real first-row
-  // transaction is far better than keeping a ₹48,000 phantom that
-  // distorts every dashboard tile.
-  let openingFromBareRow = false;
-  if (kind === 'bank') {
-    // Pass 1: bare opening-balance row.
-    for (let rIdx = 0; rIdx < Math.min(grid.rows.length, 20); rIdx++) {
-      const row = grid.rows[rIdx];
-      const cell = (role: ColumnRole) => {
-        const i = colByRole.get(role);
-        return i === undefined ? '' : (row[i] ?? '').trim();
-      };
-      const dateRaw = cell('date');
-      const balanceRaw = cell('balance');
-      const debitRaw = cell('debit');
-      const creditRaw = cell('credit');
-      if (parseDate(dateRaw, inferredYear ?? undefined) || debitRaw || creditRaw) break;
-      const bal = parseNumber(balanceRaw);
-      if (bal == null) continue;
-      let signed = bal;
-      if (/\bcr\.?\s*$/i.test(balanceRaw)) signed = -Math.abs(signed);
-      else if (/\bdr\.?\s*$/i.test(balanceRaw)) signed = Math.abs(signed);
-      if (/\bdr\.?\s*$/i.test(balanceRaw) && signed > 0) signed = -signed;
-      lastBalance = signed;
-      openingFromBareRow = true;
-      break;
-    }
-    // Pass 2: ANY balance-shaped cell in the first 10 grid rows.
-    // Only runs when Pass 1 didn't find a bare row.
-    if (!openingFromBareRow) {
-      const BAL_RE = /^[-]?[\d,]+\.\d{1,2}\s*(?:dr|cr)?$/i;
-      outer: for (let rIdx = 0; rIdx < Math.min(grid.rows.length, 10); rIdx++) {
-        const row = grid.rows[rIdx];
-        for (const rawCell of row) {
-          const cellTxt = (rawCell ?? '').trim();
-          if (!cellTxt) continue;
-          if (!BAL_RE.test(cellTxt)) continue;
-          const parsed = parseNumber(cellTxt);
-          if (parsed == null) continue;
-          // Reject implausibly-small "balance" candidates that are
-          // really transaction amounts captured ahead of the opening
-          // balance (e.g. cell `120.00` in a narration column). Real
-          // CC / savings account opening balances exceed ₹100.
-          if (Math.abs(parsed) < 100) continue;
-          let signed = parsed;
-          if (/\bcr\.?\s*$/i.test(cellTxt)) signed = -Math.abs(signed);
-          else if (/\bdr\.?\s*$/i.test(cellTxt)) signed = Math.abs(signed);
-          if (/\bdr\.?\s*$/i.test(cellTxt) && signed > 0) signed = -signed;
-          lastBalance = signed;
-          break outer;
-        }
-      }
-    }
-  }
 
   const flushPending = () => {
     if (!pending) return;
@@ -1625,27 +1549,29 @@ export function applyMapping(
         // Swap + flip.
         { amount: -sign * b, balance: m,
           err: errFor(-sign * b, m), kind: 'swap+flip' },
-        // 2026-06: delta-derived amount. The flip/swap candidates
-        // only catch column-confusion bugs. They DON'T catch the
-        // case where the printed amount is fundamentally wrong (a
-        // carry-forward placeholder from a wrapped narration landed
-        // on this row, J&K Bank MS HIGHBRAND ELECTRO scenario where
-        // amount=48,000 but real movement = 2,000). The bank's
-        // printed running balance is ground truth; the delta IS the
-        // real amount. Always exact (err=0) when both balances are
-        // correct — so it wins whenever asIs is wildly wrong.
+        // 2026-06: Balance-delta candidate. Catches the case where the
+        // printed amount cell is fundamentally wrong — not a column
+        // swap or sign flip but a different value entirely. Observed
+        // on J&K Bank wrapped-narration rows where the next/previous
+        // row's amount cell drifts onto the current row's y-band.
+        //
+        // Reproducible locally (scripts/jkbank-find-source.mts):
+        //   Row 19 (MASHOOQ) — pdfjs cluster gives D=2,000 but the
+        //   balance trajectory says the row is W=53,610. flip/swap
+        //   candidates can't close the err; only the delta candidate
+        //   does.
+        //
+        // Delta-derived amount = balance(N) − balance(N-1). Always
+        // err=0 by construction when both balances are correct.
+        // Strict gate (`asIs.err > 1`) prevents this from over-
+        // correcting rows where the printed amount agrees with delta
+        // within paisa rounding noise — paisa-level interest calcs
+        // would otherwise get silently rewritten.
         { amount: pending.balance - lastBalance!, balance: pending.balance,
           err: 0, kind: 'delta' },
       ];
       let best = asIs;
       for (const c of candidates) if (c.err < best.err) best = c;
-      // Gate: original gate (`asIs.err > 1 && best.err < 0.05`)
-      // applied to flip/swap. The delta candidate has err=0 by
-      // construction, so it would ALWAYS beat asIs when asIs.err > 0.
-      // To prevent it from over-correcting rows where the printed
-      // amount has tiny rounding diffs from balance-delta (paisa
-      // shifts on interest calcs etc.), require asIs.err > 1 before
-      // adopting delta. That keeps the 1₹+ "real bug" gate intact.
       if (asIs.err > 1 && best.err < 0.05 && best !== asIs) {
         amount = best.amount;
         pending.balance = best.balance;
@@ -1654,37 +1580,6 @@ export function applyMapping(
 
     if (amount == null || !Number.isFinite(amount)) {
       stats.skippedNoAmount += 1;
-      pending = null;
-      return;
-    }
-
-    // 2026-06: zero-delta phantom drop. Bank statements occasionally
-    // attach a stray amount cell to the opening-balance row (J&K
-    // Bank's wrapped-narration MS HIGHBRAND ELECTRO scenario where
-    // ₹48,000 floats up onto the opening line). If our printed
-    // balance matches the seeded `lastBalance` exactly and yet we
-    // have a non-zero amount, the row must be a phantom — a real
-    // transaction with that amount would move the balance.
-    //
-    // Only triggers on the FIRST transaction we'd emit (pending.balance
-    // matches lastBalance EXACTLY and out is empty); subsequent
-    // identical-balance rows are valid same-instant reversal pairs
-    // (e.g. NACH presentment + return) that the dedup pass later
-    // handles separately.
-    //
-    // Bank-only — Tally ledgers legitimately produce same-balance
-    // rows when an entry is offset by an immediate counter-entry.
-    if (
-      kind === 'bank'
-      && out.length === 0
-      && lastBalance != null
-      && pending.balance != null
-      && Math.abs(pending.balance - lastBalance) < 0.05
-      && Math.abs(amount) >= 100
-    ) {
-      stats.skippedNoAmount += 1;
-      // lastBalance already equals pending.balance, leave it unchanged
-      // so the next row's sanity-check uses the correct anchor.
       pending = null;
       return;
     }

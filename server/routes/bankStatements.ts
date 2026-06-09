@@ -2196,7 +2196,7 @@ INPUT_ROWS — TSV, one row per line, columns narration<TAB>type<TAB>amount:
       const reconciliationWarning = (() => {
         const parts: string[] = [];
         if (amountOverridden > 0) {
-          parts.push(`Replaced ${amountOverridden} transaction amount${amountOverridden === 1 ? '' : 's'} with values derived from the printed running balance — totals below reflect the bank's own arithmetic.`);
+          parts.push(`Replaced ${amountOverridden} transaction amount${amountOverridden === 1 ? '' : 's'} with values derived from the printed running balance — totals reflect what actually moved through the account. If the bank's printed Grand Total disagrees, it's because some of the bank's PDF amount cells don't match its own balance column; we trust the balance column.`);
         }
         if (phantomDropped > 0) {
           parts.push(`Dropped ${phantomDropped} duplicate row${phantomDropped === 1 ? '' : 's'} that had no balance change (typically a wrapped UPI narration parsed twice).`);
