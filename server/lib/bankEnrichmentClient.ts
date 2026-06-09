@@ -31,6 +31,7 @@ import { GEMINI_API_KEYS, GEMINI_MODEL, GEMINI_FALLBACK_MODEL } from './gemini.j
 import { safeParseJson, type GeminiJsonOptions, type GeminiJsonResult } from './geminiJson.js';
 import { withBreaker } from './circuitBreaker.js';
 import { getOrCreateCachedContent, invalidateCache } from './geminiCache.js';
+import { buildGeminiUserError } from './geminiUserError.js';
 
 const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
@@ -159,8 +160,8 @@ export async function callBankEnrichment<T>(
               continue;
             }
             console.warn(`[bankEnrichment] ${model} HTTP ${status}: ${text.slice(0, 300)}`);
-            const err = new Error(`AI service error ${status}: ${text.slice(0, 300)}`);
-            (err as { status?: number }).status = status;
+            const err = buildGeminiUserError(status, text);
+            (err as Error & { status?: number }).status = status;
             throw err;
           }
           const json = await res.json() as NativeResponse;

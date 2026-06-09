@@ -13,6 +13,7 @@
  */
 
 import { getOrCreateCachedContent, invalidateCache } from './geminiCache.js';
+import { buildGeminiUserError } from './geminiUserError.js';
 
 const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
 
@@ -122,17 +123,17 @@ export async function* streamGeminiChat(
       cachedContentName = null;
       response = await postBody(false);
     } else {
-      // Non-cache error — throw with the text we already consumed.
-      throw new Error(`AI service error ${response.status}: ${errText.slice(0, 300)}`);
+      // Non-cache error — log full upstream body for ops, throw the
+      // sanitised user-facing message.
+      console.warn(`[geminiChat] ${model} HTTP ${response.status}: ${errText.slice(0, 300)}`);
+      throw buildGeminiUserError(response.status, errText);
     }
   }
 
   if (!response.ok) {
     const errText = await response.text();
-    // Console keeps the model name for debugging; the thrown error
-    // text — which surfaces in user-facing toasts — does not.
     console.warn(`[geminiChat] ${model} HTTP ${response.status}: ${errText.slice(0, 300)}`);
-    throw new Error(`AI service error ${response.status}: ${errText.slice(0, 300)}`);
+    throw buildGeminiUserError(response.status, errText);
   }
 
   const reader = response.body!.getReader();

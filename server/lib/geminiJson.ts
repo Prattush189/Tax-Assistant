@@ -6,6 +6,7 @@
  */
 import { gemini, GEMINI_MODEL, GEMINI_FALLBACK_MODEL } from './gemini.js';
 import { withBreaker, BreakerOpenError } from './circuitBreaker.js';
+import { buildGeminiUserError } from './geminiUserError.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 
 export interface GeminiJsonOptions {
@@ -103,15 +104,31 @@ async function callOnce<T>(
   responseFormat: GeminiJsonOptions['responseFormat'],
   recordAttempt?: GeminiJsonOptions['recordAttempt'],
 ): Promise<GeminiJsonResult<T>> {
-  // Pass `stream: false` explicitly so TypeScript narrows the return type
-  // to ChatCompletion (the SDK overloads on the `stream` literal).
-  const response = await gemini.chat.completions.create({
-    model,
-    max_tokens: maxTokens,
-    messages,
-    stream: false,
-    ...(responseFormat === null ? {} : { response_format: responseFormat ?? { type: 'json_object' } }),
-  });
+  let response: Awaited<ReturnType<typeof gemini.chat.completions.create>>;
+  try {
+    // Pass `stream: false` explicitly so TypeScript narrows the return type
+    // to ChatCompletion (the SDK overloads on the `stream` literal).
+    response = await gemini.chat.completions.create({
+      model,
+      max_tokens: maxTokens,
+      messages,
+      stream: false,
+      ...(responseFormat === null ? {} : { response_format: responseFormat ?? { type: 'json_object' } }),
+    });
+  } catch (err) {
+    // OpenAI SDK throws APIError with `.status` and a verbose message
+    // that includes Google's raw upstream JSON (billing URLs, project
+    // ids, etc.). Log the full text for ops, surface a sanitised
+    // single-line message to whatever bubbles up to the user. Preserve
+    // `.status` so the retry-and-fallback ladder in callGeminiJson can
+    // still inspect it.
+    const status = (err as { status?: number })?.status ?? 0;
+    const rawMessage = err instanceof Error ? err.message : String(err);
+    console.warn(`[geminiJson] ${model} upstream error (status ${status}): ${rawMessage.slice(0, 400)}`);
+    const userErr = buildGeminiUserError(status, rawMessage);
+    (userErr as Error & { status: number }).status = status;
+    throw userErr;
+  }
   const raw = response.choices[0]?.message?.content ?? '{}';
   const inputTokens = response.usage?.prompt_tokens ?? 0;
   const outputTokens = response.usage?.completion_tokens ?? 0;

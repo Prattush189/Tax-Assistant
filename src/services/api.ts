@@ -269,7 +269,12 @@ async function authFetch(url: string, options: RequestInit = {}) {
     // comparison hit MAX_TOKENS, lost auth, or the LLM timed out.
     const headline = data.error || `Request failed (${res.status})`;
     const msg = data.detail ? `${headline} — ${data.detail}` : headline;
-    throw new Error(msg);
+    // Strip the [gemini-user] sentinel prefix that the server attaches
+    // to sanitised AI-service errors before they surface here. The
+    // prefix is invisible to end users but lets the client tell a
+    // pre-formatted message from a raw passthrough.
+    const clean = msg.startsWith('[gemini-user]') ? msg.slice('[gemini-user]'.length).trim() : msg;
+    throw new Error(clean);
   }
   // Surface provider-fallback so the UI can toast "Server busy, retrying…".
   // Set by routes whose LLM call fell from the primary to a backup model
