@@ -65,6 +65,14 @@ async function main() {
     console.log(`${(i + 1).toString().padStart(3)}  ${(r.date ?? '?').padEnd(11)}  amt=${(r.amount ?? 0).toFixed(2).padStart(12)}  bal=${String(r.balance ?? '').padStart(13)}  ${(r.narration ?? '').slice(0, 50)}`);
   }
 
+  const perDate = new Map<string, number>();
+  for (const r of rows) {
+    if (!r.date) continue;
+    perDate.set(r.date, (perDate.get(r.date) ?? 0) + 1);
+  }
+  const lines = [...perDate.entries()].sort().map(([d,c]) => `${d.split('-').reverse().join('-')} ${c}`).join('\n');
+  fs.writeFileSync('C:/Users/Prattush/AppData/Local/Temp/extr_per_date.txt', lines);
+
   console.log(`\n=== Top 30 amount outliers ===`);
   const sorted = [...rows].filter(r => r.amount != null).sort((a, b) => Math.abs(b.amount!) - Math.abs(a.amount!));
   for (const r of sorted.slice(0, 30)) {

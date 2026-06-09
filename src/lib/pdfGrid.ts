@@ -1374,6 +1374,18 @@ export function applyMapping(
   // header row appends to the previous name with " — " instead of
   // replacing it.
   let prevRowWasAccountHeader = false;
+  // Set when an incomplete pending block (date+narration only, no
+  // amount yet) survives a Page Total / page-banner marker row. The
+  // transaction's real continuation row sits on the NEXT page after
+  // the banner; until we find it, every intervening row is page-
+  // header noise (bank address, pincode, "Printed By..."), which
+  // would corrupt pending if merged. While this flag is set, only
+  // rows that look like a legitimate continuation (no date, has a
+  // valid Dr/Cr-suffixed balance, has a non-zero amount) are allowed
+  // to merge into pending. Everything else is skipped silently. The
+  // flag clears once a continuation lands, a new date row arrives
+  // (abandoning pending), or pending is otherwise flushed.
+  let pendingAwaitingCrossPage = false;
   // Set when we see a Busy / Tally "( Contd. )" page-continuation
   // marker. Suppresses account-header detection on every subsequent
   // date-less row UNTIL we hit a real dated transaction. Without
@@ -1398,6 +1410,27 @@ export function applyMapping(
   // balance(N) − balance(N-1). Only fires when no other amount
   // source is available.
   let lastBalance: number | null = null;
+  // Cash Credit account detection. CC statements (J&K Bank, etc.)
+  // print every running balance with a "Dr" suffix because the
+  // customer owes the bank. On these accounts a DEPOSIT reduces the
+  // outstanding Dr-balance — the inverse of a savings account, where
+  // a deposit grows the balance. The balance-equation sanity check
+  // below (`lastBalance + amount = newBalance`) assumes the savings
+  // convention, so on a CC statement it flips the sign of every
+  // correctly-mapped deposit. Detect CC by scanning the balance
+  // column for the Dr/Cr suffix mix: when 95%+ of suffixed balance
+  // values carry "Dr" with effectively zero "Cr", we're on a CC
+  // statement and must skip the savings-convention sanity check.
+  const balanceColIdx = mapping.roles.findIndex(r => r === 'balance');
+  let drCount = 0, crCount = 0;
+  if (balanceColIdx >= 0) {
+    for (const r of grid.rows) {
+      const raw = (r[balanceColIdx] ?? '').trim();
+      if (/cr\.?\s*$/i.test(raw)) crCount += 1;
+      else if (/dr\.?\s*$/i.test(raw)) drCount += 1;
+    }
+  }
+  const isCashCredit = drCount >= 20 && crCount * 20 < drCount;
 
 
   const flushPending = () => {
@@ -1525,6 +1558,10 @@ export function applyMapping(
       // construction; only sanity-check rows where amount came from
       // the explicit cells (debit/credit/amountSingle).
       && !(pending.debit === 0 && pending.credit === 0 && pending.amountSingle == null)
+      // CC accounts invert the balance-equation convention (deposits
+      // reduce the Dr-balance). On a CC statement this check would
+      // flip the sign of every correctly-mapped deposit. Skip it.
+      && !isCashCredit
     ) {
       const sign = amount < 0 ? -1 : 1;
       const m = Math.abs(amount);
@@ -1799,7 +1836,7 @@ export function applyMapping(
       // page's first transaction date, producing a grid row that has
       // a date AND the Page Total values). These tokens never appear
       // in legitimate transaction narrations.
-      const UNAMBIGUOUS_MARKER = /\b(page\s+total|grand\s+total|effective\s+available\s+amount|total\s+available\s+amount|funds\s+in\s+clearing|ffd\s+contribution|unless\s+the\s+constituent)\b/i;
+      const UNAMBIGUOUS_MARKER = /\b(?:page\s+total|grand\s+total|effective\s+available\s+amount|total\s+available\s+amount|funds\s+in\s+clearing|ffd\s+contribution|unless\s+the\s+constituent|type\s*:\s*cash\s+credit|cash\s+credit\s+scheme|statement\s+of\s+account\s+for\s+the\s+period|transaction\s+details|printed\s+by\s+\d|page\s+\d+\s+of\s+\d|ifsc\s+code|micr\s+code|phone\s+code|a\/c\s+no|no\s+nomination\s+available|interest\s+rate|jammu\s+and\s+kashmir\s+bank|ckyc\s+id|cKYC|chand\s+nagar)|https?:\/\/|\.jsp\b|\.jkb\.com/i;
       const haystack = `${narr} ${voucher ?? ''} ${reference ?? ''}`.trim();
       // J&K Bank CC pages split "Page Total :" across two adjacent
       // pdfjs cells ("Page" in the narration column, "Total:" in the
@@ -1808,9 +1845,25 @@ export function applyMapping(
       // the raw row so the marker fires regardless of column split.
       const rowHaystack = row.map(c => (c ?? '').trim()).filter(Boolean).join(' ');
       if ((!date && SUBTOTAL_MARKER.test(haystack)) || UNAMBIGUOUS_MARKER.test(haystack) || UNAMBIGUOUS_MARKER.test(rowHaystack)) {
-        // Flush whatever was pending so this row's stray numbers
-        // don't bleed into the previous transaction's pending block.
-        flushPending();
+        // Only flush pending if it already has an amount. J&K Bank CC
+        // statements split a single transaction across a page boundary:
+        // the date row sits at the bottom of page N (so pending gets
+        // date+narration only), then the Page Total + page banner rows
+        // intervene, then the continuation row (with amount + balance)
+        // appears on page N+1. If we flush here unconditionally, the
+        // incomplete pending gets emitted as skippedNoAmount and the
+        // continuation row on the next page has nothing to attach to —
+        // the entire transaction is lost. Preserving incomplete pending
+        // across the marker block lets the continuation finish the
+        // transaction normally.
+        if (pending && pending.debit == null && pending.credit == null && pending.amountSingle == null && pending.balance == null) {
+          // incomplete — keep alive across the page boundary, but
+          // gate subsequent merges so page-banner noise (addresses,
+          // pincodes, "Printed By...") can't pollute pending.
+          pendingAwaitingCrossPage = true;
+        } else {
+          flushPending();
+        }
         stats.skippedNoAmount += 1;
         continue;
       }
@@ -1866,7 +1919,14 @@ export function applyMapping(
     }
 
     if (date) {
-      // New transaction starts. Flush whatever was pending.
+      // New transaction starts. Flush whatever was pending. Clear
+      // the cross-page guard — if the awaited continuation never
+      // arrived (page banner is unusually long, or the bank skipped
+      // a continuation row entirely), abandoning pending here means
+      // the previous transaction is lost as `skippedNoAmount`, which
+      // is the correct outcome (better than corrupting it with
+      // banner noise).
+      pendingAwaitingCrossPage = false;
       flushPending();
       pending = {
         date,
@@ -1881,6 +1941,33 @@ export function applyMapping(
         account: lastAccount,
       };
     } else if (pending) {
+      // Cross-page-boundary guard. When the previous page ended with
+      // an incomplete pending block (date+narration but no amount)
+      // the next page's banner — bank address, pincode, "Printed
+      // By...", account-no echo — sits between us and the real
+      // continuation row. Those banner rows don't match the marker
+      // regex but they DO have stray numeric noise that would
+      // corrupt pending if merged. While the awaiting flag is set,
+      // only accept rows that look like a real continuation: no
+      // date, a Dr/Cr-suffixed balance >= ₹1,000, and a non-zero
+      // amount in either debit or credit. Otherwise skip silently.
+      if (pendingAwaitingCrossPage) {
+        // The Dr/Cr suffix is often rendered in a separate styled
+        // text run on bank PDFs, so pdfjs sometimes hands us the
+        // balance number WITHOUT the suffix even when the visual PDF
+        // shows it attached. Accept any balance ≥ ₹1,000 with a
+        // non-zero amount as evidence of a real continuation.
+        const hasValidBalance = balance != null && Math.abs(balance) >= 1000;
+        const hasAmount =
+          (debit != null && debit !== 0) || (credit != null && credit !== 0);
+        if (!hasValidBalance || !hasAmount) {
+          stats.skippedNoAmount += 1;
+          continue;
+        }
+        // legitimate continuation found — clear the guard so normal
+        // merging proceeds.
+        pendingAwaitingCrossPage = false;
+      }
       // Continuation row — fill in any missing fields on the
       // pending transaction. Narration concatenates; numeric fields
       // take the first non-null/non-zero value (so a separately-

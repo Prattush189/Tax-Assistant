@@ -66,6 +66,19 @@ const Z_SCORE_THRESHOLD = 2.0;
 // twitchy and we'd flag the first big number as an outlier even
 // when it's just the second sample.
 const MIN_CATEGORY_SAMPLES_FOR_Z = 5;
+// Absolute amount floor for outlier-amount flags. A ₹5K transaction
+// isn't worth a CA's eyeball even if it's 10σ above category mean.
+// Calibrated against J&K Bank CC statements where Business Income is
+// dominated by hundreds of tiny UPI receipts (mean ≈ ₹543, stdev ≈
+// ₹2K) — every normal ₹5K-25K deposit reads as a high-σ "outlier"
+// but is operationally routine. Below this floor we suppress.
+const OUTLIER_AMOUNT_FLOOR = 50_000;
+// Minimum category mean before z-score firing is meaningful. When
+// the baseline mean is under this floor the category is being held
+// down by micro-transactions and any reasonably-sized row looks
+// extreme. Comparing a ₹25K deposit to a ₹543 mean is a category-
+// labelling problem, not a real anomaly.
+const MIN_CATEGORY_MEAN_FOR_Z = 1_000;
 const NEW_COUNTERPARTY_AMOUNT_THRESHOLD = 100_000;
 const NEW_COUNTERPARTY_LOOKBACK_DAYS = 365;
 const ROUND_CASH_DEPOSIT_MIN = 50_000;
@@ -133,9 +146,13 @@ export function detectAnomalies(
     const variance = amounts.reduce((a, b) => a + (b - mean) ** 2, 0) / amounts.length;
     const stdev = Math.sqrt(variance);
     if (stdev < 1) continue; // category is too uniform — every row would be 0σ
+    // Skip categories dominated by micro-transactions: the baseline is
+    // pulled down by tiny UPI receipts and a normal-sized deposit
+    // would always look extreme without being worth a flag.
+    if (mean < MIN_CATEGORY_MEAN_FOR_Z) continue;
     for (const tx of group) {
       const z = (Math.abs(tx.amount) - mean) / stdev;
-      if (z > Z_SCORE_THRESHOLD) {
+      if (z > Z_SCORE_THRESHOLD && Math.abs(tx.amount) >= OUTLIER_AMOUNT_FLOOR) {
         out.push({
           transactionId: tx.id,
           type: 'outlier_amount',
@@ -231,6 +248,8 @@ export function detectAnomalies(
 export const ANOMALY_THRESHOLDS = {
   Z_SCORE_THRESHOLD,
   MIN_CATEGORY_SAMPLES_FOR_Z,
+  OUTLIER_AMOUNT_FLOOR,
+  MIN_CATEGORY_MEAN_FOR_Z,
   NEW_COUNTERPARTY_AMOUNT_THRESHOLD,
   NEW_COUNTERPARTY_LOOKBACK_DAYS,
   ROUND_CASH_DEPOSIT_MIN,
