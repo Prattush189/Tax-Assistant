@@ -157,17 +157,34 @@ const BUSY: ErpRule = {
 // (non-merged Tally exports with separate Vch No / Debit columns
 // flow through normally).
 function tallySplitMergedVchNoDebit(grid: PdfGrid): PdfGrid {
-  // Cells where the only content is a Vch No, optionally followed by
-  // a currency-shape amount (decimal-required so a leading-Vch-No
-  // narration like "2841 Cheque payment" doesn't match).
+  // Cells where the only content is a NUMERIC Vch No, optionally
+  // followed by a currency-shape amount (decimal-required so a
+  // leading-Vch-No narration like "2841 Cheque payment" doesn't match).
   const vchNoMaybeAmount = /^(\d+)(?:\s+([\d,]+\.\d+))?$/;
   // Pure currency cells (Indian comma grouping, mandatory decimal).
   const pureCurrency = /^[\d,]+\.\d+$/;
   // Contra-detail amount cells: currency-shape followed by Dr/Cr
   // suffix. "92,000.00 Dr", "16,560.00Cr", etc.
   const drCrAmount = /^[\d,]+\.\d+\s*(?:dr|cr)\.?$/i;
+  // 2026-06: Alphanumeric voucher numbers (BBL/2025-26/21, IP-00291,
+  // INV-12345, AB/123). SRHEE BANKE's bill rows ONLY have the voucher
+  // number in this column (no amount on the bill side; the amount
+  // lives in the separate Credit column). Without recognising these
+  // as legitimate "merged-column-eligible" cells, the conformance
+  // ratio falls below 60% (only the payment rows match the numeric
+  // pattern) and the split is silently skipped — leaving the column
+  // merged and the user manually mapping it to "Bill / Voucher No."
+  // which loses the payment-side debit amount.
+  const vchNoAlphaNum = /^[A-Z]{1,5}[\/\-]\d{1,4}(?:[\/\-]\d{1,5}|-\d{1,5})?$|^[A-Z]{1,4}-\d{2,8}$/;
+  // Alphanumeric voucher + currency on the same line (rare but seen
+  // on some Tally exports where the payment row also has a bill ref).
+  const vchNoAlphaPlusAmount = /^([A-Z]{1,5}[\/\-]\d{1,4}(?:[\/\-]\d{1,5})?|[A-Z]{1,4}-\d{2,8})\s+([\d,]+\.\d+)$/;
   const matchesSplit = (s: string): boolean =>
-    vchNoMaybeAmount.test(s) || pureCurrency.test(s) || drCrAmount.test(s);
+    vchNoMaybeAmount.test(s)
+    || pureCurrency.test(s)
+    || drCrAmount.test(s)
+    || vchNoAlphaNum.test(s)
+    || vchNoAlphaPlusAmount.test(s);
 
   const sample = grid.rows.slice(0, 50);
   let splitCol = -1;
@@ -180,8 +197,9 @@ function tallySplitMergedVchNoDebit(grid: PdfGrid): PdfGrid {
       if (!v) continue;
       nonEmpty++;
       if (matchesSplit(v)) matches++;
-      const m = vchNoMaybeAmount.exec(v);
-      if (m && m[2]) merged++;
+      const m1 = vchNoMaybeAmount.exec(v);
+      const m2 = vchNoAlphaPlusAmount.exec(v);
+      if ((m1 && m1[2]) || m2) merged++;
     }
     // Need ≥5 non-empty cells, ≥60% conformance, AND ≥1 merged cell.
     // Threshold is 60% (not higher) because the column also picks up
@@ -203,9 +221,16 @@ function tallySplitMergedVchNoDebit(grid: PdfGrid): PdfGrid {
     for (let i = 0; i < splitCol; i++) out[i] = r[i] ?? '';
     const cell = (r[splitCol] ?? '').trim();
     const vMatch = vchNoMaybeAmount.exec(cell);
+    const vMatchAlphaPlus = vchNoAlphaPlusAmount.exec(cell);
     if (vMatch) {
-      out[splitCol] = vMatch[1];                  // Vch No
+      out[splitCol] = vMatch[1];                  // Vch No (numeric)
       out[splitCol + 1] = vMatch[2] ?? '';        // Debit amount (if merged)
+    } else if (vMatchAlphaPlus) {
+      out[splitCol] = vMatchAlphaPlus[1];          // Vch No (alphanumeric: BBL/2025-26/21)
+      out[splitCol + 1] = vMatchAlphaPlus[2];      // Debit amount
+    } else if (vchNoAlphaNum.test(cell)) {
+      out[splitCol] = cell;                        // Alphanumeric Vch No, no amount on this row
+      out[splitCol + 1] = '';
     } else if (pureCurrency.test(cell) || drCrAmount.test(cell)) {
       out[splitCol] = '';                          // No Vch No
       out[splitCol + 1] = cell;                    // → debit column (preserves Dr/Cr suffix for contra-detail guard)
