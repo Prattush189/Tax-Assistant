@@ -277,20 +277,38 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
                     onPointerDown={e => {
                       const el = marqueeRef.current;
                       if (!el) return;
-                      dragStateRef.current.dragging = true;
+                      // Track the gesture but do NOT call setPointerCapture
+                      // here. Capturing on pointerdown reroutes the
+                      // subsequent click event to the marquee container,
+                      // which prevents the inner <button>'s onClick from
+                      // firing on a plain tap. We only need pointer
+                      // capture once a real drag is in progress —
+                      // upgrade to capture inside pointermove once
+                      // movedPx crosses the click-vs-drag threshold.
+                      dragStateRef.current.dragging = false;
                       dragStateRef.current.startX = e.clientX;
                       dragStateRef.current.startScroll = el.scrollLeft;
                       dragStateRef.current.movedPx = 0;
-                      el.setPointerCapture(e.pointerId);
                     }}
                     onPointerMove={e => {
-                      if (!dragStateRef.current.dragging) return;
                       const el = marqueeRef.current;
                       if (!el) return;
+                      // Were we tracking a pointerdown? startX is stored
+                      // regardless of dragging flag.
+                      if (dragStateRef.current.startX === 0 && dragStateRef.current.movedPx === 0 && !dragStateRef.current.dragging) {
+                        // No active gesture (pointer outside).
+                        return;
+                      }
                       const dx = e.clientX - dragStateRef.current.startX;
                       dragStateRef.current.movedPx = Math.max(dragStateRef.current.movedPx, Math.abs(dx));
+                      // Cross 5px → promote to actual drag, capture
+                      // pointer, start consuming the move.
+                      if (!dragStateRef.current.dragging && dragStateRef.current.movedPx > 5) {
+                        dragStateRef.current.dragging = true;
+                        try { el.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+                      }
+                      if (!dragStateRef.current.dragging) return;
                       el.scrollLeft = dragStateRef.current.startScroll - dx;
-                      // Loop math when dragging past either edge.
                       const half = el.scrollWidth / 2;
                       if (half > 0) {
                         if (el.scrollLeft < 0) el.scrollLeft += half;
@@ -298,16 +316,22 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
                       }
                     }}
                     onPointerUp={e => {
-                      if (!dragStateRef.current.dragging) return;
+                      const wasDragging = dragStateRef.current.dragging;
                       dragStateRef.current.dragging = false;
-                      // If the pointer travelled > 5px, suppress the
-                      // synthetic click that follows pointerup so a
-                      // drag-to-scroll gesture doesn't accidentally
-                      // open a notification.
-                      suppressClickRef.current = dragStateRef.current.movedPx > 5;
-                      try { marqueeRef.current?.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+                      dragStateRef.current.startX = 0;
+                      // Only suppress the synthetic click when we
+                      // genuinely promoted to a drag gesture.
+                      suppressClickRef.current = wasDragging && dragStateRef.current.movedPx > 5;
+                      if (wasDragging) {
+                        try { marqueeRef.current?.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+                      }
+                      dragStateRef.current.movedPx = 0;
                     }}
-                    onPointerCancel={() => { dragStateRef.current.dragging = false; }}
+                    onPointerCancel={() => {
+                      dragStateRef.current.dragging = false;
+                      dragStateRef.current.startX = 0;
+                      dragStateRef.current.movedPx = 0;
+                    }}
                   >
                   {[...notifications, ...notifications].map((n, idx) => {
                     const isPending = pendingNotificationId === n.id;
