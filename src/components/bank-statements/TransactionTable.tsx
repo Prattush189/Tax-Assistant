@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Repeat, CheckCircle2, Brain, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Repeat, CheckCircle2, Brain, X, Search } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { BankTransaction } from '../../services/api';
 import { formatINR, formatDate } from '../../lib/utils';
@@ -59,6 +59,34 @@ export function TransactionTable({ transactions, manager }: Props) {
   // State shape: Map keyed by txId so re-correcting the same row
   // updates the existing entry rather than creating a duplicate.
   const [pendingLearns, setPendingLearns] = useState<Map<string, PendingLearn>>(new Map());
+
+  // Search / filter state. Matches narration + counterparty +
+  // reference + category + formatted amount + date — anything visible
+  // in the row, so a user typing "phonepe", "2025-05-07", "135000",
+  // or "transfers" all just work. Case-insensitive substring.
+  const [query, setQuery] = useState('');
+  const filteredTransactions = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return transactions;
+    return transactions.filter((t) => {
+      const hay = [
+        t.narration,
+        t.counterparty,
+        t.reference,
+        t.category,
+        t.subcategory,
+        t.date,
+        // amount as plain integer + comma-formatted INR both, so
+        // "135000" and "1,35,000" both match.
+        String(Math.round(Math.abs(t.amount))),
+        formatINR(Math.abs(t.amount)),
+      ]
+        .filter((v): v is string => typeof v === 'string' && v.length > 0)
+        .join(' ')
+        .toLowerCase();
+      return hay.includes(q);
+    });
+  }, [transactions, query]);
 
   const toggleChecked = useCallback((txId: string) => {
     setPendingLearns((prev) => {
@@ -235,6 +263,33 @@ export function TransactionTable({ transactions, manager }: Props) {
 
   return (
     <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900/40 overflow-hidden">
+      <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 flex items-center gap-3">
+        <div className="relative flex-1">
+          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search narration, counterparty, amount, date, category..."
+            className="w-full pl-9 pr-9 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+          />
+          {query && (
+            <button
+              type="button"
+              onClick={() => setQuery('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+              aria-label="Clear search"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+        <div className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
+          {query
+            ? `${filteredTransactions.length} of ${transactions.length}`
+            : `${transactions.length} txns`}
+        </div>
+      </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-gray-50 dark:bg-gray-900/60 text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
@@ -247,7 +302,14 @@ export function TransactionTable({ transactions, manager }: Props) {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-            {transactions.map((t) => {
+            {filteredTransactions.length === 0 && (
+              <tr>
+                <td colSpan={5} className="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+                  No transactions match &ldquo;{query}&rdquo;.
+                </td>
+              </tr>
+            )}
+            {filteredTransactions.map((t) => {
               const cat = (BANK_STATEMENT_CATEGORIES as readonly string[]).includes(t.category)
                 ? t.category as BankStatementCategory
                 : 'Other';
