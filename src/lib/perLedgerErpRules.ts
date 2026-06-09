@@ -845,35 +845,6 @@ export function detectAndMapLedgerErp(gridIn: PdfGrid | null): DetectedErpMappin
     if (match.role !== 'skip') taken.add(match.role);
   }
 
-  // 2026-06: Content-based fallback for empty-header columns.
-  // bizanalyst.in's Tally export (PURCHASE.pdf) splits the column
-  // header "Vch Type Vch No." across two pdfjs cells, with the
-  // narration column for Vch No. ending up empty. The header-based
-  // loop above leaves that column as 'skip', which makes the
-  // PURCHASE.pdf BBL/2025-26/21 values land in Skip / Ignore and the
-  // user has to fix it manually.
-  //
-  // Scan every column that's STILL 'skip' and check its contents.
-  // If the column looks like voucher numbers (BBL/2025-26/21,
-  // IP-00291, INV-12345 pattern) — alphanumeric prefix + slash/dash
-  // + digits — promote it to 'reference' (Bill / Voucher No.) so the
-  // role is assigned even without a header.
-  const VCH_NO_SHAPE = /^[A-Z]{1,6}(?:[\/\-]\d+){1,4}$/;
-  if (!taken.has('reference')) {
-    const sampleRows = grid.rows.slice(0, 50);
-    for (let c = 0; c < grid.columnCount; c++) {
-      if (roles[c] !== 'skip') continue;
-      const cells = sampleRows.map(r => (r[c] ?? '').trim()).filter(Boolean);
-      if (cells.length < 3) continue;
-      const refLike = cells.filter(v => VCH_NO_SHAPE.test(v)).length;
-      if (refLike / cells.length >= 0.4) {
-        roles[c] = 'reference';
-        taken.add('reference');
-        break; // only one reference column per ledger
-      }
-    }
-  }
-
   for (const r of rule.required) {
     if (!roles.includes(r)) {
       console.warn(
@@ -1059,6 +1030,39 @@ export function detectAndMapLedgerErp(gridIn: PdfGrid | null): DetectedErpMappin
           );
           return null;
         }
+      }
+    }
+  }
+
+  // 2026-06: Content-based fallback for empty-header columns.
+  // Runs AFTER the header-column → data-column shift correction so
+  // it sees the final post-shift roles. On bizanalyst.in's Tally
+  // export (PURCHASE.pdf), pdfjs gives the "Debit" header cell to the
+  // Vch No. column whose data is actually BBL/2025-26/21 strings.
+  // The shift correction realises col N has no numbers and reassigns
+  // 'debit' to col N+1 — leaving col N back at 'skip' with BBL data
+  // orphaned. Without this pass, BBL/2025-26/21 stays in Skip / Ignore
+  // and the user re-tags manually.
+  //
+  // Scan every column that's STILL 'skip' after shift correction.
+  // If the column looks like voucher numbers (BBL/2025-26/21,
+  // IP-00291, INV-12345 pattern) — alphanumeric prefix + slash/dash
+  // + digits — promote it to 'reference' (Bill / Voucher No.). Only
+  // claims one column even if multiple match (defensive — real PDFs
+  // never have two voucher-ref columns).
+  const VCH_NO_SHAPE = /^[A-Z]{1,6}(?:[\/\-]\d+){1,4}$/;
+  const refTaken = roles.includes('reference');
+  if (!refTaken) {
+    const sampleRows = grid.rows.slice(0, 50);
+    for (let c = 0; c < grid.columnCount; c++) {
+      if (roles[c] !== 'skip') continue;
+      const cells = sampleRows.map(r => (r[c] ?? '').trim()).filter(Boolean);
+      if (cells.length < 3) continue;
+      const refLike = cells.filter(v => VCH_NO_SHAPE.test(v)).length;
+      if (refLike / cells.length >= 0.4) {
+        console.log(`[perLedgerErpRules] ${rule.name} post-shift content fallback: column ${c} → reference (${refLike}/${cells.length} cells match voucher shape)`);
+        roles[c] = 'reference';
+        break;
       }
     }
   }
