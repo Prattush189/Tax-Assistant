@@ -49,7 +49,7 @@ const BASE_ROLES: Array<{
   { value: 'amount',     bankLabel: 'Amount (single column)',        ledgerLabel: 'Amount (single column)' },
   { value: 'drCrMarker', bankLabel: 'Dr/Cr marker',                  ledgerLabel: 'Dr/Cr marker' },
   { value: 'balance',    bankLabel: 'Running Balance',               ledgerLabel: 'Running Balance' },
-  { value: 'reference',  bankLabel: 'Reference / UTR / Cheque',      ledgerLabel: 'Reference / UTR / Cheque' },
+  { value: 'reference',  bankLabel: 'Reference / UTR / Cheque',      ledgerLabel: 'Bill / Voucher No.' },
   { value: 'voucher',    bankLabel: 'Voucher / Type',                ledgerLabel: 'Voucher / Type', ledgerOnly: true },
   { value: 'account',    bankLabel: 'Account / Ledger Name',         ledgerLabel: 'Account / Ledger Name', ledgerOnly: true },
 ];
@@ -363,8 +363,17 @@ function validate(mapping: ColumnMapping, kind: 'bank' | 'ledger'): { ok: true }
   if (!hasDebitCredit && !hasSingleAmount) {
     return { ok: false, reason: 'Map either a Debit + Credit pair, or a single Amount column.' };
   }
-  if (kind === 'ledger' && !roles.has('narration')) {
-    return { ok: false, reason: 'Ledgers need a Narration / Particulars column for audit context.' };
-  }
+  // 2026-06: Narration / descriptive-column requirement removed.
+  // Many real-world ledger formats (Busy "PURCHASE" register, Tally
+  // daybook exports, J&K subsidiary books) ship with no separate
+  // Particulars column — only Date, Voucher Type, Bill No., and
+  // amount columns. Blocking those uploads forces the user to fake a
+  // narration column. The downstream audit prompt already falls back
+  // to whichever descriptive cells are populated (voucher / reference
+  // / counterparty) so no descriptive column at all is acceptable.
+  //
+  // _kind_ is still accepted in the signature for forward-compat
+  // (future per-kind rules), but no ledger-specific rule fires here.
+  void kind;
   return { ok: true };
 }

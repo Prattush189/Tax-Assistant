@@ -2346,11 +2346,16 @@ function roleFromHeader(header: string): ColumnRole | null {
   // Single signed amount column (when there's no separate dr/cr)
   if (/^amount$|^amt\.?$|\btxn\s*amount\b/.test(h)) return 'amount';
   if (/\bdr\s*\/\s*cr|type\s*\(dr\/cr\)|dr\/cr/.test(h)) return 'drCrMarker';
-  // Cheque / Reference / UTR — distinct from narration so search/filter
-  // works on the long narration text without matching reference numbers.
-  if (/\b(chq\.?\s*(no|number|ref)?|cheque|ref\.?\s*no\.?|reference|utr)\b/.test(h)) return 'reference';
-  // Voucher type (Tally) — ledger only but harmless if assigned for bank
-  if (/\bvoucher|\bvch\b|^type$/.test(h)) return 'voucher';
+  // Cheque / Reference / UTR / Bill-No / Voucher-No / Invoice-No.
+  // Distinct from narration so search/filter works on the long narration
+  // text without matching reference numbers. Indian ledgers (Tally /
+  // Busy / Marg) often have a "Vch No." or "Bill No." column right
+  // after the Voucher Type — we want this column tagged as `reference`
+  // so it isn't mis-detected as a numeric Debit column.
+  if (/\b(chq\.?\s*(no|number|ref)?|cheque|ref\.?\s*no\.?|reference|utr|bill\.?\s*no\.?|invoice\s*no\.?|inv\.?\s*no\.?|vch\.?\s*no\.?|voucher\s*no\.?)\b/.test(h)) return 'reference';
+  // Voucher type (Tally) — ledger only but harmless if assigned for bank.
+  // Anchored without a number-suffix so "Vch No." goes to reference above.
+  if (/\bvoucher\s*type|^vch\s*type$|\bvch\s*type\b|^type$|\bvoucher$/.test(h)) return 'voucher';
   // Account / ledger name (Tally party-wise book)
   if (/\baccount\b|^ledger$|party\s*name/.test(h)) return 'account';
   // Date — checked AFTER value-date so the real Date column wins
@@ -2397,6 +2402,19 @@ export function suggestMapping(grid: PdfGrid): ColumnMapping {
     if (dateHits >= sample.length * 0.4 && !taken.has('date')) {
       roles[c] = 'date';
       taken.add('date');
+      continue;
+    }
+    // 2026-06: voucher/bill-number-shaped content. Indian ledgers
+    // (Busy "PURCHASE" register, Tally daybook) emit a column like
+    // "BBL/2025-26/21" or "IP-00291" or "INV-12345" right after
+    // Voucher Type. Without this guard the column gets numHits=0
+    // (it has dashes/slashes, fails the NUMBER_RE) and falls through
+    // to skip — making the user re-tag it manually. Tag as `reference`
+    // so the wizard pre-fills the right role.
+    const refLike = texts.filter(t => /^[A-Z][A-Z0-9]{0,4}[\/\-]\d/.test(t.trim())).length;
+    if (refLike >= sample.length * 0.4 && !taken.has('reference')) {
+      roles[c] = 'reference';
+      taken.add('reference');
       continue;
     }
     if (numHits >= sample.length * 0.4) {
