@@ -1,19 +1,25 @@
 import { useState } from 'react';
-import { Download, Trash2, Filter } from 'lucide-react';
+import { Download, Trash2, Filter, ArrowUpDown } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { formatINRPrecise, formatDate } from '../../lib/utils';
 import { BankStatementDetail } from '../../hooks/useBankStatementManager';
-import { downloadBankStatementCsv } from '../../services/api';
+import { downloadBankStatementCsv, flipBankStatementSigns } from '../../services/api';
 import { CustomExportDialog } from './CustomExportDialog';
 
 interface Props {
   detail: BankStatementDetail;
   onDelete: () => void;
+  /** Called after a successful sign-flip so the parent can re-fetch
+   *  the detail (refreshes the transaction table + category breakdown
+   *  + flagged transactions panel without a full page reload). */
+  onRefresh?: () => void | Promise<void>;
 }
 
-export function BankStatementSummary({ detail, onDelete }: Props) {
+export function BankStatementSummary({ detail, onDelete, onRefresh }: Props) {
   const { statement } = detail;
   const net = statement.totalInflow - statement.totalOutflow;
   const [downloading, setDownloading] = useState(false);
+  const [flipping, setFlipping] = useState(false);
   const [customOpen, setCustomOpen] = useState(false);
   // Disable destructive / export actions while the statement is
   // mid-analysis. CSV would download an empty file; Delete would
@@ -30,6 +36,22 @@ export function BankStatementSummary({ detail, onDelete }: Props) {
       alert(err instanceof Error ? err.message : 'CSV download failed');
     } finally {
       setDownloading(false);
+    }
+  };
+
+  const handleFlipSigns = async () => {
+    if (flipping) return;
+    setFlipping(true);
+    try {
+      const result = await flipBankStatementSigns(statement.id);
+      toast.success(`Flipped ${result.updated.toLocaleString('en-IN')} signs — Inflow / Outflow swapped.`);
+      // Refresh the parent so the cards + table update. Falls back
+      // gracefully if no callback was wired (older callers).
+      if (onRefresh) await onRefresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Sign flip failed');
+    } finally {
+      setFlipping(false);
     }
   };
 
@@ -61,6 +83,20 @@ export function BankStatementSummary({ detail, onDelete }: Props) {
           >
             <Filter className="w-4 h-4" />
             Custom
+          </button>
+          <button
+            type="button"
+            onClick={handleFlipSigns}
+            disabled={flipping || isRunning || detail.transactions.length === 0}
+            title={
+              isRunning
+                ? 'Wait for the analysis to finish before flipping signs'
+                : 'Flip every transaction\'s sign — use when Inflow / Outflow look swapped (Cash Credit, Overdraft, or Loan accounts the auto-detector missed). Click again to undo.'
+            }
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <ArrowUpDown className="w-4 h-4" />
+            {flipping ? 'Flipping…' : 'Flip signs'}
           </button>
           <button
             type="button"

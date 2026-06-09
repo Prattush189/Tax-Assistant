@@ -1439,7 +1439,13 @@ export function applyMapping(
       else if (/dr\.?\s*$/i.test(raw)) drCount += 1;
     }
   }
-  const isCashCredit = drCount >= 20 && crCount * 20 < drCount;
+  // Detection threshold: at least 10 Dr-suffixed balances (down from
+  // 20 so single-month loan / OD statements with ~30-90 transactions
+  // trigger reliably) AND effectively no Cr-suffixed balances
+  // (crCount × 20 < drCount → < 5% Cr noise tolerated for the rare
+  // overpayment row that lands Cr on a CC account). A normal savings
+  // account has the inverse mix and won't trip this.
+  const isCashCredit = drCount >= 10 && crCount * 20 < drCount;
   stats.isCashCredit = isCashCredit;
 
 

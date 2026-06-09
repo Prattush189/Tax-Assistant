@@ -114,6 +114,19 @@ const stmts = {
         AND statement_id = ?
         AND user_override = 0`
   ),
+  // Flip every signed amount in a statement. Escape hatch for the
+  // rare case where the CC auto-detect missed (or wrongly fired) and
+  // the user wants a one-click sign correction without re-uploading.
+  // Negates amount in place — also negates balance, since the
+  // dashboard treats balance as account-relative (a Dr balance
+  // displayed as +12,79,294 represents debt; after the flip the
+  // signs flow consistently as if accountKind was the other way).
+  flipSignsForStatement: db.prepare(
+    `UPDATE bank_transactions
+        SET amount = -amount,
+            balance = CASE WHEN balance IS NULL THEN NULL ELSE -balance END
+      WHERE statement_id = ?`
+  ),
 };
 
 const insertMany = db.transaction((stmtId: string, txs: BankTransactionInput[]) => {
@@ -216,6 +229,16 @@ export const bankTransactionRepo = {
    * runtime dependency on the classifier module — keeps the dep graph
    * pointing one way (route → repo → db).
    */
+  /**
+   * Flip the sign of every transaction in a statement. Returns the
+   * number of rows updated. Used by the manual "Flip signs" toggle
+   * when the CC auto-detection got the account-type wrong.
+   */
+  flipSigns(statementId: string): { updated: number } {
+    const info = stmts.flipSignsForStatement.run(statementId);
+    return { updated: info.changes };
+  },
+
   reclassifyStatement(
     statementId: string,
     classify: (row: BankTransactionRow) => { category: string; subcategory: string | null } | null,

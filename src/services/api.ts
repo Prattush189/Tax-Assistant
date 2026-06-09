@@ -2389,6 +2389,19 @@ export async function reclassifyBankStatement(id: string): Promise<{ success: bo
   return authFetch(`/api/bank-statements/${id}/reclassify`, { method: 'POST' });
 }
 
+/** Negate every transaction's amount + balance in a statement. The
+ *  escape hatch for the rare case where Cash Credit auto-detection
+ *  got the account-type wrong on upload — most CC and overdraft
+ *  statements are detected correctly via the Dr-suffix-prevalence
+ *  scan in pdfGrid, but short loan statements, mixed Dr/Cr exports,
+ *  and unfamiliar bank layouts can slip through. Calling this twice
+ *  restores the original signs, so it's safe to experiment with. */
+export async function flipBankStatementSigns(id: string): Promise<{
+  success: boolean; updated: number; totalInflow: number; totalOutflow: number;
+}> {
+  return authFetch(`/api/bank-statements/${id}/flip-signs`, { method: 'POST' });
+}
+
 /** Toggle the per-user "require OTP via email on every login" flag.
  *  Server-side: PATCH /api/auth/settings/require-login-otp. The change
  *  takes effect on the user's NEXT sign-in — the current session keeps

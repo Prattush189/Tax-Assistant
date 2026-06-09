@@ -171,7 +171,11 @@ export function BankStatementView({ manager }: Props) {
       className="flex-1 overflow-y-auto"
     >
       <div className="max-w-5xl mx-auto p-6 space-y-5">
-        <BankStatementSummary detail={manager.current} onDelete={handleDelete} />
+        <BankStatementSummary
+          detail={manager.current}
+          onDelete={handleDelete}
+          onRefresh={() => manager.load(manager.current!.statement.id)}
+        />
         {manager.current.reconciliationWarning && (
           <div className="rounded-2xl border border-amber-200 dark:border-amber-800/60 bg-amber-50/60 dark:bg-amber-900/15 p-4 text-sm text-amber-800 dark:text-amber-200">
             <span className="font-semibold">Heads up:</span> {manager.current.reconciliationWarning}

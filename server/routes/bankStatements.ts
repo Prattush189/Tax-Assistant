@@ -1019,6 +1019,37 @@ router.post('/:id/reclassify', (req: AuthRequest, res: Response) => {
   res.json({ success: true, ...result });
 });
 
+// POST /api/bank-statements/:id/flip-signs — escape hatch for the
+// Cash-Credit / Overdraft / Loan sign convention. When auto-detect
+// (isCashCredit on the upload side) gets the account type wrong —
+// either fails to fire on a short loan statement OR fires on a
+// savings account that happens to have a lot of Dr balances — the
+// user clicks one button to negate every amount + balance in place.
+// Recomputes statement totals so Inflow/Outflow update immediately.
+// Idempotent against itself: clicking twice restores the original
+// signs. No re-extraction needed, no Gemini cost, no upload cycle.
+router.post('/:id/flip-signs', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const stmt = bankStatementRepo.findByIdForUser(req.params.id, req.user.id);
+  if (!stmt) { res.status(404).json({ error: 'Statement not found' }); return; }
+  const result = bankTransactionRepo.flipSigns(stmt.id);
+  // Re-derive Inflow/Outflow off the post-flip rows so the summary
+  // cards update without needing a separate refresh.
+  const rows = bankTransactionRepo.listByStatement(stmt.id);
+  let inflow = 0, outflow = 0;
+  for (const r of rows) {
+    if (r.amount > 0) inflow += r.amount;
+    else if (r.amount < 0) outflow += -r.amount;
+  }
+  bankStatementRepo.updateTotals(stmt.id, inflow, outflow, rows.length);
+  res.json({
+    success: true,
+    updated: result.updated,
+    totalInflow: inflow,
+    totalOutflow: outflow,
+  });
+});
+
 // POST /api/bank-statements/:id/reapply-conditions — re-run the
 // post-extraction filter against the user's CURRENT conditions list.
 // Useful after the user adds/edits/removes a condition: the stored
