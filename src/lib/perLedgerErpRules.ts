@@ -167,18 +167,24 @@ function tallySplitMergedVchNoDebit(grid: PdfGrid): PdfGrid {
   // suffix. "92,000.00 Dr", "16,560.00Cr", etc.
   const drCrAmount = /^[\d,]+\.\d+\s*(?:dr|cr)\.?$/i;
   // 2026-06: Alphanumeric voucher numbers (BBL/2025-26/21, IP-00291,
-  // INV-12345, AB/123). SRHEE BANKE's bill rows ONLY have the voucher
-  // number in this column (no amount on the bill side; the amount
-  // lives in the separate Credit column). Without recognising these
-  // as legitimate "merged-column-eligible" cells, the conformance
-  // ratio falls below 60% (only the payment rows match the numeric
-  // pattern) and the split is silently skipped — leaving the column
-  // merged and the user manually mapping it to "Bill / Voucher No."
-  // which loses the payment-side debit amount.
-  const vchNoAlphaNum = /^[A-Z]{1,5}[\/\-]\d{1,4}(?:[\/\-]\d{1,5}|-\d{1,5})?$|^[A-Z]{1,4}-\d{2,8}$/;
+  // INV-12345, AB/123, IP-00291). SRHEE BANKE's bill rows ONLY have
+  // the voucher number in this column (no amount on the bill side;
+  // the amount lives in the separate Credit column). Without
+  // recognising these as legitimate "merged-column-eligible" cells,
+  // the conformance ratio falls below 60% (only payment rows match
+  // the numeric pattern) and the split is silently skipped — leaving
+  // the column merged and the user manually mapping it to "Bill /
+  // Voucher No." which loses the payment-side debit amount.
+  //
+  // Format breakdown:
+  //   - 1-6 uppercase letters (BBL, IP, INV, IPL, ASSA)
+  //   - 1-4 separator+digit groups: BBL/2025-26/21 has THREE separator
+  //     groups (/2025, -26, /21). The original regex with one
+  //     optional group missed this layout entirely.
+  const vchNoAlphaNum = /^[A-Z]{1,6}(?:[\/\-]\d+){1,4}$/;
   // Alphanumeric voucher + currency on the same line (rare but seen
   // on some Tally exports where the payment row also has a bill ref).
-  const vchNoAlphaPlusAmount = /^([A-Z]{1,5}[\/\-]\d{1,4}(?:[\/\-]\d{1,5})?|[A-Z]{1,4}-\d{2,8})\s+([\d,]+\.\d+)$/;
+  const vchNoAlphaPlusAmount = /^([A-Z]{1,6}(?:[\/\-]\d+){1,4})\s+([\d,]+\.\d+)$/;
   const matchesSplit = (s: string): boolean =>
     vchNoMaybeAmount.test(s)
     || pureCurrency.test(s)
@@ -837,6 +843,35 @@ export function detectAndMapLedgerErp(gridIn: PdfGrid | null): DetectedErpMappin
     if (match.role !== 'skip' && taken.has(match.role)) continue;
     roles[c] = match.role;
     if (match.role !== 'skip') taken.add(match.role);
+  }
+
+  // 2026-06: Content-based fallback for empty-header columns.
+  // bizanalyst.in's Tally export (PURCHASE.pdf) splits the column
+  // header "Vch Type Vch No." across two pdfjs cells, with the
+  // narration column for Vch No. ending up empty. The header-based
+  // loop above leaves that column as 'skip', which makes the
+  // PURCHASE.pdf BBL/2025-26/21 values land in Skip / Ignore and the
+  // user has to fix it manually.
+  //
+  // Scan every column that's STILL 'skip' and check its contents.
+  // If the column looks like voucher numbers (BBL/2025-26/21,
+  // IP-00291, INV-12345 pattern) — alphanumeric prefix + slash/dash
+  // + digits — promote it to 'reference' (Bill / Voucher No.) so the
+  // role is assigned even without a header.
+  const VCH_NO_SHAPE = /^[A-Z]{1,6}(?:[\/\-]\d+){1,4}$/;
+  if (!taken.has('reference')) {
+    const sampleRows = grid.rows.slice(0, 50);
+    for (let c = 0; c < grid.columnCount; c++) {
+      if (roles[c] !== 'skip') continue;
+      const cells = sampleRows.map(r => (r[c] ?? '').trim()).filter(Boolean);
+      if (cells.length < 3) continue;
+      const refLike = cells.filter(v => VCH_NO_SHAPE.test(v)).length;
+      if (refLike / cells.length >= 0.4) {
+        roles[c] = 'reference';
+        taken.add('reference');
+        break; // only one reference column per ledger
+      }
+    }
   }
 
   for (const r of rule.required) {
