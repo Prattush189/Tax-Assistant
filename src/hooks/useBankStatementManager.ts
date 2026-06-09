@@ -197,11 +197,15 @@ export function useBankStatementManager(enabled: boolean) {
     }
   }, [refresh]);
 
-  const analyzeCsv = useCallback(async (csvText: string, filename?: string): Promise<BankStatementDetail> => {
+  const analyzeCsv = useCallback(async (
+    csvText: string,
+    filename?: string,
+    accountKind?: 'asset' | 'liability',
+  ): Promise<BankStatementDetail> => {
     setIsAnalyzing(true);
     setError(null);
     try {
-      const result = await analyzeBankStatementCsv(csvText, filename);
+      const result = await analyzeBankStatementCsv(csvText, filename, accountKind);
       setStatements((prev) => {
         const filtered = prev.filter((s) => s.id !== result.statement.id);
         return [result.statement, ...filtered];

@@ -495,8 +495,14 @@ export function BankStatementUploader({ manager }: Props) {
       }
     }
     const csv = mappedRowsToBankCsv(mapped);
+    // Cash Credit / Overdraft accounts have an inverted sign
+    // convention vs savings — applyMapping detects this from the
+    // balance column's Dr/Cr suffix mix and flags it on stats. Pass
+    // it through to the server so its balance-delta reconciler
+    // doesn't flip every deposit's sign back to outflow.
+    const accountKind: 'asset' | 'liability' = stats.isCashCredit ? 'liability' : 'asset';
     try {
-      const result = await manager.analyzeCsv(csv, filename);
+      const result = await manager.analyzeCsv(csv, filename, accountKind);
       const prefix = successPrefix ? `${successPrefix} — ` : '';
       toast.success(result.alreadyAnalyzed
         ? `This statement was already analyzed earlier — opened the existing one (${result.transactions.length} transactions).`

@@ -1285,6 +1285,13 @@ export interface MappingStats {
    *  headers (e.g. "-HDFC BANK LTD.") — used to update the account
    *  context for following transactions. Always 0 for kind='bank'. */
   accountHeaders: number;
+  /** Detected Cash Credit / Overdraft / Loan account — balance is a
+   *  DEBIT balance (95%+ of suffixed balance values carry "Dr"). The
+   *  caller passes this through to the upload payload as
+   *  `accountKind: 'liability'` so the server's balance-delta
+   *  reconciler doesn't flip every deposit's sign. Defaults to false
+   *  when balance suffixes are mixed or absent (regular savings). */
+  isCashCredit: boolean;
 }
 
 /**
@@ -1329,6 +1336,8 @@ export function applyMapping(
     mergedContinuations: 0,
     skippedNoAmount: 0,
     accountHeaders: 0,
+    // Filled in once the balance-suffix scan runs (a few lines below).
+    isCashCredit: false,
   };
   const colByRole = new Map<ColumnRole, number>();
   mapping.roles.forEach((r, i) => {
@@ -1431,6 +1440,7 @@ export function applyMapping(
     }
   }
   const isCashCredit = drCount >= 20 && crCount * 20 < drCount;
+  stats.isCashCredit = isCashCredit;
 
 
   const flushPending = () => {

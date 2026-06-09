@@ -2172,13 +2172,23 @@ export async function analyzeBankStatementFile(
 //   - analyzeBankStatementFile : vision multipart for un-grid-able PDFs
 //   - analyzeBankStatementCsv  : wizard-mapped uploads (the cheap path)
 
-export async function analyzeBankStatementCsv(csvText: string, filename?: string): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[]; anomalies?: BankTransactionAnomaly[]; alreadyAnalyzed?: boolean }> {
+export async function analyzeBankStatementCsv(
+  csvText: string,
+  filename?: string,
+  accountKind?: 'asset' | 'liability',
+): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[]; anomalies?: BankTransactionAnomaly[]; alreadyAnalyzed?: boolean }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 120_000);
+  // accountKind tells the server's balance-delta reconciler which
+  // sign convention this account uses. 'liability' (Cash Credit /
+  // Overdraft / Loan) inverts the delta sign so a deposit reducing
+  // the Dr-balance is correctly recorded as an inflow. Omitting the
+  // field defaults the server to 'asset' (savings-style) — fine for
+  // regular accounts but inverts every CC sign.
   const doFetch = () => fetch('/api/bank-statements/analyze', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-    body: JSON.stringify({ csvText, filename }),
+    body: JSON.stringify({ csvText, filename, accountKind }),
     signal: controller.signal,
   });
   try {

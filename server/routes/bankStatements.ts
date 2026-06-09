@@ -2030,6 +2030,13 @@ INPUT_ROWS — TSV, one row per line, columns narration<TAB>type<TAB>amount:
           periodFrom: bankMeta.periodFrom ?? null,
           periodTo: bankMeta.periodTo ?? null,
           currency: bankMeta.currency ?? 'INR',
+          // The wizard's client-side pdfGrid detects Cash Credit
+          // statements (95%+ Dr-suffixed balances) and sends
+          // accountKind='liability' on the upload body. Pipe it
+          // through here so persistStatement's balance-delta
+          // reconciler knows to invert the delta sign — without
+          // this, a CC account's deposits land as outflows.
+          accountKind: req.body?.accountKind === 'liability' ? 'liability' : 'asset',
           transactions: mergedTransactions,
         };
         (res.locals as Record<string, unknown>).geminiUsages = aiUsages;
