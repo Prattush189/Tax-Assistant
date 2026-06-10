@@ -38,6 +38,11 @@ export function GenerateLicenseDialog({ onClose, onIssued }: Props) {
   const [userSearch, setUserSearch] = useState('');
   const [userId, setUserId] = useState('');
   const [plan, setPlan] = useState<'pro' | 'enterprise'>('pro');
+  // Complimentary = free-of-charge grant (team members, partners).
+  // Hides every payment field; the server skips the payment row +
+  // invoice/receipt and records the grant on the license audit row
+  // instead. Reason note becomes mandatory.
+  const [isComplimentary, setIsComplimentary] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<AdminPaymentMethod>('cash');
   const [paymentReference, setPaymentReference] = useState('');
   const [amountInr, setAmountInr] = useState('');
@@ -102,31 +107,42 @@ export function GenerateLicenseDialog({ onClose, onIssued }: Props) {
   const billingValid = ['name', 'addressLine1', 'city', 'state', 'pincode']
     .every(k => (billing[k as keyof AdminBillingDetails] ?? '').trim().length > 0);
 
-  const canSubmit = !!userId && refValid && amountValid && billingValid && !submitting;
+  const canSubmit = !!userId && !submitting && (
+    isComplimentary
+      ? notes.trim().length > 0
+      : refValid && amountValid && billingValid
+  );
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
     setSubmitting(true);
     try {
-      const payload = {
-        userId,
-        plan,
-        paymentMethod,
-        paymentReference: refRequired ? paymentReference.trim() : undefined,
-        amount: Math.round(parseFloat(amountInr) * 100),
-        billingDetails: {
-          name: billing.name.trim(),
-          addressLine1: billing.addressLine1.trim(),
-          addressLine2: billing.addressLine2?.trim() || undefined,
-          city: billing.city.trim(),
-          state: billing.state.trim(),
-          pincode: billing.pincode.trim(),
-          gstin: billing.gstin?.trim() || undefined,
-        },
-        notes: notes.trim() || undefined,
-      };
+      const payload = isComplimentary
+        ? {
+            userId,
+            plan,
+            complimentary: true as const,
+            notes: notes.trim(),
+          }
+        : {
+            userId,
+            plan,
+            paymentMethod,
+            paymentReference: refRequired ? paymentReference.trim() : undefined,
+            amount: Math.round(parseFloat(amountInr) * 100),
+            billingDetails: {
+              name: billing.name.trim(),
+              addressLine1: billing.addressLine1.trim(),
+              addressLine2: billing.addressLine2?.trim() || undefined,
+              city: billing.city.trim(),
+              state: billing.state.trim(),
+              pincode: billing.pincode.trim(),
+              gstin: billing.gstin?.trim() || undefined,
+            },
+            notes: notes.trim() || undefined,
+          };
       const result = await adminGenerateLicense(payload);
-      toast.success(`Issued ${result.license.key}`);
+      toast.success(`Issued ${result.license.key}${isComplimentary ? ' (complimentary — no invoice)' : ''}`);
       onIssued({ invoiceUrl: result.invoiceUrl, receiptUrl: result.receiptUrl });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to issue license');
@@ -194,6 +210,23 @@ export function GenerateLicenseDialog({ onClose, onIssued }: Props) {
             </div>
           </div>
 
+          <label className="flex items-start gap-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={isComplimentary}
+              onChange={e => setIsComplimentary(e.target.checked)}
+              className="mt-0.5 accent-emerald-600"
+            />
+            <span>
+              <span className="block text-sm font-medium text-gray-900 dark:text-gray-100">Complimentary — no payment</span>
+              <span className="block text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                For team members and partners. Skips payment details and billing — no invoice or
+                receipt is generated. The reason note below becomes mandatory (audit trail).
+              </span>
+            </span>
+          </label>
+
+          {!isComplimentary && (
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className={labelClass}>Payment method</label>
@@ -213,8 +246,9 @@ export function GenerateLicenseDialog({ onClose, onIssued }: Props) {
               />
             </div>
           </div>
+          )}
 
-          {refRequired && (
+          {!isComplimentary && refRequired && (
             <div>
               <label className={labelClass}>{methodOpt.refLabel ?? 'Reference'}</label>
               <input
@@ -229,6 +263,7 @@ export function GenerateLicenseDialog({ onClose, onIssued }: Props) {
             </div>
           )}
 
+          {!isComplimentary && (
           <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-3 space-y-2">
             <p className="text-xs font-medium text-gray-700 dark:text-gray-200">Billing address (saved for next time)</p>
             <div>
@@ -262,14 +297,19 @@ export function GenerateLicenseDialog({ onClose, onIssued }: Props) {
               <input value={billing.gstin ?? ''} onChange={e => setBilling(b => ({ ...b, gstin: e.target.value }))} className={inputClass} />
             </div>
           </div>
+          )}
 
           <div>
-            <label className={labelClass}>Notes (optional)</label>
+            <label className={labelClass}>
+              {isComplimentary ? <>Reason <span className="text-rose-500">(required)</span></> : <>Notes (optional)</>}
+            </label>
             <textarea
               value={notes}
               onChange={e => setNotes(e.target.value)}
               rows={2}
-              placeholder="e.g. Paid by NEFT to dealer Pankaj Sethi on 12 Apr 2026"
+              placeholder={isComplimentary
+                ? 'e.g. Team member — Priya Sharma, support engineer'
+                : 'e.g. Paid by NEFT to dealer Pankaj Sethi on 12 Apr 2026'}
               className={inputClass}
             />
           </div>

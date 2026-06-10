@@ -1745,10 +1745,15 @@ export interface AdminBillingDetails {
 export async function adminGenerateLicense(input: {
   userId: string;
   plan: 'pro' | 'enterprise';
-  paymentMethod: AdminPaymentMethod;
+  /** Free-of-charge grant (team members, partners). Skips payment
+   *  method / amount / billing entirely — no payment row, invoice,
+   *  or receipt is created. `notes` becomes mandatory (the audit
+   *  trail records who the grant is for and why). */
+  complimentary?: boolean;
+  paymentMethod?: AdminPaymentMethod;
   paymentReference?: string;
-  amount: number; // paise — required (yearly grant)
-  billingDetails: AdminBillingDetails;
+  amount?: number; // paise — required for paid grants, omit for complimentary
+  billingDetails?: AdminBillingDetails;
   notes?: string;
 }): Promise<{ license: AdminLicenseRow; paymentId: string | null; invoiceUrl: string | null; receiptUrl: string | null }> {
   return authFetch('/api/admin/licenses', { method: 'POST', body: JSON.stringify(input) });

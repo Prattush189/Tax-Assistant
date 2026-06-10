@@ -12,7 +12,7 @@ import db from '../index.js';
 import { generateLicenseKey, type LicensePlan } from '../../lib/licenseKey.js';
 
 export type LicenseStatus = 'active' | 'expired' | 'revoked' | 'superseded';
-export type LicenseGeneratedVia = 'razorpay' | 'offline' | 'seed' | 'free-signup' | 'admin-signup';
+export type LicenseGeneratedVia = 'razorpay' | 'offline' | 'seed' | 'free-signup' | 'admin-signup' | 'complimentary';
 
 export interface LicenseKeyRow {
   id: string;

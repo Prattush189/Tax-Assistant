@@ -629,7 +629,7 @@ const PAYMENT_METHODS_NEEDING_REFERENCE = new Set(['cheque', 'neft', 'imps', 'up
 
 router.post('/licenses', async (req: AuthRequest, res: Response) => {
   if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
-  const { userId, plan, paymentMethod, paymentReference, amount, billingDetails, notes } = req.body ?? {};
+  const { userId, plan, paymentMethod, paymentReference, amount, billingDetails, notes, complimentary } = req.body ?? {};
 
   if (typeof userId !== 'string' || !userId) {
     res.status(400).json({ error: 'userId is required' });
@@ -639,6 +639,40 @@ router.post('/licenses', async (req: AuthRequest, res: Response) => {
     res.status(400).json({ error: 'plan must be "pro" or "enterprise" — free trials auto-issue at signup' });
     return;
   }
+
+  // Complimentary grant — team members, partners, goodwill. No money
+  // moves, so the paid-issuance requirements (payment method, amount,
+  // billing details) don't apply, and NO payment row / invoice /
+  // receipt is created — a ₹0 invoice would be a fake accounting
+  // record and would pollute revenue reports. The license row itself
+  // is the audit trail: generated_via='complimentary', the issuing
+  // admin's id, and a mandatory reason note.
+  if (complimentary === true) {
+    if (typeof notes !== 'string' || !notes.trim()) {
+      res.status(400).json({ error: 'notes is required for complimentary licenses — record who this is for and why (e.g. "team member — Priya, support")' });
+      return;
+    }
+    const compUser = userRepo.findById(userId);
+    if (!compUser) { res.status(404).json({ error: 'User not found' }); return; }
+
+    const compStarts = new Date();
+    const compExpires = new Date(compStarts);
+    compExpires.setFullYear(compExpires.getFullYear() + 1);
+
+    const license = licenseKeyRepo.issue({
+      userId,
+      plan: plan as 'pro' | 'enterprise',
+      startsAt: compStarts.toISOString().replace('Z', ''),
+      expiresAt: compExpires.toISOString().replace('Z', ''),
+      generatedVia: 'complimentary',
+      paymentId: null,
+      issuedByAdminId: req.user.id,
+      issuedNotes: notes.trim(),
+    });
+    res.json({ license, paymentId: null, invoiceUrl: null, receiptUrl: null });
+    return;
+  }
+
   if (!VALID_PAYMENT_METHODS.has(paymentMethod)) {
     res.status(400).json({ error: 'paymentMethod required (cash | cheque | neft | imps | upi | rtgs | card | other)' });
     return;
