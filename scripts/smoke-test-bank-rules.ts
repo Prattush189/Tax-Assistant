@@ -11,22 +11,32 @@
  *   npx tsx scripts/smoke-test-bank-rules.ts
  *   npx tsx scripts/smoke-test-bank-rules.ts path/to/statement.pdf
  */
+// DOM stubs MUST be installed before any pdfjs/react-pdf import.
+// Static imports are hoisted above this code, which is why the
+// react-pdf / pdfGrid imports below are DYNAMIC — newer pdfjs builds
+// reference DOMMatrix at module-evaluation time and crash in Node
+// otherwise.
+class DOMMatrixStub { a=1; b=0; c=0; d=1; e=0; f=0; constructor(_?: unknown){} multiply(){return this;} translate(){return this;} scale(){return this;} rotate(){return this;} invertSelf(){return this;} }
+class Path2DStub { constructor(_?: unknown){} addPath(){} moveTo(){} lineTo(){} closePath(){} }
+class ImageDataStub { width: number; height: number; data: Uint8ClampedArray; constructor(w: number, h: number){ this.width = w; this.height = h; this.data = new Uint8ClampedArray(w * h * 4); } }
+(globalThis as Record<string, unknown>).DOMMatrix = DOMMatrixStub;
+(globalThis as Record<string, unknown>).Path2D = Path2DStub;
+(globalThis as Record<string, unknown>).ImageData = ImageDataStub;
+
 import fs from 'node:fs';
 import path from 'node:path';
-// react-pdf re-exports pdfjs; configure it BEFORE pdfGrid imports run.
-// Setting workerPort = null forces the main-thread fake-worker path,
-// which works fine in Node and avoids the dynamic worker import that
-// fails outside a bundler.
-import { pdfjs } from 'react-pdf';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-// Point pdfjs at the local worker file so its fake-worker path can
-// resolve it via fs:// — pdfjs accepts a file: URL string as workerSrc.
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+const { pdfjs } = await import('react-pdf');
+// Point pdfjs at the local worker file so its fake-worker path can
+// resolve it via fs:// — pdfjs accepts a file: URL string as workerSrc.
 const workerPath = path.resolve(__dirname, '../node_modules/pdfjs-dist/build/pdf.worker.mjs');
 pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
-import { extractPdfGrid } from '../src/lib/pdfGrid';
-import { detectAndMapBank } from '../src/lib/perBankRules';
+const { extractPdfGrid } = await import('../src/lib/pdfGrid');
+const { detectAndMapBank } = await import('../src/lib/perBankRules');
 
 async function fileFromPath(p: string): Promise<File> {
   const buf = fs.readFileSync(p);

@@ -404,6 +404,104 @@ const JK_BANK: BankRule = {
   required: ['date', 'narration', 'debit', 'credit', 'balance'],
 };
 
+// J&K Bank GENERAL SAVING / current-account export (amitT.pdf is the
+// canonical fixture: 95 pages, "TYPE: GENERAL SAVING BANK" banner).
+// Same DCR-era print engine as the Cash Credit format but a narrower
+// table — the date column sits so close to the narration column that
+// the grid extractor's anchor clustering fuses them into ONE cell:
+//
+//   row A: ["01-04-2025 UPI/FDRL/509129607", "",       "", ""          ]
+//   row B: ["704/DR/Mrs SUNITA",             "200.00", "", "73510.27Cr"]
+//
+// Four anchors survive: [date+narration, withdrawals, deposits,
+// balance]. With no date column, JK_BANK's header rule bails
+// ("required role date missing") and suggestMapping sees only noise —
+// the user gets a wizard full of Skip/Ignore dropdowns and no way to
+// build a correct mapping by hand (the screenshot case).
+//
+// The preprocess below splits the leading dd-mm-yyyy off col 0 into
+// its own column (same approach as Kotak's date/description split),
+// turning the grid into the 5-column layout the positional mapping
+// expects. applyMapping's pending/continuation machinery then
+// reassembles each two-row transaction exactly like the CC format.
+function jkBankSplitLeadingDate(grid: PdfGrid): PdfGrid {
+  // Structural gate: this fusion only happens on the 4-column savings
+  // layout. Never touch the 6-column CC grids (JK_BANK_DCR territory)
+  // or anything else that shares the J&K fingerprints.
+  if (grid.columnCount !== 4) return grid;
+  const leadingDate = /^(\d{2}-\d{2}-\d{4})\s+(.+)$/;
+  // Demand a healthy sample of date-prefixed col-0 cells before
+  // reshaping — protects against false-positive fingerprint hits.
+  const sample = grid.rows.slice(0, 120);
+  const hits = sample.filter(r => leadingDate.test((r[0] ?? '').trim())).length;
+  if (hits < 5) return grid;
+
+  const newColumnCount = grid.columnCount + 1;
+  const newRows: string[][] = grid.rows.map(r => {
+    const out: string[] = new Array(newColumnCount).fill('');
+    const cellZero = (r[0] ?? '').trim();
+    const m = leadingDate.exec(cellZero);
+    if (m) {
+      out[0] = m[1];   // extracted dd-mm-yyyy
+      out[1] = m[2];   // remainder = narration head (UPI/XXXX/ref)
+    } else {
+      // Continuation / banner / total rows: no date, full text stays
+      // in the narration position.
+      out[0] = '';
+      out[1] = cellZero;
+    }
+    for (let i = 1; i < grid.columnCount; i++) {
+      out[i + 1] = r[i] ?? '';
+    }
+    return out;
+  });
+
+  // No real header row exists in this format (the extractor reported
+  // all-null headers) — emit canonical names so downstream display
+  // and the wizard preview read sensibly.
+  const newHeaders: Array<string | null> = ['Date', 'Particulars', 'Withdrawals', 'Deposits', 'Balance'];
+
+  return {
+    ...grid,
+    rows: newRows,
+    columnCount: newColumnCount,
+    columnHeaders: newHeaders,
+  };
+}
+
+const JK_BANK_SAVINGS: BankRule = {
+  name: 'J&K Bank (Savings)',
+  fingerprints: [
+    'jammu and kashmir bank',
+    'j&k bank',
+    /\bifsc\b.{0,30}\bjaka0\w{4,}/i,
+  ],
+  preprocess: jkBankSplitLeadingDate,
+  positional: {
+    columnCount: 5, // post-preprocess
+    roles: ['date', 'narration', 'debit', 'credit', 'balance'],
+    verify: (grid) => {
+      // Col 0: at least 5 date-shaped entries (the preprocess only
+      // produces these when the split actually fired).
+      const datePat = /^\d{2}-\d{2}-\d{4}$/;
+      const dateCount = grid.rows.reduce(
+        (acc, r) => acc + (datePat.test((r[0] ?? '').trim()) ? 1 : 0),
+        0,
+      );
+      if (dateCount < 5) return false;
+      // Col 4: at least 5 Dr/Cr-suffixed balances — the J&K print
+      // engine always stamps the direction on the running balance.
+      const drCrPat = /^-?[\d,]+(?:\.\d+)?(Dr|Cr)$/i;
+      const balCount = grid.rows.reduce(
+        (acc, r) => acc + (drCrPat.test((r[4] ?? '').trim()) ? 1 : 0),
+        0,
+      );
+      if (balCount < 5) return false;
+      return true;
+    },
+  },
+};
+
 // J&K Bank's legacy DCR / Cash Credit-style export prints a metadata
 // banner ("JAMMU AND KASHMIR BANK LTD" / "TYPE: CASH CREDIT SCHEME" or
 // "TYPE: CC MORTG TRADE/SERVICE" / customer address) and then jumps
@@ -490,7 +588,11 @@ const JK_BANK_DCR: BankRule = {
 // "KKBK0" IFSC) are unique to Kotak and don't overlap with any
 // existing rule, so its position in the list is purely cosmetic
 // (grouped with the other major private banks).
-const RULES: BankRule[] = [HDFC, ICICI, CANARA, PNB, YES_BANK, KOTAK, JK_BANK_DCR, JK_BANK];
+// JK_BANK_SAVINGS sits after JK_BANK_DCR (6-col CC grids must not be
+// reshaped — its preprocess gates on columnCount === 4 anyway) and
+// before JK_BANK (whose header rule can never satisfy this format's
+// all-null headers, so ordering only saves a wasted attempt).
+const RULES: BankRule[] = [HDFC, ICICI, CANARA, PNB, YES_BANK, KOTAK, JK_BANK_DCR, JK_BANK_SAVINGS, JK_BANK];
 
 export interface DetectedBankMapping {
   bank: string;

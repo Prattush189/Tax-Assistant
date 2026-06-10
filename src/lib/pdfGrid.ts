@@ -1650,7 +1650,15 @@ export function applyMapping(
     pending = null;
   };
 
+  let __rowIdx = -1;
   for (const row of grid.rows) {
+    __rowIdx++;
+    if (process.env.PDFGRID_DEBUG_RANGE) {
+      const [lo, hi] = process.env.PDFGRID_DEBUG_RANGE.split('-').map(Number);
+      if (__rowIdx >= lo && __rowIdx <= hi) {
+        console.log(`[dbgR ${__rowIdx}] pending=${pending ? pending.date + (pendingAwaitingCrossPage ? '/awaitX' : '') : 'null'} row=${JSON.stringify(row)}`);
+      }
+    }
     const cell = (role: ColumnRole) => {
       const i = colByRole.get(role);
       return i === undefined ? '' : (row[i] ?? '').trim();
@@ -1852,7 +1860,7 @@ export function applyMapping(
       // page's first transaction date, producing a grid row that has
       // a date AND the Page Total values). These tokens never appear
       // in legitimate transaction narrations.
-      const UNAMBIGUOUS_MARKER = /\b(?:page\s+total|grand\s+total|effective\s+available\s+amount|total\s+available\s+amount|funds\s+in\s+clearing|ffd\s+contribution|unless\s+the\s+constituent|type\s*:\s*cash\s+credit|cash\s+credit\s+scheme|statement\s+of\s+account\s+for\s+the\s+period|transaction\s+details|printed\s+by\s+\d|page\s+\d+\s+of\s+\d|ifsc\s+code|micr\s+code|phone\s+code|a\/c\s+no|no\s+nomination\s+available|interest\s+rate|jammu\s+and\s+kashmir\s+bank|ckyc\s+id|cKYC|chand\s+nagar)|https?:\/\/|\.jsp\b|\.jkb\.com/i;
+      const UNAMBIGUOUS_MARKER = /\b(?:page\s+total|grand\s+total|effective\s+available\s+amount|total\s+available\s+amount|funds\s+in\s+clearing|ffd\s+contribution|unless\s+the\s+constituent|type\s*:\s*cash\s+credit|cash\s+credit\s+scheme|type\s*:\s*general\s+saving|statement\s+of\s+account\s+for\s+the\s+period|transaction\s+details|printed\s+by\s+\d|page\s+\d+\s+of\s+\d|ifsc\s+code|micr\s+code|phone\s+code|a\/c\s+no|no\s+nomination\s+available|nomination\s+available\s+for\s+the\s+account|interest\s+rate|jammu\s+and\s+kashmir\s+bank|ckyc\s+id|cKYC|chand\s+nagar)|https?:\/\/|\.jsp\b|\.jkb\.com/i;
       const haystack = `${narr} ${voucher ?? ''} ${reference ?? ''}`.trim();
       // J&K Bank CC pages split "Page Total :" across two adjacent
       // pdfjs cells ("Page" in the narration column, "Total:" in the
@@ -1891,7 +1899,17 @@ export function applyMapping(
       // almost certainly extracted noise — drop the row before the
       // balance-delta fallback can turn it into a ₹15L phantom.
       if (!date && balance != null && Math.abs(balance) < 100) {
-        flushPending();
+        // Same incomplete-pending preservation as the marker branch
+        // above. The GENERAL SAVING banner's "TYPE: ... DATE:
+        // 08-06-2026" row parses a tiny number out of the DATE cell
+        // and lands here — flushing unconditionally killed the
+        // cross-page pending and lost the straddling transaction
+        // (amitT.pdf dropped 34 txns this way, one per page break).
+        if (pending && pending.debit == null && pending.credit == null && pending.amountSingle == null && pending.balance == null) {
+          pendingAwaitingCrossPage = true;
+        } else {
+          flushPending();
+        }
         stats.skippedNoAmount += 1;
         continue;
       }
