@@ -87,6 +87,19 @@ type ExtractedStatement = {
   // Optional + defaults to 'asset' on the server when null/undefined —
   // back-compat with statements parsed before this field existed.
   accountKind?: 'asset' | 'liability' | null;
+  // When true, the transaction amounts arrived pre-signed from a
+  // deterministic source (the wizard's column mapping, where the PDF
+  // prints explicit WITHDRAWALS / DEPOSITS columns) and the server
+  // must NOT second-guess them. Skips the balance-delta derivation
+  // and sign-flip reconciliation phases entirely — those exist for
+  // the vision path, where AI-read amounts genuinely need the printed
+  // balance chain as ground truth. Running them on wizard CSVs is
+  // actively harmful: banks encode CC balances inconsistently
+  // (J&K prints "1383991.20Dr" on one product and "-12,79,294.23Dr"
+  // on another), so any balance-derived sign convention is a coin
+  // flip, and the derive phase was REPLACING correct printed amounts
+  // with delta values that no longer tie to the bank's Grand Total.
+  amountsAuthoritative?: boolean;
   transactions: unknown[];
 };
 
@@ -671,26 +684,50 @@ function persistStatement(
   // current statements behave exactly as before.
   const accountKind: 'asset' | 'liability' = data.accountKind === 'liability' ? 'liability' : 'asset';
 
-  // Phase 1: derive each amount from the printed running balance
-  // delta. The AI's amount field is treated as a fallback (used only
-  // for rows where balance is null on either side). Zero-delta rows
-  // (a balance unchanged from prev row) drop out here as a second
-  // layer of phantom defence.
-  const opening = typeof data.openingBalance === 'number' ? data.openingBalance : null;
-  const { amountOverridden, phantomDropped } = deriveAmountsFromBalance(txs, opening, accountKind);
-  const totalPhantomDropped = phantomDropped + inlineDatePhantomsDropped;
+  // Phases 1-3 below re-derive amounts and signs from the printed
+  // running-balance chain. They are VISION-PATH machinery: when the
+  // AI reads a statement image, its amount/direction fields are
+  // unreliable and the balance column is the best ground truth.
+  //
+  // Wizard-mapped CSVs are the opposite: amounts and direction come
+  // from explicit Withdrawal/Deposit columns the user (or a bank
+  // rule) mapped deterministically — those ARE the bank's printed
+  // numbers, and the dashboard must tie to the bank's printed Grand
+  // Total. Meanwhile the balance column's sign encoding varies by
+  // product even within one bank (J&K: "1383991.20Dr" vs
+  // "-12,79,294.23Dr"), so balance-derived amounts on this path
+  // replaced correct values with garbage. amountsAuthoritative=true
+  // (set by the CSV branch) skips all three phases.
+  let amountOverridden = 0;
+  let totalPhantomDropped = inlineDatePhantomsDropped;
+  let autoCorrected = 0;
+  let mismatches: ReturnType<typeof reconcileBalances>['mismatches'] = [];
+  let closingMismatch: ReturnType<typeof verifyClosingBalance> = null;
+  if (!data.amountsAuthoritative) {
+    // Phase 1: derive each amount from the printed running balance
+    // delta. The AI's amount field is treated as a fallback (used only
+    // for rows where balance is null on either side). Zero-delta rows
+    // (a balance unchanged from prev row) drop out here as a second
+    // layer of phantom defence.
+    const opening = typeof data.openingBalance === 'number' ? data.openingBalance : null;
+    const derived = deriveAmountsFromBalance(txs, opening, accountKind);
+    amountOverridden = derived.amountOverridden;
+    totalPhantomDropped += derived.phantomDropped;
 
-  // Phase 2: legacy sign-flip / column-swap reconciliation. After
-  // deriveAmountsFromBalance most rows already have authoritative
-  // amounts; this catches the residual cases where balance was null
-  // on one side and we fell back to the AI's value. Cheap to keep.
-  const { autoCorrected, mismatches } = reconcileBalances(txs, accountKind);
+    // Phase 2: legacy sign-flip / column-swap reconciliation. After
+    // deriveAmountsFromBalance most rows already have authoritative
+    // amounts; this catches the residual cases where balance was null
+    // on one side and we fell back to the AI's value. Cheap to keep.
+    const reconciled = reconcileBalances(txs, accountKind);
+    autoCorrected = reconciled.autoCorrected;
+    mismatches = reconciled.mismatches;
 
-  // Phase 3: integrity check — opening + sum should equal closing.
-  // If not, the printed-balance chain itself has a misread somewhere
-  // and our derived totals are still suspect. Surface as a warning.
-  const closing = typeof data.closingBalance === 'number' ? data.closingBalance : null;
-  const closingMismatch = verifyClosingBalance(txs, opening, closing, accountKind);
+    // Phase 3: integrity check — opening + sum should equal closing.
+    // If not, the printed-balance chain itself has a misread somewhere
+    // and our derived totals are still suspect. Surface as a warning.
+    const closing = typeof data.closingBalance === 'number' ? data.closingBalance : null;
+    closingMismatch = verifyClosingBalance(txs, opening, closing, accountKind);
+  }
 
   const { inflow, outflow } = computeTotals(txs);
   const periodLabel = data.periodFrom && data.periodTo
@@ -2063,11 +2100,15 @@ INPUT_ROWS — TSV, one row per line, columns narration<TAB>type<TAB>amount:
           currency: bankMeta.currency ?? 'INR',
           // The wizard's client-side pdfGrid detects Cash Credit
           // statements (95%+ Dr-suffixed balances) and sends
-          // accountKind='liability' on the upload body. Pipe it
-          // through here so persistStatement's balance-delta
-          // reconciler knows to invert the delta sign — without
-          // this, a CC account's deposits land as outflows.
+          // accountKind='liability' on the upload body. Stored on
+          // the statement for reference / display.
           accountKind: req.body?.accountKind === 'liability' ? 'liability' : 'asset',
+          // Wizard-mapped amounts come from the PDF's explicit
+          // Withdrawal/Deposit columns — they're the bank's printed
+          // numbers and the server must not rewrite them from the
+          // balance chain (whose sign encoding varies per product).
+          // See ExtractedStatement.amountsAuthoritative.
+          amountsAuthoritative: true,
           transactions: mergedTransactions,
         };
         (res.locals as Record<string, unknown>).geminiUsages = aiUsages;
