@@ -797,6 +797,32 @@ router.post('/licenses/:id/renew', (req: AuthRequest, res: Response) => {
   res.json({ license });
 });
 
+// DELETE /api/admin/licenses/superseded — bulk-remove every
+// superseded license row. Superseded rows are pure audit clutter
+// once the renewal/upgrade that replaced them is itself on record;
+// active / expired / revoked rows are never touched. Registered
+// BEFORE the /:id route so Express doesn't match "superseded" as an
+// id.
+router.delete('/licenses/superseded', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const result = licenseKeyRepo.deleteAllSuperseded();
+  console.log(`[admin/licenses] ${req.user.id} bulk-deleted ${result.deleted} superseded license(s)`);
+  res.json(result);
+});
+
+// DELETE /api/admin/licenses/:id — remove a single superseded
+// license. Refuses anything that isn't status='superseded'.
+router.delete('/licenses/:id', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const result = licenseKeyRepo.deleteSuperseded(req.params.id);
+  if (!result.deleted) {
+    res.status(400).json({ error: result.reason ?? 'Delete failed' });
+    return;
+  }
+  console.log(`[admin/licenses] ${req.user.id} deleted superseded license ${req.params.id}`);
+  res.json({ success: true });
+});
+
 // POST /api/admin/licenses/reconcile
 //   Re-issue licenses for any user whose users.plan column doesn't
 //   match their active license's plan. Used to clean up users whose

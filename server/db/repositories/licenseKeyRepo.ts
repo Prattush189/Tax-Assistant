@@ -218,6 +218,42 @@ export const licenseKeyRepo = {
     stmts.markRevoked.run(reason, id);
   },
 
+  /**
+   * Hard-delete a single SUPERSEDED license row. Superseded rows are
+   * the only safe deletion target: the superseding row carries the
+   * live plan state, so removing the old one loses only historic
+   * audit clutter — never an active grant. Guards:
+   *   - status must be 'superseded' (active/expired/revoked refuse)
+   *   - no users.license_key_id may still point at the row
+   * superseded_by_id back-references from even older rows are handled
+   * by the FK's ON DELETE SET NULL.
+   */
+  deleteSuperseded(id: string): { deleted: boolean; reason?: string } {
+    const row = db.prepare('SELECT id, status FROM license_keys WHERE id = ?').get(id) as { id: string; status: string } | undefined;
+    if (!row) return { deleted: false, reason: 'License not found' };
+    if (row.status !== 'superseded') return { deleted: false, reason: `Only superseded licenses can be deleted (this one is ${row.status})` };
+    const referencing = db.prepare('SELECT COUNT(*) AS n FROM users WHERE license_key_id = ?').get(id) as { n: number };
+    if (referencing.n > 0) return { deleted: false, reason: 'A user account still references this license — reconcile first' };
+    db.prepare('DELETE FROM license_keys WHERE id = ? AND status = \'superseded\'').run(id);
+    return { deleted: true };
+  },
+
+  /**
+   * Bulk-delete every superseded license that no user references.
+   * Returns the number of rows removed. Rows still referenced by a
+   * users.license_key_id are silently kept (shouldn't happen — a
+   * superseded row's user always points at the superseding row — but
+   * cheap to be defensive about).
+   */
+  deleteAllSuperseded(): { deleted: number } {
+    const info = db.prepare(`
+      DELETE FROM license_keys
+       WHERE status = 'superseded'
+         AND id NOT IN (SELECT license_key_id FROM users WHERE license_key_id IS NOT NULL)
+    `).run();
+    return { deleted: info.changes };
+  },
+
   /** Sweep all licenses whose expires_at is in the past and flip
    *  their status to 'expired'. Also resets users.plan to 'free'
    *  for any user whose paid license just lapsed — keeps the

@@ -1775,6 +1775,18 @@ export async function adminReconcileLicenses(): Promise<{ reconciled: number }> 
   return authFetch('/api/admin/licenses/reconcile', { method: 'POST' });
 }
 
+/** Delete a single SUPERSEDED license row. The server refuses any
+ *  other status — active/expired/revoked rows are audit history. */
+export async function adminDeleteLicense(id: string): Promise<{ success: boolean }> {
+  return authFetch(`/api/admin/licenses/${id}`, { method: 'DELETE' });
+}
+
+/** Bulk-delete every superseded license row (skips any still
+ *  referenced by a user account). Returns rows removed. */
+export async function adminDeleteSupersededLicenses(): Promise<{ deleted: number }> {
+  return authFetch('/api/admin/licenses/superseded', { method: 'DELETE' });
+}
+
 // ── External API keys (for assist.smartbizin.com etc.) ─────────────────
 
 export interface AdminExternalKey {

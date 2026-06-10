@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Key, RefreshCw, Ban, Search, Plus, Wrench } from 'lucide-react';
+import { Key, RefreshCw, Ban, Search, Plus, Wrench, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { cn } from '../../lib/utils';
 import {
   adminFetchLicenses, adminRenewLicense, adminRevokeLicense, adminReconcileLicenses,
+  adminDeleteLicense, adminDeleteSupersededLicenses,
   type AdminLicenseRow,
 } from '../../services/api';
 import { GenerateLicenseDialog } from './GenerateLicenseDialog';
@@ -103,6 +104,28 @@ export function LicensesDashboard() {
     }
   };
 
+  const handleDelete = async (lic: AdminLicenseRow) => {
+    if (!confirm(`Delete superseded license ${lic.key}?\n\nThis permanently removes the row — the replacement license already carries the user's current plan, so nothing changes for them.`)) return;
+    try {
+      await adminDeleteLicense(lic.id);
+      toast.success('License deleted');
+      load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Delete failed');
+    }
+  };
+
+  const handleDeleteAllSuperseded = async () => {
+    if (!confirm('Delete ALL superseded licenses?\n\nSuperseded rows are old keys that were replaced by a renewal or upgrade — the replacement carries each user\'s current plan, so no active grant is touched. This only clears the historic clutter.')) return;
+    try {
+      const r = await adminDeleteSupersededLicenses();
+      toast.success(`Deleted ${r.deleted} superseded license(s)`);
+      load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Bulk delete failed');
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -110,6 +133,13 @@ export function LicensesDashboard() {
           <Key className="w-5 h-5 text-amber-500" /> Licenses
         </h2>
         <div className="flex items-center gap-2">
+          <button
+            onClick={handleDeleteAllSuperseded}
+            title="Permanently remove all superseded license rows — old keys already replaced by a renewal or upgrade. No active license is touched."
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300"
+          >
+            <Trash2 className="w-4 h-4" /> Delete superseded
+          </button>
           <button
             onClick={handleReconcile}
             disabled={reconciling}
@@ -187,6 +217,11 @@ export function LicensesDashboard() {
                           <Ban className="w-3.5 h-3.5" />
                         </button>
                       </div>
+                    )}
+                    {r.status === 'superseded' && (
+                      <button onClick={() => handleDelete(r)} title="Delete this superseded license" className="p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-400 hover:text-rose-600 dark:hover:text-rose-400">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
                     )}
                   </td>
                 </tr>
