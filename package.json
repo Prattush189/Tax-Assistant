@@ -72,5 +72,11 @@
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
+  },
+  "overrides": {
+    "shell-quote": "^1.8.4",
+    "exceljs": {
+      "uuid": "^11.1.1"
+    }
   }
 }
