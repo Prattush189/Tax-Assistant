@@ -21,7 +21,7 @@
  */
 
 import { streamGeminiChat } from './geminiChat.js';
-import { GEMINI_CHAT_MODEL_T1, GEMINI_API_KEYS } from './gemini.js';
+import { GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, GEMINI_API_KEYS } from './gemini.js';
 
 export interface StructuredOcrRow {
   date: string | null;            // YYYY-MM-DD
@@ -35,6 +35,11 @@ export interface StructuredOcrResult {
   inputTokens: number;
   outputTokens: number;
   modelUsed: string;
+  /** Per-model token usage. The tiered chunk strategy (T2 first, T1
+   *  on retry) can mix models within one statement — usage logging
+   *  needs the per-model split so the quota gate weights each call
+   *  by the model that actually ran it. */
+  usages?: Array<{ inputTokens: number; outputTokens: number; modelUsed: string }>;
 }
 
 /**
@@ -98,6 +103,19 @@ export async function structureOcrTextIntoRows(
   const results: StructuredOcrRow[][] = new Array(chunks.length);
   let inputTokens = 0;
   let outputTokens = 0;
+  // Per-model token tallies for quota logging. T2 output weighs 4×
+  // vs T1's 15× in the cross-feature quota — lumping a mixed-tier
+  // statement under one model string would mis-weight the user's
+  // budget by up to ~3.7×.
+  const usageByModel = new Map<string, { inputTokens: number; outputTokens: number }>();
+  const addUsage = (model: string, inTok: number, outTok: number) => {
+    inputTokens += inTok;
+    outputTokens += outTok;
+    const u = usageByModel.get(model) ?? { inputTokens: 0, outputTokens: 0 };
+    u.inputTokens += inTok;
+    u.outputTokens += outTok;
+    usageByModel.set(model, u);
+  };
 
   let cursor = 0;
   const workers = Array.from({ length: Math.min(CHUNK_CONCURRENCY, chunks.length) }, async () => {
@@ -107,13 +125,19 @@ export async function structureOcrTextIntoRows(
       const chunk = chunks[idx];
       const pageRange = `pages ${chunk[0].pageNo}-${chunk[chunk.length - 1].pageNo}`;
       const estimate = chunk.reduce((a, p) => a + estimateTxnRows(p.text), 0);
+      // Tiered models: T2 (2.5 flash-lite) first — structuring is a
+      // mechanical parse, and T2's output tokens weigh 4× in the
+      // quota vs T1's 15×, so the statement costs ~3.5× less when T2
+      // holds. The per-chunk estimate guard is the safety net: if T2
+      // drops rows (its known weakness on dense batches) or returns
+      // bad JSON, the retry escalates to T1. Same tier-order pattern
+      // as the vision path.
       let res: StructuredOcrResult | null = null;
       try {
-        res = await structureChunk(chunk, estimate, apiKey);
-        inputTokens += res.inputTokens;
-        outputTokens += res.outputTokens;
+        res = await structureChunk(chunk, estimate, apiKey, GEMINI_CHAT_MODEL_T2);
+        addUsage(GEMINI_CHAT_MODEL_T2, res.inputTokens, res.outputTokens);
       } catch (e) {
-        console.warn(`[paddleStructurer] chunk ${idx + 1}/${chunks.length} (${pageRange}) failed: ${(e as Error).message.slice(0, 200)} — retrying once`);
+        console.warn(`[paddleStructurer] chunk ${idx + 1}/${chunks.length} (${pageRange}) failed on T2: ${(e as Error).message.slice(0, 200)} — retrying on T1`);
       }
       // One retry for either failure mode: a thrown error (bad JSON)
       // or a short yield. Short yields matter because a truncated
@@ -121,10 +145,9 @@ export async function structureOcrTextIntoRows(
       // one — the date-line estimate is the only tell.
       const short = res !== null && estimate >= 10 && res.transactions.length < estimate * MIN_YIELD_RATIO;
       if (res === null || short) {
-        if (short) console.warn(`[paddleStructurer] chunk ${idx + 1}/${chunks.length} (${pageRange}) returned ${res!.transactions.length} rows vs ~${estimate} date-lines — retrying once`);
-        const retry = await structureChunk(chunk, estimate, apiKey); // throws → whole structurer fails → route falls back to vision
-        inputTokens += retry.inputTokens;
-        outputTokens += retry.outputTokens;
+        if (short) console.warn(`[paddleStructurer] chunk ${idx + 1}/${chunks.length} (${pageRange}) returned ${res!.transactions.length} rows vs ~${estimate} date-lines on T2 — retrying on T1`);
+        const retry = await structureChunk(chunk, estimate, apiKey, GEMINI_CHAT_MODEL_T1); // throws → whole structurer fails → route falls back to vision
+        addUsage(GEMINI_CHAT_MODEL_T1, retry.inputTokens, retry.outputTokens);
         if (res === null || retry.transactions.length > res.transactions.length) res = retry;
       }
       results[idx] = res.transactions;
@@ -133,11 +156,22 @@ export async function structureOcrTextIntoRows(
   });
   await Promise.all(workers);
 
+  const usages = [...usageByModel.entries()].map(([modelUsed, u]) => ({
+    modelUsed,
+    inputTokens: u.inputTokens,
+    outputTokens: u.outputTokens,
+  }));
   return {
     transactions: results.flat(),
     inputTokens,
     outputTokens,
-    modelUsed: GEMINI_CHAT_MODEL_T1,
+    // Headline model = whichever processed more output tokens.
+    // Display-only; the per-model `usages` array is what billing
+    // and the quota gate should consume.
+    modelUsed: usages.length > 0
+      ? usages.reduce((a, b) => (b.outputTokens > a.outputTokens ? b : a)).modelUsed
+      : GEMINI_CHAT_MODEL_T2,
+    usages,
   };
 }
 
@@ -145,6 +179,7 @@ async function structureChunk(
   chunk: Array<{ text: string; pageNo: number }>,
   estimatedRows: number,
   apiKey: string,
+  model: string,
 ): Promise<StructuredOcrResult> {
   // Tag each page so the model can resolve repeated narrations
   // (e.g. recurring UPI to the same VPA) and so we can spot which
@@ -181,7 +216,7 @@ ${combinedText}`;
   let inputTokens = 0;
   let outputTokens = 0;
   for await (const part of streamGeminiChat(
-    GEMINI_CHAT_MODEL_T1,
+    model,
     '',
     [],
     prompt,
@@ -245,6 +280,6 @@ ${combinedText}`;
     transactions,
     inputTokens,
     outputTokens,
-    modelUsed: GEMINI_CHAT_MODEL_T1,
+    modelUsed: model,
   };
 }

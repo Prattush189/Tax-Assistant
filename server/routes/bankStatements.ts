@@ -1352,11 +1352,18 @@ router.post(
                 balance: r.balance,
               })),
             } as ExtractedStatement;
-            (res.locals as Record<string, unknown>).geminiUsages = [{
-              inputTokens: structured.inputTokens,
-              outputTokens: structured.outputTokens,
-              modelUsed: structured.modelUsed,
-            }];
+            // Per-model usage split: the tiered structurer runs T2
+            // first and escalates short-yield/error chunks to T1 —
+            // each tier must be weighted by its own model in the
+            // quota gate (T1 output weighs 15× vs T2's 4×).
+            (res.locals as Record<string, unknown>).geminiUsages =
+              structured.usages && structured.usages.length > 0
+                ? structured.usages
+                : [{
+                    inputTokens: structured.inputTokens,
+                    outputTokens: structured.outputTokens,
+                    modelUsed: structured.modelUsed,
+                  }];
             extractedFromOcr = true;
             const totalMs = Date.now() - ocrStart;
             console.log(`[bank-statements] OCR pipeline total: ${totalMs}ms (${(totalMs / Math.max(1, ocr.pages.length)).toFixed(0)}ms/page)`);
