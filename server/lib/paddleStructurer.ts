@@ -37,6 +37,44 @@ export interface StructuredOcrResult {
   modelUsed: string;
 }
 
+/**
+ * Pages per Gemini call. The original implementation sent the WHOLE
+ * statement in one call with a 32K output cap — on a 21-page scanned
+ * ICICI statement (~600 rows with long UPI narrations ≈ 28-30K output
+ * tokens) the model hit output-density pressure and silently dropped
+ * ~150 rows (the dropped credits/debits nearly cancelled, so totals
+ * looked only ~1% off while ₹76K was missing from each side). Same
+ * failure mode we already fixed for the vision path via chunking.
+ *
+ * 4 pages ≈ 100-120 rows ≈ 5-7K output tokens per call — far below
+ * any pressure point. Chunks run with bounded concurrency; results
+ * merge in page order so the downstream balance-delta deriver sees
+ * rows in statement order.
+ */
+const PAGES_PER_CHUNK = 4;
+/** Parallel Gemini calls. Modest — these are cheap T1 calls but we
+ *  don't want a 40-page statement to burst 10 concurrent requests
+ *  into the per-key rate limit. */
+const CHUNK_CONCURRENCY = 3;
+/** Retry threshold: if a chunk returns fewer than this fraction of
+ *  the date-line estimate, re-ask once with an explicit row-count
+ *  hint before accepting the short result. */
+const MIN_YIELD_RATIO = 0.7;
+
+/**
+ * Cheap deterministic estimate of how many transaction rows a page's
+ * OCR text contains: lines that START with a date token. Indian bank
+ * prints use DD-MM-YYYY / DD/MM/YYYY / DD-MMM-YY(YY). Used to (a)
+ * give the model an explicit target count and (b) detect short
+ * yields worth retrying. An estimate, not ground truth — wrapped
+ * narrations never start with a date, and some banks repeat the date
+ * on continuation lines, so we only act on LARGE shortfalls.
+ */
+export function estimateTxnRows(text: string): number {
+  const datePat = /^\s*\d{1,2}[-/](?:\d{1,2}|[A-Za-z]{3})[-/]\d{2,4}\b/;
+  return text.split('\n').filter(l => datePat.test(l)).length;
+}
+
 export async function structureOcrTextIntoRows(
   pages: string[],
 ): Promise<StructuredOcrResult> {
@@ -45,14 +83,79 @@ export async function structureOcrTextIntoRows(
     throw new Error('GEMINI_API_KEY is not set — cannot structure OCR text');
   }
 
+  // Drop blank pages up front (some scan containers report phantom
+  // pages that rasterize to nothing — they'd just dilute the chunks).
+  const realPages = pages.map((p, i) => ({ text: p?.trim() ?? '', pageNo: i + 1 }))
+    .filter(p => p.text.length > 0);
+
+  // Build page-group chunks, preserving original page numbers in the
+  // tags so diagnostics can point at the source page.
+  const chunks: Array<Array<{ text: string; pageNo: number }>> = [];
+  for (let i = 0; i < realPages.length; i += PAGES_PER_CHUNK) {
+    chunks.push(realPages.slice(i, i + PAGES_PER_CHUNK));
+  }
+
+  const results: StructuredOcrRow[][] = new Array(chunks.length);
+  let inputTokens = 0;
+  let outputTokens = 0;
+
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(CHUNK_CONCURRENCY, chunks.length) }, async () => {
+    while (true) {
+      const idx = cursor++;
+      if (idx >= chunks.length) return;
+      const chunk = chunks[idx];
+      const pageRange = `pages ${chunk[0].pageNo}-${chunk[chunk.length - 1].pageNo}`;
+      const estimate = chunk.reduce((a, p) => a + estimateTxnRows(p.text), 0);
+      let res: StructuredOcrResult | null = null;
+      try {
+        res = await structureChunk(chunk, estimate, apiKey);
+        inputTokens += res.inputTokens;
+        outputTokens += res.outputTokens;
+      } catch (e) {
+        console.warn(`[paddleStructurer] chunk ${idx + 1}/${chunks.length} (${pageRange}) failed: ${(e as Error).message.slice(0, 200)} — retrying once`);
+      }
+      // One retry for either failure mode: a thrown error (bad JSON)
+      // or a short yield. Short yields matter because a truncated
+      // JSON that still parses is indistinguishable from a complete
+      // one — the date-line estimate is the only tell.
+      const short = res !== null && estimate >= 10 && res.transactions.length < estimate * MIN_YIELD_RATIO;
+      if (res === null || short) {
+        if (short) console.warn(`[paddleStructurer] chunk ${idx + 1}/${chunks.length} (${pageRange}) returned ${res!.transactions.length} rows vs ~${estimate} date-lines — retrying once`);
+        const retry = await structureChunk(chunk, estimate, apiKey); // throws → whole structurer fails → route falls back to vision
+        inputTokens += retry.inputTokens;
+        outputTokens += retry.outputTokens;
+        if (res === null || retry.transactions.length > res.transactions.length) res = retry;
+      }
+      results[idx] = res.transactions;
+      console.log(`[paddleStructurer] chunk ${idx + 1}/${chunks.length} (${pageRange}): ${res.transactions.length} rows (est ${estimate})`);
+    }
+  });
+  await Promise.all(workers);
+
+  return {
+    transactions: results.flat(),
+    inputTokens,
+    outputTokens,
+    modelUsed: GEMINI_CHAT_MODEL_T1,
+  };
+}
+
+async function structureChunk(
+  chunk: Array<{ text: string; pageNo: number }>,
+  estimatedRows: number,
+  apiKey: string,
+): Promise<StructuredOcrResult> {
   // Tag each page so the model can resolve repeated narrations
   // (e.g. recurring UPI to the same VPA) and so we can spot which
   // page the model dropped rows from if diagnostics are needed.
-  const combinedText = pages
-    .map((p, i) => `=== PAGE ${i + 1} ===\n${p.trim()}`)
+  const combinedText = chunk
+    .map(p => `=== PAGE ${p.pageNo} ===\n${p.text}`)
     .join('\n\n');
 
-  const prompt = `You receive the OCR text of an Indian bank statement. An OCR engine has already extracted the text page-by-page; your job is to PARSE this text into structured transaction rows.
+  const prompt = `You receive the OCR text of ${chunk.length} page(s) of an Indian bank statement. An OCR engine has already extracted the text page-by-page; your job is to PARSE this text into structured transaction rows.
+
+These pages contain approximately ${estimatedRows} transaction rows (counted from date-prefixed lines). Extract ALL of them — a result far below that count means you skipped rows.
 
 CRITICAL RULES:
 - DO NOT INVENT data. Only output rows that are clearly visible in the OCR text.
@@ -77,24 +180,24 @@ ${combinedText}`;
   let buffer = '';
   let inputTokens = 0;
   let outputTokens = 0;
-  for await (const chunk of streamGeminiChat(
+  for await (const part of streamGeminiChat(
     GEMINI_CHAT_MODEL_T1,
     '',
     [],
     prompt,
     apiKey,
-    // 32K output cap — plenty for ~1,200 rows at ~25 tokens each.
-    // PaddleOCR-style text input keeps density pressure off the
-    // model (it sees what's there, doesn't have to read images),
-    // so the same model that drops rows during vision parses
-    // cleanly here.
-    32768,
+    // Per-chunk output cap. A 4-page chunk tops out around 120 rows
+    // × ~50 tokens (long UPI narrations) ≈ 6K tokens — 16K leaves a
+    // wide margin without inviting the output-density row-dropping
+    // that the old single-call 32K design suffered on dense
+    // statements (~600 rows ≈ 28-30K tokens, right at the cap).
+    16384,
     false,
     false,
   )) {
-    if (chunk.text) buffer += chunk.text;
-    if (typeof chunk.inputTokens === 'number') inputTokens = chunk.inputTokens;
-    if (typeof chunk.outputTokens === 'number') outputTokens = chunk.outputTokens;
+    if (part.text) buffer += part.text;
+    if (typeof part.inputTokens === 'number') inputTokens = part.inputTokens;
+    if (typeof part.outputTokens === 'number') outputTokens = part.outputTokens;
   }
 
   const cleaned = buffer
