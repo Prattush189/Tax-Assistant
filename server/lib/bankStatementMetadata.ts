@@ -99,24 +99,29 @@ const BANK_PATTERNS: Array<{ name: string; regex: RegExp }> = [
  * scoring gives J&K Bank the win because JAKA appears dozens of
  * times while HDFC appears only as a UPI counterparty mention or two.
  *
- * Filename always counts as one hit if it contains the pattern,
- * pushing the customer's own bank ahead in the rare case where
- * narrations are perfectly tied.
+ * Filename hits are weighted heavily (×100 ≈ filename-wins-when-
+ * present). A user-downloaded statement file that NAMES a bank
+ * ("ICICI BANK FORMAT-2.pdf") is near-definitive, while narration
+ * frequency can mislead on accounts whose own bank never appears in
+ * narrations: a scanned ICICI statement full of UPI receipts shows
+ * "AXIS BANK" / "CITIBANK" as COUNTERPARTY banks dozens of times,
+ * and ICICI's own tell is just an "ICI" prefix inside reference
+ * UUIDs that \bICICI\b can't match. Narration frequency remains the
+ * decider for unnamed files ("statement (3).pdf").
  */
 function detectBankName(filename: string | null, rows: NormalizedRow[]): string | null {
-  const haystacks: string[] = [];
-  if (filename) haystacks.push(filename);
-  // Scan ALL transaction narrations now — frequency-weighted matching
+  // Scan ALL transaction narrations — frequency-weighted matching
   // is robust against high counterparty diversity, so a deeper sample
   // gives the customer's own bank an even stronger lead.
-  for (const r of rows) haystacks.push(r.narration);
-  const text = haystacks.join(' ');
+  const text = rows.map(r => r.narration).join(' ');
+  const FILENAME_WEIGHT = 100;
 
   let bestName: string | null = null;
   let bestCount = 0;
   for (const { name, regex } of BANK_PATTERNS) {
-    const matches = text.match(regex);
-    const count = matches?.length ?? 0;
+    const narrCount = text.match(regex)?.length ?? 0;
+    const fileCount = filename ? (filename.match(regex)?.length ?? 0) : 0;
+    const count = narrCount + fileCount * FILENAME_WEIGHT;
     if (count > bestCount) {
       bestCount = count;
       bestName = name;

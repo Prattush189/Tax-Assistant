@@ -1458,17 +1458,49 @@ router.post(
             outputTokens: visionResult.outputTokens,
             modelUsed: visionResult.modelUsed,
           }];
-          } // end else (single-call vision path) — also closes if (!extractedFromOcr)
+          } // end else (single-call vision path)
+        } // end if (!extractedFromOcr) — vision fallback
           // Convergence point: extracted is populated by whichever
           // path ran (PaddleOCR + structurer, chunked vision, or
           // single-call vision). The "0 transactions" defence covers
           // ALL paths.
+          //
+          // 2026-06: this convergence used to sit INSIDE the
+          // !extractedFromOcr branch (the old brace comment claimed
+          // one `}` closed two blocks — it didn't). Net effect: OCR-
+          // extracted rows skipped the classifier post-pass entirely
+          // and every transaction landed as "Other" with no
+          // counterparty, and the metadata backstop below never ran
+          // (card showed "Bank Statement · Period not detected").
           if (!extracted || !Array.isArray(extracted.transactions) || extracted.transactions.length === 0) {
             console.warn(`[bank-statements] extraction returned 0 transactions for ${filename} (${req.file.size} bytes, mime=${mimeType}). Likely too large/dense — recommend the text path or splitting the PDF.`);
             res.status(422).json({
               error: 'AI vision could not extract any transactions from this PDF. The file may be too large or dense for vision OCR — try the column-mapping flow (the PDF has selectable text) or split it into smaller chunks.',
             });
             return;
+          }
+          // Metadata backstop. The vision prompt asks the model for
+          // bankName / masked account / period, but the OCR structurer
+          // deliberately doesn't (its rows are date/narration/type/
+          // balance only) — without this the statement card renders
+          // "Bank Statement · Period not detected". Same deterministic
+          // extractor the CSV path uses: bank name from filename +
+          // narration frequency, period from min/max row dates. Only
+          // fills fields the upstream path left empty.
+          if (!extracted.bankName || !extracted.periodFrom || !extracted.periodTo || !extracted.accountNumberMasked) {
+            const metaRows = (extracted.transactions as Array<{ date?: string | null; narration?: string; type?: string; balance?: number | null }>)
+              .map(t => ({
+                date: typeof t.date === 'string' ? t.date : null,
+                narration: typeof t.narration === 'string' ? t.narration : '',
+                amount: 0, // unused by the metadata extractor; amounts derive later
+                type: t.type === 'credit' ? 'credit' : 'debit',
+                balance: typeof t.balance === 'number' ? t.balance : null,
+              }));
+            const meta = extractBankMetadata(filename, metaRows);
+            extracted.bankName = extracted.bankName ?? meta.bankName;
+            extracted.accountNumberMasked = extracted.accountNumberMasked ?? meta.accountNumberMasked;
+            extracted.periodFrom = extracted.periodFrom ?? meta.periodFrom;
+            extracted.periodTo = extracted.periodTo ?? meta.periodTo;
           }
           // Vision returns SLIM rows: { date, narration, type, balance }
           // only. The categorization fields (category / subcategory /
@@ -1535,7 +1567,7 @@ router.post(
             for (const id of visionLearnedHitIds) {
               learnedClassificationsRepo.recordHit(id);
             }
-            console.log(`[bank-statements] vision classifier post-pass: ${visionTierCounts.learned} learned, ${visionTierCounts.anchor} anchor, ${visionTierCounts.unclassified} → Other (${visionTierCounts.conflicts} learned/anchor conflicts)`);
+            console.log(`[bank-statements] ${extractedFromOcr ? 'ocr' : 'vision'} classifier post-pass: ${visionTierCounts.learned} learned, ${visionTierCounts.anchor} anchor, ${visionTierCounts.unclassified} → Other (${visionTierCounts.conflicts} learned/anchor conflicts)`);
             // Now that category / subcategory are set, the consistency
             // pass can back-fill any obvious cross-row inconsistency
             // (same counterparty appearing with different categories).
@@ -1571,7 +1603,6 @@ router.post(
             // Acceptable for the vision path: recurring detection is a
             // dashboard nicety, not a correctness signal.
           }
-        }
       } else {
         // CSV path: client posted parsed CSV text; we already know the
         // structure (date / narration / debit / credit / balance), so the
