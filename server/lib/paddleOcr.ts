@@ -149,12 +149,16 @@ function runPython(pdfPath: string, outPath: string, started: number): Promise<P
 
 /**
  * Quick health-check used at boot or in an admin endpoint to confirm
- * PaddleOCR is wired up. Spawns Python with `-c 'import paddleocr'`
- * and returns true if it exits 0. Does NOT touch any PDFs.
+ * PaddleOCR is wired up. Imports BOTH paddleocr and pdf2image — the
+ * worker needs both, and a server with only paddleocr installed
+ * passes an import-paddleocr-only check and then dies at page-
+ * rasterization time on every upload (observed 2026-06-12: every
+ * "OCR" upload silently fell back to vision because pdf2image was
+ * missing). Does NOT touch any PDFs.
  */
 export async function checkPaddleOcrAvailable(): Promise<boolean> {
   return new Promise((resolve) => {
-    const py = spawn(PYTHON_BIN, ['-c', 'import paddleocr'], {
+    const py = spawn(PYTHON_BIN, ['-c', 'import paddleocr, pdf2image'], {
       stdio: ['ignore', 'ignore', 'ignore'],
     });
     py.on('close', (code) => resolve(code === 0));
