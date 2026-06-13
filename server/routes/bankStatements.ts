@@ -1442,6 +1442,18 @@ router.post(
                   }
                 } else {
                   console.log(`[bank-statements] OCR→grid: no per-bank rule matched (grid ${grid ? grid.columnCount + ' cols' : 'null'}) — falling through to structurer`);
+                  // Diagnostic dump so the OCR grid structure is visible
+                  // in the logs — lets us tune column clustering or add an
+                  // OCR-tolerant per-bank rule for layouts whose headers
+                  // OCR garbled. Headers + first 6 data rows, truncated.
+                  if (grid) {
+                    console.log(`[bank-statements] OCR-grid headers: ${JSON.stringify(grid.columnHeaders)}`);
+                    const sample = grid.rows
+                      .filter(r => r.some(c => (c ?? '').trim()))
+                      .slice(0, 6)
+                      .map((r, i) => `  r${i}: ${r.map(c => `"${(c ?? '').slice(0, 24)}"`).join(' | ')}`);
+                    console.log(`[bank-statements] OCR-grid sample rows:\n${sample.join('\n')}`);
+                  }
                 }
               } catch (gridErr) {
                 console.warn(`[bank-statements] OCR→grid path errored, falling through to structurer: ${(gridErr as Error).message?.slice(0, 200)}`);
