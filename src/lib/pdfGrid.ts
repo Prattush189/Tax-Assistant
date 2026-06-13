@@ -16,14 +16,14 @@
  * derived deterministically).
  */
 
-import { pdfjs } from 'react-pdf';
-
-if (typeof window !== 'undefined' && !pdfjs.GlobalWorkerOptions.workerSrc) {
-  pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-    'pdfjs-dist/build/pdf.worker.min.mjs',
-    import.meta.url,
-  ).toString();
-}
+// NOTE: pdfjs / react-pdf is imported DYNAMICALLY inside extractPdfGrid
+// (not statically at module top) so this module can be imported in
+// Node — specifically by the server's scanned-PDF OCR path, which
+// reuses the pure-geometry grid builder (buildGridFromItems) without
+// touching pdfjs. A static `import { pdfjs } from 'react-pdf'` here
+// would pull pdfjs (and its DOMMatrix dependency) into the server
+// bundle and crash on import. The dynamic import keeps pdfjs strictly
+// browser-side while the grid algorithm stays runtime-agnostic.
 
 export interface PdfGrid {
   /** Rows of cells, ordered top-to-bottom across all pages. */
@@ -209,6 +209,17 @@ export async function extractPdfGrid(file: File, password?: string): Promise<Pdf
   const looksLikePdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
   if (!looksLikePdf) return null;
   try {
+    // Dynamic import keeps pdfjs out of the Node/server bundle — see
+    // the module-header note. In the browser Vite code-splits this
+    // into a lazily-loaded chunk (pdfjs only loads when a PDF is
+    // actually processed).
+    const { pdfjs } = await import('react-pdf');
+    if (typeof window !== 'undefined' && !pdfjs.GlobalWorkerOptions.workerSrc) {
+      pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+        'pdfjs-dist/build/pdf.worker.min.mjs',
+        import.meta.url,
+      ).toString();
+    }
     const buf = await file.arrayBuffer();
     const pdf = await pdfjs.getDocument({
       data: new Uint8Array(buf),
@@ -218,6 +229,9 @@ export async function extractPdfGrid(file: File, password?: string): Promise<Pdf
     // Phase 1 — pull every text item with its coords. Across all pages.
     // We carry a page-relative y plus a global page offset so a 50-page
     // ledger sorts as one continuous y-axis (pdfjs gives per-page coords).
+    // This is the ONLY pdfjs-coupled phase; everything downstream is
+    // pure geometry, factored into buildGridFromItems so the scanned-
+    // PDF OCR path can feed the same engine PaddleOCR bounding boxes.
     const allItems: RawItem[] = [];
     const pageBoundaries: number[] = [];
     let yOffset = 0;
@@ -243,12 +257,46 @@ export async function extractPdfGrid(file: File, password?: string): Promise<Pdf
       yOffset += viewport.height + 20; // small page gap
     }
 
-    if (allItems.length < 5) return null;
+    return buildGridFromItems(allItems, { pageBoundaries, pageCount: pdf.numPages });
+  } catch (err) {
+    // Surface password-protected PDFs as a typed error so the uploader
+    // can prompt the user. pdfjs's PasswordException uses code 1 for
+    // "need password" and code 2 for "incorrect password" — both end
+    // up here when getDocument().promise rejects.
+    const e = err as { name?: string; code?: number } | null;
+    if (e && e.name === 'PasswordException') {
+      throw new PdfPasswordError(e.code === 2);
+    }
+    console.warn('[pdfGrid] extraction failed:', err);
+    return null;
+  }
+}
 
-    // Phase 2 — cluster items by y to form rows. Items are roughly in
-    // reading order from pdfjs but we don't rely on that — sort by y
-    // ascending, then group into bands within Y_TOLERANCE.
-    allItems.sort((a, b) => a.y - b.y);
+/**
+ * Pure-geometry grid builder. Takes positioned text items
+ * ({text, x, y, width}, y already flattened to one continuous axis
+ * across pages) and produces the 2D grid the wizard / per-bank rules
+ * consume. Runtime-agnostic: no pdfjs, no DOM — so the server's
+ * scanned-PDF OCR path imports it directly and feeds it PaddleOCR
+ * bounding boxes, reusing the entire column-detection + cell-
+ * assignment engine that the digital-PDF path uses.
+ *
+ * Returns null when there's too little to work with (< 5 items or
+ * < 2 detectable columns).
+ */
+export function buildGridFromItems(
+  allItems: RawItem[],
+  opts?: { pageBoundaries?: number[]; pageCount?: number },
+): PdfGrid | null {
+  const pageBoundaries = opts?.pageBoundaries ?? [];
+  const pageCount = opts?.pageCount ?? 1;
+
+  if (allItems.length < 5) return null;
+
+  // Phase 2 — cluster items by y to form rows. Items are roughly in
+  // reading order from the source but we don't rely on that — sort by
+  // y ascending, then group into bands within Y_TOLERANCE.
+  allItems.sort((a, b) => a.y - b.y);
     const rowBuckets: RawItem[][] = [];
     let currentRow: RawItem[] = [];
     let currentY = -Infinity;
@@ -874,20 +922,8 @@ export async function extractPdfGrid(file: File, password?: string): Promise<Pdf
       columnXs,
       columnHeaders: columnAnchors.map(a => a.headerText),
       pageBreaks,
-      pageCount: pdf.numPages,
+      pageCount,
     });
-  } catch (err) {
-    // Surface password-protected PDFs as a typed error so the uploader
-    // can prompt the user. pdfjs's PasswordException uses code 1 for
-    // "need password" and code 2 for "incorrect password" — both end
-    // up here when getDocument().promise rejects.
-    const e = err as { name?: string; code?: number } | null;
-    if (e && e.name === 'PasswordException') {
-      throw new PdfPasswordError(e.code === 2);
-    }
-    console.warn('[pdfGrid] extraction failed:', err);
-    return null;
-  }
 }
 
 export type ColumnRole =
