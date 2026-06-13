@@ -8,6 +8,11 @@ import { getPdfPageCount, splitPdfByPages, PDF_VISION_CHUNK_THRESHOLD } from '..
 import { applyConditionsToStatement } from '../lib/bankConditionFilter.js';
 import { extractPdfTextWithPaddleOcr } from '../lib/paddleOcr.js';
 import { structureOcrTextIntoRows } from '../lib/paddleStructurer.js';
+// Pure-geometry grid engine + per-bank rules, shared with the browser
+// digital-PDF path. pdfGrid's pdfjs import is dynamic (browser-only),
+// so these load cleanly in Node — see the note atop src/lib/pdfGrid.ts.
+import { buildGridFromItems, applyMapping } from '../../src/lib/pdfGrid.js';
+import { detectAndMapBank } from '../../src/lib/perBankRules.js';
 import type { GeminiJsonResult } from '../lib/geminiJson.js';
 import { callBankEnrichment } from '../lib/bankEnrichmentClient.js';
 import { getBreakerStatus } from '../lib/circuitBreaker.js';
@@ -1392,40 +1397,95 @@ router.post(
             const ocrStart = Date.now();
             console.log(`[bank-statements] PaddleOCR start: ${filename} (${req.file.size} bytes)`);
             const ocr = await extractPdfTextWithPaddleOcr(req.file.buffer);
-            console.log(`[bank-statements] PaddleOCR done: ${ocr.pages.length} pages in ${ocr.durationMs}ms`);
-            const structured = await structureOcrTextIntoRows(ocr.pages);
-            console.log(`[bank-statements] structurer: ${structured.transactions.length} rows · in=${structured.inputTokens} out=${structured.outputTokens}`);
-            extracted = {
-              transactions: structured.transactions.map((r) => ({
-                date: r.date,
-                narration: r.narration,
-                type: r.type,
-                // Sign the printed amount by direction. persistStatement's
-                // deriveAmountsFromBalance cross-checks this against the
-                // running-balance delta and prefers it when they
-                // disagree — a self-contained per-row amount can't
-                // amplify a single misread the way a balance-chain delta
-                // does. null amount → pure balance-delta fallback.
-                amount: r.amount != null ? (r.type === 'credit' ? r.amount : -r.amount) : undefined,
-                balance: r.balance,
-              })),
-              amountsFromOcr: true,
-            } as ExtractedStatement;
-            // Per-model usage split: the tiered structurer runs T2
-            // first and escalates short-yield/error chunks to T1 —
-            // each tier must be weighted by its own model in the
-            // quota gate (T1 output weighs 15× vs T2's 4×).
-            (res.locals as Record<string, unknown>).geminiUsages =
-              structured.usages && structured.usages.length > 0
-                ? structured.usages
-                : [{
-                    inputTokens: structured.inputTokens,
-                    outputTokens: structured.outputTokens,
-                    modelUsed: structured.modelUsed,
-                  }];
-            extractedFromOcr = true;
-            const totalMs = Date.now() - ocrStart;
-            console.log(`[bank-statements] OCR pipeline total: ${totalMs}ms (${(totalMs / Math.max(1, ocr.pages.length)).toFixed(0)}ms/page)`);
+            console.log(`[bank-statements] PaddleOCR done: ${ocr.pages.length} pages, ${ocr.items.length} tokens in ${ocr.durationMs}ms`);
+
+            // ── Path A: deterministic grid → per-bank auto-map ──────────
+            // Feed PaddleOCR's bounding boxes through the SAME grid engine
+            // the digital-PDF wizard uses. When a per-bank rule fires (its
+            // verify() confirms the column structure), applyMapping reads
+            // the printed Withdrawal/Deposit/Balance columns deterministic-
+            // ally — no LLM structuring call at all (saves the ~40K output
+            // tokens that dominate cost) AND no LLM row-dropping. Only when
+            // this fails — no coordinates (old worker), grid too sparse, or
+            // no matching bank rule — do we fall through to Path B.
+            if (ocr.items.length >= 20) {
+              try {
+                const grid = buildGridFromItems(ocr.items, {
+                  pageBoundaries: ocr.pageBoundaries,
+                  pageCount: ocr.pageCount,
+                });
+                const detected = grid ? detectAndMapBank(grid) : null;
+                if (detected) {
+                  const { rows: mapped, stats } = applyMapping(detected.grid, detected.mapping, 'bank');
+                  if (mapped.length >= 5) {
+                    extracted = {
+                      bankName: detected.bank,
+                      accountKind: stats.isCashCredit ? 'liability' : 'asset',
+                      // Column amounts are OCR'd → reconcile against the
+                      // balance delta (same guard as the structurer path).
+                      amountsFromOcr: true,
+                      transactions: mapped.map((r) => ({
+                        date: r.date,
+                        narration: r.narration,
+                        type: (r.amount >= 0 ? 'credit' : 'debit') as 'credit' | 'debit',
+                        amount: r.amount,
+                        balance: r.balance,
+                      })),
+                    } as ExtractedStatement;
+                    extractedFromOcr = true;
+                    // No Gemini extraction call on this path — leave
+                    // geminiUsages unset so nothing is billed for it.
+                    const totalMs = Date.now() - ocrStart;
+                    console.log(`[bank-statements] OCR→grid auto-map: ${detected.bank}, ${mapped.length} rows, isCC=${stats.isCashCredit} — NO structurer call (${totalMs}ms)`);
+                  } else {
+                    console.log(`[bank-statements] OCR→grid: rule ${detected.bank} fired but only ${mapped.length} rows mapped — falling through to structurer`);
+                  }
+                } else {
+                  console.log(`[bank-statements] OCR→grid: no per-bank rule matched (grid ${grid ? grid.columnCount + ' cols' : 'null'}) — falling through to structurer`);
+                }
+              } catch (gridErr) {
+                console.warn(`[bank-statements] OCR→grid path errored, falling through to structurer: ${(gridErr as Error).message?.slice(0, 200)}`);
+              }
+            }
+
+            // ── Path B: LLM structurer (fallback) ───────────────────────
+            // Unknown bank format, or the grid path couldn't auto-map.
+            // Structure the joined OCR text with Gemini (T2-first).
+            if (!extractedFromOcr) {
+              const structured = await structureOcrTextIntoRows(ocr.pages);
+              console.log(`[bank-statements] structurer: ${structured.transactions.length} rows · in=${structured.inputTokens} out=${structured.outputTokens}`);
+              extracted = {
+                transactions: structured.transactions.map((r) => ({
+                  date: r.date,
+                  narration: r.narration,
+                  type: r.type,
+                  // Sign the printed amount by direction. persistStatement's
+                  // deriveAmountsFromBalance cross-checks this against the
+                  // running-balance delta and prefers it when they
+                  // disagree — a self-contained per-row amount can't
+                  // amplify a single misread the way a balance-chain delta
+                  // does. null amount → pure balance-delta fallback.
+                  amount: r.amount != null ? (r.type === 'credit' ? r.amount : -r.amount) : undefined,
+                  balance: r.balance,
+                })),
+                amountsFromOcr: true,
+              } as ExtractedStatement;
+              // Per-model usage split: the tiered structurer runs T2
+              // first and escalates short-yield/error chunks to T1 —
+              // each tier must be weighted by its own model in the
+              // quota gate (T1 output weighs 15× vs T2's 4×).
+              (res.locals as Record<string, unknown>).geminiUsages =
+                structured.usages && structured.usages.length > 0
+                  ? structured.usages
+                  : [{
+                      inputTokens: structured.inputTokens,
+                      outputTokens: structured.outputTokens,
+                      modelUsed: structured.modelUsed,
+                    }];
+              extractedFromOcr = true;
+              const totalMs = Date.now() - ocrStart;
+              console.log(`[bank-statements] OCR pipeline total: ${totalMs}ms (${(totalMs / Math.max(1, ocr.pages.length)).toFixed(0)}ms/page)`);
+            }
           } catch (err) {
             console.warn(`[bank-statements] PaddleOCR path failed, falling back to vision: ${(err as Error).message?.slice(0, 200)}`);
           }

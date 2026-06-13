@@ -25,11 +25,31 @@ import { tmpdir } from 'os';
 import path from 'path';
 import crypto from 'crypto';
 
+/** A positioned OCR token. Shape-compatible with pdfGrid's RawItem so
+ *  it can be fed straight into buildGridFromItems. `y` is FLATTENED to
+ *  one continuous axis across all pages (page-relative y + cumulative
+ *  page-height offset), mirroring extractPdfGrid's Phase 1. */
+export interface OcrItem {
+  text: string;
+  x: number;
+  y: number;
+  width: number;
+}
+
 export interface PaddleOcrResult {
-  /** One entry per PDF page, in order. May contain empty strings for
-   *  pages PaddleOCR couldn't detect any text on (very rare even for
-   *  decorative covers). */
+  /** Joined text per PDF page, in order. Feeds the LLM structurer
+   *  fallback when the deterministic grid path can't auto-map. May
+   *  contain empty strings for pages with no detected text. */
   pages: string[];
+  /** All OCR tokens across the document, flattened with a continuous
+   *  y-axis, for buildGridFromItems. Empty when the worker predates
+   *  coordinate emission (graceful degradation → structurer path). */
+  items: OcrItem[];
+  /** Item-array indices where each page begins — passed to
+   *  buildGridFromItems as pageBoundaries. */
+  pageBoundaries: number[];
+  /** Number of pages OCR'd. */
+  pageCount: number;
   /** Wall-clock time spent in the Python subprocess. */
   durationMs: number;
 }
@@ -126,8 +146,42 @@ function runPython(pdfPath: string, outPath: string, started: number): Promise<P
           reject(new Error(`PaddleOCR returned malformed output: ${raw.slice(0, 200)}`));
           return;
         }
+        // Two output shapes:
+        //   - new: pages = [{ text, width, height, items:[{text,x,y,w}] }]
+        //   - old: pages = ["text", ...]  (worker predating coordinate
+        //     emission — flatten to text only, items stays empty so the
+        //     route falls through to the structurer)
+        const pageTexts: string[] = [];
+        const items: OcrItem[] = [];
+        const pageBoundaries: number[] = [];
+        let yOffset = 0;
+        for (const p of parsed.pages) {
+          pageBoundaries.push(items.length);
+          if (typeof p === 'string') {
+            pageTexts.push(p);
+            continue;
+          }
+          const page = (p ?? {}) as { text?: unknown; width?: unknown; height?: unknown; items?: unknown };
+          pageTexts.push(typeof page.text === 'string' ? page.text : '');
+          const pageHeight = typeof page.height === 'number' && page.height > 0 ? page.height : 0;
+          if (Array.isArray(page.items)) {
+            for (const it of page.items as Array<Record<string, unknown>>) {
+              if (!it || typeof it.text !== 'string' || !it.text.trim()) continue;
+              const x = typeof it.x === 'number' ? it.x : 0;
+              const y = typeof it.y === 'number' ? it.y : 0;
+              const w = typeof it.w === 'number' ? it.w : 0;
+              items.push({ text: it.text, x, y: yOffset + y, width: w });
+            }
+          }
+          // Continuous y across pages (mirrors extractPdfGrid: page
+          // height + small gap). 0-height pages contribute no offset.
+          yOffset += pageHeight + 20;
+        }
         resolve({
-          pages: parsed.pages.map((p) => (typeof p === 'string' ? p : '')),
+          pages: pageTexts,
+          items,
+          pageBoundaries,
+          pageCount: parsed.pages.length,
           durationMs: Date.now() - started,
         });
       } catch (e) {

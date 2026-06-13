@@ -8,7 +8,17 @@ Invoked by server/lib/paddleOcr.ts as a one-shot subprocess:
 Reads the PDF, runs PaddleOCR page-by-page, writes a JSON file at the
 second-argument path:
 
-    {"pages": ["page-1 text\\n...", "page-2 text\\n...", ...]}
+    {"pages": [
+        {"text": "page-1 text\\n...",       # joined text (structurer fallback)
+         "width": 1654, "height": 2339,     # page pixel dims (for y-offset)
+         "items": [{"text": "...", "x": .., "y": .., "w": ..}, ...]},
+        ...
+    ]}
+
+`items` are positioned tokens (top-left x/y + width) the TS side
+clusters into a 2D grid — letting a scanned statement of a known bank
+auto-map deterministically and skip the LLM structurer. `text` is kept
+so the structurer can still run on unknown-format scans.
 
 Output goes to a sidecar file (not stdout) because PaddleOCR 2.7.3 and
 its transitive deps (paddlepaddle, opencv, fire) print log lines /
@@ -147,9 +157,18 @@ def main() -> None:
             results.append(page_res)
 
     pages = []
-    for page_result in results:
+    for page_idx, page_result in enumerate(results):
+        # Page pixel dimensions — needed so the TS side can offset each
+        # page's y into one continuous axis (mirrors extractPdfGrid's
+        # Phase 1) before feeding buildGridFromItems.
+        try:
+            page_w = int(page_images[page_idx].width)
+            page_h = int(page_images[page_idx].height)
+        except Exception:  # noqa: BLE001
+            page_w, page_h = 0, 0
+
         if not page_result:
-            pages.append("")
+            pages.append({"text": "", "width": page_w, "height": page_h, "items": []})
             continue
 
         # Normalise across PaddleOCR major-version output formats:
@@ -183,14 +202,9 @@ def main() -> None:
                 items.append((bbox, text))
 
         if not items:
-            pages.append("")
+            pages.append({"text": "", "width": page_w, "height": page_h, "items": []})
             continue
 
-        # Group lines by Y-band (~15px) so words on the same visual
-        # row stay together, then sort by X within each band. 15px is
-        # empirical — tight enough that a 2-line transaction narration
-        # splits cleanly, loose enough that anti-aliased text on the
-        # same baseline doesn't fragment.
         def y_of(bbox):
             # bbox[0] is the first point [x, y].
             return bbox[0][1]
@@ -198,11 +212,39 @@ def main() -> None:
         def x_of(bbox):
             return bbox[0][0]
 
+        def w_of(bbox):
+            # 4-point quad [TL, TR, BR, BL]; width = TR.x - TL.x.
+            try:
+                return float(bbox[1][0]) - float(bbox[0][0])
+            except Exception:  # noqa: BLE001
+                return 0.0
+
+        # Positioned items for the grid engine. Each carries its own
+        # top-left x/y and width — the TS side clusters these into a
+        # 2D grid exactly like the digital-PDF path, so a scanned
+        # statement of a known bank can auto-map deterministically
+        # instead of paying for the LLM structurer.
+        out_items = []
+        for bbox, text in items:
+            if not text or not text.strip():
+                continue
+            out_items.append({
+                "text": text,
+                "x": round(float(x_of(bbox)), 2),
+                "y": round(float(y_of(bbox)), 2),
+                "w": round(w_of(bbox), 2),
+            })
+
+        # Group lines by Y-band (~15px) for the joined `text` blob —
+        # still emitted because the LLM structurer fallback consumes it
+        # when the grid path can't auto-map (unknown bank format).
+        # 15px is empirical: tight enough that a 2-line narration splits
+        # cleanly, loose enough that same-baseline anti-aliased text
+        # doesn't fragment.
         def y_band(bbox):
             return round(y_of(bbox) / 15)
 
         items.sort(key=lambda it: (y_band(it[0]), x_of(it[0])))
-
         lines = []
         current_band = None
         buffer = []
@@ -218,7 +260,12 @@ def main() -> None:
         if buffer:
             lines.append(" ".join(buffer))
 
-        pages.append("\n".join(lines))
+        pages.append({
+            "text": "\n".join(lines),
+            "width": page_w,
+            "height": page_h,
+            "items": out_items,
+        })
 
     # Write to the sidecar file the Node wrapper passes in. Avoids
     # contamination from any PaddleOCR / paddlepaddle / opencv chatter
