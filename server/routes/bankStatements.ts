@@ -386,15 +386,31 @@ function deriveAmountsFromBalance(
 
       if (printed !== null) {
         if (Math.abs(delta - printed) <= tol) {
-          // Printed amount and balance delta agree — high confidence.
+          // Printed amount and balance delta agree on BOTH magnitude
+          // and sign — high confidence.
           kept.push({ ...cur, amount: delta });
         } else {
-          // Disagreement → trust the self-contained printed amount.
-          // The balance (and thus this/next delta) is the likely
-          // misread; using the printed amount keeps gross totals
-          // correct even though the running-balance column stays off
-          // on the misread row.
-          kept.push({ ...cur, amount: printed });
+          // Disagreement. Two independent OCR signals conflict. WHICH
+          // one is wrong is told by whether their MAGNITUDES match:
+          const magTol = Math.max(1, Math.abs(printed) * 0.02);
+          if (Math.abs(Math.abs(delta) - Math.abs(printed)) <= magTol) {
+            // Same magnitude, opposite sign → the structurer mis-read
+            // the DIRECTION (it can't tell the Deposit column from the
+            // Withdrawal column in flattened OCR text and mis-signs
+            // ~half the rows on dense scans — withdrawals leaking in as
+            // positive). The balance trajectory is reliable here
+            // because the magnitude matched, so take the sign from it.
+            kept.push({ ...cur, amount: (delta >= 0 ? 1 : -1) * Math.abs(printed) });
+          } else {
+            // Magnitudes differ → the balance (this/next delta) is the
+            // likely MISREAD; a single bad balance amplifies into a
+            // huge phantom delta (the both-totals-inflate bug). The
+            // printed amount is self-contained — keep it AS-IS,
+            // including the structurer's sign, which read THIS row's
+            // own Deposit/Withdrawal column correctly (the balance
+            // chain, not the column, is what's corrupted on this row).
+            kept.push({ ...cur, amount: printed });
+          }
           reconciledFromAmount++;
         }
         continue;

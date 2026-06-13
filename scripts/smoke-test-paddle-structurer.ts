@@ -64,7 +64,17 @@ function deriveAmounts(
       if (Math.abs(delta) < 0.005 && printed === null) { out.push(0); continue; }
       if (printed !== null) {
         if (Math.abs(delta - printed) <= tol) out.push(delta);
-        else { out.push(printed); reconciled++; }
+        else {
+          // Magnitudes match → sign-only error → trust balance sign.
+          // Magnitudes differ → balance misread → keep printed as-is.
+          const magTol = Math.max(1, Math.abs(printed) * 0.02);
+          if (Math.abs(Math.abs(delta) - Math.abs(printed)) <= magTol) {
+            out.push((delta >= 0 ? 1 : -1) * Math.abs(printed));
+          } else {
+            out.push(printed);
+          }
+          reconciled++;
+        }
         continue;
       }
       out.push(delta);
@@ -104,6 +114,20 @@ const clean = [
 const cleanOut = deriveAmounts(clean, 1000, true);
 expect('clean: 0 reconciled', cleanOut.reconciled === 0);
 expect('clean: outflow = 910', Math.abs(sumAbsOut(cleanOut.amounts) - 910) < 0.01);
+
+// Wrong-direction case (the ICICI scanned bug): the structurer can't
+// tell Deposit from Withdrawal in flattened OCR text and signs two
+// withdrawals as POSITIVE (+200, +500). But the balance FELL on those
+// rows, so the trajectory says debit. Sign-from-delta must flip them.
+const wrongDir = [
+  { amount: +200, balance: 800 },   // structurer said credit; balance fell 1000→800
+  { amount: -210, balance: 590 },   // correct debit, agrees
+  { amount: +500, balance: 90 },    // structurer said credit; balance fell 590→90
+];
+const fixed = deriveAmounts(wrongDir, 1000, true);
+expect('wrong-direction: all three are debits (outflow 910)', Math.abs(sumAbsOut(fixed.amounts) - 910) < 0.01);
+expect('wrong-direction: zero inflow', sumAbsIn(fixed.amounts) < 0.01);
+expect('wrong-direction: flipped 2 mis-signed rows', fixed.reconciled === 2);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);
