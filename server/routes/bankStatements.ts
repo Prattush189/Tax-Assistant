@@ -354,86 +354,96 @@ function deriveAmountsFromBalance(
   let phantomDropped = 0;
   let reconciledFromAmount = 0;
   const kept: BankTransactionInput[] = [];
+  // Printed magnitude (the structurer's |amount|) kept in lockstep with
+  // `kept`, for the OCR spike-repair pass below. The main loop
+  // overwrites amount with the balance delta, so we capture it first.
+  const keptPrintedMag: number[] = [];
   const deltaSign = accountKind === 'liability' ? -1 : 1;
 
   for (let i = 0; i < txs.length; i++) {
     const cur = txs[i];
     const prevBalance = i === 0 ? openingBalance : txs[i - 1].balance;
-    // Printed amount (already signed by type for OCR rows). null when
-    // not a reliable source or the cell was blank (normalizeTransactions
-    // collapsed it to ~0).
-    const printed = (printedAmountsReliable && Math.abs(cur.amount) >= 0.005) ? cur.amount : null;
+    const printedMag = printedAmountsReliable ? Math.abs(cur.amount) : 0;
 
     if (prevBalance != null && cur.balance != null) {
       const delta = deltaSign * (cur.balance - prevBalance);
-      const tol = Math.max(1, Math.abs(delta) * 0.005);
 
-      // Phantom row detection: identical balance to the previous row
-      // AND no printed amount means no money moved on this line. UPI
-      // narrations on dense statements sometimes wrap onto two visual
-      // lines and the AI emits both as separate transactions; the
-      // continuation row copies the same balance. Drop these. (If a
-      // printed amount IS present on a zero-delta row, the balance was
-      // misread, not the row — handled by the reconciliation below.)
-      if (Math.abs(delta) < 0.005 && printed === null) {
-        if (Math.abs(cur.amount) < 0.005) {
-          kept.push({ ...cur, amount: 0 });
-        } else {
-          phantomDropped++;
-        }
+      // Phantom row: identical balance to the previous row AND no
+      // printed amount → no money moved (a UPI narration that wrapped
+      // onto two lines and got emitted as two rows). Drop it.
+      if (Math.abs(delta) < 0.005 && printedMag < 0.005) {
+        if (Math.abs(cur.amount) < 0.005) { kept.push({ ...cur, amount: 0 }); keptPrintedMag.push(0); }
+        else phantomDropped++;
         continue;
       }
 
-      if (printed !== null) {
-        if (Math.abs(delta - printed) <= tol) {
-          // Printed amount and balance delta agree on BOTH magnitude
-          // and sign — high confidence.
-          kept.push({ ...cur, amount: delta });
-        } else {
-          // Disagreement. Two independent OCR signals conflict. WHICH
-          // one is wrong is told by whether their MAGNITUDES match:
-          const magTol = Math.max(1, Math.abs(printed) * 0.02);
-          if (Math.abs(Math.abs(delta) - Math.abs(printed)) <= magTol) {
-            // Same magnitude, opposite sign → the structurer mis-read
-            // the DIRECTION (it can't tell the Deposit column from the
-            // Withdrawal column in flattened OCR text and mis-signs
-            // ~half the rows on dense scans — withdrawals leaking in as
-            // positive). The balance trajectory is reliable here
-            // because the magnitude matched, so take the sign from it.
-            kept.push({ ...cur, amount: (delta >= 0 ? 1 : -1) * Math.abs(printed) });
-          } else {
-            // Magnitudes differ → the balance (this/next delta) is the
-            // likely MISREAD; a single bad balance amplifies into a
-            // huge phantom delta (the both-totals-inflate bug). The
-            // printed amount is self-contained — keep it AS-IS,
-            // including the structurer's sign, which read THIS row's
-            // own Deposit/Withdrawal column correctly (the balance
-            // chain, not the column, is what's corrupted on this row).
-            kept.push({ ...cur, amount: printed });
-          }
-          reconciledFromAmount++;
-        }
-        continue;
-      }
-
-      // No printed amount — derive from balance delta (vision path,
-      // or an OCR row whose amount cell was unreadable). Track when
-      // the AI's value materially disagreed for the warning banner.
-      if (Math.abs(delta - cur.amount) > tol) {
+      // PURE BALANCE DELTA. Two properties we depend on:
+      //  1. Telescoping — Σ deltas = closing − opening EXACTLY, so the
+      //     NET is correct no matter how many intermediate balances OCR
+      //     misread. (Substituting per-row printed amounts breaks this
+      //     and lets net drift — the bug this rewrite fixes.)
+      //  2. Direction for free — the sign comes from the trajectory, so
+      //     the structurer's unreliable credit/debit guess is ignored
+      //     (it mis-signs ~half the rows on dense scans).
+      // The only damage a misread balance does now is a GROSS spike on
+      // its two adjacent deltas — repaired below using printed
+      // magnitudes, without disturbing the net.
+      if (!printedAmountsReliable && Math.abs(delta - cur.amount) > Math.max(1, Math.abs(delta) * 0.005)) {
         amountOverridden++;
       }
       kept.push({ ...cur, amount: delta });
+      keptPrintedMag.push(printedMag);
       continue;
     }
 
-    // Balance is null on either this row or the previous one. Prefer a
-    // printed amount when we have one; else fall back to whatever the
-    // AI gave us (legacy path — rare on statements with consistent
-    // balance printing).
-    if (printed !== null) {
-      kept.push({ ...cur, amount: printed });
-    } else {
-      kept.push(cur);
+    // Balance null on a side — no delta available. Fall back to the
+    // printed/AI amount as-is.
+    kept.push(cur);
+    keptPrintedMag.push(printedMag);
+  }
+
+  // ── OCR spike-repair ────────────────────────────────────────────
+  // A single misread balance B(i) inflates delta(i) into a huge spike
+  // and delta(i+1) into its near-mirror (they cancel because B(i) is
+  // the shared endpoint). Detect such pairs and redistribute the pair
+  // using the printed magnitudes — choosing signs that match the
+  // trajectory — while PRESERVING the pair's sum, so the telescoped net
+  // is untouched. Net stays exact; gross inflation disappears.
+  if (printedAmountsReliable && kept.length >= 2) {
+    for (let i = 0; i < kept.length - 1; i++) {
+      const a = kept[i].amount;
+      const pIn = keptPrintedMag[i];
+      const pOut = keptPrintedMag[i + 1];
+      if (pIn < 0.005 || pOut < 0.005) continue; // need both printed amounts to repair
+      // Spike = the delta dwarfs the bank's OWN printed figure for this
+      // row (>3× and >₹10k absolute). A genuine large transaction has
+      // delta ≈ printed and is NOT flagged; only a misread balance makes
+      // the delta balloon past what the bank wrote for the row. This is
+      // robust regardless of how many rows are spikes (a median-based
+      // threshold breaks when spikes are a big fraction of the data).
+      if (Math.abs(a) <= Math.max(10_000, pIn * 3)) continue;
+      const b = kept[i + 1].amount;
+      const pairSum = a + b;
+      // The spike and its successor must roughly cancel — signature of a
+      // misread SHARED balance, not two genuine large transactions.
+      if (Math.abs(pairSum) > Math.abs(a) * 0.5) continue;
+      // amount(i) = s·pIn ; amount(i+1) = pairSum − s·pIn (sum preserved
+      // → telescoped net untouched). Pick the sign whose resulting
+      // amount(i+1) magnitude best matches the printed pOut.
+      let bestS = 1, bestErr = Infinity;
+      for (const s of [1, -1]) {
+        const err = Math.abs(Math.abs(pairSum - s * pIn) - pOut);
+        if (err < bestErr) { bestErr = err; bestS = s; }
+      }
+      // Commit only if the split actually reconciles to the printed
+      // amount on the successor row (within 2%); otherwise leave the raw
+      // deltas so a genuine large pair isn't mangled.
+      const outMag = Math.abs(pairSum - bestS * pIn);
+      if (Math.abs(outMag - pOut) <= Math.max(1, pOut * 0.02)) {
+        kept[i] = { ...kept[i], amount: bestS * pIn };
+        kept[i + 1] = { ...kept[i + 1], amount: pairSum - bestS * pIn };
+        reconciledFromAmount++;
+      }
     }
   }
 

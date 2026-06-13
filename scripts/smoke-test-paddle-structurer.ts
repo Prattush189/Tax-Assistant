@@ -42,92 +42,101 @@ expect('21 pages → 6 chunks', chunksFor(21) === 6);
 expect('4 pages → 1 chunk', chunksFor(4) === 1);
 expect('1 page → 1 chunk', chunksFor(1) === 1);
 
-// ── Balance-misread reconciliation (the ICICI scanned-PDF bug) ──
-// Inline re-implementation of deriveAmountsFromBalance's reconciliation
-// rule so the test doesn't need to import the route module (which pulls
-// in the DB + Gemini at import time). Mirrors server/routes/
-// bankStatements.ts deriveAmountsFromBalance exactly.
+// ── Balance-delta + spike-repair (mirrors deriveAmountsFromBalance) ──
+// Inline re-implementation so the test doesn't import the route module
+// (which pulls in the DB + Gemini at import time). Mirrors server/
+// routes/bankStatements.ts deriveAmountsFromBalance: PURE deltas (exact
+// net via telescoping; sign from the trajectory, not the structurer)
+// + an OCR spike-repair pass that fixes gross inflation from misread
+// balances WITHOUT disturbing the net.
 function deriveAmounts(
   rows: Array<{ amount: number; balance: number | null }>,
   opening: number | null,
   printedReliable: boolean,
 ): { amounts: number[]; reconciled: number } {
   const out: number[] = [];
-  let reconciled = 0;
+  const printedMag: number[] = [];
   for (let i = 0; i < rows.length; i++) {
     const cur = rows[i];
     const prev = i === 0 ? opening : rows[i - 1].balance;
-    const printed = (printedReliable && Math.abs(cur.amount) >= 0.005) ? cur.amount : null;
+    const pMag = printedReliable ? Math.abs(cur.amount) : 0;
     if (prev != null && cur.balance != null) {
       const delta = cur.balance - prev;
-      const tol = Math.max(1, Math.abs(delta) * 0.005);
-      if (Math.abs(delta) < 0.005 && printed === null) { out.push(0); continue; }
-      if (printed !== null) {
-        if (Math.abs(delta - printed) <= tol) out.push(delta);
-        else {
-          // Magnitudes match → sign-only error → trust balance sign.
-          // Magnitudes differ → balance misread → keep printed as-is.
-          const magTol = Math.max(1, Math.abs(printed) * 0.02);
-          if (Math.abs(Math.abs(delta) - Math.abs(printed)) <= magTol) {
-            out.push((delta >= 0 ? 1 : -1) * Math.abs(printed));
-          } else {
-            out.push(printed);
-          }
-          reconciled++;
-        }
-        continue;
-      }
-      out.push(delta);
+      if (Math.abs(delta) < 0.005 && pMag < 0.005) { out.push(0); printedMag.push(0); continue; }
+      out.push(delta); printedMag.push(pMag);
       continue;
     }
-    out.push(printed !== null ? printed : cur.amount);
+    out.push(cur.amount); printedMag.push(pMag);
+  }
+  let reconciled = 0;
+  if (printedReliable && out.length >= 2) {
+    for (let i = 0; i < out.length - 1; i++) {
+      const pIn = printedMag[i], pOut = printedMag[i + 1];
+      if (pIn < 0.005 || pOut < 0.005) continue;
+      if (Math.abs(out[i]) <= Math.max(10_000, pIn * 3)) continue;
+      const pairSum = out[i] + out[i + 1];
+      if (Math.abs(pairSum) > Math.abs(out[i]) * 0.5) continue;
+      let bestS = 1, bestErr = Infinity;
+      for (const s of [1, -1]) {
+        const err = Math.abs(Math.abs(pairSum - s * pIn) - pOut);
+        if (err < bestErr) { bestErr = err; bestS = s; }
+      }
+      const outMag = Math.abs(pairSum - bestS * pIn);
+      if (Math.abs(outMag - pOut) <= Math.max(1, pOut * 0.02)) {
+        out[i] = bestS * pIn;
+        out[i + 1] = pairSum - bestS * pIn;
+        reconciled++;
+      }
+    }
   }
   return { amounts: out, reconciled };
 }
 
-// Scenario: 3 debits of -200, -210, -500. Opening 1000. True balances
-// 800, 590, 90. OCR misreads the MIDDLE balance 590 → 5,90,000.
-// Pure balance-delta would give: -200, +5,89,200, -5,89,910 — inflow
-// AND outflow both spike by ~5.9L, net preserved. With printed amounts
-// the misread is bypassed.
+const sumAbsIn = (a: number[]) => a.filter(x => x > 0).reduce((s, x) => s + x, 0);
+const sumAbsOut = (a: number[]) => a.filter(x => x < 0).reduce((s, x) => s - x, 0);
+const net = (a: number[]) => a.reduce((s, x) => s + x, 0);
+
+// Misread-balance case: 3 debits -200,-210,-500. Opening 1000, true
+// balances 800,590,90. OCR misreads the MIDDLE balance 590 → 590000.
+// Pure delta gives -200,+589200,-589910: gross spikes ~5.9L but the NET
+// telescopes to exactly closing-opening = -910. Spike-repair fixes the
+// gross using printed magnitudes, net untouched.
 const misread = [
   { amount: -200, balance: 800 },
-  { amount: -210, balance: 590000 },   // balance misread (true 590)
+  { amount: -210, balance: 590000 },
   { amount: -500, balance: 90 },
 ];
 const pure = deriveAmounts(misread, 1000, false);
-const withPrinted = deriveAmounts(misread, 1000, true);
-const sumAbsIn = (a: number[]) => a.filter(x => x > 0).reduce((s, x) => s + x, 0);
-const sumAbsOut = (a: number[]) => a.filter(x => x < 0).reduce((s, x) => s - x, 0);
-expect('pure-delta inflates inflow on misread', sumAbsIn(pure.amounts) > 500000);
-expect('printed-amount keeps inflow ~0', sumAbsIn(withPrinted.amounts) < 1);
-expect('printed-amount outflow = 910 (200+210+500)', Math.abs(sumAbsOut(withPrinted.amounts) - 910) < 0.01);
-expect('reconciled 2 rows on misread', withPrinted.reconciled === 2);
+const repaired = deriveAmounts(misread, 1000, true);
+expect('pure delta: net is EXACT (-910) despite misread', Math.abs(net(pure.amounts) - (-910)) < 0.01);
+expect('pure delta: gross inflated on misread', sumAbsIn(pure.amounts) > 500000);
+expect('spike-repair: net still EXACT (-910)', Math.abs(net(repaired.amounts) - (-910)) < 0.01);
+expect('spike-repair: gross fixed (inflow ~0)', sumAbsIn(repaired.amounts) < 1);
+expect('spike-repair: outflow = 910', Math.abs(sumAbsOut(repaired.amounts) - 910) < 0.01);
+expect('spike-repair: repaired 1 pair', repaired.reconciled === 1);
 
-// Agreement case: printed amounts match balance deltas → no reconcile,
-// amounts = deltas exactly.
+// Clean case: balances all correct → no spike → amounts = deltas.
 const clean = [
   { amount: -200, balance: 800 },
   { amount: -210, balance: 590 },
   { amount: -500, balance: 90 },
 ];
 const cleanOut = deriveAmounts(clean, 1000, true);
-expect('clean: 0 reconciled', cleanOut.reconciled === 0);
-expect('clean: outflow = 910', Math.abs(sumAbsOut(cleanOut.amounts) - 910) < 0.01);
+expect('clean: 0 repaired', cleanOut.reconciled === 0);
+expect('clean: outflow = 910, net -910', Math.abs(sumAbsOut(cleanOut.amounts) - 910) < 0.01 && Math.abs(net(cleanOut.amounts) + 910) < 0.01);
 
-// Wrong-direction case (the ICICI scanned bug): the structurer can't
-// tell Deposit from Withdrawal in flattened OCR text and signs two
-// withdrawals as POSITIVE (+200, +500). But the balance FELL on those
-// rows, so the trajectory says debit. Sign-from-delta must flip them.
+// Wrong-direction case: the structurer mis-signs two withdrawals as
+// credits (+200,+500), but the BALANCES are correct. Pure delta ignores
+// the structurer's sign entirely → all three come out as debits.
 const wrongDir = [
-  { amount: +200, balance: 800 },   // structurer said credit; balance fell 1000→800
-  { amount: -210, balance: 590 },   // correct debit, agrees
-  { amount: +500, balance: 90 },    // structurer said credit; balance fell 590→90
+  { amount: +200, balance: 800 },
+  { amount: -210, balance: 590 },
+  { amount: +500, balance: 90 },
 ];
 const fixed = deriveAmounts(wrongDir, 1000, true);
-expect('wrong-direction: all three are debits (outflow 910)', Math.abs(sumAbsOut(fixed.amounts) - 910) < 0.01);
+expect('wrong-direction: all debits via trajectory (outflow 910)', Math.abs(sumAbsOut(fixed.amounts) - 910) < 0.01);
 expect('wrong-direction: zero inflow', sumAbsIn(fixed.amounts) < 0.01);
-expect('wrong-direction: flipped 2 mis-signed rows', fixed.reconciled === 2);
+expect('wrong-direction: net -910', Math.abs(net(fixed.amounts) + 910) < 0.01);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);
