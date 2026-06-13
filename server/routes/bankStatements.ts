@@ -100,6 +100,16 @@ type ExtractedStatement = {
   // flip, and the derive phase was REPLACING correct printed amounts
   // with delta values that no longer tie to the bank's Grand Total.
   amountsAuthoritative?: boolean;
+  // When true, each row's `amount` is the bank's printed Deposit/
+  // Withdrawal figure, OCR'd as an INDEPENDENT value alongside the
+  // running balance. deriveAmountsFromBalance cross-checks the two
+  // and prefers the printed amount when they disagree — a single
+  // misread balance otherwise amplifies into two huge phantom deltas
+  // (one in, one out) that inflate both gross totals while leaving
+  // net intact. Unlike amountsAuthoritative (wizard, fully trusted),
+  // OCR amounts are still LLM-read so we keep the balance chain as a
+  // co-validator rather than skipping derivation outright.
+  amountsFromOcr?: boolean;
   transactions: unknown[];
 };
 
@@ -321,33 +331,46 @@ function deriveAmountsFromBalance(
    *  so we invert the sign of every delta before treating it as a
    *  signed amount. Null treated as 'asset' for back-compat. */
   accountKind: 'asset' | 'liability' | null = 'asset',
+  /** True on the OCR path: each row's `amount` is the bank's printed
+   *  Deposit/Withdrawal figure (signed by type), OCR'd independently
+   *  of the running balance. When it disagrees with the balance delta
+   *  we trust the printed amount — a self-contained per-row value
+   *  can't amplify a single misread the way a balance-chain delta
+   *  does (one bad balance → +X spike in, −X spike out → both gross
+   *  totals inflate, net unchanged: the exact ICICI scanned-PDF bug).
+   *  False (vision/default): amount is unreliable, balance delta wins. */
+  printedAmountsReliable: boolean = false,
 ): {
   amountOverridden: number;
   phantomDropped: number;
+  reconciledFromAmount: number;
 } {
   let amountOverridden = 0;
   let phantomDropped = 0;
+  let reconciledFromAmount = 0;
   const kept: BankTransactionInput[] = [];
   const deltaSign = accountKind === 'liability' ? -1 : 1;
 
   for (let i = 0; i < txs.length; i++) {
     const cur = txs[i];
     const prevBalance = i === 0 ? openingBalance : txs[i - 1].balance;
+    // Printed amount (already signed by type for OCR rows). null when
+    // not a reliable source or the cell was blank (normalizeTransactions
+    // collapsed it to ~0).
+    const printed = (printedAmountsReliable && Math.abs(cur.amount) >= 0.005) ? cur.amount : null;
 
     if (prevBalance != null && cur.balance != null) {
       const delta = deltaSign * (cur.balance - prevBalance);
+      const tol = Math.max(1, Math.abs(delta) * 0.005);
+
       // Phantom row detection: identical balance to the previous row
-      // means no money moved on this line. UPI narrations on dense
-      // statements sometimes wrap onto two visual lines and the AI
-      // emits both as separate transactions. The continuation row
-      // copies the same balance because that's what's printed next
-      // to it. Drop these — keeping them would either inflate the
-      // inflow/outflow with the AI's hallucinated amount or pollute
-      // the row count with empty entries.
-      if (Math.abs(delta) < 0.005) {
-        // Edge case: a genuine 0.00 transaction (very rare — bank
-        // bonus, contra-entry netting). Keep it if the AI did NOT
-        // give it a non-trivial amount.
+      // AND no printed amount means no money moved on this line. UPI
+      // narrations on dense statements sometimes wrap onto two visual
+      // lines and the AI emits both as separate transactions; the
+      // continuation row copies the same balance. Drop these. (If a
+      // printed amount IS present on a zero-delta row, the balance was
+      // misread, not the row — handled by the reconciliation below.)
+      if (Math.abs(delta) < 0.005 && printed === null) {
         if (Math.abs(cur.amount) < 0.005) {
           kept.push({ ...cur, amount: 0 });
         } else {
@@ -356,19 +379,41 @@ function deriveAmountsFromBalance(
         continue;
       }
 
-      // Override. Track when the AI's value materially disagreed so
-      // the warning banner can surface it.
-      if (Math.abs(delta - cur.amount) > Math.max(1, Math.abs(delta) * 0.005)) {
+      if (printed !== null) {
+        if (Math.abs(delta - printed) <= tol) {
+          // Printed amount and balance delta agree — high confidence.
+          kept.push({ ...cur, amount: delta });
+        } else {
+          // Disagreement → trust the self-contained printed amount.
+          // The balance (and thus this/next delta) is the likely
+          // misread; using the printed amount keeps gross totals
+          // correct even though the running-balance column stays off
+          // on the misread row.
+          kept.push({ ...cur, amount: printed });
+          reconciledFromAmount++;
+        }
+        continue;
+      }
+
+      // No printed amount — derive from balance delta (vision path,
+      // or an OCR row whose amount cell was unreadable). Track when
+      // the AI's value materially disagreed for the warning banner.
+      if (Math.abs(delta - cur.amount) > tol) {
         amountOverridden++;
       }
       kept.push({ ...cur, amount: delta });
       continue;
     }
 
-    // Balance is null on either this row or the previous one — fall
-    // back to whatever the AI gave us. This is the legacy path; on
-    // statements with consistent balance printing it never fires.
-    kept.push(cur);
+    // Balance is null on either this row or the previous one. Prefer a
+    // printed amount when we have one; else fall back to whatever the
+    // AI gave us (legacy path — rare on statements with consistent
+    // balance printing).
+    if (printed !== null) {
+      kept.push({ ...cur, amount: printed });
+    } else {
+      kept.push(cur);
+    }
   }
 
   // Replace the array contents in-place so callers using the same
@@ -376,7 +421,7 @@ function deriveAmountsFromBalance(
   txs.length = 0;
   txs.push(...kept);
 
-  return { amountOverridden, phantomDropped };
+  return { amountOverridden, phantomDropped, reconciledFromAmount };
 }
 
 /**
@@ -699,20 +744,26 @@ function persistStatement(
   // replaced correct values with garbage. amountsAuthoritative=true
   // (set by the CSV branch) skips all three phases.
   let amountOverridden = 0;
+  let reconciledFromAmount = 0;
   let totalPhantomDropped = inlineDatePhantomsDropped;
   let autoCorrected = 0;
   let mismatches: ReturnType<typeof reconcileBalances>['mismatches'] = [];
   let closingMismatch: ReturnType<typeof verifyClosingBalance> = null;
   if (!data.amountsAuthoritative) {
     // Phase 1: derive each amount from the printed running balance
-    // delta. The AI's amount field is treated as a fallback (used only
-    // for rows where balance is null on either side). Zero-delta rows
-    // (a balance unchanged from prev row) drop out here as a second
-    // layer of phantom defence.
+    // delta. On the OCR path the structurer also captured each row's
+    // printed Deposit/Withdrawal figure; we pass amountsFromOcr so the
+    // deriver cross-checks the two and prefers the self-contained
+    // printed amount on disagreement (stops single-misread-balance
+    // amplification). Vision rows have no printed amount → pure delta.
     const opening = typeof data.openingBalance === 'number' ? data.openingBalance : null;
-    const derived = deriveAmountsFromBalance(txs, opening, accountKind);
+    const derived = deriveAmountsFromBalance(txs, opening, accountKind, data.amountsFromOcr === true);
     amountOverridden = derived.amountOverridden;
+    reconciledFromAmount = derived.reconciledFromAmount;
     totalPhantomDropped += derived.phantomDropped;
+    if (reconciledFromAmount > 0) {
+      console.log(`[bank-statements] balance reconciliation: ${reconciledFromAmount} row(s) used the printed amount over a disagreeing balance delta (likely OCR balance misreads)`);
+    }
 
     // Phase 2: legacy sign-flip / column-swap reconciliation. After
     // deriveAmountsFromBalance most rows already have authoritative
@@ -760,7 +811,7 @@ function persistStatement(
   bankTransactionRepo.bulkInsert(statementId, txsWithFingerprint);
   bankStatementRepo.updateTotals(statementId, inflow, outflow, txs.length);
 
-  return { txCount: txs.length, autoCorrected, mismatches, amountOverridden, phantomDropped: totalPhantomDropped, closingMismatch };
+  return { txCount: txs.length, autoCorrected, mismatches, amountOverridden, reconciledFromAmount, phantomDropped: totalPhantomDropped, closingMismatch };
 }
 
 function serializeStatement(row: ReturnType<typeof bankStatementRepo.findByIdForUser>) {
@@ -1349,8 +1400,16 @@ router.post(
                 date: r.date,
                 narration: r.narration,
                 type: r.type,
+                // Sign the printed amount by direction. persistStatement's
+                // deriveAmountsFromBalance cross-checks this against the
+                // running-balance delta and prefers it when they
+                // disagree — a self-contained per-row amount can't
+                // amplify a single misread the way a balance-chain delta
+                // does. null amount → pure balance-delta fallback.
+                amount: r.amount != null ? (r.type === 'credit' ? r.amount : -r.amount) : undefined,
                 balance: r.balance,
               })),
+              amountsFromOcr: true,
             } as ExtractedStatement;
             // Per-model usage split: the tiered structurer runs T2
             // first and escalates short-yield/error chunks to T1 —
@@ -2189,7 +2248,7 @@ INPUT_ROWS — TSV, one row per line, columns narration<TAB>type<TAB>amount:
         else res.status(200).json(cancelledPayload);
         return;
       }
-      const { txCount, autoCorrected, mismatches, amountOverridden, phantomDropped, closingMismatch } = persistStatement(req.user.id, placeholder.id, extracted, filename ?? 'Bank Statement');
+      const { txCount, autoCorrected, mismatches, amountOverridden, reconciledFromAmount, phantomDropped, closingMismatch } = persistStatement(req.user.id, placeholder.id, extracted, filename ?? 'Bank Statement');
 
       // Phase 2 anomaly detector — runs against the just-persisted
       // rows (re-reading them to get the database-assigned IDs that
@@ -2314,6 +2373,9 @@ INPUT_ROWS — TSV, one row per line, columns narration<TAB>type<TAB>amount:
         const parts: string[] = [];
         if (amountOverridden > 0) {
           parts.push(`Replaced ${amountOverridden} transaction amount${amountOverridden === 1 ? '' : 's'} with values derived from the printed running balance — totals reflect what actually moved through the account. If the bank's printed Grand Total disagrees, it's because some of the bank's PDF amount cells don't match its own balance column; we trust the balance column.`);
+        }
+        if (reconciledFromAmount > 0) {
+          parts.push(`Corrected ${reconciledFromAmount} row${reconciledFromAmount === 1 ? '' : 's'} where the scanned amount and running balance disagreed — used the printed Deposit/Withdrawal figure, since a single misread balance would otherwise inflate both totals.`);
         }
         if (phantomDropped > 0) {
           parts.push(`Dropped ${phantomDropped} duplicate row${phantomDropped === 1 ? '' : 's'} that had no balance change (typically a wrapped UPI narration parsed twice).`);

@@ -27,6 +27,15 @@ export interface StructuredOcrRow {
   date: string | null;            // YYYY-MM-DD
   narration: string;
   type: 'credit' | 'debit';
+  /** Unsigned magnitude of the printed Deposit/Withdrawal amount for
+   *  this row. The structurer extracts it because, on a SCANNED
+   *  statement, the amount column is an independent OCR'd value that
+   *  the server can cross-check against the running-balance delta —
+   *  a single misread balance amplifies into two huge phantom deltas
+   *  (one in, one out), but a self-contained per-row amount can't.
+   *  null when the column was blank/unreadable; the server then falls
+   *  back to the balance delta. Direction comes from `type`. */
+  amount: number | null;
   balance: number | null;
 }
 
@@ -200,14 +209,14 @@ CRITICAL RULES:
 - If a row's date or balance is unreadable, skip the row entirely. Do not guess.
 
 OUTPUT — STRICT JSON, no markdown fences, no prose:
-{"transactions": [{"date": "YYYY-MM-DD", "narration": "...", "type": "credit"|"debit", "balance": <number>}, ...]}
+{"transactions": [{"date": "YYYY-MM-DD", "narration": "...", "type": "credit"|"debit", "amount": <number>, "balance": <number>}, ...]}
 
 FIELD RULES:
 - date: ISO YYYY-MM-DD. Convert from the bank's printed format (DD/MM/YYYY, DD-MMM-YY, DD-MMM-YYYY).
 - narration: the transaction description, cleaned. Preserve banking codes (UPI/NEFT/IMPS/RTGS/MMT/CAM/CHEQUE/BIL/TRFR) and counterparty names. Drop OCR garbage characters that aren't word characters or common punctuation.
 - type: "credit" if money came INTO the account, "debit" if money went OUT. Read the deposit/withdrawal column placement. On a Cash Credit / OD account, "By Cash" / "By Transfer" lines are credits (reducing dr balance) and "To" lines are debits.
+- amount: the transaction's OWN figure from the Deposit OR Withdrawal column (whichever is filled) — a POSITIVE plain number, no sign, no commas, no rupee symbol. This is the per-row amount, NOT the balance. A "credit" row's amount is its Deposit value; a "debit" row's amount is its Withdrawal value. Use null only if that cell is genuinely blank/unreadable. Read it carefully and independently of the balance — it is a critical cross-check.
 - balance: the running balance AFTER this transaction, as a plain number (no commas, no rupee symbol). null only if truly unreadable.
-- Do NOT emit "amount" — the server derives it from balance gaps.
 
 OCR TEXT:
 ${combinedText}`;
@@ -261,18 +270,26 @@ ${combinedText}`;
     const date = typeof row.date === 'string' ? row.date : null;
     const narration = typeof row.narration === 'string' ? row.narration : '';
     const type = row.type === 'credit' || row.type === 'debit' ? row.type : null;
-    const balance =
-      typeof row.balance === 'number'
-        ? row.balance
-        : typeof row.balance === 'string' && row.balance.trim() !== ''
-          ? Number(row.balance.replace(/[,\s]/g, ''))
-          : null;
+    const parseNum = (v: unknown): number | null => {
+      if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+      if (typeof v === 'string' && v.trim() !== '') {
+        const n = Number(v.replace(/[,\s₹]/g, ''));
+        return Number.isFinite(n) ? n : null;
+      }
+      return null;
+    };
+    const balance = parseNum(row.balance);
+    // Printed amount is an unsigned magnitude — guard against the model
+    // accidentally echoing a signed value or the balance.
+    const amountRaw = parseNum(row.amount);
+    const amount = amountRaw !== null ? Math.abs(amountRaw) : null;
     if (!narration || !type) continue;
     transactions.push({
       date,
       narration,
       type,
-      balance: balance !== null && Number.isFinite(balance) ? balance : null,
+      amount,
+      balance,
     });
   }
 

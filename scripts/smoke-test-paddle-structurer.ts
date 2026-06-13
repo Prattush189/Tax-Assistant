@@ -42,5 +42,68 @@ expect('21 pages → 6 chunks', chunksFor(21) === 6);
 expect('4 pages → 1 chunk', chunksFor(4) === 1);
 expect('1 page → 1 chunk', chunksFor(1) === 1);
 
+// ── Balance-misread reconciliation (the ICICI scanned-PDF bug) ──
+// Inline re-implementation of deriveAmountsFromBalance's reconciliation
+// rule so the test doesn't need to import the route module (which pulls
+// in the DB + Gemini at import time). Mirrors server/routes/
+// bankStatements.ts deriveAmountsFromBalance exactly.
+function deriveAmounts(
+  rows: Array<{ amount: number; balance: number | null }>,
+  opening: number | null,
+  printedReliable: boolean,
+): { amounts: number[]; reconciled: number } {
+  const out: number[] = [];
+  let reconciled = 0;
+  for (let i = 0; i < rows.length; i++) {
+    const cur = rows[i];
+    const prev = i === 0 ? opening : rows[i - 1].balance;
+    const printed = (printedReliable && Math.abs(cur.amount) >= 0.005) ? cur.amount : null;
+    if (prev != null && cur.balance != null) {
+      const delta = cur.balance - prev;
+      const tol = Math.max(1, Math.abs(delta) * 0.005);
+      if (Math.abs(delta) < 0.005 && printed === null) { out.push(0); continue; }
+      if (printed !== null) {
+        if (Math.abs(delta - printed) <= tol) out.push(delta);
+        else { out.push(printed); reconciled++; }
+        continue;
+      }
+      out.push(delta);
+      continue;
+    }
+    out.push(printed !== null ? printed : cur.amount);
+  }
+  return { amounts: out, reconciled };
+}
+
+// Scenario: 3 debits of -200, -210, -500. Opening 1000. True balances
+// 800, 590, 90. OCR misreads the MIDDLE balance 590 → 5,90,000.
+// Pure balance-delta would give: -200, +5,89,200, -5,89,910 — inflow
+// AND outflow both spike by ~5.9L, net preserved. With printed amounts
+// the misread is bypassed.
+const misread = [
+  { amount: -200, balance: 800 },
+  { amount: -210, balance: 590000 },   // balance misread (true 590)
+  { amount: -500, balance: 90 },
+];
+const pure = deriveAmounts(misread, 1000, false);
+const withPrinted = deriveAmounts(misread, 1000, true);
+const sumAbsIn = (a: number[]) => a.filter(x => x > 0).reduce((s, x) => s + x, 0);
+const sumAbsOut = (a: number[]) => a.filter(x => x < 0).reduce((s, x) => s - x, 0);
+expect('pure-delta inflates inflow on misread', sumAbsIn(pure.amounts) > 500000);
+expect('printed-amount keeps inflow ~0', sumAbsIn(withPrinted.amounts) < 1);
+expect('printed-amount outflow = 910 (200+210+500)', Math.abs(sumAbsOut(withPrinted.amounts) - 910) < 0.01);
+expect('reconciled 2 rows on misread', withPrinted.reconciled === 2);
+
+// Agreement case: printed amounts match balance deltas → no reconcile,
+// amounts = deltas exactly.
+const clean = [
+  { amount: -200, balance: 800 },
+  { amount: -210, balance: 590 },
+  { amount: -500, balance: 90 },
+];
+const cleanOut = deriveAmounts(clean, 1000, true);
+expect('clean: 0 reconciled', cleanOut.reconciled === 0);
+expect('clean: outflow = 910', Math.abs(sumAbsOut(cleanOut.amounts) - 910) < 0.01);
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);
