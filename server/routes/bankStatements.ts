@@ -384,12 +384,26 @@ function deriveAmountsFromBalance(
         kept.push({ ...cur, amount: delta });
         continue;
       }
-      // Flag (don't fix) rows where the printed magnitude disagrees with
-      // the balance delta — a likely OCR amount-cell misread. We still
-      // trust the column for the SIGN; the count surfaces in the warning
-      // and these rows are flagged for review.
+      // Rows where the printed magnitude disagrees with the balance
+      // delta are an OCR amount-cell misread (e.g. ₹5,31,100 scanned as
+      // ₹31,100). Correct the MAGNITUDE from the balance delta — exact
+      // arithmetic off the bank's own running-balance column — while
+      // keeping the SIGN from the Deposit/Withdrawal column. This split
+      // is deliberate:
+      //   • magnitude ← |balance delta|  (fixes the misread-digit totals
+      //     bug: a wrong amount cell can't survive when the balance moved
+      //     by a different figure).
+      //   • sign      ← printed column   (a single MISREAD BALANCE flips a
+      //     delta's sign but cannot change which column the amount was
+      //     printed in — so taking the sign from the column avoids the
+      //     sign-flip regression we hit when sign was derived from the
+      //     delta). Only correct when the chain is locally usable
+      //     (delta != null); otherwise the printed amount is all we have.
       if (delta != null && Math.abs(Math.abs(delta) - Math.abs(printed)) > Math.max(1, Math.abs(printed) * 0.02)) {
         reconciledFromAmount++;
+        const sign = printed < 0 ? -1 : 1;
+        kept.push({ ...cur, amount: sign * Math.abs(delta) });
+        continue;
       }
       kept.push({ ...cur, amount: printed });
       continue;
@@ -2440,7 +2454,7 @@ INPUT_ROWS — TSV, one row per line, columns narration<TAB>type<TAB>amount:
           parts.push(`Replaced ${amountOverridden} transaction amount${amountOverridden === 1 ? '' : 's'} with values derived from the printed running balance — totals reflect what actually moved through the account. If the bank's printed Grand Total disagrees, it's because some of the bank's PDF amount cells don't match its own balance column; we trust the balance column.`);
         }
         if (reconciledFromAmount > 0) {
-          parts.push(`${reconciledFromAmount} row${reconciledFromAmount === 1 ? '' : 's'} had a scanned amount that didn't tie to the running balance (an OCR misread on one of the two) — flagged for review. Direction was taken from the bank's Deposit/Withdrawal column, not the balance.`);
+          parts.push(`${reconciledFromAmount} row${reconciledFromAmount === 1 ? '' : 's'} had a scanned amount that didn't tie to the running balance (an OCR misread) — the amount was corrected to match the balance movement, while direction was kept from the bank's Deposit/Withdrawal column. Please verify ${reconciledFromAmount === 1 ? 'this row' : 'these rows'} against the original PDF.`);
         }
         if (phantomDropped > 0) {
           parts.push(`Dropped ${phantomDropped} duplicate row${phantomDropped === 1 ? '' : 's'} that had no balance change (typically a wrapped UPI narration parsed twice).`);
