@@ -201,9 +201,9 @@ async function structureChunk(
 
 These pages contain approximately ${estimatedRows} transaction rows (counted from date-prefixed lines). Extract ALL of them — a result far below that count means you skipped rows.
 
-CRITICAL RULES:
-- DO NOT INVENT data. Only output rows that are clearly visible in the OCR text.
-- Extract EVERY transaction row you can see. Do not skip rows that look repetitive (recurring UPI, identical amounts) — the user wants the full ledger.
+COLUMN LAYOUT — IMPORTANT:
+- The text is COLUMN-ALIGNED: cells on each line are separated by " | " (pipe), and EMPTY cells are preserved as blanks between pipes. The numeric columns on the right are, in order, the bank's amount columns (e.g. Withdrawal, Deposit) followed by the running Balance — read the header row to confirm which is which.
+- Direction comes from WHICH COLUMN the amount sits in, NOT from guessing. If the amount is in the Withdrawal column → type="debit". If in the Deposit column → type="credit". A blank cell means that column had no value on this row. This is the reliable signal — use it.
 - Skip non-transaction lines: column headers, page headers/footers, "BROUGHT FORWARD" / "B/F" / "OPENING BALANCE" stubs, page totals, watermarks.
 - OCR text may have minor errors (rupee symbol mistaken for 7, lowercase l vs digit 1). Apply minimal correction only when the bank-statement context makes the right value obvious (e.g. "balance" column should be a number).
 - If a row's date or balance is unreadable, skip the row entirely. Do not guess.
@@ -214,7 +214,7 @@ OUTPUT — STRICT JSON, no markdown fences, no prose:
 FIELD RULES:
 - date: ISO YYYY-MM-DD. Convert from the bank's printed format (DD/MM/YYYY, DD-MMM-YY, DD-MMM-YYYY).
 - narration: the transaction description, cleaned. Preserve banking codes (UPI/NEFT/IMPS/RTGS/MMT/CAM/CHEQUE/BIL/TRFR) and counterparty names. Drop OCR garbage characters that aren't word characters or common punctuation.
-- type: "credit" if money came INTO the account, "debit" if money went OUT. Read the deposit/withdrawal column placement. On a Cash Credit / OD account, "By Cash" / "By Transfer" lines are credits (reducing dr balance) and "To" lines are debits.
+- type: "credit" if money came INTO the account, "debit" if money went OUT — determined by which COLUMN the amount is in (see COLUMN LAYOUT above), not by the narration. On a Cash Credit / OD account, "By Cash" / "By Transfer" lines are credits (reducing dr balance) and "To" lines are debits.
 - amount: the transaction's OWN figure from the Deposit OR Withdrawal column (whichever is filled) — a POSITIVE plain number, no sign, no commas, no rupee symbol. This is the per-row amount, NOT the balance. A "credit" row's amount is its Deposit value; a "debit" row's amount is its Withdrawal value. Use null only if that cell is genuinely blank/unreadable. Read it carefully and independently of the balance — it is a critical cross-check.
 - balance: the running balance AFTER this transaction, as a plain number (no commas, no rupee symbol). null only if truly unreadable.
 

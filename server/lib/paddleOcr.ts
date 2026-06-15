@@ -36,6 +36,88 @@ export interface OcrItem {
   width: number;
 }
 
+/**
+ * Render OCR tokens into COLUMN-ALIGNED text so the structurer can read
+ * transaction direction from column position. The naive "join every
+ * token in a y-band with spaces" output collapses empty cells: a
+ * withdrawal-only row ("… 200.00 [blank] 9800.00") and a deposit-only
+ * row ("… [blank] 500.00 10300.00") flatten to the SAME shape ("…
+ * <num> <num>"), so the model can't tell deposit from withdrawal and
+ * mis-signs ~half the rows. We fix that by detecting the right-side
+ * numeric column x-centres (Withdrawal / Deposit / Balance are
+ * narrow, well-separated) and placing each row's numeric tokens into
+ * fixed slots, preserving blanks. Output rows look like:
+ *   "01-04-2025 UPI/payee | 200.00 |  | 9800.00"   (withdrawal)
+ *   "02-04-2025 NEFT/payee |  | 500.00 | 10300.00"  (deposit)
+ * The structurer then reads the header row (also aligned) to label the
+ * columns and signs every row from its column, not a guess.
+ *
+ * Falls back to a naive per-row join when there isn't enough numeric-
+ * column structure to detect (covers non-tabular pages / banners).
+ * Exported for unit testing.
+ */
+export function renderColumnAlignedPage(pageItems: OcrItem[]): string {
+  if (pageItems.length === 0) return '';
+  const Y_BAND = 8; // px @ ~200 dpi — one printed line
+  const sorted = [...pageItems].sort((a, b) => a.y - b.y || a.x - b.x);
+  // Cluster into y-band rows.
+  const rows: OcrItem[][] = [];
+  let cur: OcrItem[] = [];
+  let curY = -Infinity;
+  for (const it of sorted) {
+    if (cur.length === 0 || Math.abs(it.y - curY) <= Y_BAND) {
+      cur.push(it);
+      curY = cur.length === 1 ? it.y : (curY + it.y) / 2;
+    } else {
+      rows.push(cur);
+      cur = [it];
+      curY = it.y;
+    }
+  }
+  if (cur.length) rows.push(cur);
+
+  const naive = () => rows.map(r => r.map(t => t.text).join(' ')).join('\n');
+
+  const dateRe = /^\d{1,2}[-/]\d{1,2}[-/]\d{2,4}$/;
+  const isNum = (s: string) => /^-?[\d,]+\.?\d*$/.test(s.replace(/\s/g, '')) && /\d/.test(s);
+  // Transaction rows: a date token AND a numeric token.
+  const txRows = rows.filter(r =>
+    r.some(t => dateRe.test(t.text.trim())) && r.some(t => isNum(t.text)));
+  if (txRows.length < 3) return naive();
+
+  // Numeric column centres from transaction rows. Numbers sit in
+  // narrow, well-separated columns (unlike wide narration), so a
+  // gap-split on their x cleanly recovers Withdrawal/Deposit/Balance.
+  const GAP = 35;
+  const numXs = txRows.flatMap(r => r.filter(t => isNum(t.text)).map(t => t.x)).sort((a, b) => a - b);
+  const centers: number[] = [];
+  {
+    let prev = -Infinity, sum = 0, n = 0;
+    for (const x of numXs) {
+      if (n > 0 && x - prev > GAP) { centers.push(sum / n); sum = 0; n = 0; }
+      sum += x; n++; prev = x;
+    }
+    if (n > 0) centers.push(sum / n);
+  }
+  if (centers.length < 2) return naive();
+  const leftBound = Math.min(...centers) - 30; // narration/date sit left of the first numeric column
+
+  return rows.map(r => {
+    const rs = [...r].sort((a, b) => a.x - b.x);
+    const leftText = rs.filter(t => t.x < leftBound).map(t => t.text).join(' ');
+    const cells = new Array(centers.length).fill('');
+    for (const t of rs.filter(t => t.x >= leftBound)) {
+      let best = 0, bd = Infinity;
+      for (let c = 0; c < centers.length; c++) {
+        const d = Math.abs(t.x - centers[c]);
+        if (d < bd) { bd = d; best = c; }
+      }
+      cells[best] = cells[best] ? `${cells[best]} ${t.text}` : t.text;
+    }
+    return [leftText, ...cells].join(' | ');
+  }).join('\n');
+}
+
 export interface PaddleOcrResult {
   /** Joined text per PDF page, in order. Feeds the LLM structurer
    *  fallback when the deterministic grid path can't auto-map. May
@@ -158,21 +240,33 @@ function runPython(pdfPath: string, outPath: string, started: number): Promise<P
         for (const p of parsed.pages) {
           pageBoundaries.push(items.length);
           if (typeof p === 'string') {
+            // Old worker — no coordinates; use the joined text as-is.
             pageTexts.push(p);
             continue;
           }
           const page = (p ?? {}) as { text?: unknown; width?: unknown; height?: unknown; items?: unknown };
-          pageTexts.push(typeof page.text === 'string' ? page.text : '');
           const pageHeight = typeof page.height === 'number' && page.height > 0 ? page.height : 0;
+          // Collect this page's positioned tokens (page-relative y for
+          // the column renderer; flattened y for the global `items`).
+          const pageOcrItems: OcrItem[] = [];
           if (Array.isArray(page.items)) {
             for (const it of page.items as Array<Record<string, unknown>>) {
               if (!it || typeof it.text !== 'string' || !it.text.trim()) continue;
               const x = typeof it.x === 'number' ? it.x : 0;
               const y = typeof it.y === 'number' ? it.y : 0;
               const w = typeof it.w === 'number' ? it.w : 0;
+              pageOcrItems.push({ text: it.text, x, y, width: w });
               items.push({ text: it.text, x, y: yOffset + y, width: w });
             }
           }
+          // Column-aligned text (preserves Withdrawal/Deposit columns so
+          // the structurer reads direction correctly) when we have
+          // coordinates; else fall back to the worker's joined text.
+          pageTexts.push(
+            pageOcrItems.length > 0
+              ? renderColumnAlignedPage(pageOcrItems)
+              : (typeof page.text === 'string' ? page.text : ''),
+          );
           // Continuous y across pages (mirrors extractPdfGrid: page
           // height + small gap). 0-height pages contribute no offset.
           yOffset += pageHeight + 20;
