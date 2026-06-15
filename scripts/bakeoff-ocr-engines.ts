@@ -2,11 +2,15 @@
  * OCR engine bake-off harness.
  *
  * Compares the CURRENT scanned-PDF pipeline (PaddleOCR → column-align →
- * Gemini structurer) against candidate engines on the same statement(s),
- * so the switch decision is made on numbers, not vibes. Candidates:
- *   - docling (https://github.com/docling-project/docling) — self-hosted,
- *     CPU-friendly, TableFormer structured tables. The chosen direction.
- *   - marker  (https://github.com/datalab-to/marker) — kept for reference.
+ * Gemini structurer) against a candidate (marker, https://github.com/
+ * datalab-to/marker) on the same statement(s), so the switch decision is
+ * made on numbers, not vibes.
+ *
+ * Note: Docling was trialled (June 2026) and rejected — on a 21pp ICICI
+ * scan it dropped ~57 rows (TableFormer missed dense same-date clusters)
+ * and ran 4.5-5.5 min on CPU vs Paddle's seconds. Paddle + the balance-
+ * delta reconciliation won decisively, so the production engine stays
+ * Paddle. The docling engine was removed from this harness with it.
  *
  * The scoring is LABEL-FREE on purpose. We don't hand-key ground truth;
  * the bank's own running-BALANCE column is the oracle. Every honest row
@@ -30,7 +34,7 @@
  *
  * Usage:
  *   npx tsx scripts/bakeoff-ocr-engines.ts <statement.pdf> [more.pdf ...] \
- *       [--engines paddle,docling,marker] \
+ *       [--engines paddle,marker] \
  *       [--opening 680.44] [--closing 0.02] \
  *       [--truth path/to/known-good.csv]   # optional row-count anchor
  *
@@ -53,7 +57,6 @@ import crypto from 'crypto';
 
 import { extractPdfTextWithPaddleOcr, checkPaddleOcrAvailable } from '../server/lib/paddleOcr.js';
 import { structureOcrTextIntoRows, estimateTxnRows } from '../server/lib/paddleStructurer.js';
-import { extractWithDocling, checkDoclingAvailable } from '../server/lib/docling.js';
 import { GEMINI_API_KEYS } from '../server/lib/gemini.js';
 
 // ── Pricing knobs (approximate — confirm before quoting) ───────────────
@@ -128,36 +131,6 @@ const paddleGeminiEngine: Engine = {
     const t = run.tokens ?? { inTok: 0, outTok: 0 };
     const value = (t.inTok / 1e6) * GEMINI_IN_PER_M + (t.outTok / 1e6) * GEMINI_OUT_PER_M;
     return { value, basis: `${t.inTok}in/${t.outTok}out tok; OCR compute ~free (CPU)` };
-  },
-};
-
-// ── Engine: Docling (self-hosted, CPU) ─────────────────────────────────
-const doclingEngine: Engine = {
-  name: 'docling',
-  async available() {
-    const ok = await checkDoclingAvailable();
-    return ok ? { ok: true } : { ok: false, reason: 'docling not importable (pip install docling; see scripts/install-docling.sh)' };
-  },
-  async run(pdf) {
-    const res = await extractWithDocling(pdf);
-    const rows: BakeRow[] = res.transactions.map((t) => ({
-      date: t.date,
-      narration: t.narration,
-      amount: t.amount == null ? 0 : signByType(t.type, t.amount),
-      balance: t.balance,
-    }));
-    return {
-      rows,
-      rawText: res.markdown,
-      pageCount: res.pageCount,
-      latencyMs: res.durationMs,
-      note: 'TableFormer structured cells; no LLM structurer',
-    };
-  },
-  costUsd(run) {
-    // Self-hosted: ~$0 marginal per statement (no API, no LLM structurer
-    // call). The cost is amortized CPU/infra, not per-page.
-    return { value: 0, basis: `${run.pageCount}pp on CPU; no API, no Gemini structurer ($0 marginal)` };
   },
 };
 
@@ -403,7 +376,7 @@ function report(file: string, results: Array<{ engine: string; score?: Score; sk
 // ── CLI ────────────────────────────────────────────────────────────────
 function parseArgs(argv: string[]) {
   const files: string[] = [];
-  let engines = ['paddle', 'docling'];
+  let engines = ['paddle', 'marker'];
   let opening: number | null = null;
   let closing: number | null = null;
   let truth: string | null = null;
@@ -421,7 +394,7 @@ function parseArgs(argv: string[]) {
 async function main() {
   const { files, engines: wanted, opening, closing, truth } = parseArgs(process.argv.slice(2));
   if (files.length === 0) {
-    console.error('Usage: npx tsx scripts/bakeoff-ocr-engines.ts <statement.pdf> [...] [--engines paddle,docling,marker] [--opening N] [--closing N] [--truth file.csv]');
+    console.error('Usage: npx tsx scripts/bakeoff-ocr-engines.ts <statement.pdf> [...] [--engines paddle,marker] [--opening N] [--closing N] [--truth file.csv]');
     process.exit(1);
   }
   if (truth && existsSync(truth)) {
@@ -431,7 +404,6 @@ async function main() {
 
   const allEngines: Engine[] = [];
   if (wanted.includes('paddle')) allEngines.push(paddleGeminiEngine);
-  if (wanted.includes('docling')) allEngines.push(doclingEngine);
   if (wanted.includes('marker')) allEngines.push(markerEngine);
 
   // Resolve availability once.

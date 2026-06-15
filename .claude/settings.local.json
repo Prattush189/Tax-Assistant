@@ -8,7 +8,19 @@
       "Bash(npx tsc:*)",
       "Bash(npm uninstall:*)",
       "Bash(node /tmp/inspect-pdf.mjs \"/c/Users/Prattush/Downloads/Statement - Suresh.pdf\")",
-      "Bash(node *)"
+      "Bash(node *)",
+      "Bash(command -v pdftotext pdftoppm tesseract mutool qpdf)",
+      "Bash(cd /tmp)",
+      "Bash(sed -i \"s#/c/Users/Prattush/Downloads/ICICI_Bank_2025-04-01_2026-02-27.csv#C:/Users/Prattush/Downloads/ICICI_Bank_2025-04-01_2026-02-27.csv#\" check.py)",
+      "Bash(python check.py)",
+      "Bash(pdffonts \"/c/Users/Prattush/Downloads/AI STUFF/ICICI BANK FORMAT-2.pdf\")",
+      "Bash(pdfimages -list \"/c/Users/Prattush/Downloads/AI STUFF/ICICI BANK FORMAT-2.pdf\")",
+      "Bash(python -m py_compile server/python/docling_worker.py)",
+      "Bash(npx tsx *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(python -m py_compile \"D:/tax-assistant/server/python/docling_worker.py\")"
     ]
   }
 }
