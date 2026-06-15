@@ -93,6 +93,12 @@ function runPython(pdfPath: string, outPath: string, started: number): Promise<D
         reject(new Error(`Docling exited ${code}: ${msg}`));
         return;
       }
+      // Surface the worker's diagnostic line (raw-vs-kept counts, drop
+      // reasons, table headers) so a low row yield is debuggable from the
+      // pm2 log without re-running. The worker writes one JSON line to
+      // stderr; everything else there is Docling's own warnings.
+      const diagLine = stderr.split('\n').find((l) => l.includes('"diag"'));
+      if (diagLine) console.log(`[docling] ${diagLine.trim().slice(0, 800)}`);
       if (!existsSync(outPath)) {
         reject(new Error(`Docling exited 0 but wrote no output at ${outPath}`));
         return;

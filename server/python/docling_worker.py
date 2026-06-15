@@ -99,14 +99,27 @@ def find_col(headers, *keys) -> int:
     return -1
 
 
-def rows_from_table(df) -> list:
+def rows_from_table(df, state) -> list:
     """Map one Docling table (a pandas DataFrame) to transaction rows.
     Returns [] when the table doesn't look like a statement (no date /
-    balance header) so non-transaction tables are skipped."""
+    balance header) so non-transaction tables are skipped.
+
+    `state` carries cross-table context + diagnostics:
+      - state['last_date']: the most recent parsed date, carried forward
+        onto rows whose own date cell is blank — Indian statements print
+        the date once per day and leave continuation rows blank, so a
+        strict "needs a date" filter silently drops whole same-date
+        clusters (observed: 74 rows lost on a 21-page ICICI scan).
+      - state['stats']: raw/kept/drop-reason tallies, emitted to stderr so
+        we can tell a TableFormer miss (Docling never produced the row)
+        from a filter drop (we discarded it) without re-running blind."""
+    st = state['stats']
     headers = [str(c) for c in df.columns]
+    st['tables'].append(headers)
     date_i = find_col(headers, "date")
     bal_i = find_col(headers, "balance", "closing bal")
     if date_i < 0 or bal_i < 0:
+        st['skipped_tables'] += 1
         return []
     narr_i = find_col(headers, "particular", "narration", "description", "details", "remarks", "transaction")
     wd_i = find_col(headers, "withdraw", "debit", "dr ", "(dr", "dr)", "paid")
@@ -117,13 +130,15 @@ def rows_from_table(df) -> list:
     out = []
     for _, r in df.iterrows():
         cells = [("" if v is None else str(v)) for v in list(r)]
+        if not any(c.strip() for c in cells):
+            continue  # wholly blank row
+        st['raw'] += 1
 
         def cell(i):
             return cells[i] if 0 <= i < len(cells) else ""
 
         date_iso = to_iso(cell(date_i))
-        if not date_iso:
-            continue  # header / total / continuation — not a transaction
+        bal = to_num(cell(bal_i))
 
         wd = to_num(cell(wd_i)) if wd_i >= 0 else None
         dep = to_num(cell(dep_i)) if dep_i >= 0 else None
@@ -133,28 +148,45 @@ def rows_from_table(df) -> list:
             typ, mag = "debit", abs(wd)
         elif dep not in (None, 0):
             typ, mag = "credit", abs(dep)
-        elif amt is not None:
+        elif amt is not None and amt != 0:
             ind = cell(drcr_i).lower()
             if "cr" in ind:
                 typ, mag = "credit", abs(amt)
             elif "dr" in ind:
                 typ, mag = "debit", abs(amt)
             else:
-                # Single amount column with no direction marker: leave the
-                # magnitude and let the balance-delta reconciler downstream
-                # decide. Default the sign hint from the value.
                 typ, mag = ("credit" if amt >= 0 else "debit"), abs(amt)
         else:
-            continue  # no amount on this row
+            # No amount: header repeat / total / B/F stub. Drop, but don't
+            # let it reset the carried date.
+            st['drop_no_amount'] += 1
+            if len(st['samples']) < 12:
+                st['samples'].append("no_amount: " + " | ".join(c[:18] for c in cells))
+            continue
 
-        narr = re.sub(r"\s+", " ", cell(narr_i)).strip()
+        if not date_iso:
+            # Date cell blank but this row HAS a real amount → it's a
+            # same-date continuation row. Carry the last date forward
+            # rather than dropping a genuine transaction.
+            if state['last_date'] and bal is not None:
+                date_iso = state['last_date']
+                st['carried_date'] += 1
+            else:
+                st['drop_no_date'] += 1
+                if len(st['samples']) < 12:
+                    st['samples'].append("no_date: " + " | ".join(c[:18] for c in cells))
+                continue
+        else:
+            state['last_date'] = date_iso
+
         out.append({
             "date": date_iso,
-            "narration": narr,
+            "narration": re.sub(r"\s+", " ", cell(narr_i)).strip(),
             "type": typ,
             "amount": mag,
-            "balance": to_num(cell(bal_i)),
+            "balance": bal,
         })
+        st['kept'] += 1
     return out
 
 
@@ -218,15 +250,38 @@ def main() -> None:
         emit_error(f"Docling conversion failed: {type(e).__name__}: {e}", 3)
 
     transactions = []
+    state = {
+        "last_date": None,
+        "stats": {
+            "tables": [], "skipped_tables": 0, "raw": 0, "kept": 0,
+            "carried_date": 0, "drop_no_amount": 0, "drop_no_date": 0,
+            "frame_failed": 0, "samples": [],
+        },
+    }
     try:
         for table in (getattr(doc, "tables", None) or []):
             try:
                 df = table.export_to_dataframe()
             except Exception:  # noqa: BLE001 — skip a table that won't frame
+                state["stats"]["frame_failed"] += 1
                 continue
-            transactions.extend(rows_from_table(df))
+            transactions.extend(rows_from_table(df, state))
     except Exception as e:  # noqa: BLE001
         emit_error(f"Docling table parse failed: {type(e).__name__}: {e}", 3)
+
+    # Diagnostics to stderr (the Node wrapper logs this) — lets us tell a
+    # TableFormer miss from a filter drop. raw≈expected but kept<raw means
+    # our mapping is too strict; raw itself low means Docling lost the row.
+    st = state["stats"]
+    print(json.dumps({
+        "diag": {
+            "n_tables": len(st["tables"]), "skipped_tables": st["skipped_tables"],
+            "frame_failed": st["frame_failed"], "raw_rows": st["raw"],
+            "kept": st["kept"], "carried_date": st["carried_date"],
+            "drop_no_amount": st["drop_no_amount"], "drop_no_date": st["drop_no_date"],
+            "table_headers": st["tables"][:6], "drop_samples": st["samples"],
+        }
+    }), file=sys.stderr)
 
     try:
         markdown = doc.export_to_markdown()
