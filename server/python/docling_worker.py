@@ -99,10 +99,27 @@ def find_col(headers, *keys) -> int:
     return -1
 
 
-def rows_from_table(df, state) -> list:
-    """Map one Docling table (a pandas DataFrame) to transaction rows.
-    Returns [] when the table doesn't look like a statement (no date /
-    balance header) so non-transaction tables are skipped.
+def compute_mapping(headers):
+    """Column-index map from a table's header row, or None when this
+    doesn't look like a statement table (no Date + Balance columns)."""
+    date_i = find_col(headers, "date")
+    bal_i = find_col(headers, "balance", "closing bal")
+    if date_i < 0 or bal_i < 0:
+        return None
+    return {
+        "date": date_i, "bal": bal_i, "ncols": len(headers),
+        "narr": find_col(headers, "particular", "narration", "description", "details", "remarks", "transaction"),
+        "wd": find_col(headers, "withdraw", "debit", "dr ", "(dr", "dr)", "paid"),
+        "dep": find_col(headers, "deposit", "credit", "cr ", "(cr", "cr)", "received"),
+        "amt": find_col(headers, "amount"),
+        "drcr": find_col(headers, "dr/cr", "cr/dr", "type", "indicator"),
+    }
+
+
+def rows_from_table(df, m, state) -> list:
+    """Map one Docling table (a pandas DataFrame) to transaction rows,
+    given a column mapping `m` (from this table's header, or inherited
+    from an earlier page — see main).
 
     `state` carries cross-table context + diagnostics:
       - state['last_date']: the most recent parsed date, carried forward
@@ -114,18 +131,8 @@ def rows_from_table(df, state) -> list:
         we can tell a TableFormer miss (Docling never produced the row)
         from a filter drop (we discarded it) without re-running blind."""
     st = state['stats']
-    headers = [str(c) for c in df.columns]
-    st['tables'].append(headers)
-    date_i = find_col(headers, "date")
-    bal_i = find_col(headers, "balance", "closing bal")
-    if date_i < 0 or bal_i < 0:
-        st['skipped_tables'] += 1
-        return []
-    narr_i = find_col(headers, "particular", "narration", "description", "details", "remarks", "transaction")
-    wd_i = find_col(headers, "withdraw", "debit", "dr ", "(dr", "dr)", "paid")
-    dep_i = find_col(headers, "deposit", "credit", "cr ", "(cr", "cr)", "received")
-    amt_i = find_col(headers, "amount")
-    drcr_i = find_col(headers, "dr/cr", "cr/dr", "type", "indicator")
+    date_i, bal_i = m["date"], m["bal"]
+    narr_i, wd_i, dep_i, amt_i, drcr_i = m["narr"], m["wd"], m["dep"], m["amt"], m["drcr"]
 
     out = []
     for _, r in df.iterrows():
@@ -253,11 +260,12 @@ def main() -> None:
     state = {
         "last_date": None,
         "stats": {
-            "tables": [], "skipped_tables": 0, "raw": 0, "kept": 0,
-            "carried_date": 0, "drop_no_amount": 0, "drop_no_date": 0,
+            "tables": [], "skipped_tables": 0, "inherited_tables": 0, "raw": 0,
+            "kept": 0, "carried_date": 0, "drop_no_amount": 0, "drop_no_date": 0,
             "frame_failed": 0, "samples": [],
         },
     }
+    last_mapping = None
     try:
         for table in (getattr(doc, "tables", None) or []):
             try:
@@ -265,7 +273,23 @@ def main() -> None:
             except Exception:  # noqa: BLE001 — skip a table that won't frame
                 state["stats"]["frame_failed"] += 1
                 continue
-            transactions.extend(rows_from_table(df, state))
+            headers = [str(c) for c in df.columns]
+            state["stats"]["tables"].append(headers)
+            m = compute_mapping(headers)
+            if m is not None:
+                last_mapping = m  # remember the schema for continuation pages
+            elif last_mapping is not None and last_mapping["ncols"] == len(df.columns):
+                # Continuation page: header row missing or OCR-garbled, but
+                # the column COUNT matches the last good page — reuse its
+                # layout instead of dropping every row on this page (which is
+                # how whole same-date clusters were vanishing). Header-looking
+                # rows still fail the per-row date/amount filter and drop out.
+                m = last_mapping
+                state["stats"]["inherited_tables"] += 1
+            else:
+                state["stats"]["skipped_tables"] += 1
+                continue
+            transactions.extend(rows_from_table(df, m, state))
     except Exception as e:  # noqa: BLE001
         emit_error(f"Docling table parse failed: {type(e).__name__}: {e}", 3)
 
@@ -276,6 +300,7 @@ def main() -> None:
     print(json.dumps({
         "diag": {
             "n_tables": len(st["tables"]), "skipped_tables": st["skipped_tables"],
+            "inherited_tables": st["inherited_tables"],
             "frame_failed": st["frame_failed"], "raw_rows": st["raw"],
             "kept": st["kept"], "carried_date": st["carried_date"],
             "drop_no_amount": st["drop_no_amount"], "drop_no_date": st["drop_no_date"],
