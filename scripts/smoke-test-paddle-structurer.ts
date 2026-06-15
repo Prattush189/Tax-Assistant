@@ -42,52 +42,45 @@ expect('21 pages → 6 chunks', chunksFor(21) === 6);
 expect('4 pages → 1 chunk', chunksFor(4) === 1);
 expect('1 page → 1 chunk', chunksFor(1) === 1);
 
-// ── Balance-delta + spike-repair (mirrors deriveAmountsFromBalance) ──
+// ── Trust-the-column derive (mirrors deriveAmountsFromBalance) ──────
 // Inline re-implementation so the test doesn't import the route module
-// (which pulls in the DB + Gemini at import time). Mirrors server/
-// routes/bankStatements.ts deriveAmountsFromBalance: PURE deltas (exact
-// net via telescoping; sign from the trajectory, not the structurer)
-// + an OCR spike-repair pass that fixes gross inflation from misread
-// balances WITHOUT disturbing the net.
+// (which pulls in the DB + Gemini at import time). OCR text is now
+// column-aligned, so the structurer reads each amount's Deposit /
+// Withdrawal column directly — the route TRUSTS that signed printed
+// amount and does NOT flip signs from the balance trajectory. Balance
+// is used only for phantom detection + a disagreement flag. The vision
+// path (no printed amount) still derives from the balance delta.
 function deriveAmounts(
   rows: Array<{ amount: number; balance: number | null }>,
   opening: number | null,
   printedReliable: boolean,
 ): { amounts: number[]; reconciled: number } {
   const out: number[] = [];
-  const printedMag: number[] = [];
+  let reconciled = 0;
   for (let i = 0; i < rows.length; i++) {
     const cur = rows[i];
     const prev = i === 0 ? opening : rows[i - 1].balance;
-    const pMag = printedReliable ? Math.abs(cur.amount) : 0;
-    if (prev != null && cur.balance != null) {
-      const delta = cur.balance - prev;
-      if (Math.abs(delta) < 0.005 && pMag < 0.005) { out.push(0); printedMag.push(0); continue; }
-      out.push(delta); printedMag.push(pMag);
+    const delta = prev != null && cur.balance != null ? cur.balance - prev : null;
+    if (printedReliable) {
+      const printed = cur.amount; // signed by the column the structurer read
+      if (Math.abs(printed) < 0.005) {
+        if (delta == null || Math.abs(delta) < 0.005) continue; // phantom dropped
+        out.push(delta); // OCR missed the amount cell → recover from delta
+        continue;
+      }
+      if (delta != null && Math.abs(Math.abs(delta) - Math.abs(printed)) > Math.max(1, Math.abs(printed) * 0.02)) {
+        reconciled++; // magnitude disagrees with balance → flag (still trust column sign)
+      }
+      out.push(printed);
       continue;
     }
-    out.push(cur.amount); printedMag.push(pMag);
-  }
-  let reconciled = 0;
-  if (printedReliable && out.length >= 2) {
-    for (let i = 0; i < out.length - 1; i++) {
-      const pIn = printedMag[i], pOut = printedMag[i + 1];
-      if (pIn < 0.005 || pOut < 0.005) continue;
-      if (Math.abs(out[i]) <= Math.max(10_000, pIn * 3)) continue;
-      const pairSum = out[i] + out[i + 1];
-      if (Math.abs(pairSum) > Math.abs(out[i]) * 0.5) continue;
-      let bestS = 1, bestErr = Infinity;
-      for (const s of [1, -1]) {
-        const err = Math.abs(Math.abs(pairSum - s * pIn) - pOut);
-        if (err < bestErr) { bestErr = err; bestS = s; }
-      }
-      const outMag = Math.abs(pairSum - bestS * pIn);
-      if (Math.abs(outMag - pOut) <= Math.max(1, pOut * 0.02)) {
-        out[i] = bestS * pIn;
-        out[i + 1] = pairSum - bestS * pIn;
-        reconciled++;
-      }
+    // Vision path: derive from balance delta.
+    if (delta != null) {
+      if (Math.abs(delta) < 0.005) { if (Math.abs(cur.amount) < 0.005) out.push(0); continue; }
+      out.push(delta);
+      continue;
     }
+    out.push(cur.amount);
   }
   return { amounts: out, reconciled };
 }
@@ -96,47 +89,46 @@ const sumAbsIn = (a: number[]) => a.filter(x => x > 0).reduce((s, x) => s + x, 0
 const sumAbsOut = (a: number[]) => a.filter(x => x < 0).reduce((s, x) => s - x, 0);
 const net = (a: number[]) => a.reduce((s, x) => s + x, 0);
 
-// Misread-balance case: 3 debits -200,-210,-500. Opening 1000, true
-// balances 800,590,90. OCR misreads the MIDDLE balance 590 → 590000.
-// Pure delta gives -200,+589200,-589910: gross spikes ~5.9L but the NET
-// telescopes to exactly closing-opening = -910. Spike-repair fixes the
-// gross using printed magnitudes, net untouched.
-const misread = [
+// Trust-the-column: amounts come from the printed Deposit/Withdrawal
+// column (signed by type), NOT from the balance trajectory. A misread
+// MIDDLE balance (590 → 590000) is therefore IGNORED — the column
+// amounts give the correct -200/-210/-500 with no gross inflation,
+// where a balance-delta approach would spike ~5.9L. The misread rows
+// are flagged (their printed magnitude disagrees with the bad delta).
+const misreadBalance = [
   { amount: -200, balance: 800 },
-  { amount: -210, balance: 590000 },
+  { amount: -210, balance: 590000 },  // balance misread; column amount still -210
   { amount: -500, balance: 90 },
 ];
-const pure = deriveAmounts(misread, 1000, false);
-const repaired = deriveAmounts(misread, 1000, true);
-expect('pure delta: net is EXACT (-910) despite misread', Math.abs(net(pure.amounts) - (-910)) < 0.01);
-expect('pure delta: gross inflated on misread', sumAbsIn(pure.amounts) > 500000);
-expect('spike-repair: net still EXACT (-910)', Math.abs(net(repaired.amounts) - (-910)) < 0.01);
-expect('spike-repair: gross fixed (inflow ~0)', sumAbsIn(repaired.amounts) < 1);
-expect('spike-repair: outflow = 910', Math.abs(sumAbsOut(repaired.amounts) - 910) < 0.01);
-expect('spike-repair: repaired 1 pair', repaired.reconciled === 1);
+const col = deriveAmounts(misreadBalance, 1000, true);
+expect('trust-column: misread balance ignored, outflow = 910', Math.abs(sumAbsOut(col.amounts) - 910) < 0.01);
+expect('trust-column: no gross inflation (inflow 0)', sumAbsIn(col.amounts) < 0.01);
+expect('trust-column: net -910', Math.abs(net(col.amounts) + 910) < 0.01);
+expect('trust-column: flagged 2 disagreeing rows', col.reconciled === 2);
 
-// Clean case: balances all correct → no spike → amounts = deltas.
-const clean = [
-  { amount: -200, balance: 800 },
-  { amount: -210, balance: 590 },
-  { amount: -500, balance: 90 },
+// Direction comes from the COLUMN, not the value. Here the bank's
+// columns say row0 is a DEPOSIT (+1000) and row1 a WITHDRAWAL (-200),
+// and we trust that even though the balance numbers would tell a
+// different story if misread.
+const directions = [
+  { amount: +1000, balance: 2000 }, // deposit per column
+  { amount: -200, balance: 1800 },  // withdrawal per column
+  { amount: -300, balance: 1500 },
 ];
-const cleanOut = deriveAmounts(clean, 1000, true);
-expect('clean: 0 repaired', cleanOut.reconciled === 0);
-expect('clean: outflow = 910, net -910', Math.abs(sumAbsOut(cleanOut.amounts) - 910) < 0.01 && Math.abs(net(cleanOut.amounts) + 910) < 0.01);
+const dir = deriveAmounts(directions, 1000, true);
+expect('trust-column: deposit stays credit (+1000)', dir.amounts[0] === 1000);
+expect('trust-column: withdrawals stay debit', dir.amounts[1] === -200 && dir.amounts[2] === -300);
+expect('trust-column: inflow 1000 / outflow 500', sumAbsIn(dir.amounts) === 1000 && sumAbsOut(dir.amounts) === 500);
 
-// Wrong-direction case: the structurer mis-signs two withdrawals as
-// credits (+200,+500), but the BALANCES are correct. Pure delta ignores
-// the structurer's sign entirely → all three come out as debits.
-const wrongDir = [
-  { amount: +200, balance: 800 },
-  { amount: -210, balance: 590 },
-  { amount: +500, balance: 90 },
+// Vision path (no reliable printed amount) still uses balance deltas.
+const vision = [
+  { amount: 0, balance: 800 },
+  { amount: 0, balance: 590 },
+  { amount: 0, balance: 90 },
 ];
-const fixed = deriveAmounts(wrongDir, 1000, true);
-expect('wrong-direction: all debits via trajectory (outflow 910)', Math.abs(sumAbsOut(fixed.amounts) - 910) < 0.01);
-expect('wrong-direction: zero inflow', sumAbsIn(fixed.amounts) < 0.01);
-expect('wrong-direction: net -910', Math.abs(net(fixed.amounts) + 910) < 0.01);
+const vis = deriveAmounts(vision, 1000, false);
+expect('vision: derives from delta (outflow 910, net -910)',
+  Math.abs(sumAbsOut(vis.amounts) - 910) < 0.01 && Math.abs(net(vis.amounts) + 910) < 0.01);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);
