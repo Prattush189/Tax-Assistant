@@ -8,6 +8,7 @@ import { getPdfPageCount, splitPdfByPages, PDF_VISION_CHUNK_THRESHOLD } from '..
 import { applyConditionsToStatement } from '../lib/bankConditionFilter.js';
 import { extractPdfTextWithPaddleOcr } from '../lib/paddleOcr.js';
 import { structureOcrTextIntoRows } from '../lib/paddleStructurer.js';
+import { extractWithDocling } from '../lib/docling.js';
 // Pure-geometry grid engine + per-bank rules, shared with the browser
 // digital-PDF path. pdfGrid's pdfjs import is dynamic (browser-only),
 // so these load cleanly in Node — see the note atop src/lib/pdfGrid.ts.
@@ -1399,7 +1400,53 @@ router.post(
         // is caught and falls back to vision so uploads never break
         // entirely while the operator debugs the OCR pipeline.
         let extractedFromOcr = false;
-        if (mimeType === 'application/pdf') {
+
+        // ── Primary OCR engine: Docling ──────────────────────────────────
+        // Docling's TableFormer reconstructs the statement table and hands
+        // us structured rows directly — no Gemini structurer call, and
+        // direction comes from the actual Deposit/Withdrawal cells (not a
+        // re-gridding heuristic), which is the column/sign accuracy win.
+        // Runs on CPU. Any failure (not installed, timeout, no parseable
+        // table, too few rows) falls THROUGH to the PaddleOCR path below,
+        // which itself falls through to vision — so uploads never break.
+        // Set OCR_ENGINE=paddle to skip Docling and force the old path.
+        const ocrEngine = (process.env.OCR_ENGINE ?? 'docling').toLowerCase();
+        if (mimeType === 'application/pdf' && ocrEngine !== 'paddle') {
+          try {
+            const dStart = Date.now();
+            console.log(`[bank-statements] Docling start: ${filename} (${req.file.size} bytes)`);
+            const dres = await extractWithDocling(req.file.buffer);
+            console.log(`[bank-statements] Docling done: ${dres.transactions.length} rows, ${dres.pageCount} pages in ${dres.durationMs}ms`);
+            // Require a few rows so a partial/failed table parse falls
+            // through to the proven PaddleOCR path rather than persisting a
+            // near-empty statement.
+            if (dres.transactions.length >= 5) {
+              extracted = {
+                // Direction is from Docling's table cells; the printed
+                // magnitude is still OCR'd, so flag amountsFromOcr and let
+                // deriveAmountsFromBalance reconcile it against the balance
+                // delta (same safety net as the other OCR paths).
+                amountsFromOcr: true,
+                transactions: dres.transactions.map((r) => ({
+                  date: r.date,
+                  narration: r.narration,
+                  type: r.type,
+                  amount: r.amount != null ? (r.type === 'credit' ? r.amount : -r.amount) : undefined,
+                  balance: r.balance,
+                })),
+              } as ExtractedStatement;
+              extractedFromOcr = true;
+              // No Gemini call on this path — leave geminiUsages unset.
+              console.log(`[bank-statements] Docling auto-structure: ${dres.transactions.length} rows — NO structurer call (${Date.now() - dStart}ms)`);
+            } else {
+              console.log(`[bank-statements] Docling yielded ${dres.transactions.length} rows (<5) — falling through to PaddleOCR`);
+            }
+          } catch (err) {
+            console.warn(`[bank-statements] Docling path failed, falling through to PaddleOCR: ${(err as Error).message?.slice(0, 200)}`);
+          }
+        }
+
+        if (mimeType === 'application/pdf' && !extractedFromOcr) {
           try {
             const ocrStart = Date.now();
             console.log(`[bank-statements] PaddleOCR start: ${filename} (${req.file.size} bytes)`);
