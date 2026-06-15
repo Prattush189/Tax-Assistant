@@ -24,7 +24,12 @@ import { AuthRequest } from '../types.js';
 const router = Router();
 
 router.get('/latest', (_req: AuthRequest, res: Response) => {
-  const items = notificationsRepo.listLatest(12);
+  // Show the WHOLE latest batch (a typical fetch is ~40 items). The
+  // welcome card is an auto-scrolling marquee, so a longer list just
+  // means more to scroll through — and capping at 12 hid most of the
+  // batch, including dateless items (e.g. GST Council recommendations,
+  // which sort NULLS LAST and fell past a small cap entirely).
+  const items = notificationsRepo.listLatest(100);
   res.json({
     items: items.map(it => ({
       id: it.id,
