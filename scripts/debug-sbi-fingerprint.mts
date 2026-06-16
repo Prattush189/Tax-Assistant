@@ -93,6 +93,40 @@ for (const m of MARKERS) {
 }
 console.log('');
 
+// ── Per-column structure: where do dates / numbers actually land? ──
+const datePat = /\b\d{2}\/\d{2}\/\d{4}\b/;
+const numPat = /\d[\d,]*\.\d{2}/;
+console.log('Per-column hit counts across all rows:');
+for (let c = 0; c < grid.columnCount; c++) {
+  let dates = 0, nums = 0;
+  for (const r of grid.rows) {
+    if (datePat.test((r[c] ?? '').trim())) dates++;
+    if (numPat.test((r[c] ?? '').trim())) nums++;
+  }
+  console.log(`  col${c}: ${String(dates).padStart(4)} dd/MM/yyyy dates, ${String(nums).padStart(4)} numbers`);
+}
+// The SBI rule's verify() breakdown.
+let dateCount = 0, balCount = 0, amtCount = 0;
+for (const r of grid.rows) {
+  if (datePat.test((r[0] ?? '').trim())) dateCount++;
+  if (numPat.test((r[5] ?? '').trim())) balCount++;
+  if (numPat.test((r[2] ?? '').trim()) || numPat.test((r[4] ?? '').trim())) amtCount++;
+}
+console.log(`\nSBI verify(): dateCount(col0)=${dateCount} balCount(col5)=${balCount} amtCount(col2|4)=${amtCount} → ${dateCount >= 5 && balCount >= 5 && amtCount >= 5 ? 'PASS' : 'FAIL'}`);
+
+// Show the first 5 rows that carry a date in ANY column — the real
+// transaction shape, and which column index the date sits in.
+console.log('\nFirst 5 rows with a date in any column (all cells):');
+let shown = 0;
+for (let i = 0; i < grid.rows.length && shown < 5; i++) {
+  const r = grid.rows[i];
+  const dateCol = r.findIndex((cell) => datePat.test((cell ?? '').trim()));
+  if (dateCol < 0) continue;
+  shown++;
+  console.log(`  row ${i} (date in col${dateCol}): ${JSON.stringify(r.map((c) => (c ?? '').slice(0, 22)))}`);
+}
+
+console.log('');
 const detected = detectAndMapBank(grid);
 if (detected) {
   console.log(`[PASS] detectAndMapBank -> ${detected.bank}`);

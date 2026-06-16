@@ -646,7 +646,27 @@ export function BankStatementUploader({ manager }: Props) {
               const grid = await extractPdfGrid(file, password);
               if (grid && grid.rows.length >= 3) {
                 setPendingPassword(null);
-                setPendingGrid({ grid, filename: file.name, file });
+                // Run the SAME per-bank auto-map the main (unencrypted)
+                // path runs. Without this, an encrypted statement always
+                // landed in the wizard with EVERY column unmapped even
+                // when we have a deterministic rule for it. The SBI
+                // net-banking PDF is password-protected, so it only ever
+                // reached this path — which is why detectAndMapBank fired
+                // in the Node harness but never in the browser: the
+                // encrypted path skipped detection entirely.
+                const detected = detectAndMapBank(grid);
+                if (detected) {
+                  console.log(`[BankStatementUploader] auto-detected ${detected.bank} (encrypted PDF) — pre-filling wizard for review`);
+                  setPendingGrid({
+                    grid: detected.grid,
+                    filename: file.name,
+                    file,
+                    presetMapping: detected.mapping,
+                    detectedBank: detected.bank,
+                  });
+                } else {
+                  setPendingGrid({ grid, filename: file.name, file });
+                }
                 return;
               }
               // Decrypted but no usable text layer: fall through to
