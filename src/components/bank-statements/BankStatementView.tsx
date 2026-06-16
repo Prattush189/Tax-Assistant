@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Landmark, Loader2 } from 'lucide-react';
+import { Landmark, Loader2, RefreshCw } from 'lucide-react';
 import { motion } from 'motion/react';
 import toast from 'react-hot-toast';
 import { BankStatementManager } from '../../hooks/useBankStatementManager';
@@ -23,6 +23,8 @@ export function BankStatementView({ manager }: Props) {
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelPending, setCancelPending] = useState(false);
 
+  const [isReapplying, setIsReapplying] = useState(false);
+
   const handleDelete = async () => {
     if (!manager.current) return;
     if (!confirm('Delete this statement? This cannot be undone.')) return;
@@ -31,6 +33,25 @@ export function BankStatementView({ manager }: Props) {
       toast.success('Statement deleted');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to delete');
+    }
+  };
+
+  // Push the user's current auto-tagging rules + conditions onto THIS
+  // already-processed statement (no re-upload, no AI re-extraction). The
+  // manager reloads the detail afterwards so the table reflects the new
+  // categories and hidden rows immediately.
+  const handleReapply = async () => {
+    if (!manager.current) return;
+    setIsReapplying(true);
+    try {
+      const { ruleUpdated, hidden } = await manager.reapplyTagging(manager.current.statement.id);
+      toast.success(
+        `Re-applied — ${ruleUpdated} row${ruleUpdated === 1 ? '' : 's'} re-tagged by rules, ${hidden} hidden by conditions.`,
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to re-apply rules & conditions');
+    } finally {
+      setIsReapplying(false);
     }
   };
 
@@ -236,6 +257,26 @@ export function BankStatementView({ manager }: Props) {
         )}
         {!isAnalyzing && !isError && !isCancelled && (
           <>
+            {/* Re-apply the user's current auto-tagging rules + conditions
+                to this already-processed statement. Only shown when the
+                user actually has rules/conditions to apply. Rules/
+                conditions are applied at upload time; this lets the user
+                push a later edit onto an existing statement without
+                re-uploading and re-paying for AI extraction. */}
+            {(manager.rules.length > 0 || manager.conditions.length > 0) && (
+              <div className="flex justify-end -mb-1">
+                <button
+                  type="button"
+                  onClick={() => void handleReapply()}
+                  disabled={isReapplying}
+                  title="Apply your current auto-tagging rules and conditions to this statement"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isReapplying ? 'animate-spin' : ''}`} />
+                  {isReapplying ? 'Re-applying…' : 'Re-apply rules & conditions'}
+                </button>
+              </div>
+            )}
             {/* Phase 2 anomaly callouts. Renders nothing when no
                 anomalies fired (silence is good news — no false
                 "0 issues" banner). Clicking a row scrolls to the

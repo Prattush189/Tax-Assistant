@@ -14,6 +14,8 @@ import {
   fetchBankStatementConditions,
   createBankStatementCondition,
   deleteBankStatementCondition,
+  reapplyBankStatementRules,
+  reapplyBankStatementConditions,
   BankStatementSummary,
   BankTransaction,
   BankTransactionAnomaly,
@@ -325,6 +327,18 @@ export function useBankStatementManager(enabled: boolean) {
     setConditions((prev) => prev.filter((c) => c.id !== id));
   }, []);
 
+  // Push the user's CURRENT rules + conditions onto an already-processed
+  // statement, then reload its detail so the table reflects the new
+  // categories + hidden flags. Returns counts for a summary toast.
+  const reapplyTagging = useCallback(async (id: string): Promise<{ ruleUpdated: number; hidden: number }> => {
+    const [ruleRes, condRes] = await Promise.all([
+      reapplyBankStatementRules(id),
+      reapplyBankStatementConditions(id),
+    ]);
+    await load(id);
+    return { ruleUpdated: ruleRes.updated, hidden: condRes.hidden };
+  }, [load]);
+
   // Any analysis still running on the server, derived from the persisted
   // status flag rather than the in-flight isAnalyzing boolean (which
   // resets on tab reload). UI uses this to gate Add rule / Add condition
@@ -356,6 +370,7 @@ export function useBankStatementManager(enabled: boolean) {
     removeRule,
     addCondition,
     removeCondition,
+    reapplyTagging,
   };
 }
 

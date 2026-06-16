@@ -279,18 +279,45 @@ function normalizeTransactions(raw: unknown[]): BankTransactionInput[] {
 }
 
 /**
- * Apply user-defined rules: if a rule's match_text appears (case-insensitive)
- * inside the narration, override category and/or stamp counterparty_label.
- * Mutates a shallow copy — leaves originals alone. Rules are tried in order,
- * first match wins.
+ * Fuzzy "narration contains" test for a user auto-tagging rule.
+ *
+ * A literal `narration.includes(matchText)` is too brittle for real
+ * bank narrations: the statement splices a payee's name with stray
+ * separators the user never types. SBI prints "Mr. AVINASH – MEHRA"
+ * (space / en-dash / space) so a rule typed as "AVINASH MEHRA" — the
+ * natural way to enter it — never matches. Other banks jam tokens
+ * together ("HDFCHL0001234" vs a "HDFC HL" rule) or pad with extra
+ * spaces.
+ *
+ * Normalise BOTH sides by collapsing every run of non-alphanumeric
+ * characters (spaces, dashes of every Unicode width, dots, slashes)
+ * to a single space, then test containment. A spaceless fallback
+ * catches the bank-jammed-it-together case. Still a substring test —
+ * "ZOMATO" matches "ZOMATO LTD" — just immune to separator noise.
+ */
+function ruleTextMatches(narration: string, matchText: string): boolean {
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const hay = norm(narration);
+  const needle = norm(matchText);
+  if (!needle) return false;
+  if (hay.includes(needle)) return true;
+  // "HDFC HL" → "hdfchl" so it still finds "...HDFCHL0001234...".
+  return hay.replace(/ /g, '').includes(needle.replace(/ /g, ''));
+}
+
+/**
+ * Apply user-defined rules: if a rule's match_text appears (separator-
+ * insensitive, case-insensitive) inside the narration, override category
+ * and/or stamp counterparty_label. Mutates a shallow copy — leaves
+ * originals alone. Rules are tried in order, first match wins.
  */
 function applyUserRules(txs: BankTransactionInput[], rules: BankStatementRuleRow[]): BankTransactionInput[] {
   if (!rules.length) return txs;
   return txs.map((tx) => {
-    const hay = (tx.narration ?? '').toLowerCase();
+    const narration = tx.narration ?? '';
     for (const rule of rules) {
       if (!rule.match_text) continue;
-      if (hay.includes(rule.match_text.toLowerCase())) {
+      if (ruleTextMatches(narration, rule.match_text)) {
         return {
           ...tx,
           category: rule.category ? normalizeCategory(rule.category) : tx.category,
@@ -1179,6 +1206,37 @@ router.post('/:id/reapply-conditions', async (req: AuthRequest, res: Response) =
     console.warn('[bank-statements] reapply-conditions failed:', err instanceof Error ? err.message : err);
     res.status(500).json({ error: 'Failed to re-apply conditions' });
   }
+});
+
+// POST /api/bank-statements/:id/reapply-rules — apply the user's CURRENT
+// auto-tagging rules to an already-processed statement. Same matcher the
+// upload path uses (separator-insensitive), skips rows the user manually
+// re-tagged. Cheap + reversible-ish (re-running with edited rules
+// re-converges). Lets a user who fixed/added a rule push it onto an
+// existing statement instead of re-uploading the PDF.
+router.post('/:id/reapply-rules', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const stmt = bankStatementRepo.findByIdForUser(req.params.id, req.user.id);
+  if (!stmt) { res.status(404).json({ error: 'Statement not found' }); return; }
+  const rules = bankStatementRuleRepo.listByUser(req.user.id);
+  if (rules.length === 0) {
+    res.json({ success: true, scanned: 0, updated: 0, noRules: true });
+    return;
+  }
+  const result = bankTransactionRepo.applyRulesToStatement(stmt.id, (row) => {
+    const narration = row.narration ?? '';
+    for (const rule of rules) {
+      if (!rule.match_text) continue;
+      if (ruleTextMatches(narration, rule.match_text)) {
+        return {
+          category: rule.category ? normalizeCategory(rule.category) : row.category,
+          counterparty: rule.counterparty_label ?? row.counterparty,
+        };
+      }
+    }
+    return null;
+  });
+  res.json({ success: true, ...result });
 });
 
 // GET /api/bank-statements/:id — detail + transactions

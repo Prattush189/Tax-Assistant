@@ -2438,6 +2438,15 @@ export async function reapplyBankStatementConditions(id: string): Promise<{ succ
   return authFetch(`/api/bank-statements/${id}/reapply-conditions`, { method: 'POST' });
 }
 
+/** Apply the user's current auto-tagging rules to an already-processed
+ *  statement (separator-insensitive narration match → category /
+ *  counterparty). Rows the user manually re-tagged are left alone.
+ *  Used when the user adds/edits a rule and wants it reflected on an
+ *  existing statement without re-uploading. */
+export async function reapplyBankStatementRules(id: string): Promise<{ success: boolean; scanned: number; updated: number; noRules?: boolean }> {
+  return authFetch(`/api/bank-statements/${id}/reapply-rules`, { method: 'POST' });
+}
+
 // ── Ledger Scrutiny API ───────────────────────────────────────────────────
 
 export type LedgerScrutinySeverity = 'info' | 'warn' | 'high';

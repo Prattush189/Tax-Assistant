@@ -114,6 +114,19 @@ const stmts = {
         AND statement_id = ?
         AND user_override = 0`
   ),
+  // Re-apply user auto-tagging rules to an existing statement. Sets
+  // category + counterparty (rules don't carry subcategory) WITHOUT
+  // marking user_override — and skips rows the user manually re-tagged,
+  // same guard as reclassifyRow. Lets a user who edits their rule list
+  // push the change onto an already-processed statement instead of
+  // re-uploading the PDF.
+  applyRuleRow: db.prepare(
+    `UPDATE bank_transactions
+        SET category = ?, counterparty = ?
+      WHERE id = ?
+        AND statement_id = ?
+        AND user_override = 0`
+  ),
   // Flip every signed amount in a statement. Escape hatch for the
   // rare case where the CC auto-detect missed (or wrongly fired) and
   // the user wants a one-click sign correction without re-uploading.
@@ -252,6 +265,32 @@ export const bankTransactionRepo = {
         if (!result) continue;
         if (result.category === r.category && result.subcategory === r.subcategory) continue;
         stmts.reclassifyRow.run(result.category, result.subcategory, r.id, statementId);
+        updated++;
+      }
+    });
+    apply();
+    return { scanned: rows.length, updated };
+  },
+
+  // Apply the user's auto-tagging rules to an already-persisted
+  // statement. `match` returns the new category + counterparty for a
+  // row (or null when no rule matched). Skips user_override rows and
+  // only writes when something actually changed. Mirrors the upload
+  // path's applyUserRules so re-applying gives the same result a fresh
+  // upload would.
+  applyRulesToStatement(
+    statementId: string,
+    match: (row: BankTransactionRow) => { category: string; counterparty: string | null } | null,
+  ): { scanned: number; updated: number } {
+    const rows = stmts.listByStatement.all(statementId) as BankTransactionRow[];
+    let updated = 0;
+    const apply = db.transaction(() => {
+      for (const r of rows) {
+        if (r.user_override === 1) continue;
+        const result = match(r);
+        if (!result) continue;
+        if (result.category === r.category && result.counterparty === r.counterparty) continue;
+        stmts.applyRuleRow.run(result.category, result.counterparty, r.id, statementId);
         updated++;
       }
     });
