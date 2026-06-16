@@ -579,6 +579,51 @@ const JK_BANK_DCR: BankRule = {
   },
 };
 
+// State Bank of India — internet-banking "Account Statement" PDF that
+// leads with a portfolio / "Relationship Summary" cover page (Loans,
+// Deposits, MY ACCOUNTS) and then the real "STATEMENT OF ACCOUNT"
+// table. The cover page's summary tables pollute header detection, so
+// the grid's headers come out as repeated "Balance" with no usable
+// transaction-header row — but the column LAYOUT is fixed by SBI's
+// template, so a positional rule maps it cleanly:
+//   0 — date (txn date + value date fused into one cell; parseDate
+//       takes the first)
+//   1 — narration / reference (NEFT/UPI/INB string; wraps onto
+//       adjacent rows, merged by applyMapping's continuation logic)
+//   2 — debit  (Withdrawal column)
+//   3 — skip   (spacer the cover-page anchoring inserts)
+//   4 — credit (Deposit column)
+//   5 — running balance
+//
+// Fingerprint: the branch email domain "sbi.co.in" sits on the cover
+// page (within the first-30-rows fingerprint window); "state bank of
+// india" / the SBIN0 IFSC appear deeper and back it up. verify()
+// confirms col0 dates + col5 balances + amounts present so the rule
+// only fires on this exact layout and otherwise falls to the wizard.
+const SBI: BankRule = {
+  name: 'State Bank of India',
+  fingerprints: [
+    'sbi.co.in',
+    'state bank of india',
+    /\bsbin0\d{4,}\b/i,
+  ],
+  positional: {
+    columnCount: 6,
+    roles: ['date', 'narration', 'debit', 'skip', 'credit', 'balance'],
+    verify: (grid) => {
+      const datePat = /\b\d{2}\/\d{2}\/\d{4}\b/;
+      const numPat = /\d[\d,]*\.\d{2}/;
+      let dateCount = 0, balCount = 0, amtCount = 0;
+      for (const r of grid.rows) {
+        if (datePat.test((r[0] ?? '').trim())) dateCount++;
+        if (numPat.test((r[5] ?? '').trim())) balCount++;
+        if (numPat.test((r[2] ?? '').trim()) || numPat.test((r[4] ?? '').trim())) amtCount++;
+      }
+      return dateCount >= 5 && balCount >= 5 && amtCount >= 5;
+    },
+  },
+};
+
 // Order matters: rules with more-specific fingerprints first so a
 // generic substring (like "detailed account statement") doesn't get
 // stolen by a different rule's broader fingerprint.
@@ -592,7 +637,7 @@ const JK_BANK_DCR: BankRule = {
 // reshaped — its preprocess gates on columnCount === 4 anyway) and
 // before JK_BANK (whose header rule can never satisfy this format's
 // all-null headers, so ordering only saves a wasted attempt).
-const RULES: BankRule[] = [HDFC, ICICI, CANARA, PNB, YES_BANK, KOTAK, JK_BANK_DCR, JK_BANK_SAVINGS, JK_BANK];
+const RULES: BankRule[] = [HDFC, ICICI, CANARA, PNB, YES_BANK, KOTAK, SBI, JK_BANK_DCR, JK_BANK_SAVINGS, JK_BANK];
 
 export interface DetectedBankMapping {
   bank: string;

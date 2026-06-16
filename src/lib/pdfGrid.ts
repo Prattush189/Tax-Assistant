@@ -321,11 +321,22 @@ export function buildGridFromItems(
     // and adding a row whose balance equals the previous balance
     // unchanged, which is impossible for a real transaction. Cut
     // everything from the marker row onward.
+    // Only truncate at a summary marker that comes AFTER the transaction
+    // table — i.e. a genuine TRAILING totals block. SBI (and other banks
+    // with a portfolio/"Relationship Summary" cover) print "Account
+    // Summary" at the TOP, before any transactions; truncating there
+    // chops the entire statement (observed: a 24-page SBI statement
+    // collapsed to the page-1 summary's 3 columns / 30 rows). Require at
+    // least a few date-bearing rows before the marker so a leading
+    // cover-summary is ignored and a trailing totals panel still cuts.
     const SUMMARY_MARKER = /\b(statement\s+summary|account\s+summary|period\s+summary|summary\s+of\s+account|legends?\s*:)\b/i;
+    const DATE_LIKE_ROW = /\b\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\b/;
     let summaryCutAt = rowBuckets.length;
+    let datedRowsSeen = 0;
     for (let i = 0; i < rowBuckets.length; i++) {
       const rowText = rowBuckets[i].map(it => it.text).join(' ');
-      if (SUMMARY_MARKER.test(rowText)) {
+      if (DATE_LIKE_ROW.test(rowText)) datedRowsSeen++;
+      if (datedRowsSeen >= 5 && SUMMARY_MARKER.test(rowText)) {
         summaryCutAt = i;
         break;
       }
