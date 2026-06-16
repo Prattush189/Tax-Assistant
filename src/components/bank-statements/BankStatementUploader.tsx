@@ -266,6 +266,35 @@ export function BankStatementUploader({ manager }: Props) {
         // HDFC / ICICI / Canara auto-detect flow. Clicking Continue
         // re-applies the (already correct) mapping and submits to
         // the analyze-CSV endpoint.
+        //
+        // Per-bank deterministic column rule FIRST — it runs on the
+        // already-parsed grid (cheap, no I/O). The J&K RPT detection
+        // below re-opens and re-reads the WHOLE PDF (a second full
+        // pdfjs parse), so we only pay for it when no per-bank rule
+        // matched. Previously RPT ran for every upload, doubling the
+        // parse time and causing a multi-second UI freeze on larger
+        // statements (24-page HDFC report etc.).
+        const detected = detectAndMapBank(grid);
+        if (detected && grid) {
+          console.log(`[BankStatementUploader] auto-detected ${detected.bank} — pre-filling wizard for review`);
+          setIsReadingPdf(false);
+          setPendingGrid({
+            // Use the rule's preprocessed grid, NOT the raw grid from
+            // extractPdfGrid. For Kotak (and any future rule that
+            // defines a `preprocess` hook), the grid has been reshaped
+            // (e.g. merged Date+Description split into two) and
+            // `detected.mapping.roles` is indexed against the
+            // post-preprocess column count. For non-preprocess rules
+            // detected.grid === the input grid, so this is a no-op.
+            grid: detected.grid,
+            filename: file.name,
+            file,
+            presetMapping: detected.mapping,
+            detectedBank: detected.bank,
+          });
+          return;
+        }
+
         try {
           const rptDetected = await detectJkbankRptFormat(file);
           if (rptDetected) {
@@ -313,46 +342,8 @@ export function BankStatementUploader({ manager }: Props) {
           console.warn('[BankStatementUploader] RPT detection threw:', rptErr);
         }
 
-        // Per-bank deterministic column rule. HDFC / ICICI / Canara
-        // have stable header layouts; if the grid extracted cleanly
-        // we can pre-fill the column mapping from a bank-specific
-        // header→role table. We DON'T auto-submit — the user always
-        // sees the wizard with the detected mapping pre-applied so
-        // they can verify it. Catches the failure mode where the
-        // rule fires but the extractor's column anchors don't
-        // actually line up with the rule's role assignments
-        // (Canara's "Deposits"/"Balance" data lands in the column
-        // next to its left-aligned header; ICICI's compact layout
-        // can split "Transaction Date" into two columns). Without
-        // the review step the user got an opaque "no transactions
-        // extracted" error instead of a fixable mapping screen.
-        const detected = detectAndMapBank(grid);
-        if (detected && grid) {
-          console.log(`[BankStatementUploader] auto-detected ${detected.bank} — pre-filling wizard for review`);
-          setIsReadingPdf(false);
-          setPendingGrid({
-            // Use the rule's preprocessed grid, NOT the raw grid from
-            // extractPdfGrid. For Kotak (and any future rule that
-            // defines a `preprocess` hook), the grid has been
-            // reshaped — e.g. the merged Date+Description column was
-            // split into two — and `detected.mapping.roles` is indexed
-            // against the post-preprocess column count. Feeding the
-            // wizard the raw grid here while passing a mapping array
-            // built for the reshaped grid puts the role dropdowns and
-            // the data preview off by one (user-reported on Kotak
-            // 2026-05: wizard dropdowns showed Date / Narration /
-            // Reference / Debit / Credit / Skip / Balance over a
-            // preview where col 1 still held "31 Mar 2025 PCI/9710/…"
-            // merged). For non-preprocess rules `detected.grid` is
-            // equal to the input grid, so this is a no-op.
-            grid: detected.grid,
-            filename: file.name,
-            file,
-            presetMapping: detected.mapping,
-            detectedBank: detected.bank,
-          });
-          return;
-        }
+        // (Per-bank deterministic column detection already ran above,
+        // before the RPT re-parse.)
 
         // Bank fingerprint shortcut for layouts we don't yet have a
         // per-bank rule for, OR layouts that ship as image-only PDFs
