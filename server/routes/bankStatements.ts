@@ -8,6 +8,7 @@ import { getPdfPageCount, splitPdfByPages, PDF_VISION_CHUNK_THRESHOLD } from '..
 import { applyConditionsToStatement } from '../lib/bankConditionFilter.js';
 import { extractPdfTextWithPaddleOcr } from '../lib/paddleOcr.js';
 import { structureOcrTextIntoRows } from '../lib/paddleStructurer.js';
+import { parsePrintedTotals, grossTotalNote } from '../lib/bankGrossReconcile.js';
 // Pure-geometry grid engine + per-bank rules, shared with the browser
 // digital-PDF path. pdfGrid's pdfjs import is dynamic (browser-only),
 // so these load cleanly in Node — see the note atop src/lib/pdfGrid.ts.
@@ -115,6 +116,15 @@ type ExtractedStatement = {
   // OCR amounts are still LLM-read so we keep the balance chain as a
   // co-validator rather than skipping derivation outright.
   amountsFromOcr?: boolean;
+  // Large money figures parsed off the statement's printed "TOTAL" /
+  // "GRAND TOTAL" row (OCR paths only). Used purely to cross-check our
+  // computed gross turnover against the bank's own printed total: when
+  // the net + closing reconcile exactly but gross is short by an even
+  // amount, a self-cancelling reversal pair (charge + RVSL, net zero)
+  // was dropped — harmless to balances, but worth explaining instead of
+  // leaving the user wondering why turnover differs. Order-agnostic: the
+  // note matches these to inflow/outflow by proximity, not column slot.
+  printedTotals?: number[] | null;
   transactions: unknown[];
 };
 
@@ -793,6 +803,10 @@ function persistStatement(
   }
 
   const { inflow, outflow } = computeTotals(txs);
+  // Cross-check gross turnover against the bank's printed Grand Total
+  // (OCR paths only). Only meaningful once the chain reconciles, so it's
+  // an explanation of the residual, never a hard error.
+  const grossNote = grossTotalNote(inflow, outflow, data.printedTotals);
   const periodLabel = data.periodFrom && data.periodTo
     ? `${data.periodFrom} – ${data.periodTo}`
     : new Date().toISOString().slice(0, 10);
@@ -823,7 +837,7 @@ function persistStatement(
   bankTransactionRepo.bulkInsert(statementId, txsWithFingerprint);
   bankStatementRepo.updateTotals(statementId, inflow, outflow, txs.length);
 
-  return { txCount: txs.length, autoCorrected, mismatches, amountOverridden, reconciledFromAmount, phantomDropped: totalPhantomDropped, closingMismatch };
+  return { txCount: txs.length, autoCorrected, mismatches, amountOverridden, reconciledFromAmount, phantomDropped: totalPhantomDropped, closingMismatch, grossNote };
 }
 
 function serializeStatement(row: ReturnType<typeof bankStatementRepo.findByIdForUser>) {
@@ -1405,6 +1419,9 @@ router.post(
             console.log(`[bank-statements] PaddleOCR start: ${filename} (${req.file.size} bytes)`);
             const ocr = await extractPdfTextWithPaddleOcr(req.file.buffer);
             console.log(`[bank-statements] PaddleOCR done: ${ocr.pages.length} pages, ${ocr.items.length} tokens in ${ocr.durationMs}ms`);
+            // Bank's printed Grand Total row, for the gross-turnover
+            // cross-check in persistStatement. Same OCR text both paths see.
+            const printedTotals = parsePrintedTotals(ocr.pages);
 
             // ── Path A: deterministic grid → per-bank auto-map ──────────
             // Feed PaddleOCR's bounding boxes through the SAME grid engine
@@ -1431,6 +1448,7 @@ router.post(
                       // Column amounts are OCR'd → reconcile against the
                       // balance delta (same guard as the structurer path).
                       amountsFromOcr: true,
+                      printedTotals,
                       transactions: mapped.map((r) => ({
                         date: r.date,
                         narration: r.narration,
@@ -1488,6 +1506,7 @@ router.post(
                   balance: r.balance,
                 })),
                 amountsFromOcr: true,
+                printedTotals,
               } as ExtractedStatement;
               // Per-model usage split: the tiered structurer runs T2
               // first and escalates short-yield/error chunks to T1 —
@@ -2327,7 +2346,7 @@ INPUT_ROWS — TSV, one row per line, columns narration<TAB>type<TAB>amount:
         else res.status(200).json(cancelledPayload);
         return;
       }
-      const { txCount, autoCorrected, mismatches, amountOverridden, reconciledFromAmount, phantomDropped, closingMismatch } = persistStatement(req.user.id, placeholder.id, extracted, filename ?? 'Bank Statement');
+      const { txCount, autoCorrected, mismatches, amountOverridden, reconciledFromAmount, phantomDropped, closingMismatch, grossNote } = persistStatement(req.user.id, placeholder.id, extracted, filename ?? 'Bank Statement');
 
       // Phase 2 anomaly detector — runs against the just-persisted
       // rows (re-reading them to get the database-assigned IDs that
@@ -2467,6 +2486,12 @@ INPUT_ROWS — TSV, one row per line, columns narration<TAB>type<TAB>amount:
         }
         if (closingMismatch) {
           parts.push(closingMismatch);
+        }
+        // Gross-turnover explanation. Suppressed when the chain itself
+        // didn't tie out (closingMismatch) — no point reassuring about
+        // gross when net is already flagged as suspect.
+        if (grossNote && !closingMismatch) {
+          parts.push(grossNote);
         }
         return parts.length > 0 ? parts.join(' ') : null;
       })();
