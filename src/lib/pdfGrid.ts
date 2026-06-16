@@ -16,14 +16,22 @@
  * derived deterministically).
  */
 
-// NOTE: pdfjs / react-pdf is imported DYNAMICALLY inside extractPdfGrid
-// (not statically at module top) so this module can be imported in
-// Node — specifically by the server's scanned-PDF OCR path, which
-// reuses the pure-geometry grid builder (buildGridFromItems) without
-// touching pdfjs. A static `import { pdfjs } from 'react-pdf'` here
-// would pull pdfjs (and its DOMMatrix dependency) into the server
-// bundle and crash on import. The dynamic import keeps pdfjs strictly
-// browser-side while the grid algorithm stays runtime-agnostic.
+import { pdfjs } from 'react-pdf';
+
+// Static import (not dynamic): Vite must statically see the
+// `new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url)`
+// below to bundle the worker. A dynamic `await import('react-pdf')`
+// inside extractPdfGrid broke that resolution, so getDocument failed
+// in the browser for EVERY digital PDF and they all fell through to
+// the server OCR path. buildGridFromItems stays pure (no pdfjs) but
+// the server must NOT import this module — it imports the grid engine
+// from elsewhere if needed.
+if (typeof window !== 'undefined' && !pdfjs.GlobalWorkerOptions.workerSrc) {
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+    'pdfjs-dist/build/pdf.worker.min.mjs',
+    import.meta.url,
+  ).toString();
+}
 
 export interface PdfGrid {
   /** Rows of cells, ordered top-to-bottom across all pages. */
@@ -209,17 +217,6 @@ export async function extractPdfGrid(file: File, password?: string): Promise<Pdf
   const looksLikePdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
   if (!looksLikePdf) return null;
   try {
-    // Dynamic import keeps pdfjs out of the Node/server bundle — see
-    // the module-header note. In the browser Vite code-splits this
-    // into a lazily-loaded chunk (pdfjs only loads when a PDF is
-    // actually processed).
-    const { pdfjs } = await import('react-pdf');
-    if (typeof window !== 'undefined' && !pdfjs.GlobalWorkerOptions.workerSrc) {
-      pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-        'pdfjs-dist/build/pdf.worker.min.mjs',
-        import.meta.url,
-      ).toString();
-    }
     const buf = await file.arrayBuffer();
     const pdf = await pdfjs.getDocument({
       data: new Uint8Array(buf),
