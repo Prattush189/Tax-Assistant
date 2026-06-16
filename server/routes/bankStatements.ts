@@ -18,6 +18,7 @@ import { learnedClassificationsRepo } from '../db/repositories/learnedClassifica
 import { learnedEmbeddingsRepo, type EmbeddingRecord } from '../db/repositories/learnedEmbeddingsRepo.js';
 import { semanticTierEnabledFor, bestMatch, appendCorrectionEmbedding } from '../lib/semanticTier.js';
 import { embedTexts } from '../lib/embedder.js';
+import { buildPayeeReview } from '../lib/payeeExport.js';
 import { lookupAiClassification, recordAiClassification } from '../lib/bankAiClassificationCache.js';
 import { extractBankMetadata } from '../lib/bankStatementMetadata.js';
 import { detectAnomalies } from '../lib/bankAnomalyDetector.js';
@@ -1092,6 +1093,22 @@ router.post('/learned-rules/bulk-update', (req: AuthRequest, res: Response) => {
   const subcategory = typeof req.body?.subcategory === 'string' ? req.body.subcategory : null;
   const changed = learnedClassificationsRepo.bulkUpdateCategory(billingUser.id, ids, category, subcategory);
   res.json({ changed });
+});
+
+// GET /api/bank-statements/admin/payee-export?minCount=5 — ADMIN ONLY.
+// Returns the deduped payee list (one entry per distinct narration
+// fingerprint, most-frequent first) as JSON for an offline labeling
+// pass. Nothing is persisted server-side; the admin's browser saves the
+// file. minCount filters to recurring payees (5 → ~the top 29% of
+// volume; 1 → the full long tail). Contains payee names, so it's gated
+// to admins and never cached.
+router.get('/admin/payee-export', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const actor = userRepo.findById(req.user.id);
+  if (actor?.role !== 'admin') { res.status(403).json({ error: 'Admin only' }); return; }
+  const minCount = Math.max(1, parseInt(String(req.query.minCount ?? '5'), 10) || 5);
+  const data = buildPayeeReview(minCount);
+  res.json({ minCount, count: data.length, rowsCovered: data.reduce((a, b) => a + b.count, 0), payees: data });
 });
 
 function serializeCondition(row: BankStatementConditionRow) {

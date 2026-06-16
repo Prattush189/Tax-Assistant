@@ -2447,6 +2447,27 @@ export async function reapplyBankStatementRules(id: string): Promise<{ success: 
   return authFetch(`/api/bank-statements/${id}/reapply-rules`, { method: 'POST' });
 }
 
+export interface PayeeReviewRow {
+  fingerprint: string;
+  count: number;
+  direction: 'credit' | 'debit';
+  mixed: boolean;
+  current_category: string;
+  sample_narration: string;
+  label: string | null;
+  confidence: 'high' | 'medium' | 'low' | null;
+  needs_human: boolean;
+}
+
+/** ADMIN: download the deduped payee list for an offline labeling pass.
+ *  minCount filters to recurring payees (5 → the high-volume head; 1 →
+ *  the full long tail). Returns the array plus coverage stats. */
+export async function fetchPayeeExport(minCount: number): Promise<{
+  minCount: number; count: number; rowsCovered: number; payees: PayeeReviewRow[];
+}> {
+  return authFetch(`/api/bank-statements/admin/payee-export?minCount=${encodeURIComponent(minCount)}`);
+}
+
 // ── Ledger Scrutiny API ───────────────────────────────────────────────────
 
 export type LedgerScrutinySeverity = 'info' | 'warn' | 'high';

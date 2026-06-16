@@ -18,3 +18,7 @@ logs/
 
 # transformers.js model cache (downloaded at runtime, ~30MB)
 .models-cache/
+
+# Bank payee labeling data (customer payee names — never commit)
+payees-review*.json
+payees-labeled*.json

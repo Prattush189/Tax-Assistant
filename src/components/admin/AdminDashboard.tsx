@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Users, Activity, DollarSign, Shield, RefreshCw, ShieldOff, BarChart3, Cpu, Clock, RotateCcw, Search, Filter, Key, Wallet, Plug } from 'lucide-react';
+import { Users, Activity, DollarSign, Shield, RefreshCw, ShieldOff, BarChart3, Cpu, Clock, RotateCcw, Search, Filter, Key, Wallet, Plug, Database } from 'lucide-react';
 import { LicensesDashboard } from './LicensesDashboard';
+import { BankTrainingDashboard } from './BankTrainingDashboard';
 import { PaymentsDashboard } from './PaymentsDashboard';
 import { ExternalKeysDashboard } from './ExternalKeysDashboard';
 import { ApiCostDashboard } from './ApiCostDashboard';
@@ -14,7 +15,7 @@ import toast from 'react-hot-toast';
 import { cn } from '../../lib/utils';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 
-type AdminTab = 'overview' | 'users' | 'licenses' | 'payments' | 'external-keys' | 'api-costs' | 'recent-calls' | 'model-usage';
+type AdminTab = 'overview' | 'users' | 'licenses' | 'payments' | 'external-keys' | 'api-costs' | 'recent-calls' | 'model-usage' | 'bank-training';
 
 interface Stats {
   total_requests: number;
@@ -205,6 +206,7 @@ export function AdminDashboard() {
     { id: 'api-costs', label: 'API Costs', icon: DollarSign, ai: true },
     { id: 'recent-calls', label: 'Recent Calls', icon: Clock, ai: true },
     { id: 'model-usage', label: 'Model Usage', icon: Cpu, ai: true },
+    { id: 'bank-training', label: 'Bank Training', icon: Database },
   ];
 
   return (
@@ -285,6 +287,9 @@ export function AdminDashboard() {
 
         {/* Model Usage tab */}
         {adminTab === 'model-usage' && <ModelUsageDashboard />}
+
+        {/* Bank Training tab — payee labeling export for the classifier */}
+        {adminTab === 'bank-training' && <BankTrainingDashboard />}
 
         {/* Licenses tab — manage license keys, generate new ones, renew/revoke */}
         {adminTab === 'licenses' && <LicensesDashboard />}
