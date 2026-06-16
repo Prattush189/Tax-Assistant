@@ -275,6 +275,14 @@ export function BankStatementUploader({ manager }: Props) {
         // parse time and causing a multi-second UI freeze on larger
         // statements (24-page HDFC report etc.).
         const detected = detectAndMapBank(grid);
+        if (!detected && grid) {
+          // Diagnostic: when no per-bank rule matched, surface the grid
+          // shape + the fingerprint window the detector scanned, so a
+          // "should have matched but didn't" case is debuggable straight
+          // from the browser console instead of guessing at deploy state.
+          const fpWindow = grid.rows.slice(0, 30).flat().join(' ').toLowerCase();
+          console.log(`[BankStatementUploader] no per-bank rule matched — cols=${grid.columnCount}, rows=${grid.rows.length}, headers=${JSON.stringify(grid.columnHeaders)}, fp-has-sbi=${fpWindow.includes('sbi.co.in') || fpWindow.includes('state bank')}`);
+        }
         if (detected && grid) {
           console.log(`[BankStatementUploader] auto-detected ${detected.bank} — pre-filling wizard for review`);
           setIsReadingPdf(false);
