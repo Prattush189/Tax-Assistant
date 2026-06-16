@@ -15,3 +15,6 @@ logs/
 !server/data/
 !server/data/*.txt
 !src/data/
+
+# transformers.js model cache (downloaded at runtime, ~30MB)
+.models-cache/

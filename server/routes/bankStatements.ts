@@ -15,6 +15,9 @@ import { getBreakerStatus } from '../lib/circuitBreaker.js';
 import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_CATEGORIES, buildConditionsBlock, countWords, MAX_CONDITION_WORDS, type BankStatementCategory } from '../lib/bankStatementPrompt.js';
 import { classifyWithLearning, classifyRow, extractCounterpartyAndReference, extractNarrationFingerprint, markRecurring, unifyAmbiguousCounterparties, validateDirectionCategory, applyRetailBusinessPromotion } from '../lib/bankClassifier.js';
 import { learnedClassificationsRepo } from '../db/repositories/learnedClassificationsRepo.js';
+import { learnedEmbeddingsRepo, type EmbeddingRecord } from '../db/repositories/learnedEmbeddingsRepo.js';
+import { semanticTierEnabledFor, bestMatch, appendCorrectionEmbedding } from '../lib/semanticTier.js';
+import { embedTexts } from '../lib/embedder.js';
 import { lookupAiClassification, recordAiClassification } from '../lib/bankAiClassificationCache.js';
 import { extractBankMetadata } from '../lib/bankStatementMetadata.js';
 import { detectAnomalies } from '../lib/bankAnomalyDetector.js';
@@ -1810,7 +1813,35 @@ router.post(
         // output (the schema below drops counterparty/reference too).
         const learnedLookup = (fp: string, dir: 'credit' | 'debit') =>
           learnedClassificationsRepo.lookupForClassify(quota.billingUserId, fp, dir);
-        const tierCounts = { learned: 0, anchor: 0, aiCache: 0, unclassified: 0, conflicts: 0 };
+
+        // EXPERIMENTAL semantic tier (admin + SEMANTIC_TIER=1 only). Embed
+        // every narration's fingerprint ONCE and load the firm's vector
+        // index, so the per-row pass below can nearest-neighbour match
+        // between the exact learned-rules and the AI call. Entirely
+        // best-effort: any failure (model load, hub fetch) disables it for
+        // this run and we fall through to the existing path. Non-admins
+        // never enter this block — zero added cost or risk for real users
+        // while it's under test.
+        const semanticOn = semanticTierEnabledFor(quota.billingUserId);
+        let semIndex: EmbeddingRecord[] | null = null;
+        let semVecs: Float32Array[] | null = null;
+        if (semanticOn) {
+          try {
+            semIndex = learnedEmbeddingsRepo.loadForUser(quota.billingUserId);
+            if (semIndex.length > 0) {
+              const texts = normalized.map((r) => extractNarrationFingerprint(r.narration) || r.narration.slice(0, 256));
+              semVecs = await embedTexts(texts);
+            } else {
+              semIndex = null;
+            }
+          } catch (err) {
+            console.warn('[semanticTier] disabled this run:', err instanceof Error ? err.message : err);
+            semIndex = null;
+            semVecs = null;
+          }
+        }
+
+        const tierCounts = { learned: 0, anchor: 0, aiCache: 0, semantic: 0, unclassified: 0, conflicts: 0 };
         const learnedHitIds = new Set<string>();
         const ruleResults = normalized.map((row, index) => {
           const out = classifyWithLearning(
@@ -1825,6 +1856,29 @@ router.post(
           if (out.result) {
             tierCounts[out.tier]++;
             return { index, row, classified: out.result, needsAi: false };
+          }
+          // EXPERIMENTAL: semantic nearest-neighbour over the firm's past
+          // corrections — catches near-duplicate narrations the exact
+          // fingerprint match missed. Below threshold → falls through to
+          // the AI path unchanged. (semVecs/semIndex are null unless the
+          // admin-gated tier is on, so this is a no-op for real users.)
+          if (semIndex && semVecs) {
+            const m = bestMatch(semVecs[index], semIndex, row.type as 'credit' | 'debit');
+            if (m) {
+              tierCounts.semantic++;
+              const { counterparty, reference } = extractCounterpartyAndReference(row.narration);
+              return {
+                index,
+                row,
+                classified: {
+                  category: m.category as BankStatementCategory,
+                  subcategory: m.subcategory,
+                  counterparty,
+                  reference,
+                },
+                needsAi: false,
+              };
+            }
           }
           // Anchor + learned both missed. Check the in-memory AI-decision
           // cache for this firm/fingerprint before scheduling a Gemini
@@ -1861,7 +1915,7 @@ router.post(
         for (const id of learnedHitIds) {
           learnedClassificationsRepo.recordHit(id);
         }
-        console.log(`[bank-statements] csv classifier pre-pass: ${tierCounts.learned} learned, ${tierCounts.anchor} anchor, ${tierCounts.aiCache} ai-cache, ${tierCounts.unclassified} → AI (of ${normalized.length} rows; ${tierCounts.conflicts} learned/anchor conflicts)`);
+        console.log(`[bank-statements] csv classifier pre-pass: ${tierCounts.learned} learned, ${tierCounts.anchor} anchor, ${tierCounts.aiCache} ai-cache, ${tierCounts.semantic} semantic, ${tierCounts.unclassified} → AI (of ${normalized.length} rows; ${tierCounts.conflicts} learned/anchor conflicts)`);
 
         // Batch size lowered 80 → 40 (2026-05): empirically T2
         // (gemini-2.5-flash-lite) skips rows it can't categorize
@@ -2648,6 +2702,20 @@ router.patch('/:id/transactions/:txId', (req: AuthRequest, res: Response) => {
             createdByUserId: req.user.id,
           });
           learned = serializeLearnedRule(rule);
+          // EXPERIMENTAL: also append this correction to the firm's
+          // semantic vector memory (admin + SEMANTIC_TIER=1 only).
+          // Fire-and-forget — embedding is async and best-effort, so it
+          // never blocks the reassign response or fails the request.
+          if (semanticTierEnabledFor(billingUser.id)) {
+            void appendCorrectionEmbedding({
+              billingUserId: billingUser.id,
+              fingerprint,
+              narration,
+              category,
+              subcategory,
+              direction,
+            }).catch((e) => console.warn('[semanticTier] append failed:', e instanceof Error ? e.message : e));
+          }
         }
       }
     }

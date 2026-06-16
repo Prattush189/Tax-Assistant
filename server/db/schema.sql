@@ -432,6 +432,31 @@ CREATE TABLE IF NOT EXISTS learned_classifications (
   last_applied_at TEXT
 );
 
+-- Semantic classification tier (EXPERIMENTAL — admin-gated via SEMANTIC_TIER=1).
+-- Per-firm memory of categorized narrations stored as 384-dim BGE-small
+-- embeddings, so a new row that's SEMANTICALLY similar to a past correction
+-- (not just an exact fingerprint match like learned_classifications) inherits
+-- its category — with no retraining: the "learning" is just appending a row.
+-- Appended on user corrections + backfilled from learned_classifications;
+-- read by the semantic tier between the exact learned-rules and the AI call.
+CREATE TABLE IF NOT EXISTS learned_embeddings (
+  id TEXT PRIMARY KEY,
+  billing_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  fingerprint TEXT NOT NULL,
+  sample_narration TEXT,
+  -- 384 × float32 = 1536 bytes, L2-normalized so cosine = dot product.
+  vec BLOB NOT NULL,
+  category TEXT NOT NULL,
+  subcategory TEXT,
+  direction_scope TEXT NOT NULL DEFAULT 'either' CHECK(direction_scope IN ('credit', 'debit', 'either')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+);
+-- One embedding per (firm, fingerprint, direction) — re-teaching replaces in place.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_learned_embeddings_key
+  ON learned_embeddings (billing_user_id, fingerprint, direction_scope);
+CREATE INDEX IF NOT EXISTS idx_learned_embeddings_user
+  ON learned_embeddings (billing_user_id);
+
 -- Free-form per-user conditions appended to the bank-statement parse prompt.
 -- Used for filter / include / exclude / tagging instructions the user wants
 -- the AI to follow ("ignore txns under ₹100", "treat ZOMATO as Personal").
