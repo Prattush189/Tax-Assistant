@@ -606,6 +606,11 @@ const SBI: BankRule = {
     'sbi.co.in',
     'state bank of india',
     /\bsbin0\d{4,}\b/i,
+    // SBI net-banking portfolio cover page has these distinctive
+    // section titles in the fingerprint window even when the bank
+    // name / IFSC sit deeper on the statement-of-account page.
+    'relationship summary',
+    /\bmy information\b.*\bbranch information\b/i,
   ],
   positional: {
     columnCount: 6,
@@ -675,7 +680,14 @@ export function detectAndMapBank(grid: PdfGrid | null): DetectedBankMapping | nu
   if (grid.rows.length < 5) return null;
   if (grid.columnCount < 4) return null;
 
-  const fingerprint = grid.rows.slice(0, 30).flat().join(' ').toLowerCase();
+  // Scan the first 60 rows (was 30). Some banks bury their name / IFSC
+  // behind a portfolio cover page (SBI's "Relationship Summary" sits
+  // before the "STATEMENT OF ACCOUNT" header where SBIN0/the bank name
+  // appear). A deeper window catches those; spurious cross-bank IFSC
+  // hits in the wider window are harmless — the candidates loop below
+  // validates each match's structure via verify()/required and falls
+  // through on a mismatch.
+  const fingerprint = grid.rows.slice(0, 60).flat().join(' ').toLowerCase();
   // Try every rule whose fingerprint matches, in declaration order.
   // The previous version used RULES.find(...) which short-circuited
   // on first fingerprint hit — but bank narrations routinely embed

@@ -280,8 +280,19 @@ export function BankStatementUploader({ manager }: Props) {
           // shape + the fingerprint window the detector scanned, so a
           // "should have matched but didn't" case is debuggable straight
           // from the browser console instead of guessing at deploy state.
-          const fpWindow = grid.rows.slice(0, 30).flat().join(' ').toLowerCase();
-          console.log(`[BankStatementUploader] no per-bank rule matched — cols=${grid.columnCount}, rows=${grid.rows.length}, headers=${JSON.stringify(grid.columnHeaders)}, fp-has-sbi=${fpWindow.includes('sbi.co.in') || fpWindow.includes('state bank')}`);
+          // Mirror detectAndMapBank's 60-row window and test every SBI
+          // marker — if all are false but cols===6 the layout is SBI yet
+          // the cover page didn't surface a fingerprint (widen further);
+          // if cols!==6 the grid itself differs from the test fixture.
+          const fpWindow = grid.rows.slice(0, 60).flat().join(' ').toLowerCase();
+          const sbiMarkers = {
+            email: fpWindow.includes('sbi.co.in'),
+            name: fpWindow.includes('state bank of india'),
+            ifsc: /\bsbin0\d{4,}\b/i.test(fpWindow),
+            relSummary: fpWindow.includes('relationship summary'),
+            myBranchInfo: /\bmy information\b.*\bbranch information\b/i.test(fpWindow),
+          };
+          console.log(`[BankStatementUploader] no per-bank rule matched — cols=${grid.columnCount}, rows=${grid.rows.length}, headers=${JSON.stringify(grid.columnHeaders)}, sbi-markers=${JSON.stringify(sbiMarkers)}`);
         }
         if (detected && grid) {
           console.log(`[BankStatementUploader] auto-detected ${detected.bank} — pre-filling wizard for review`);
