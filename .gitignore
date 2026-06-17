@@ -22,3 +22,7 @@ logs/
 # Bank payee labeling data (customer payee names — never commit)
 payees-review*.json
 payees-labeled*.json
+
+# ad-hoc ledger samples (customer data)
+shakti-sample.pdf
+*-sample.pdf
