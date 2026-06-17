@@ -223,6 +223,18 @@ function sanitizeObservations(raw: ScrutinyObservationRaw[]): ScrutinyObservatio
   return out;
 }
 
+// Codes whose `amount` is a VOLUME / BALANCE figure (turnover,
+// squared-off volume, a one-sided balance, a reconciliation gap) rather
+// than a quantified EXPOSURE (TDS / penalty / disallowance at risk).
+// Excluded from the headline "total flagged amount" so it reflects real
+// exposure — previously the Rs. 9 cr turnover line alone inflated it ~50x.
+const NON_EXPOSURE_CODES = new Set<string>([
+  'TURNOVER_AUDIT_FLAG',
+  'PATTERN_SQUARED_OFF',
+  'PATTERN_ONE_SIDED_CREDIT',
+  'RECON_BREAK',
+]);
+
 function toNumber(v: unknown): number {
   if (typeof v === 'number' && Number.isFinite(v)) return v;
   if (typeof v === 'string') {
@@ -2034,7 +2046,7 @@ router.post(
         if (o.severity === 'high') high += 1;
         else if (o.severity === 'warn') warn += 1;
         else info += 1;
-        if (typeof o.amount === 'number') flaggedAmount += Math.abs(o.amount);
+        if (typeof o.amount === 'number' && !NON_EXPOSURE_CODES.has(o.code)) flaggedAmount += Math.abs(o.amount);
       }
       ledgerScrutinyRepo.updateTotals(job.id, high, warn, info, flaggedAmount);
       // If the user paused/cancelled mid-flight, leave the row at
@@ -2281,7 +2293,7 @@ router.post('/:id/scrutinize', async (req: AuthRequest, res: Response) => {
       if (o.severity === 'high') high += 1;
       else if (o.severity === 'warn') warn += 1;
       else info += 1;
-      if (typeof o.amount === 'number') flaggedAmount += Math.abs(o.amount);
+      if (typeof o.amount === 'number' && !NON_EXPOSURE_CODES.has(o.code)) flaggedAmount += Math.abs(o.amount);
     }
     ledgerScrutinyRepo.updateTotals(job.id, high, warn, info, flaggedAmount);
     // Honor a mid-flight cancel: don't overwrite 'cancelled' with 'done'.
@@ -2494,7 +2506,7 @@ router.post('/:id/resume', async (req: AuthRequest, res: Response) => {
         if (o.severity === 'high') high += 1;
         else if (o.severity === 'warn') warn += 1;
         else info += 1;
-        if (typeof o.amount === 'number') flaggedAmount += Math.abs(o.amount);
+        if (typeof o.amount === 'number' && !NON_EXPOSURE_CODES.has(o.code)) flaggedAmount += Math.abs(o.amount);
       }
       ledgerScrutinyRepo.updateTotals(job.id, high, warn, info, flaggedAmount);
 

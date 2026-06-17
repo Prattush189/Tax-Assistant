@@ -99,7 +99,7 @@ const SALARY_HEAD_HINTS = /\b(salary|salaries|wages|payroll)\b/i;
 // the closing balance after transfer is zero, recon never ties on the columns
 // alone, and §194Q-on-customer logic uses Cr-side as a proxy that doesn't
 // apply to the SALES ledger itself.
-const NOMINAL_HEAD_HINTS = /\b(sales?|purchases?|profit|loss|trading|opening\s*stock|closing\s*stock|gross\s*profit|net\s*profit|round\s*off|rebate|discount|short.*excess|depreciation|freight\s*o\/?w|interest\s*(others|received|receivable))\b/i;
+const NOMINAL_HEAD_HINTS = /\b(sales?|purchases?|profit|loss|trading|opening\s*stock|closing\s*stock|stock|inventory|gross\s*profit|net\s*profit|round\s*off|rebate|discount|short.*excess|depreciation|freight\s*o\/?w|interest\s*(others|received|receivable))\b/i;
 const CAPITAL_HEAD_HINTS = /\b(capital|drawings|proprietor|partner|reserves)\b/i;
 
 export type DetAccountClass =
@@ -551,6 +551,19 @@ export function flagReconBreak(ledger: DetLedger): DetObservation[] {
     const computed = acct.opening + acct.totalDebit - acct.totalCredit;
     const gap = computed - acct.closing;
     if (Math.abs(gap) < RECON_MATERIALITY) continue;
+    // Suppress STRUCTURAL artifacts (the ~12 RECON_BREAK false positives).
+    // A genuine dropped mid-statement transaction leaves a gap unrelated
+    // to the account's own totals. But static carry-forward accounts
+    // (fixed assets, deposits, prior-year openings) and squared-off
+    // nominal heads produce a gap that EXACTLY equals the opening, the
+    // closing, or a column total — because the B/F opening line wasn't
+    // captured as a Dr/Cr row, or the closing shown is a column total.
+    // If |gap| matches one of those to the rupee, it's an extraction
+    // artifact, not a finding.
+    const absGap = Math.abs(gap);
+    const structural = [acct.opening, acct.closing, acct.totalDebit, acct.totalCredit]
+      .some((v) => v !== 0 && Math.abs(absGap - Math.abs(v)) <= RECON_MATERIALITY * 2);
+    if (structural) continue;
     out.push({
       accountName: acct.name,
       code: 'RECON_BREAK',
@@ -600,7 +613,7 @@ export function flagSquaredOff(ledger: DetLedger): DetObservation[] {
     out.push({
       accountName: null,
       code: 'PATTERN_SQUARED_OFF',
-      severity: 'info',
+      severity: 'warn',
       amount: totalVol,
       dateRef: null,
       message:
@@ -635,10 +648,14 @@ export function flagOneSidedCredits(ledger: DetLedger): DetObservation[] {
   if (candidates.length === 0) return out;
   candidates.sort((a, b) => b.cr - a.cr);
   for (const c of candidates) {
+    // Escalate by size: a large one-sided ("loan-shaped") credit is a
+    // material §269SS exposure, not a note. >= Rs. 50L -> high,
+    // >= Rs. 10L -> warn, else info.
+    const severity: DetSeverity = c.cr >= 50_00_000 ? 'high' : c.cr >= 10_00_000 ? 'warn' : 'info';
     out.push({
       accountName: c.name,
       code: 'PATTERN_ONE_SIDED_CREDIT',
-      severity: 'info',
+      severity,
       amount: c.cr,
       dateRef: null,
       message:
