@@ -64,6 +64,11 @@ interface Rule {
   subcategory?: string | null;
   /** If set, restricts the rule to rows of this direction. */
   direction?: 'credit' | 'debit';
+  /** Experimental rules are SKIPPED unless the caller passes
+   *  `includeExperimental: true`. Used to admin-gate new heuristics
+   *  (business-counterparty-by-direction, aggregator settlements) for
+   *  testing before rolling them out to all firms. */
+  experimental?: boolean;
   /** Human-readable label for debugging / smoke tests. */
   name: string;
 }
@@ -574,6 +579,7 @@ const RULES: Rule[] = [
   // merchant, so a credit is unambiguously Business Income.
   {
     name: 'payment-aggregator-settlement',
+    experimental: true,
     // Clearly-merchant settlement entities only. Generic "Paytm
     // Payments" is deliberately excluded — it also fronts consumer
     // wallet/UPI, so it would mislabel personal Paytm activity.
@@ -591,6 +597,7 @@ const RULES: Rule[] = [
   // is safe. Structural rules (charges/GST/EMI/etc.) above still win.
   {
     name: 'business-counterparty-by-direction',
+    experimental: true,
     pattern: /\b(?:traders?|trading\s?co(?:mpany)?|distributors?|lubricants?|petroleum|automobiles?|auto\s?parts?|auto\s?corp|motor\s?stores?|enterprises?|industries|eng(?:ineering)?\s?works?|& sons|pvt\.?\s?ltd|private\s?limited|\bllp\b|agencies)\b/i,
     category: (input) => (input.type === 'credit' ? 'Business Income' : 'Business Expenses'),
     subcategory: null,
@@ -947,9 +954,13 @@ export function extractNarrationFingerprint(narration: string | null): string {
  * going to AI for category still benefits from regex-derived
  * counterparty/reference and the AI doesn't have to redo that work.
  */
-export function classifyRow(input: ClassifierInput): ClassifierResult | null {
+export function classifyRow(
+  input: ClassifierInput,
+  opts?: { includeExperimental?: boolean },
+): ClassifierResult | null {
   const lower = input.narration.toLowerCase();
   for (const rule of RULES) {
+    if (rule.experimental && !opts?.includeExperimental) continue;
     if (rule.direction && rule.direction !== input.type) continue;
     if (!rule.pattern.test(lower)) continue;
     const cat = typeof rule.category === 'function' ? rule.category(input) : rule.category;
@@ -1042,9 +1053,10 @@ export interface ClassifyWithLearningResult {
 export function classifyWithLearning(
   input: ClassifierInput,
   learnedLookup: LearnedLookupFn,
+  opts?: { includeExperimental?: boolean },
 ): ClassifyWithLearningResult {
   const fingerprint = extractNarrationFingerprint(input.narration);
-  const anchorResult = classifyRow(input);
+  const anchorResult = classifyRow(input, opts);
 
   if (fingerprint.length > 0) {
     const learned = learnedLookup(fingerprint, input.type);

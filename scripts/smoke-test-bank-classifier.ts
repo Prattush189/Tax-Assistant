@@ -293,7 +293,9 @@ function run(): void {
   const failures: string[] = [];
 
   for (const c of CASES) {
-    const result = classifyRow({ narration: c.narration, type: c.type, amount: c.amount });
+    // Test with experimental rules ON — they're admin-gated in
+    // production but this suite validates the full rule set.
+    const result = classifyRow({ narration: c.narration, type: c.type, amount: c.amount }, { includeExperimental: true });
 
     // Category check.
     if (c.expect === null) {

@@ -1158,12 +1158,13 @@ router.post('/:id/reclassify', (req: AuthRequest, res: Response) => {
   if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
   const stmt = bankStatementRepo.findByIdForUser(req.params.id, req.user.id);
   if (!stmt) { res.status(404).json({ error: 'Statement not found' }); return; }
+  const reclassifyExperimental = userRepo.findById(req.user.id)?.role === 'admin';
   const result = bankTransactionRepo.reclassifyStatement(stmt.id, (row) => {
     const r = classifyRow({
       narration: row.narration ?? '',
       type: row.amount >= 0 ? 'credit' : 'debit',
       amount: Math.abs(row.amount),
-    });
+    }, { includeExperimental: reclassifyExperimental });
     if (!r) return null;
     // Apply the direction-mismatch flip / demote pass to the single
     // row by wrapping it in a one-element array (the validator
@@ -1710,6 +1711,7 @@ router.post(
             // memory layer captures the user's specific corrections.
             const visionLearnedLookup = (fp: string, dir: 'credit' | 'debit') =>
               learnedClassificationsRepo.lookupForClassify(quota.billingUserId, fp, dir);
+            const visionIncludeExperimental = userRepo.findById(quota.billingUserId)?.role === 'admin';
             const visionTierCounts = { learned: 0, anchor: 0, unclassified: 0, conflicts: 0 };
             const visionLearnedHitIds = new Set<string>();
             for (const row of extracted.transactions as VisionRow[]) {
@@ -1721,6 +1723,7 @@ router.post(
                   amount: typeof row.amount === 'number' ? row.amount : 0,
                 },
                 visionLearnedLookup,
+                { includeExperimental: visionIncludeExperimental },
               );
               visionTierCounts[out.tier]++;
               if (out.anchorConflict) visionTierCounts.conflicts++;
@@ -1840,6 +1843,10 @@ router.post(
         // never enter this block — zero added cost or risk for real users
         // while it's under test.
         const semanticOn = semanticTierEnabledFor(quota.billingUserId);
+        // Experimental classifier heuristics (business-counterparty-by-
+        // direction, aggregator settlements) are admin-gated while under
+        // test — computed once here, not per row.
+        const includeExperimental = userRepo.findById(quota.billingUserId)?.role === 'admin';
         let semIndex: EmbeddingRecord[] | null = null;
         let semVecs: Float32Array[] | null = null;
         if (semanticOn) {
@@ -1864,6 +1871,7 @@ router.post(
           const out = classifyWithLearning(
             { narration: row.narration, type: row.type as 'credit' | 'debit', amount: row.amount },
             learnedLookup,
+            { includeExperimental },
           );
           if (out.anchorConflict) {
             tierCounts.conflicts++;
