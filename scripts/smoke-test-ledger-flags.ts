@@ -13,7 +13,7 @@
  * mode means adding a fixture + (if needed) a code-path in the engine.
  */
 
-import { runAllFlags, formatINR, voucherKind, classifyAccount, mergeObservations, DETERMINISTIC_CODES, type DetObservation } from '../server/lib/ledgerScrutinyFlags.js';
+import { runAllFlags, formatINR, voucherKind, classifyAccount, mergeObservations, filterMisdirectedPersonalExpense, DETERMINISTIC_CODES, type DetObservation, type DetLedger } from '../server/lib/ledgerScrutinyFlags.js';
 import { formatPreRaisedFlags } from '../server/lib/ledgerScrutinyPrompt.js';
 import { CASES } from '../server/lib/__fixtures__/ledger-scrutiny-cases.js';
 
@@ -180,7 +180,7 @@ function detObs(over: Partial<DetObservation>): DetObservation {
 
 // Test 5 — DETERMINISTIC_CODES contains all engine codes.
 {
-  const required = ['CASH_40A3', 'CASH_269ST', 'CASH_269SS', 'CASH_269T', 'TDS_194Q_MISSING', 'TDS_194C_MISSING', 'TDS_194I_MISSING', 'TDS_194H_MISSING', 'TDS_194J_MISSING', 'TDS_192_VERIFY', 'RECON_BREAK', 'PATTERN_SQUARED_OFF', 'PATTERN_ONE_SIDED_CREDIT', 'TURNOVER_AUDIT_FLAG'];
+  const required = ['CASH_40A3', 'CASH_40A3_STRUCTURING', 'CASH_269ST', 'CASH_269SS', 'CASH_269T', 'TDS_194Q_MISSING', 'TDS_194C_MISSING', 'TDS_194I_MISSING', 'TDS_194H_MISSING', 'TDS_194J_MISSING', 'TDS_192_VERIFY', 'RECON_BREAK', 'PATTERN_SQUARED_OFF', 'PATTERN_ONE_SIDED_CREDIT', 'TURNOVER_AUDIT_FLAG', 'IT_GST_RECON'];
   for (const c of required) {
     if (!DETERMINISTIC_CODES.has(c)) mergeFails.push(`DETERMINISTIC_CODES missing ${c}`);
   }
@@ -211,6 +211,55 @@ if (mergeFails.length === 0) {
 } else {
   for (const f of mergeFails) console.log('  FAIL  ' + f);
   failed += mergeFails.length;
+}
+
+// ── PERSONAL_EXPENSE direction-guard tests ───────────────────────────
+// A genuine personal expense is an OUTFLOW. The LLM sometimes flags a
+// customer it sells to (e.g. a school / college) as personal drawings,
+// mislabelling collected revenue as a cost. filterMisdirectedPersonalExpense
+// drops those by checking the account direction.
+
+console.log('\n=== PERSONAL_EXPENSE direction-guard tests ===\n');
+
+const dirFails: string[] = [];
+
+const dirLedger: DetLedger = {
+  partyName: 'Test', gstin: null, periodFrom: '2025-04-01', periodTo: '2026-03-31',
+  accounts: [
+    // A school the assessee SELLS to: invoiced Rs. 1.27L, collected Rs. 1.27L.
+    { name: 'GREENFIELD PUBLIC SCHOOL', accountType: null, opening: 0, closing: 0, totalDebit: 1_27_000, totalCredit: 1_27_000, transactions: [] },
+    // A genuine personal outflow: only debits (paid out), no receipts in.
+    { name: 'PROPRIETOR SCHOOL FEES', accountType: null, opening: 0, closing: 1_20_000, totalDebit: 1_20_000, totalCredit: 0, transactions: [] },
+  ],
+};
+
+// Test 1 — PERSONAL_EXPENSE on the collected receivable is dropped.
+{
+  const llm = [{ accountName: 'GREENFIELD PUBLIC SCHOOL', code: 'PERSONAL_EXPENSE', severity: 'warn', message: 'school fees — reclassify to drawings', amount: 1_27_000, dateRef: null, suggestedAction: null }];
+  const { kept, dropped } = filterMisdirectedPersonalExpense(llm, dirLedger);
+  if (dropped.length !== 1) dirFails.push(`collected receivable PERSONAL_EXPENSE should be dropped: kept ${kept.length}, dropped ${dropped.length}`);
+}
+
+// Test 2 — PERSONAL_EXPENSE on a genuine one-way outflow is kept.
+{
+  const llm = [{ accountName: 'PROPRIETOR SCHOOL FEES', code: 'PERSONAL_EXPENSE', severity: 'warn', message: 'school fees paid for proprietor child', amount: 1_20_000, dateRef: null, suggestedAction: null }];
+  const { kept, dropped } = filterMisdirectedPersonalExpense(llm, dirLedger);
+  if (kept.length !== 1) dirFails.push(`genuine one-way personal outflow should be kept: kept ${kept.length}, dropped ${dropped.length}`);
+}
+
+// Test 3 — non-PERSONAL codes are never touched, even on a trading party.
+{
+  const llm = [{ accountName: 'GREENFIELD PUBLIC SCHOOL', code: 'INFO_DOCUMENTATION_REQUEST', severity: 'info', message: 'request bill', amount: null, dateRef: null, suggestedAction: null }];
+  const { kept } = filterMisdirectedPersonalExpense(llm, dirLedger);
+  if (kept.length !== 1) dirFails.push('non-personal code must pass through untouched');
+}
+
+if (dirFails.length === 0) {
+  console.log('  PASS  direction-guard tests (3/3)');
+  passed += 3;
+} else {
+  for (const f of dirFails) console.log('  FAIL  ' + f);
+  failed += dirFails.length;
 }
 
 // ── Punjab-shape ledger fixture (full integration check) ─────────────
@@ -371,6 +420,11 @@ if (!punjabFlags.some(f => f.code === 'PATTERN_ONE_SIDED_CREDIT')) {
 // Turnover audit: must trigger (turnover > Rs. 60 Cr).
 if (!punjabFlags.some(f => f.code === 'TURNOVER_AUDIT_FLAG')) {
   punjabFails.push('Turnover audit flag: missing');
+}
+
+// IT-vs-GST reconciliation: must trigger (Rs. 60 Cr tax-free sales).
+if (!punjabFlags.some(f => f.code === 'IT_GST_RECON')) {
+  punjabFails.push('IT-GST reconciliation flag: missing (tax-free sales present)');
 }
 
 // No spurious RECON_BREAKs on bank, sales, or capital accounts.

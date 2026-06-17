@@ -36,6 +36,7 @@ import {
 import {
   runAllFlags,
   mergeObservations,
+  filterMisdirectedPersonalExpense,
   DETERMINISTIC_CODES,
   type DetObservation,
   type DetLedger,
@@ -233,6 +234,9 @@ const NON_EXPOSURE_CODES = new Set<string>([
   'PATTERN_SQUARED_OFF',
   'PATTERN_ONE_SIDED_CREDIT',
   'RECON_BREAK',
+  // IT_GST_RECON's amount is the exempt-turnover VOLUME being reconciled,
+  // not a quantified at-risk exposure — keep it out of the headline total.
+  'IT_GST_RECON',
 ]);
 
 function toNumber(v: unknown): number {
@@ -1232,8 +1236,17 @@ async function runChunkedScrutiny(
       // reflects only sanitized findings — the un-sanitized model
       // output is no longer kept anywhere downstream.
       const sanitizedChunkObs = sanitizeObservations(r.observations);
-      console.log(`[ledger-scrutiny] scrutiny group ${idx + 1}/${groups.length} ✓ ${r.observations.length} → ${sanitizedChunkObs.length} observations after sanitize in ${Date.now() - t0}ms`);
-      allObservations.push(...sanitizedChunkObs);
+      // Direction guard: drop PERSONAL_EXPENSE flags on accounts that are
+      // actually trading parties (collected receivables / vendors). The
+      // LLM occasionally reads a customer it sells to — e.g. a school /
+      // college — as personal drawings, mischaracterising collected
+      // revenue as a cost. Uses the full extracted ledger for direction.
+      const { kept: directedChunkObs, dropped: misdirected } = filterMisdirectedPersonalExpense(sanitizedChunkObs, detLedger);
+      if (misdirected.length > 0) {
+        console.warn(`[scrutiny-filter] dropped ${misdirected.length} misdirected PERSONAL_EXPENSE (trading party / collected receivable): ${misdirected.map((o) => o.accountName).join(', ')}`);
+      }
+      console.log(`[ledger-scrutiny] scrutiny group ${idx + 1}/${groups.length} ✓ ${r.observations.length} → ${directedChunkObs.length} observations after sanitize in ${Date.now() - t0}ms`);
+      allObservations.push(...directedChunkObs);
       totalInput += r.inputTokens;
       totalOutput += r.outputTokens;
       modelUsed = r.modelUsed || modelUsed;
@@ -1241,8 +1254,8 @@ async function runChunkedScrutiny(
       // Persist this chunk's sanitized observations now so a Pause
       // click after this point preserves them. Map raw → DB shape
       // using the same logic as the final reconciliation below.
-      if (pauseControl && sanitizedChunkObs.length > 0) {
-        const inputs: LedgerObservationCreateInput[] = sanitizedChunkObs.map((o) => {
+      if (pauseControl && directedChunkObs.length > 0) {
+        const inputs: LedgerObservationCreateInput[] = directedChunkObs.map((o) => {
           const accountId = o.accountName ? accountIdByName.get(o.accountName.toLowerCase()) ?? null : null;
           return {
             accountId,

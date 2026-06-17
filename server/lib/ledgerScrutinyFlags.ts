@@ -344,16 +344,28 @@ export function flag194Q(ledger: DetLedger): DetObservation[] {
 
     const excess = purchases - THRESHOLD;
     const tdsAtRisk = Math.round(excess * 0.001);
+    // §194Q applies to the purchase value EXCLUSIVE of GST where GST is
+    // charged separately (CBDT Circular 13/2021, Q.6). The vendor-ledger
+    // Cr side is the GST-INCLUSIVE invoice value, so both the Rs. 50L
+    // threshold test and the 0.1% TDS computed here are UPPER BOUNDS. A
+    // vendor only marginally over Rs. 50L gross can fall below the
+    // threshold once GST (up to ~18%) is netted out — treat that band as
+    // "verify the GST-exclusive figure", not a firm default.
+    const GST_BORDERLINE_CAP = Math.round(THRESHOLD * 1.18); // ~59,00,000
+    const borderline = purchases <= GST_BORDERLINE_CAP;
+    const gstNote = borderline
+      ? `Note: this is the GST-INCLUSIVE ledger value — §194Q tests the purchase value net of GST (Circular 13/2021), and at up to ~18% GST the taxable purchases may fall BELOW Rs. 50 lakh. Confirm the GST-exclusive figure before raising any default.`
+      : `Figures are GST-inclusive; §194Q applies to the GST-exclusive purchase value (Circular 13/2021), so the Rs. ${formatINR(tdsAtRisk)} at-risk TDS is an upper bound — net out GST before finalising.`;
     out.push({
       accountName: acct.name,
       code: 'TDS_194Q_MISSING',
-      severity: 'warn',
+      severity: borderline ? 'info' : 'warn',
       amount: tdsAtRisk,
       dateRef: null,
       message:
         `Aggregate purchases from ${acct.name} are Rs. ${formatINR(purchases)} (exceeds the Rs. 50 lakh §194Q threshold by Rs. ${formatINR(excess)}). ` +
-        `Verify the assessee's preceding-FY turnover exceeded Rs. 10 Cr; if so, TDS @ 0.1% (Rs. ${formatINR(tdsAtRisk)}) should have been deducted, or 5% if vendor PAN is unavailable.`,
-      suggestedAction: 'Obtain TDS challan + Form 16A. If not deducted, flag §40(a)(ia) disallowance of 30% of the purchase value above Rs. 50 lakh.',
+        `Verify the assessee's preceding-FY turnover exceeded Rs. 10 Cr; if so, TDS @ 0.1% (Rs. ${formatINR(tdsAtRisk)}) should have been deducted, or 5% if vendor PAN is unavailable. ${gstNote}`,
+      suggestedAction: 'Obtain TDS challan + Form 16A and the GST-exclusive purchase value. If TDS not deducted on the taxable value above Rs. 50 lakh, flag §40(a)(ia) disallowance of 30% of that purchase value.',
       source: 'deterministic',
     });
   }
@@ -499,6 +511,17 @@ export function flag194J(ledger: DetLedger): DetObservation[] {
   return out;
 }
 
+// ── New-regime salary no-TDS ceiling (default regime, AY 2026-27) ────
+// The new regime is the DEFAULT for AY 2026-27. The §87A rebate (Finance
+// Act 2025) wipes out tax on total income up to Rs. 12,00,000 (max rebate
+// Rs. 60,000); a salaried employee also gets a Rs. 75,000 standard
+// deduction. So a salaried person on the default new regime bears NIL tax
+// — and therefore attracts NIL §192 TDS — up to Rs. 12,75,000 of gross
+// salary. Mirrors src/data/taxRules/fy2025-26.ts (verified Finance Act 2025).
+const NEW_REGIME_REBATE_CEILING = 12_00_000;
+const NEW_REGIME_STD_DEDUCTION = 75_000;
+const SALARY_NO_TDS_CEILING = NEW_REGIME_REBATE_CEILING + NEW_REGIME_STD_DEDUCTION; // 12,75,000
+
 // ── §192 salary verify ──────────────────────────────────────────────
 
 export function flag192(ledger: DetLedger): DetObservation[] {
@@ -507,18 +530,30 @@ export function flag192(ledger: DetLedger): DetObservation[] {
     if (classifyAccount(acct) !== 'salary_expense') continue;
     const total = Math.max(acct.totalCredit, acct.totalDebit);
     if (total <= 0) continue;
-    // Don't compute a TDS number — §192 depends on each employee's
-    // total income vs basic exemption + §87A rebate. Emit a verify-flag.
+    // Don't compute a TDS number — §192 depends on each employee's total
+    // income, regime election and §87A rebate. But we CAN frame the
+    // verify-flag precisely against the new-regime ceiling: under the
+    // default new regime no employee bears tax (so no §192 TDS) until
+    // gross salary crosses ~Rs. 12,75,000. If the WHOLE salary head sits
+    // below that ceiling, no single employee can have crossed it, so TDS
+    // is near-certainly NIL — say so instead of raising a generic alarm.
+    const belowCeiling = total <= SALARY_NO_TDS_CEILING;
+    const message = belowCeiling
+      ? `Salary expense of Rs. ${formatINR(total)} aggregated in ${acct.name}. ` +
+        `Under the default new regime, no §192 TDS arises until an employee's gross salary exceeds ~Rs. ${formatINR(SALARY_NO_TDS_CEILING)} ` +
+        `(Rs. ${formatINR(NEW_REGIME_REBATE_CEILING)} §87A rebate ceiling + Rs. ${formatINR(NEW_REGIME_STD_DEDUCTION)} standard deduction). ` +
+        `As the whole head is below that, TDS is likely NIL — confirm only that no single employee crossed it and none opted for the old regime.`
+      : `Salary expense of Rs. ${formatINR(total)} aggregated in ${acct.name}. ` +
+        `Verify §192 TDS per employee: under the default new regime TDS arises only where gross salary exceeds ~Rs. ${formatINR(SALARY_NO_TDS_CEILING)} ` +
+        `(Rs. ${formatINR(NEW_REGIME_REBATE_CEILING)} §87A rebate ceiling + Rs. ${formatINR(NEW_REGIME_STD_DEDUCTION)} standard deduction), so identify any employee above that and confirm deduction. Old-regime electors cross tax earlier.`;
     out.push({
       accountName: acct.name,
       code: 'TDS_192_VERIFY',
       severity: 'info',
       amount: null,
       dateRef: null,
-      message:
-        `Salary expense of Rs. ${formatINR(total)} aggregated in ${acct.name}. ` +
-        `Verify §192 TDS for each employee whose total income exceeds the basic exemption (after §87A rebate).`,
-      suggestedAction: 'Request Form 12BB / employee declarations; for any taxable employee, confirm TDS deducted and Form 16 issued.',
+      message,
+      suggestedAction: 'Request Form 12BB / regime elections; for any employee above the new-regime no-TDS ceiling (or any old-regime electors), confirm TDS deducted and Form 16 issued.',
       source: 'deterministic',
     });
   }
@@ -668,6 +703,133 @@ export function flagOneSidedCredits(ledger: DetLedger): DetObservation[] {
   return out;
 }
 
+// ── §269ST same-day structuring (split cash receipts) ───────────────
+// flag269ST (above) only sees the CASH account and catches a single row
+// >= Rs. 2L. §269ST(a) also aggregates ALL cash received from one person
+// in a day — so a Rs. 2.3L receipt split into a Rs. 1.2L + Rs. 1.1L pair on
+// the same day stays under the per-row radar but still breaches the limit.
+// We catch that here from the PARTY account (single counterparty), which
+// is precise: cash received from a party = C-voucher CREDITS. We only fire
+// when there are 2+ same-day receipts and no single one already >= 2L
+// (those are handled on the cash account) — i.e. genuinely structured.
+
+export function flag269STSameDay(ledger: DetLedger): DetObservation[] {
+  const out: DetObservation[] = [];
+  for (const acct of ledger.accounts) {
+    const cls = classifyAccount(acct);
+    if (cls === 'bank' || cls === 'cash' || cls === 'capital' || cls === 'nominal') continue;
+    const byDate = new Map<string, { total: number; count: number; max: number }>();
+    for (const tx of acct.transactions) {
+      if (voucherKind(tx.voucher) !== 'C') continue;
+      if (tx.credit <= 0) continue; // cash received from the party
+      const date = tx.date || 'undated';
+      const e = byDate.get(date) ?? { total: 0, count: 0, max: 0 };
+      e.total += tx.credit;
+      e.count += 1;
+      e.max = Math.max(e.max, tx.credit);
+      byDate.set(date, e);
+    }
+    for (const [date, e] of byDate) {
+      if (date === 'undated') continue;       // can't assert "same day" without a date
+      if (e.total < 2_00_000) continue;
+      if (e.count < 2) continue;              // a single receipt is the cash-account check's job
+      if (e.max >= 2_00_000) continue;        // a single >= 2L row isn't "structured"
+      out.push({
+        accountName: acct.name,
+        code: 'CASH_269ST',
+        severity: 'high',
+        amount: e.total,
+        dateRef: date,
+        message:
+          `${e.count} cash receipts from ${acct.name} on ${date} aggregate Rs. ${formatINR(e.total)} (each below Rs. 2L individually). ` +
+          `§269ST aggregates same-day cash received from one person, so the Rs. 2,00,000 limit is breached despite the per-voucher split; penalty u/s 271DA = 100% of the amount received.`,
+        suggestedAction: 'Confirm these are receipts from a single person on one day; if so, §269ST applies regardless of how the receipt was split across vouchers.',
+        source: 'deterministic',
+      });
+    }
+  }
+  return out;
+}
+
+// ── §40A(3) structuring (near-limit cash payments) ──────────────────
+// flag40A3 catches a single-day cash payment > Rs. 10,000. The evasion
+// pattern is the opposite: split one liability into a run of cash payments
+// each just UNDER Rs. 10,000. We flag repeated near-limit (Rs. 8,000 – Rs.
+// 10,000) cash payments to ONE payee as a structuring marker. Conservative:
+// requires 3+ such payments, and skips transporters (whose limit is Rs.
+// 35,000, so the Rs. 8-10K band isn't "near-limit" for them).
+
+const STRUCTURING_NEAR_LIMIT_LOW = 8_000;
+const STRUCTURING_MIN_COUNT = 3;
+
+export function flag40A3Structuring(ledger: DetLedger): DetObservation[] {
+  const out: DetObservation[] = [];
+  for (const acct of ledger.accounts) {
+    const cls = classifyAccount(acct);
+    if (cls === 'bank' || cls === 'cash' || cls === 'capital' || cls === 'nominal') continue;
+    if (cls === 'transport_expense') continue;
+    const nearLimit: { amt: number; date: string | null }[] = [];
+    for (const tx of acct.transactions) {
+      if (voucherKind(tx.voucher) !== 'C') continue;
+      const amt = Math.max(tx.debit, tx.credit);
+      if (amt > STRUCTURING_NEAR_LIMIT_LOW && amt <= 10_000) nearLimit.push({ amt, date: tx.date });
+    }
+    if (nearLimit.length < STRUCTURING_MIN_COUNT) continue;
+    const total = nearLimit.reduce((s, x) => s + x.amt, 0);
+    const sample = nearLimit.slice(0, 5).map((x) => `Rs. ${formatINR(x.amt)}`).join(', ');
+    out.push({
+      accountName: acct.name,
+      code: 'CASH_40A3_STRUCTURING',
+      severity: 'warn',
+      amount: total,
+      dateRef: nearLimit[0].date,
+      message:
+        `${nearLimit.length} cash payments to ${acct.name} sit just below the Rs. 10,000 §40A(3) limit (${sample}${nearLimit.length > 5 ? ', …' : ''}), aggregating Rs. ${formatINR(total)}. ` +
+        `Repeated near-limit cash payments to one payee are a structuring marker — if a single liability was split across vouchers to stay under the limit, the whole aggregate is disallowable u/s 40A(3).`,
+      suggestedAction: 'Check whether these relate to one bill / liability split across vouchers; if so, disallow the aggregate. Otherwise document the distinct purchases and payment dates.',
+      source: 'deterministic',
+    });
+  }
+  return out;
+}
+
+// ── Income-tax vs GST turnover reconciliation ───────────────────────
+// Surfaces the books turnover split into taxable vs exempt / tax-free so a
+// CA can tie it to the GST returns (GSTR-1 / 3B and the GSTR-9 / 9C). We
+// can't pull the GST figures from the ledger, so this is a reconciliation
+// PROMPT, not a computed gap. To avoid duplicating TURNOVER_AUDIT_FLAG's
+// generic turnover headline, we fire ONLY when there's a material exempt
+// slice to validate (the genuinely useful, error-prone classification).
+
+export function flagITGSTRecon(ledger: DetLedger): DetObservation[] {
+  let totalSales = 0;
+  let exemptSales = 0;
+  for (const acct of ledger.accounts) {
+    if (!/\b(sales?|turnover)\b/i.test(acct.name)) continue;
+    if (/return/i.test(acct.name)) continue;
+    const c = acct.totalCredit;
+    totalSales += c;
+    if (/\b(tax.?free|exempt|nil.?rated|0\s*%|unregd|unregistered)\b/i.test(acct.name)) exemptSales += c;
+  }
+  const out: DetObservation[] = [];
+  if (totalSales < 2_00_00_000) return out;       // below GSTR-9 scale — not worth a note
+  if (exemptSales < 1_00_00_000) return out;       // no material exempt slice to validate
+  const taxable = totalSales - exemptSales;
+  out.push({
+    accountName: null,
+    code: 'IT_GST_RECON',
+    severity: 'info',
+    amount: exemptSales,
+    dateRef: null,
+    message:
+      `Books turnover Rs. ${formatINR(totalSales)} splits into taxable Rs. ${formatINR(taxable)} and exempt / tax-free Rs. ${formatINR(exemptSales)}. ` +
+      `Reconcile this against GST turnover (GSTR-1 / 3B and the annual GSTR-9 / 9C) and confirm the exempt slice is correctly classified (e.g. unbranded agricultural produce) — a material income-tax-vs-GST turnover gap, or a wrongly-claimed exemption, is a common scrutiny trigger.`,
+    suggestedAction: 'Tie books turnover to GSTR-9 Table 5; obtain the exemption basis (HSN / notification) for the tax-free sales.',
+    source: 'deterministic',
+  });
+  return out;
+}
+
 // ── §44AB / GST turnover summary ────────────────────────────────────
 
 export function flagTurnoverThresholds(ledger: DetLedger): DetObservation[] {
@@ -680,24 +842,55 @@ export function flagTurnoverThresholds(ledger: DetLedger): DetObservation[] {
     salesTotal += acct.totalCredit;
   }
   const out: DetObservation[] = [];
-  if (salesTotal >= 1_00_00_000) {
-    const audit44AB = salesTotal >= 10_00_00_000;
-    const gstr9c = salesTotal >= 5_00_00_000;
-    const headlines: string[] = [];
-    if (audit44AB) headlines.push('§44AB tax audit applies (turnover ≥ Rs. 10 Cr or cash-receipt-condition test)');
-    else if (salesTotal >= 1_00_00_000) headlines.push('§44AB tax audit may apply (verify cash-receipt and cash-payment conditions vs Rs. 1 Cr / Rs. 10 Cr thresholds)');
-    if (gstr9c) headlines.push('GSTR-9C reconciliation required (turnover ≥ Rs. 5 Cr)');
-    out.push({
-      accountName: null,
-      code: 'TURNOVER_AUDIT_FLAG',
-      severity: 'info',
-      amount: salesTotal,
-      dateRef: null,
-      message: `Aggregate sales-side credits Rs. ${formatINR(salesTotal)}. ${headlines.join('. ')}.`,
-      suggestedAction: 'Confirm filings: Form 3CD (if §44AB) and GSTR-9 / 9C (if applicable) for AY 2026-27.',
-      source: 'deterministic',
-    });
+  if (salesTotal < 1_00_00_000) return out;
+
+  // §44AB for a business is a TEST, not a flat Rs. 10 Cr line. The audit
+  // threshold is Rs. 1 Cr, but it RISES to Rs. 10 Cr when BOTH aggregate
+  // cash receipts and aggregate cash payments are each <= 5% of their
+  // respective totals (first proviso to §44AB(a), inserted by Finance Act
+  // 2020 and widened to 5% by Finance Act 2021). So between Rs. 1 Cr and
+  // Rs. 10 Cr, audit applies UNLESS the 5% digital-mode condition is met.
+  //
+  // We estimate the cash share from cash- vs bank-account turnover. This is
+  // an APPROXIMATION — bank totals are inflated by contra / sweep transfers,
+  // which understates the cash %. So we frame it as "verify", never as a
+  // determination, and we lean towards "audit applies unless..." (the safe
+  // direction) rather than telling the assessee audit does NOT apply.
+  let cashReceipts = 0, cashPayments = 0, bankReceipts = 0, bankPayments = 0;
+  for (const acct of ledger.accounts) {
+    const cls = classifyAccount(acct);
+    if (cls === 'cash') { cashReceipts += acct.totalDebit; cashPayments += acct.totalCredit; }
+    else if (cls === 'bank') { bankReceipts += acct.totalDebit; bankPayments += acct.totalCredit; }
   }
+  const recvDenom = cashReceipts + bankReceipts;
+  const payDenom = cashPayments + bankPayments;
+  const cashRecvPct = recvDenom > 0 ? (cashReceipts / recvDenom) * 100 : null;
+  const cashPayPct = payDenom > 0 ? (cashPayments / payDenom) * 100 : null;
+  const cashShareTxt = (cashRecvPct !== null && cashPayPct !== null)
+    ? ` Books suggest cash receipts ~${cashRecvPct.toFixed(1)}% and cash payments ~${cashPayPct.toFixed(1)}% of the cash+bank totals (rough estimate — bank figures include transfers).`
+    : '';
+
+  const headlines: string[] = [];
+  if (salesTotal > 10_00_00_000) {
+    headlines.push('§44AB tax audit applies — turnover exceeds Rs. 10 Cr (the 5% cash-mode relief caps at Rs. 10 Cr)');
+  } else {
+    headlines.push(
+      '§44AB tax audit applies because turnover exceeds Rs. 1 Cr, UNLESS cash receipts AND cash payments are each <= 5% of their respective totals (then the audit threshold rises to Rs. 10 Cr).' + cashShareTxt,
+    );
+  }
+  if (salesTotal >= 5_00_00_000) headlines.push('GSTR-9C reconciliation required (turnover >= Rs. 5 Cr)');
+  else if (salesTotal >= 2_00_00_000) headlines.push('GSTR-9 annual return required (turnover >= Rs. 2 Cr)');
+
+  out.push({
+    accountName: null,
+    code: 'TURNOVER_AUDIT_FLAG',
+    severity: 'info',
+    amount: salesTotal,
+    dateRef: null,
+    message: `Aggregate sales-side credits Rs. ${formatINR(salesTotal)}. ${headlines.join('. ')}.`,
+    suggestedAction: 'Confirm filings for AY 2026-27: Form 3CD (if §44AB), GSTR-9 / 9C (if applicable). Also confirm the presumptive-scheme position (§44AD / 44ADA) if opted, and whether the 5% cash-mode relief is actually met from the cash-flow.',
+    source: 'deterministic',
+  });
   return out;
 }
 
@@ -723,10 +916,13 @@ export function runAllFlags(ledger: DetLedger, opts?: RunDetFlagsOptions): DetOb
   merge(flag194H(ledger));
   merge(flag194J(ledger));
   merge(flag192(ledger));
+  merge(flag269STSameDay(ledger));
+  merge(flag40A3Structuring(ledger));
   merge(flagReconBreak(ledger));
   merge(flagSquaredOff(ledger));
   merge(flagOneSidedCredits(ledger));
   merge(flagTurnoverThresholds(ledger));
+  merge(flagITGSTRecon(ledger));
   return all;
 }
 
@@ -746,11 +942,67 @@ export const DETERMINISTIC_CODES: ReadonlySet<string> = new Set([
   'TDS_194H_MISSING',
   'TDS_194J_MISSING',
   'TDS_192_VERIFY',
+  'CASH_40A3_STRUCTURING',
   'RECON_BREAK',
   'PATTERN_SQUARED_OFF',
   'PATTERN_ONE_SIDED_CREDIT',
   'TURNOVER_AUDIT_FLAG',
+  'IT_GST_RECON',
 ]);
+
+// ── Direction guard for LLM PERSONAL_EXPENSE flags ──────────────────
+// A genuine PERSONAL_EXPENSE is an OUTFLOW: the business paying out a
+// personal cost (a debit to an expense head funded by bank/cash). The LLM
+// sometimes flags an account whose head matches a "personal" keyword —
+// e.g. a SCHOOL or COLLEGE the assessee actually SELLS to — as personal
+// drawings. But a debtor that was invoiced and has paid in is collected
+// REVENUE, not a cost: flagging it as a personal expense mischaracterises
+// turnover as drawings (the Punjab report mislabelled ~Rs. 1.27 lakh of
+// collected receivables this way). This guard checks the DIRECTION of the
+// account before trusting the flag's framing.
+
+const PERSONAL_EXPENSE_CODE = /personal|drawings/i;
+
+/** True when the account is a trading party (a collected receivable / a
+ *  vendor), i.e. an inbound or two-sided relationship — NOT an outbound
+ *  personal cost. Used to drop misdirected PERSONAL_EXPENSE flags. */
+export function isTradingPartyNotPersonal(acct: DetAccount): boolean {
+  const cls = classifyAccount(acct);
+  if (cls === 'vendor' || cls === 'customer') return true;
+  // Two-sided, materially-collected relationship: money was both charged
+  // out (debits = invoices) AND received back (credits = receipts). A true
+  // personal-expense outflow has little or no inbound receipt side, so a
+  // substantial credit side comparable to the debit side means this is a
+  // debtor paying in, not the business paying out.
+  const lo = Math.min(acct.totalDebit, acct.totalCredit);
+  const hi = Math.max(acct.totalDebit, acct.totalCredit);
+  if (lo >= 50_000 && hi > 0 && lo >= hi * 0.5) return true;
+  return false;
+}
+
+/** Drop LLM PERSONAL_EXPENSE / DRAWINGS observations whose named account
+ *  is actually a trading party (see isTradingPartyNotPersonal). Returns
+ *  the kept observations plus the dropped ones (for logging). */
+export function filterMisdirectedPersonalExpense<T extends { accountName: string | null; code: string }>(
+  obs: T[],
+  ledger: DetLedger,
+): { kept: T[]; dropped: T[] } {
+  const byName = new Map<string, DetAccount>();
+  for (const a of ledger.accounts) byName.set(a.name.toLowerCase(), a);
+  const kept: T[] = [];
+  const dropped: T[] = [];
+  for (const o of obs) {
+    if (PERSONAL_EXPENSE_CODE.test(o.code ?? '') && o.accountName) {
+      const acct = byName.get(o.accountName.toLowerCase());
+      if (acct && isTradingPartyNotPersonal(acct)) {
+        dropped.push(o);
+        continue;
+      }
+    }
+    kept.push(o);
+  }
+  return { kept, dropped };
+}
 
 // ── Merge: deterministic + LLM observations ─────────────────────────
 // Merge rules:

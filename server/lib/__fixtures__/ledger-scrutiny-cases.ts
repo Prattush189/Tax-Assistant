@@ -427,4 +427,149 @@ export const CASES: TestCase[] = [
     ]),
     expect: { mustContain: ['CASH_269ST'] },
   },
+
+  // ── §269ST same-day structuring (Wave 3) ─────────────────────────
+  {
+    name: '§269ST structuring: Rs. 1.2L + Rs. 1.1L cash from one party SAME day — must trigger CASH_269ST',
+    ledger: ledger([
+      {
+        name: 'MEGA RETAIL BUYER',
+        accountType: null,
+        opening: 0, closing: 0,
+        totalDebit: 2_30_000, totalCredit: 2_30_000,
+        transactions: [
+          { date: '2025-07-10', narration: 'Cash recd', voucher: 'C', debit: 0, credit: 1_20_000, balance: null },
+          { date: '2025-07-10', narration: 'Cash recd', voucher: 'C', debit: 0, credit: 1_10_000, balance: null },
+        ],
+      },
+    ]),
+    expect: { mustContain: ['CASH_269ST'] },
+  },
+
+  {
+    name: '§269ST structuring: two sub-2L cash receipts on DIFFERENT days — must NOT trigger',
+    ledger: ledger([
+      {
+        name: 'SLOW PAYER ENTERPRISE',
+        accountType: null,
+        opening: 0, closing: 0,
+        totalDebit: 2_30_000, totalCredit: 2_30_000,
+        transactions: [
+          { date: '2025-07-10', narration: 'Cash recd', voucher: 'C', debit: 0, credit: 1_20_000, balance: null },
+          { date: '2025-09-22', narration: 'Cash recd', voucher: 'C', debit: 0, credit: 1_10_000, balance: null },
+        ],
+      },
+    ]),
+    expect: { mustNotContain: ['CASH_269ST'] },
+  },
+
+  // ── §40A(3) structuring (Wave 3) ─────────────────────────────────
+  {
+    name: '§40A(3) structuring: 3 cash payments of Rs. 9,500 to one payee — must trigger CASH_40A3_STRUCTURING, not CASH_40A3',
+    ledger: ledger([
+      vendorAcct('SPLIT PAYMENTS TRADER', {
+        totalCredit: 28_500, totalDebit: 28_500, closing: 0,
+        txns: [
+          { date: '2025-05-01', narration: 'Cash', voucher: 'C', debit: 9_500, credit: 0, balance: null },
+          { date: '2025-05-08', narration: 'Cash', voucher: 'C', debit: 9_500, credit: 0, balance: null },
+          { date: '2025-05-15', narration: 'Cash', voucher: 'C', debit: 9_500, credit: 0, balance: null },
+        ],
+      }),
+    ]),
+    expect: { mustContain: ['CASH_40A3_STRUCTURING'], mustNotContain: ['CASH_40A3'] },
+  },
+
+  {
+    name: '§40A(3) structuring: two near-limit cash payments — must NOT trigger (below the 3-payment floor)',
+    ledger: ledger([
+      vendorAcct('OCCASIONAL CASH TRADER', {
+        totalCredit: 19_000, totalDebit: 19_000, closing: 0,
+        txns: [
+          { date: '2025-05-01', narration: 'Cash', voucher: 'C', debit: 9_500, credit: 0, balance: null },
+          { date: '2025-06-01', narration: 'Cash', voucher: 'C', debit: 9_500, credit: 0, balance: null },
+        ],
+      }),
+    ]),
+    expect: { mustNotContain: ['CASH_40A3_STRUCTURING'] },
+  },
+
+  // ── IT-vs-GST turnover reconciliation (Wave 3) ───────────────────
+  {
+    name: 'IT_GST_RECON: Rs. 3 Cr taxable + Rs. 2 Cr tax-free sales — must flag exemption reconciliation',
+    ledger: ledger([
+      { name: 'SALES TAXABLE @5%', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 3_00_00_000, transactions: [] },
+      { name: 'SALES TAX-FREE', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 2_00_00_000, transactions: [] },
+    ]),
+    expect: { mustContain: ['IT_GST_RECON', 'TURNOVER_AUDIT_FLAG'] },
+  },
+
+  {
+    name: 'IT_GST_RECON: all-taxable Rs. 5 Cr sales (no exempt slice) — must NOT add a second turnover note',
+    ledger: ledger([
+      { name: 'SALES TAXABLE @18%', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 5_00_00_000, transactions: [] },
+    ]),
+    expect: { mustNotContain: ['IT_GST_RECON'] },
+  },
+
+  // ── §192 new-regime ceiling (Wave 2) ─────────────────────────────
+  {
+    name: '§192: salary head Rs. 13.8L — verify flag cites the Rs. 12.75L new-regime no-TDS ceiling',
+    ledger: ledger([
+      { name: 'SALARIES', accountType: null, opening: 0, closing: 0, totalDebit: 40_000, totalCredit: 13_80_000, transactions: [] },
+    ]),
+    expect: {
+      mustContain: ['TDS_192_VERIFY'],
+      assertions: [
+        (obs) => {
+          const o = obs.find(x => x.code === 'TDS_192_VERIFY');
+          if (!o) return 'missing §192 verify flag';
+          if (!/12,75,000/.test(o.message)) return 'message should cite the Rs. 12,75,000 new-regime no-TDS ceiling';
+          return null;
+        },
+      ],
+    },
+  },
+
+  // ── §44AB as a test (Wave 2) ─────────────────────────────────────
+  {
+    name: '§44AB: turnover Rs. 3 Cr — must frame the Rs.1Cr/Rs.10Cr 5% cash-mode test',
+    ledger: ledger([
+      { name: 'SALES', accountType: null, opening: 0, closing: 0, totalDebit: 0, totalCredit: 3_00_00_000, transactions: [] },
+    ]),
+    expect: {
+      mustContain: ['TURNOVER_AUDIT_FLAG'],
+      assertions: [
+        (obs) => {
+          const o = obs.find(x => x.code === 'TURNOVER_AUDIT_FLAG');
+          if (!o) return 'missing turnover flag';
+          if (!/Rs\. 10 Cr/.test(o.message)) return 'should mention the Rs. 10 Cr relief threshold';
+          if (!/5%/.test(o.message)) return 'should mention the 5% cash-mode test';
+          return null;
+        },
+      ],
+    },
+  },
+
+  // ── §194Q GST-exclusion borderline (Wave 2) ──────────────────────
+  {
+    name: '§194Q: vendor at Rs. 55 lakh (GST-inclusive) — must downgrade to info with GST caveat',
+    ledger: ledger([
+      // Cr (purchases) > Dr (payments) so it classifies as a vendor; Rs. 55L
+      // gross sits in the 50L–59L band where ~18% GST could pull the taxable
+      // value below the threshold.
+      vendorAcct('BORDERLINE GST TRADERS', { totalCredit: 55_00_000, totalDebit: 50_00_000 }),
+    ]),
+    expect: {
+      mustContain: ['TDS_194Q_MISSING'],
+      assertions: [
+        (obs) => {
+          const o = obs.find(x => x.code === 'TDS_194Q_MISSING');
+          if (!o) return 'missing §194Q observation';
+          if (o.severity !== 'info') return `borderline vendor should be info (GST may push it below 50L), got ${o.severity}`;
+          if (!/GST/i.test(o.message)) return 'message should carry the GST-exclusion caveat';
+          return null;
+        },
+      ],
+    },
+  },
 ];
