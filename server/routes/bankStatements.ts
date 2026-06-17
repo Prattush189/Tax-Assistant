@@ -1942,8 +1942,18 @@ router.post(
         // learned + semantic tiers refine these as the user corrects.
         // Off by default, reversible — the goal is to MEASURE before
         // committing to dropping Gemini.
-        const localOnly = process.env.LOCAL_ONLY === '1'
-          && userRepo.findById(quota.billingUserId)?.role === 'admin';
+        // LOCAL_ONLY=1 turns the feature on. It then applies to admin
+        // firms AND any billing user whose email (or id) is listed in
+        // LOCAL_ONLY_USERS (comma-separated) — so you can enable it for
+        // a specific test user without making them an admin. Edit .env
+        // and restart to change the list.
+        const localOnlyUser = userRepo.findById(quota.billingUserId);
+        const localOnlyAllow = (process.env.LOCAL_ONLY_USERS ?? '')
+          .toLowerCase().split(',').map((s) => s.trim()).filter(Boolean);
+        const localOnly = process.env.LOCAL_ONLY === '1' && !!localOnlyUser
+          && (localOnlyUser.role === 'admin'
+            || localOnlyAllow.includes((localOnlyUser.email ?? '').toLowerCase())
+            || localOnlyAllow.includes(localOnlyUser.id.toLowerCase()));
         if (localOnly && ambiguous.length > 0) {
           const filled = ambiguous.map(r => ({
             index: r.index,
