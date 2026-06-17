@@ -1,7 +1,7 @@
 // server/routes/chat.ts
 import { Router, Response } from 'express';
 import { GEMINI_T1_INPUT_COST, GEMINI_T1_OUTPUT_COST, GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST, GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, GEMINI_API_KEYS } from '../lib/gemini.js';
-import { selectTier, confirmUsed, getActiveKeyIndex } from '../lib/searchQuota.js';
+import { confirmUsed, getActiveKeyIndex } from '../lib/searchQuota.js';
 import { streamGeminiChat } from '../lib/geminiChat.js';
 import { referenceUrlsBlock } from '../lib/officialReferenceUrls.js';
 import { chatRepo } from '../db/repositories/chatRepo.js';
@@ -244,8 +244,12 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
         let outputTok = 0;
 
         // ── Fast-mode cascade ─────────────────────────────────────────────
-        // Primary  : Gemini 2.5 Flash-Lite (2.5 daily pool)
-        // Fallback : Gemini 3.1 Flash-Lite (3.x monthly pool)
+        // Primary  : Gemini 3.1 Flash-Lite (3.x monthly pool) — markedly more
+        //            accurate on current-year facts (new-regime slabs, FA-2025
+        //            changes like the 48-month ITR-U limit) than 2.5 in the
+        //            chat-QA bakeoff; see scripts/model-bakeoff-chat.mts.
+        // Fallback : Gemini 2.5 Flash-Lite (2.5 daily pool) — large independent
+        //            daily search pool; backstops 3.1 when it's busy/over-quota.
         // Fallback only runs if the primary emitted zero text — we don't
         // restart the stream after partial output (would produce duplicated
         // responses on the client).
@@ -258,13 +262,13 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
         let primaryFailedMidStream = false;
         const callStartMs = Date.now();
 
-        // ── FAST: Gemini 2.5 Flash-Lite primary ──
+        // ── FAST: Gemini 3.1 Flash-Lite primary ──
         const activeIdx = getActiveKeyIndex();
         const fastApiKey = GEMINI_API_KEYS[activeIdx] ?? '';
         if (fastApiKey) {
-          usedModel = GEMINI_CHAT_MODEL_T2;
+          usedModel = GEMINI_CHAT_MODEL_T1;
           try {
-            for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_T2, SYSTEM_INSTRUCTION, historyPlain, userContent, fastApiKey, MAX_TOKENS, searchEnabled, true)) {
+            for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_T1, SYSTEM_INSTRUCTION, historyPlain, userContent, fastApiKey, MAX_TOKENS, searchEnabled, true)) {
               if (chunk.text) { fullResponse += chunk.text; sse.writeText(chunk.text); }
               if (chunk.done) {
                 inputTok = chunk.inputTokens ?? 0;
@@ -272,7 +276,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
                 stopReason = chunk.finishReason === 'MAX_TOKENS' ? 'max_tokens' : 'end_turn';
               }
             }
-            confirmUsed('gemini-2.5', activeIdx, searchEnabled);
+            confirmUsed('gemini-3', activeIdx, searchEnabled);
           } catch (err) {
             // If we already started streaming text, don't run the fallback —
             // that would concatenate a second response into the same bubble.
@@ -282,7 +286,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
               stopReason = 'network_error';
               console.warn('[chat] Fast primary failed after partial output; keeping partial response:', (err as Error).message?.slice(0, 120));
             } else {
-              console.warn('[chat] Fast: Gemini 2.5 Flash-Lite failed, falling back to 3.1 Flash-Lite:', (err as Error).message?.slice(0, 120));
+              console.warn('[chat] Fast: Gemini 3.1 Flash-Lite failed, falling back to 2.5 Flash-Lite:', (err as Error).message?.slice(0, 120));
               usedModel = '';
               // Tell the client we're switching to backup so it can show a
               // transient "Server busy, retrying…" notice. Doesn't disturb
@@ -292,14 +296,15 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
           }
         }
 
-        // Gemini 3.1 Flash-Lite fallback for fast (only when primary returned nothing)
+        // Gemini 2.5 Flash-Lite fallback (only when primary returned nothing).
+        // Reuses the active key — 2.5 draws on its own large daily search pool,
+        // independent of the 3.1 monthly pool the primary just failed on.
         if (!fullResponse && !primaryFailedMidStream) {
-          const selection = selectTier(searchEnabled);
-          const fbApiKey = selection.keyIndex >= 0 ? GEMINI_API_KEYS[selection.keyIndex] ?? '' : '';
+          const fbApiKey = GEMINI_API_KEYS[activeIdx] ?? '';
           if (fbApiKey) {
-            usedModel = GEMINI_CHAT_MODEL_T1;
+            usedModel = GEMINI_CHAT_MODEL_T2;
             try {
-              for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_T1, SYSTEM_INSTRUCTION, historyPlain, userContent, fbApiKey, MAX_TOKENS, searchEnabled, true)) {
+              for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_T2, SYSTEM_INSTRUCTION, historyPlain, userContent, fbApiKey, MAX_TOKENS, searchEnabled, true)) {
                 if (chunk.text) { fullResponse += chunk.text; sse.writeText(chunk.text); }
                 if (chunk.done) {
                   inputTok = chunk.inputTokens ?? 0;
@@ -307,7 +312,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
                   stopReason = chunk.finishReason === 'MAX_TOKENS' ? 'max_tokens' : 'end_turn';
                 }
               }
-              confirmUsed('gemini-3', selection.keyIndex, searchEnabled);
+              confirmUsed('gemini-2.5', activeIdx, searchEnabled);
             } catch (err) {
               console.warn('[chat] Fast fallback also failed:', (err as Error).message?.slice(0, 120));
               if (!fullResponse) { usedModel = ''; }
