@@ -7,7 +7,6 @@ import type { BankStatementAnalyzeProgress } from '../../services/api';
 import { cn } from '../../lib/utils';
 import { ColumnMappingWizard } from '../shared/ColumnMappingWizard';
 import { ScannedPdfConfirmDialog, PdfTooLargeDialog } from '../shared/ScannedPdfConfirmDialog';
-import { countPdfPagesClient } from '../../lib/pdfText';
 import { excelToRows } from '../../lib/excelToRows';
 import {
   applyMapping,
@@ -392,18 +391,18 @@ export function BankStatementUploader({ manager }: Props) {
           ? grid.rows.slice(0, 30).flat().join(' ').toLowerCase()
           : '';
         const matchedBank = KNOWN_VISION_ONLY_BANKS.find(b => fingerprint.includes(b));
-        if (matchedBank) {
-          console.log(`[BankStatementUploader] detected ${matchedBank} — routing to vision (known-difficult layout)`);
-          const pageCount = await countPdfPagesClient(file) ?? 0;
+        // A bank name can appear INSIDE a transaction narration — e.g. a
+        // ledger whose receipt lines read "Dr AXIS BANK C/A". That must
+        // NOT hijack a perfectly mappable digital PDF into the vision
+        // path. Only route a "known-difficult" bank to vision when we
+        // DON'T already have a clean dated table to map. "Real table" =
+        // ≥3 columns and several rows carrying a parseable date.
+        const dateLike = /\b\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}\b/;
+        const datedRows = grid ? grid.rows.filter(r => r.some(c => dateLike.test(c ?? ''))).length : 0;
+        const looksLikeRealTable = !!grid && (grid.columnCount ?? 0) >= 3 && datedRows >= 5;
+        if (matchedBank && !looksLikeRealTable) {
+          console.log(`[BankStatementUploader] detected ${matchedBank} — routing to vision (no clean table to map)`);
           setIsReadingPdf(false);
-          if (pageCount > 100) {
-            setPdfTooLarge({ file, pageCount });
-            return;
-          }
-          // 2026-06: scanned PDFs now route directly to the OCR
-          // pipeline (PaddleOCR + cheap text-LLM) — no token cost
-          // surprise, so no confirm dialog needed. The user already
-          // chose to upload this file; we just process it.
           void analyzeRawFile(file);
           return;
         }
@@ -426,20 +425,11 @@ export function BankStatementUploader({ manager }: Props) {
         if (grid && (grid.columnCount ?? 0) < 3) {
           console.log(`[BankStatementUploader] only ${grid.columnCount} columns detected — routing to vision (genuinely sparse)`);
         }
-        // Either no text layer or grid is too sparse — route through
-        // vision. 100-page block kept as a UX cost guard — Gemini
-        // handles longer PDFs technically but vision over a 100+
-        // page scan is slow and expensive enough that users deserve
-        // a confirm step. The scanned-PDF confirm dialog explains
-        // the cost trade-off so dense statements don't surprise.
-        const pageCount = await countPdfPagesClient(file) ?? 0;
+        // No usable grid (no text layer / glyph-rendered / too sparse) —
+        // route to the OCR pipeline. No page cap any more: OCR is free
+        // server-side, and digital PDFs map via the wizard above
+        // regardless of length (the old 100-page AI-vision cap is gone).
         setIsReadingPdf(false);
-        if (pageCount > 100) {
-          setPdfTooLarge({ file, pageCount });
-          return;
-        }
-        // No-text-layer PDF — route directly to OCR (no confirm
-        // dialog; OCR is free server-side).
         void analyzeRawFile(file);
         return;
       } catch (err) {
