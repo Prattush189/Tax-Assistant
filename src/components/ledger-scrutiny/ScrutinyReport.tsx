@@ -57,6 +57,9 @@ export function ScrutinyReport({ manager }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelPending, setCancelPending] = useState(false);
+  const [onlyFlagged, setOnlyFlagged] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [includeClean, setIncludeClean] = useState(false);
   const detail = manager.current;
 
   const grouped = useMemo(() => {
@@ -71,9 +74,26 @@ export function ScrutinyReport({ manager }: Props) {
     return map;
   }, [detail]);
 
+  // Accounts sorted flagged-first by default: highest open severity
+  // (high → warn → info) bubbles to the top so the CA isn't scrolling
+  // past hundreds of clean parties. Ties break alphabetically.
+  const sortedAccounts = useMemo(() => {
+    const accs = detail?.accounts ?? [];
+    const score = (accId: string) => {
+      const o = grouped.get(accId) ?? [];
+      return o.filter((x) => x.severity === 'high' && x.status === 'open').length * 1_000_000
+        + o.filter((x) => x.severity === 'warn' && x.status === 'open').length * 1_000
+        + o.filter((x) => x.severity === 'info' && x.status === 'open').length;
+    };
+    return [...accs].sort((a, b) => score(b.id) - score(a.id) || a.name.localeCompare(b.name));
+  }, [detail, grouped]);
+
   if (!detail) return null;
 
   const { job, accounts, observations } = detail;
+  const isFlagged = (accId: string) => (grouped.get(accId)?.length ?? 0) > 0;
+  const flaggedCount = sortedAccounts.filter((a) => isFlagged(a.id)).length;
+  const displayedAccounts = onlyFlagged ? sortedAccounts.filter((a) => isFlagged(a.id)) : sortedAccounts;
   // Job is still running on the server when status isn't `done` or `error`.
   // The 5-s poll loop in useLedgerScrutinyManager refreshes `detail` while
   // it's in this state, so the UI updates as the server transitions
@@ -125,9 +145,12 @@ export function ScrutinyReport({ manager }: Props) {
     }
   };
 
-  const handleExport = () => {
+  const handleExport = () => setExportOpen(true);
+
+  const doExport = () => {
+    setExportOpen(false);
     try {
-      renderLedgerScrutinyPdf(detail);
+      renderLedgerScrutinyPdf(detail, { includeClean });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'PDF export failed');
     }
@@ -293,9 +316,25 @@ export function ScrutinyReport({ manager }: Props) {
         />
       )}
 
-      {/* Per-account cards */}
+      {/* Per-account cards — flagged-first, with an optional filter to
+          hide clean accounts (handy when a ledger has hundreds of
+          parties and only a few have findings). */}
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
+          {accounts.length.toLocaleString('en-IN')} accounts · {flaggedCount.toLocaleString('en-IN')} flagged
+        </p>
+        <label className="inline-flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={onlyFlagged}
+            onChange={(e) => setOnlyFlagged(e.target.checked)}
+            className="rounded border-gray-300 dark:border-gray-600 text-emerald-600 focus:ring-emerald-500"
+          />
+          Only flagged accounts
+        </label>
+      </div>
       <div className="space-y-2">
-        {accounts.map((acc) => {
+        {displayedAccounts.map((acc) => {
           const accObs = grouped.get(acc.id) ?? [];
           const isOpen = expanded.has(acc.id);
           const accHigh = accObs.filter((o) => o.severity === 'high' && o.status === 'open').length;
@@ -373,6 +412,54 @@ export function ScrutinyReport({ manager }: Props) {
         }}
         onCancel={() => setCancelOpen(false)}
       />
+
+      {/* Export options — ask whether to include clean (no-finding)
+          accounts. Default excludes them so a 900-account ledger
+          exports a tight findings-only report. */}
+      {exportOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setExportOpen(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2 mb-2">
+              <Download className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+              <h3 className="font-semibold text-gray-900 dark:text-gray-100">Export scrutiny PDF</h3>
+            </div>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+              By default the report includes only accounts with findings ({flaggedCount.toLocaleString('en-IN')} of {accounts.length.toLocaleString('en-IN')}). That keeps a large ledger short.
+            </p>
+            <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200 cursor-pointer select-none mb-5">
+              <input
+                type="checkbox"
+                checked={includeClean}
+                onChange={(e) => setIncludeClean(e.target.checked)}
+                className="rounded border-gray-300 dark:border-gray-600 text-emerald-600 focus:ring-emerald-500"
+              />
+              Also include clean accounts (no findings)
+            </label>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setExportOpen(false)}
+                className="px-3 py-2 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={doExport}
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg"
+              >
+                <Download className="w-4 h-4" /> Export PDF
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

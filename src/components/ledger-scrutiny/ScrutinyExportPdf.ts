@@ -229,7 +229,11 @@ function renderFooter(doc: jsPDF, y: number): void {
   doc.text('Date / Membership No.', PAGE_W - MARGIN - 60, y + 4);
 }
 
-export function renderLedgerScrutinyPdf(detail: LedgerScrutinyDetail): void {
+export function renderLedgerScrutinyPdf(
+  detail: LedgerScrutinyDetail,
+  opts?: { includeClean?: boolean },
+): void {
+  const includeClean = opts?.includeClean ?? false;
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
 
   let y = renderHeader(doc, detail);
@@ -256,9 +260,12 @@ export function renderLedgerScrutinyPdf(detail: LedgerScrutinyDetail): void {
     y += 3;
   }
 
-  // Per-account
+  // Per-account. By default skip clean accounts (no observations) so a
+  // ledger with hundreds of parties exports a findings-only report;
+  // includeClean=true renders every account.
   for (const acc of detail.accounts) {
     const obsList = byAccount.get(acc.id) ?? [];
+    if (obsList.length === 0 && !includeClean) continue;
     y = ensureSpace(doc, y, 18);
 
     doc.setFont('helvetica', 'bold');
