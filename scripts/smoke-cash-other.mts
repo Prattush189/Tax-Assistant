@@ -28,6 +28,32 @@ check('"WDL TFR INB sparkleshopp AT SAMRALA ROAD" not Cash Withdrawal', cat('WDL
 // "CASHFREE" counterparty must not become Cash Deposit
 check('"CASHFREE PAYMENTS" credit not Cash Deposit', cat('CASHFREE PAYMENTS INDIA', 'credit') !== 'Cash Deposit');
 
+console.log('\nBank Charges — newly mined variants (debit):');
+const charge = (n: string) => { const r = classifyRow({ narration: n, type: 'debit', amount: 50 }); return r ? `${r.category}/${r.subcategory}` : null; };
+for (const [n, want] of [
+  ['NEFT-GST-COMMISSION', 'Bank Charges/NEFT/IMPS/RTGS'],
+  ['RTGS-GST-COMMISSION', 'Bank Charges/NEFT/IMPS/RTGS'],
+  ['NEFT-CHARGES-JAKA0SOPORE', 'Bank Charges/NEFT/IMPS/RTGS'],
+  ['BENE VALIDTN CHRG', 'Bank Charges/NEFT/IMPS/RTGS'],
+  ['ATM / IMPS TRANSACTION CHARGES', 'Bank Charges/ATM'],
+  ['DEBIT CARD ANNUAL CHARGES XXXX', 'Bank Charges/Card Fee'],
+  ['DRAWDOWN FAILURE CHARGES', 'Bank Charges/Other'],
+  ['CHRG-POS TXN DECLINE FEE', 'Bank Charges/Other'],
+  ['BRANCH ACS CHRG', 'Bank Charges/Other'],
+  ['EMI RTN CHARGES-NOVEMBER', 'Bank Charges/Other'],
+] as const) {
+  const got = charge(n);
+  check(`"${n}" → ${want}`, got === want, `(got ${got})`);
+}
+// EMI return charge must NOT fall through to Loan EMI
+check('"EMI RTN CHARGES" not Loan EMI', charge('EMI RTN CHARGES-NOVEMBER') !== 'Loan EMI/null');
+
+console.log('\nRecharge (debit):');
+for (const n of ['RCHG - RECHARGE', '95277/RECHARGE', 'TOP - MOBILE RECHARGE']) {
+  const r = classifyRow({ narration: n, type: 'debit', amount: 199 });
+  check(`"${n}" → Mobile Charges`, r?.category === 'Mobile Charges', `(got ${r?.category})`);
+}
+
 console.log('\nOther → business by direction:');
 const rows = [
   { type: 'credit' as const, category: 'Other', subcategory: null },

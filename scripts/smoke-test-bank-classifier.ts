@@ -461,12 +461,16 @@ function run(): void {
     pass++;
   }
 
-  // ─── validateDirectionCategory: catches impossible combos ──
+  // ─── validateDirectionCategory: fixes impossible direction/category
+  // combos. A combo with a symmetric counterpart in DIRECTION_FLIP_PAIRS
+  // is FLIPPED (a debit "Business Income" is really an expense, etc.);
+  // one with no safe counterpart (credit "Loan EMI") is demoted to
+  // "Other". All four below change, so the returned count is 4.
   const directionValidationRows = [
-    { type: 'debit'  as const, category: 'Business Income',     subcategory: null as string | null },  // impossible
-    { type: 'credit' as const, category: 'Business Expenses',   subcategory: null as string | null },  // impossible
-    { type: 'debit'  as const, category: 'Cash Deposit',         subcategory: 'Counter' as string | null },  // impossible
-    { type: 'credit' as const, category: 'Loan EMI',             subcategory: null as string | null },  // impossible
+    { type: 'debit'  as const, category: 'Business Income',     subcategory: null as string | null },  // flip → Business Expenses
+    { type: 'credit' as const, category: 'Business Expenses',   subcategory: null as string | null },  // flip → Business Income
+    { type: 'debit'  as const, category: 'Cash Deposit',         subcategory: 'Counter' as string | null },  // flip → Cash Withdrawal
+    { type: 'credit' as const, category: 'Loan EMI',             subcategory: null as string | null },  // no pair → Other
     { type: 'debit'  as const, category: 'Business Expenses',   subcategory: 'Software' as string | null },  // valid
     { type: 'credit' as const, category: 'Business Income',     subcategory: null as string | null },  // valid
     { type: 'debit'  as const, category: 'Personal',            subcategory: 'E-commerce' as string | null },  // valid
@@ -474,11 +478,11 @@ function run(): void {
   const vDemoted = validateDirectionCategory(directionValidationRows);
   if (vDemoted !== 4) {
     fail++;
-    failures.push(`validateDirectionCategory: expected 4 demotions, got ${vDemoted}`);
+    failures.push(`validateDirectionCategory: expected 4 changes, got ${vDemoted}`);
   } else if (
-    directionValidationRows[0].category !== 'Other' ||
-    directionValidationRows[1].category !== 'Other' ||
-    directionValidationRows[2].category !== 'Other' ||
+    directionValidationRows[0].category !== 'Business Expenses' ||
+    directionValidationRows[1].category !== 'Business Income' ||
+    directionValidationRows[2].category !== 'Cash Withdrawal' ||
     directionValidationRows[3].category !== 'Other' ||
     directionValidationRows[4].category !== 'Business Expenses' ||
     directionValidationRows[5].category !== 'Business Income' ||

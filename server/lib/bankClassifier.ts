@@ -80,12 +80,16 @@ const RULES: Rule[] = [
   // 1:1 onto the source.
 
   // ATM
-  { name: 'atm-charges-quarterly', pattern: /\batm charges\b|atm ann\.?chrg|atm ann chrg|atm wdr\b|atm wdl chg|debit atm card|atm.* annual fee/i, category: 'Bank Charges', subcategory: 'ATM' },
+  { name: 'atm-charges-quarterly', pattern: /\batm charges\b|atm ann\.?chrg|atm ann chrg|atm wdr\b|atm wdl chg|debit atm card|atm.* annual fee|atm\s*\/\s*imps transaction charges/i, category: 'Bank Charges', subcategory: 'ATM' },
 
   // Wire-transfer fees (NEFT/IMPS/RTGS) — anchor on the CHRGS/CHGS
   // prefix the bank uses for charges so we don't confuse with the
   // transfer narration itself.
-  { name: 'wire-charges', pattern: /chrgs?\/(neft|imps|rtgs)|(?:neft|imps|rtgs) chgs|rtgs[-\s]?gst[-\s]?commission|imps charges/i, category: 'Bank Charges', subcategory: 'NEFT/IMPS/RTGS' },
+  // Seen in J&K Bank: "NEFT-GST-COMMISSION", "RTGS-GST-COMMISSION",
+  // "NEFT-CHARGES-JAKA...", "RTGS CHGS BRN INCL GST", "CHRGS/NEFT/MBK".
+  // "BENE VALIDTN CHRG" (beneficiary-validation fee charged when you add
+  // a new payee) rides the same wire-transfer fee bucket.
+  { name: 'wire-charges', pattern: /chrgs?\/(neft|imps|rtgs)|(?:neft|imps|rtgs)[-\s]chgs|(?:neft|imps|rtgs)[-\s]gst[-\s]commission|(?:neft|imps|rtgs)[-\s]charges|imps charges|bene\s*validtn\s*chrg/i, category: 'Bank Charges', subcategory: 'NEFT/IMPS/RTGS' },
 
   // SMS
   { name: 'sms-charges', pattern: /sms (?:charges|chrg)/i, category: 'Bank Charges', subcategory: 'SMS' },
@@ -142,12 +146,16 @@ const RULES: Rule[] = [
   { name: 'rejection', pattern: /(?:outward|inward)\s+(?:rejection|chq\s*return|cheque\s*return)\s+ch(?:gs?|arges?|rgs)?|chq\s*return\s+ch(?:gs?|arges?|rgs)?/i, category: 'Bank Charges', subcategory: 'Rejection' },
 
   // Card fees
-  { name: 'card-annual-fee', pattern: /debit card annual fee/i, category: 'Bank Charges', subcategory: 'Card Fee' },
+  { name: 'card-annual-fee', pattern: /debit card annual (?:fee|charges?)/i, category: 'Bank Charges', subcategory: 'Card Fee' },
 
   // Catch-all bank-charge anchors. Listed last in this block so
   // specific subcategories above always win. ADHOC STMT / ACCT MAIN
   // / INCIDENTAL / LOW DENOMINATION map to the "Other" subcategory.
-  { name: 'misc-bank-charges', pattern: /adhoc stmt chgs|acct main charges|incidental charges|low denomination charge/i, category: 'Bank Charges', subcategory: 'Other' },
+  // "EMI RTN CHARGES" (EMI bounce fee) is intentionally caught HERE,
+  // ahead of the loan-emi rule below — otherwise its bare "EMI" token
+  // would mis-tag a *charge* as a loan repayment. Same for the POS
+  // decline fee / drawdown-failure / branch-access / statement charges.
+  { name: 'misc-bank-charges', pattern: /adhoc stmt chgs|acct main charges|incidental charges|low denomination charge|drawdown failure charges?|pos txn decline fee|chrg-pos txn|branch acs chrg|emi\s*rtn\s*charges?|espa fee/i, category: 'Bank Charges', subcategory: 'Other' },
 
   // ─── Bank Interest ─────────────────────────────────────────────
   // "Int.Coll" = interest collected on debit balance (always Dr to
@@ -497,6 +505,12 @@ const RULES: Rule[] = [
   { name: 'jio-recharge', pattern: /\bjio\b(?!mart)|reliance\s+jio/i, category: 'Personal', subcategory: 'Telecom', direction: 'debit' },
   { name: 'vi-recharge', pattern: /vodafone\s+idea|\bvi\b\s+(?:india|postpaid|prepaid|recharge)|vodafone/i, category: 'Personal', subcategory: 'Telecom', direction: 'debit' },
   { name: 'bsnl-recharge', pattern: /\bbsnl\b/i, category: 'Personal', subcategory: 'Telecom', direction: 'debit' },
+  // Generic prepaid recharge with NO telco/merchant named: J&K Bank
+  // "RCHG - RECHARGE", "<code>/RECHARGE", "TOP - MOBILE RECHARGE".
+  // Placed AFTER every named-telco rule so "JIO RECHARGE" etc. still
+  // resolve to their specific brand first. Debit-only so a recharge-
+  // business inflow isn't swept up.
+  { name: 'mobile-recharge-generic', pattern: /\brchg\b|\brecharge\b/i, category: 'Mobile Charges', subcategory: 'Recharge', direction: 'debit' },
 
   // ─── Restaurants (Personal · Restaurants) ─────────────────────
   // Chain restaurants only — long tail of mom-and-pop restaurants
