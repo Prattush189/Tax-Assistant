@@ -1931,8 +1931,35 @@ router.post(
           tierCounts.unclassified++;
           return { index, row, classified: null, counterparty, reference, fingerprint: fp, needsAi: true };
         });
-        const ambiguous = ruleResults.filter(r => r.needsAi);
-        const classified = ruleResults.filter(r => !r.needsAi);
+        let ambiguous = ruleResults.filter(r => r.needsAi);
+        let classified = ruleResults.filter(r => !r.needsAi);
+
+        // LOCAL-ONLY mode (admin firm + LOCAL_ONLY=1): instead of sending
+        // the unmatched rows to Gemini, give each a best-effort category
+        // by direction — credit → Business Income (customer assumption),
+        // debit → Personal (conservative / tax-safe). Lets a firm run a
+        // statement with ZERO Gemini and judge the all-local quality; the
+        // learned + semantic tiers refine these as the user corrects.
+        // Off by default, reversible — the goal is to MEASURE before
+        // committing to dropping Gemini.
+        const localOnly = process.env.LOCAL_ONLY === '1'
+          && userRepo.findById(quota.billingUserId)?.role === 'admin';
+        if (localOnly && ambiguous.length > 0) {
+          const filled = ambiguous.map(r => ({
+            index: r.index,
+            row: r.row,
+            classified: {
+              category: (r.row.amount >= 0 ? 'Business Income' : 'Personal') as BankStatementCategory,
+              subcategory: null as string | null,
+              counterparty: r.counterparty ?? null,
+              reference: r.reference ?? null,
+            },
+            needsAi: false as const,
+          }));
+          classified = classified.concat(filled);
+          console.log(`[bank-statements] LOCAL-ONLY: ${filled.length} unmatched rows best-effort labeled by direction (credit→Business Income / debit→Personal) — no Gemini`);
+          ambiguous = [];
+        }
         // Bump hit_count + last_applied_at on every learned rule that
         // fired this run. Single repo call per rule (not per row) so
         // a 500-row statement triggering one popular rule writes once,
