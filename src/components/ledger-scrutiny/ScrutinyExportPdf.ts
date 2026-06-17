@@ -44,12 +44,22 @@ function severityColor(sev: 'high' | 'warn' | 'info'): [number, number, number] 
  *  doc.splitTextToSize / doc.text. */
 function sanitizeForPdf(text: string): string {
   return text
-    .replace(/[−–—]/g, '-')   // − – —  →  -
-    .replace(/[‘’‚′]/g, "'") // ' ' ‚ ′  →  '
-    .replace(/[“”„″]/g, '"') // " " „ ″  →  "
-    .replace(/[•·]/g, '*')          // • ·  →  *
-    .replace(/…/g, '...')                // …    →  ...
-    .replace(/ /g, ' ');                 // NBSP →  space
+    .replace(/[−–—]/g, '-')          // minus / en / em dash -> -
+    .replace(/[‘’‚′]/g, "'")    // curly / prime quotes  -> '
+    .replace(/[“”„″]/g, '"')    // curly double quotes   -> "
+    .replace(/[•·]/g, '*')                // bullet / middot       -> *
+    .replace(/…/g, '...')                      // ellipsis              -> ...
+    .replace(/ /g, ' ')                        // NBSP                  -> space
+    .replace(/₹/g, 'Rs.')                      // rupee                 -> Rs.
+    .replace(/§/g, 'Sec.')                     // section sign          -> Sec.
+    .replace(/≥/g, '>=').replace(/≤/g, '<=')
+    .replace(/[→➜⇒]/g, '->')         // arrows                -> ->
+    .replace(/×/g, 'x')                        // multiplication sign   -> x
+    // jsPDF Helvetica is WinAnsi-encoded: a SINGLE unrenderable code-point
+    // makes the WHOLE string render char-by-char (the garbled
+    // "A g g r e g a t e ..." the Sec.44AB note showed). Strip anything left
+    // outside printable ASCII as a final safety net so it can never happen.
+    .replace(/[^\x20-\x7E\r\n\t]/g, '');
 }
 
 function wrapText(doc: jsPDF, text: string, width: number): string[] {
@@ -79,12 +89,12 @@ function renderHeader(doc: jsPDF, detail: LedgerScrutinyDetail): number {
     `Assessee: ${job.partyName ?? job.name ?? '-'}`,
     job.gstin ? `GSTIN: ${job.gstin}` : null,
     `Period: ${job.periodFrom ?? '-'} to ${job.periodTo ?? '-'}`,
-    `Accounts: ${accounts.length} · Transactions: ${accounts.reduce((s, a) => s + a.txCount, 0).toLocaleString('en-IN')}`,
+    `Accounts: ${accounts.length} - Transactions: ${accounts.reduce((s, a) => s + a.txCount, 0).toLocaleString('en-IN')}`,
     `Generated: ${new Date().toISOString().slice(0, 10)}`,
   ].filter((l): l is string => !!l);
 
   for (const line of lines) {
-    doc.text(line, MARGIN, y);
+    doc.text(sanitizeForPdf(line), MARGIN, y);
     y += LINE;
   }
   y += 2;
@@ -274,7 +284,7 @@ export function renderLedgerScrutinyPdf(
     const accTitle = acc.accountType ? `${acc.name} [${acc.accountType.toUpperCase()}]` : acc.name;
     const titleLines = wrapText(doc, accTitle, PAGE_W - MARGIN * 2);
     for (const line of titleLines) {
-      doc.text(line, MARGIN, y);
+      doc.text(sanitizeForPdf(line), MARGIN, y);
       y += LINE;
     }
 
@@ -282,7 +292,7 @@ export function renderLedgerScrutinyPdf(
     doc.setFontSize(9);
     doc.setTextColor(90, 90, 90);
     doc.text(
-      `Opening Rs. ${fmtINR(acc.opening)} · Closing Rs. ${fmtINR(acc.closing)} · Dr Rs. ${fmtINR(acc.totalDebit)} · Cr Rs. ${fmtINR(acc.totalCredit)} · ${acc.txCount} txns`,
+      `Opening Rs. ${fmtINR(acc.opening)} - Closing Rs. ${fmtINR(acc.closing)} - Dr Rs. ${fmtINR(acc.totalDebit)} - Cr Rs. ${fmtINR(acc.totalCredit)} - ${acc.txCount} txns`,
       MARGIN,
       y,
     );
