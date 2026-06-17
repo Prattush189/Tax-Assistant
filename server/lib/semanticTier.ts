@@ -14,7 +14,6 @@
  * touching real users. Threshold is conservative by default (high
  * precision) and tunable via SEMANTIC_TIER_THRESHOLD.
  */
-import { userRepo } from '../db/repositories/userRepo.js';
 import { learnedEmbeddingsRepo, type EmbeddingRecord, type DirectionScope } from '../db/repositories/learnedEmbeddingsRepo.js';
 import { embedTexts } from './embedder.js';
 
@@ -30,12 +29,12 @@ export const SEMANTIC_THRESHOLD = (() => {
   return Number.isFinite(v) && v > 0 && v <= 1 ? v : 0.88;
 })();
 
-/** True only when the kill-switch env flag is set AND the firm is an
- *  admin firm. Cheap (one indexed user lookup). */
-export function semanticTierEnabledFor(billingUserId: string): boolean {
-  if (process.env.SEMANTIC_TIER !== '1') return false;
-  const u = userRepo.findById(billingUserId);
-  return u?.role === 'admin';
+/** On for ALL firms when the `SEMANTIC_TIER` env flag is set (the global
+ *  kill-switch). Self-limiting: a firm with an empty embedding index is
+ *  a no-op, so this costs nothing until that firm has corrections to
+ *  match against. (Was admin-gated during the test phase.) */
+export function semanticTierEnabledFor(_billingUserId: string): boolean {
+  return process.env.SEMANTIC_TIER === '1';
 }
 
 export interface SemanticMatch {

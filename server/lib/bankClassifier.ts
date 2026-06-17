@@ -579,7 +579,6 @@ const RULES: Rule[] = [
   // merchant, so a credit is unambiguously Business Income.
   {
     name: 'payment-aggregator-settlement',
-    experimental: true,
     // Clearly-merchant settlement entities only. Generic "Paytm
     // Payments" is deliberately excluded — it also fronts consumer
     // wallet/UPI, so it would mislabel personal Paytm activity.
@@ -597,7 +596,6 @@ const RULES: Rule[] = [
   // is safe. Structural rules (charges/GST/EMI/etc.) above still win.
   {
     name: 'business-counterparty-by-direction',
-    experimental: true,
     pattern: /\b(?:traders?|trading\s?co(?:mpany)?|distributors?|lubricants?|petroleum|automobiles?|auto\s?parts?|auto\s?corp|motor\s?stores?|enterprises?|industries|eng(?:ineering)?\s?works?|& sons|pvt\.?\s?ltd|private\s?limited|\bllp\b|agencies)\b/i,
     category: (input) => (input.type === 'credit' ? 'Business Income' : 'Business Expenses'),
     subcategory: null,
