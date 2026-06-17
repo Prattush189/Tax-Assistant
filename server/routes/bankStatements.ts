@@ -13,7 +13,7 @@ import type { GeminiJsonResult } from '../lib/geminiJson.js';
 import { callBankEnrichment } from '../lib/bankEnrichmentClient.js';
 import { getBreakerStatus } from '../lib/circuitBreaker.js';
 import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_CATEGORIES, buildConditionsBlock, countWords, MAX_CONDITION_WORDS, type BankStatementCategory } from '../lib/bankStatementPrompt.js';
-import { classifyWithLearning, classifyRow, extractCounterpartyAndReference, extractNarrationFingerprint, markRecurring, unifyAmbiguousCounterparties, validateDirectionCategory, applyRetailBusinessPromotion } from '../lib/bankClassifier.js';
+import { classifyWithLearning, classifyRow, extractCounterpartyAndReference, extractNarrationFingerprint, markRecurring, unifyAmbiguousCounterparties, validateDirectionCategory, applyRetailBusinessPromotion, remapOtherByDirection } from '../lib/bankClassifier.js';
 import { learnedClassificationsRepo } from '../db/repositories/learnedClassificationsRepo.js';
 import { learnedEmbeddingsRepo, type EmbeddingRecord } from '../db/repositories/learnedEmbeddingsRepo.js';
 import { semanticTierEnabledFor, bestMatch, appendCorrectionEmbedding } from '../lib/semanticTier.js';
@@ -1165,12 +1165,28 @@ router.post('/:id/reclassify', (req: AuthRequest, res: Response) => {
       type: row.amount >= 0 ? 'credit' : 'debit',
       amount: Math.abs(row.amount),
     }, { includeExperimental: reclassifyExperimental });
-    if (!r) return null;
+    if (!r) {
+      // No deterministic rule matched. If the row is currently sitting
+      // in "Other" (or blank), forward it to a business head by
+      // direction — same catch-all the upload path applies — so a
+      // reclassify also fixes already-stored "Other" rows. Rows already
+      // in a real category are left untouched (return null = no change).
+      if (row.category === 'Other' || !row.category) {
+        return { category: row.amount >= 0 ? 'Business Income' : 'Business Expenses', subcategory: 'Uncategorised' };
+      }
+      return null;
+    }
     // Apply the direction-mismatch flip / demote pass to the single
     // row by wrapping it in a one-element array (the validator
     // mutates in place and returns a count).
     const candidate = { type: row.amount >= 0 ? 'credit' as const : 'debit' as const, category: r.category, subcategory: r.subcategory };
     validateDirectionCategory([candidate]);
+    // A row the validator demoted to "Other" (wrong-direction, no safe
+    // flip) also gets the by-direction catch-all rather than landing in
+    // Other.
+    if (candidate.category === 'Other') {
+      return { category: row.amount >= 0 ? 'Business Income' : 'Business Expenses', subcategory: 'Uncategorised' };
+    }
     return { category: candidate.category, subcategory: candidate.subcategory };
   });
   res.json({ success: true, ...result });
@@ -1771,6 +1787,15 @@ router.post(
               type: 'credit' | 'debit';
               amount: number;
               counterparty: string | null;
+              category: string;
+              subcategory: string | null;
+            }>);
+            // Final catch-all: forward any leftover "Other" to a
+            // business head by direction (credit→Income, debit→Expense).
+            // Runs last so validateDirectionCategory demotions are
+            // re-homed too.
+            remapOtherByDirection(extracted.transactions as Array<{
+              type: 'credit' | 'debit';
               category: string;
               subcategory: string | null;
             }>);
@@ -2389,6 +2414,15 @@ INPUT_ROWS — TSV, one row per line, columns narration<TAB>type<TAB>amount:
           type: 'credit' | 'debit';
           amount: number;
           counterparty: string | null;
+          category: string;
+          subcategory: string | null;
+        }>);
+        // Final catch-all: forward any leftover "Other" to a business
+        // head by direction (credit→Business Income, debit→Business
+        // Expenses). Runs last so validateDirectionCategory demotions
+        // are re-homed too.
+        remapOtherByDirection(mergedTransactions as Array<{
+          type: 'credit' | 'debit';
           category: string;
           subcategory: string | null;
         }>);

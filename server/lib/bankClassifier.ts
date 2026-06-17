@@ -277,7 +277,11 @@ const RULES: Rule[] = [
     // when the row's direction column says debit, so we don't lose
     // either way. Without this change, ~10 rows in the ICICI sample
     // fell through to "Other".
-    pattern: /\bcam\b.*\bcash\s*dep|\bcdm\b|cash\s*deposit\s*machine|cash\s*acceptor/i,
+    // Machine-deposit tells across banks: CDM (Cash Deposit Machine),
+    // BNA (Bunch/Bulk Note Acceptor — Axis/HDFC), CRDM (Cash Recycler
+    // Deposit Machine), "Green Channel" (SBI self-service deposit),
+    // plus the spelled-out machine/recycler phrases.
+    pattern: /\bcam\b.*\bcash\s*dep|\bcdm\b|\bbna\b|\bcrdm\b|green\s*channel|cash\s*deposit\s*machine|cash\s*acceptor|cash\s*recycler/i,
     category: 'Cash Deposit',
     subcategory: 'CDM / ATM',
   },
@@ -330,6 +334,29 @@ const RULES: Rule[] = [
     pattern: /^cash\s*paid\b|cash\s*paid\s*[:\-]\s*self|self\s*cheque|self\s*chq|^by\s+cash\b/i,
     category: 'Cash Withdrawal',
     subcategory: 'Counter',
+    direction: 'debit',
+  },
+  // Bare ATM-withdrawal codes banks narrate WITHOUT the word "cash".
+  // Each bank has its own legend for the same act of pulling cash:
+  //   ATW         — HDFC ATM Withdrawal
+  //   NWD         — SBI National Withdrawal (cash at another bank's ATM,
+  //                 routed over the NFS / National Financial Switch)
+  //   EAW         — HDFC electronic ATM withdrawal
+  //   CWD / CWDR  — Cash Withdrawal (various)
+  //   NFS / MAT   — inter-bank ATM-network withdrawal
+  //   "ATM-WDL", "ATM/NWD", "ATM NFS" compound forms.
+  // These all carry separators (slash/space/dash) in real narrations,
+  // so word boundaries are safe. Direction-locked to debit.
+  //
+  // Deliberately NOT matched: a bare "WDL" / "WDR" — "WDL TFR INB
+  // <merchant>" is an internet-banking payment, not a cash-out, and
+  // would be mis-bucketed. We fire only on ATM-specific codes or an
+  // explicit ATM context.
+  {
+    name: 'cash-withdrawal-atm-codes',
+    pattern: /\b(?:atw|nwd|eaw|cwdr|cwd)\b|\batm[\s\/_-]+(?:wdl|wdr|nwd|nfs|cw)\b|\bnfs[\s\/_-]+atm\b/i,
+    category: 'Cash Withdrawal',
+    subcategory: 'ATM',
     direction: 'debit',
   },
 
@@ -1441,6 +1468,36 @@ export function validateDirectionCategory<T extends {
       r.category = 'Other';
       r.subcategory = null;
     }
+    changed++;
+  }
+  return changed;
+}
+
+/**
+ * Final catch-all: forward any row still sitting in "Other" to a
+ * business head by cash direction — credit → Business Income, debit →
+ * Business Expenses. Per owner directive (2026-06): a business account
+ * shouldn't leave money movements uncategorised — an unknown inflow is
+ * revenue and an unknown outflow is a cost until a correction says
+ * otherwise. The deterministic, learned, semantic and AI tiers all run
+ * BEFORE this, so only genuinely unclassified rows are touched, and a
+ * user override / learned rule still wins on the next pass. Subcategory
+ * is stamped "Uncategorised" so these auto-defaults are easy to spot
+ * and review in the UI.
+ *
+ * Runs LAST (after validateDirectionCategory, which can itself demote a
+ * wrong-direction row to "Other") so those demotions get re-homed too.
+ */
+export function remapOtherByDirection<T extends {
+  type: 'credit' | 'debit';
+  category: string;
+  subcategory: string | null;
+}>(rows: T[]): number {
+  let changed = 0;
+  for (const r of rows) {
+    if (r.category !== 'Other') continue;
+    r.category = r.type === 'credit' ? 'Business Income' : 'Business Expenses';
+    r.subcategory = 'Uncategorised';
     changed++;
   }
   return changed;
