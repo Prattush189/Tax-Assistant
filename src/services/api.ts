@@ -2468,6 +2468,30 @@ export async function fetchPayeeExport(minCount: number): Promise<{
   return authFetch(`/api/bank-statements/admin/payee-export?minCount=${encodeURIComponent(minCount)}`);
 }
 
+/** One exported chatbot (question, answer) pair awaiting a judge verdict. */
+export interface ChatAuditPair {
+  answerId: number;
+  chatId: string;
+  askedAt: string;
+  hadAttachment: boolean;
+  question: string;
+  answer: string;
+  verdict: null | 'ok' | 'wrong' | 'risky' | 'na';
+  severity: null | 'low' | 'medium' | 'high';
+  issue: string | null;
+  correction: string | null;
+}
+
+/** ADMIN: download recent chatbot (question, answer) pairs for an external
+ *  LLM-judge audit pass. sinceDays (1–365) + limit (1–5000) bound the batch.
+ *  Returns the pairs plus metadata; the file is built on demand, never stored. */
+export async function fetchChatAuditExport(sinceDays: number, limit: number): Promise<{
+  generatedAt: string; sinceDays: number; limit: number; count: number;
+  note: string; pairs: ChatAuditPair[];
+}> {
+  return authFetch(`/api/admin/chat-audit/export?sinceDays=${encodeURIComponent(sinceDays)}&limit=${encodeURIComponent(limit)}`);
+}
+
 // ── Ledger Scrutiny API ───────────────────────────────────────────────────
 
 export type LedgerScrutinySeverity = 'info' | 'warn' | 'high';

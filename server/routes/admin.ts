@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
+import { messageRepo } from '../db/repositories/messageRepo.js';
 import { AuthRequest } from '../types.js';
 import db from '../db/index.js';
 import { getBillingUser } from '../lib/billing.js';
@@ -388,6 +389,61 @@ router.get('/users/:id/details', (req: AuthRequest, res: Response) => {
       cost_inr: Math.round(r.cost * usdToInr * 1000) / 1000,
     })),
   });
+});
+
+// ── Chat-QA audit export ───────────────────────────────────────────────────
+// GET /api/admin/chat-audit/export?sinceDays=30&limit=500&download=1
+//
+// Downloads recent (question, answer) pairs from the chatbot so an external
+// LLM-judge agent can grade them for tax-correctness. Each row carries empty
+// verdict/severity/issue/correction fields for the judge to fill — same
+// export→label→import shape as the bank payee-review export.
+//
+// Bounded by recency + a hard row cap (judging costs money per pair, so we
+// keep the first batches small; widen via query params once the judge is
+// calibrated). Admin-gated by the parent /api/admin mount.
+//
+// PRIVACY: contains real user questions (may include personal/financial
+// details) and the model's answers. Treat the downloaded file as sensitive —
+// keep it local, don't commit it, delete after the audit.
+router.get('/chat-audit/export', (req: AuthRequest, res: Response) => {
+  const sinceDaysRaw = parseInt(String(req.query.sinceDays ?? '30'), 10);
+  const limitRaw = parseInt(String(req.query.limit ?? '500'), 10);
+  const sinceDays = Math.max(1, Math.min(365, Number.isFinite(sinceDaysRaw) ? sinceDaysRaw : 30));
+  const limit = Math.max(1, Math.min(5000, Number.isFinite(limitRaw) ? limitRaw : 500));
+
+  const pairs = messageRepo.getRecentQAPairs(sinceDays, limit).map(p => ({
+    answerId: p.answer_id,
+    chatId: p.chat_id,
+    askedAt: p.asked_at,
+    hadAttachment: !!p.had_attachment,
+    question: p.question,
+    answer: p.answer,
+    // ── to be filled by the judge agent ──
+    verdict: null,      // "ok" | "wrong" | "risky" | "na"
+    severity: null,     // "low" | "medium" | "high" (only when wrong/risky)
+    issue: null,        // one-line description of the error, else null
+    correction: null,   // corrected answer, else null
+  }));
+
+  const payload = {
+    generatedAt: new Date().toISOString(),
+    sinceDays,
+    limit,
+    count: pairs.length,
+    note: 'Feed each row to the chat-QA judge prompt; fill verdict/severity/issue/correction. Rows with hadAttachment=true were answered with a document the judge cannot see — grade leniently or skip (verdict="na").',
+    pairs,
+  };
+
+  // download=1 (or anything truthy) → force a file download; omit to view inline.
+  if (req.query.download) {
+    const stamp = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="chat-audit-${stamp}-last${sinceDays}d.json"`);
+    res.send(JSON.stringify(payload, null, 2));
+    return;
+  }
+  res.json(payload);
 });
 
 // GET /api/admin/stats/plans — user count by plan

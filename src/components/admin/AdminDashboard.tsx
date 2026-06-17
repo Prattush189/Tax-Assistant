@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Users, Activity, DollarSign, Shield, RefreshCw, ShieldOff, BarChart3, Cpu, Clock, RotateCcw, Search, Filter, Key, Wallet, Plug, Database } from 'lucide-react';
+import { Users, Activity, DollarSign, Shield, RefreshCw, ShieldOff, BarChart3, Cpu, Clock, RotateCcw, Search, Filter, Key, Wallet, Plug, Database, MessageSquareWarning } from 'lucide-react';
 import { LicensesDashboard } from './LicensesDashboard';
 import { BankTrainingDashboard } from './BankTrainingDashboard';
+import { ChatAuditDashboard } from './ChatAuditDashboard';
 import { PaymentsDashboard } from './PaymentsDashboard';
 import { ExternalKeysDashboard } from './ExternalKeysDashboard';
 import { ApiCostDashboard } from './ApiCostDashboard';
@@ -15,7 +16,7 @@ import toast from 'react-hot-toast';
 import { cn } from '../../lib/utils';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 
-type AdminTab = 'overview' | 'users' | 'licenses' | 'payments' | 'external-keys' | 'api-costs' | 'recent-calls' | 'model-usage' | 'bank-training';
+type AdminTab = 'overview' | 'users' | 'licenses' | 'payments' | 'external-keys' | 'api-costs' | 'recent-calls' | 'model-usage' | 'bank-training' | 'chat-audit';
 
 interface Stats {
   total_requests: number;
@@ -207,6 +208,7 @@ export function AdminDashboard() {
     { id: 'recent-calls', label: 'Recent Calls', icon: Clock, ai: true },
     { id: 'model-usage', label: 'Model Usage', icon: Cpu, ai: true },
     { id: 'bank-training', label: 'Bank Training', icon: Database },
+    { id: 'chat-audit', label: 'Chat QA', icon: MessageSquareWarning, ai: true },
   ];
 
   return (
@@ -291,6 +293,9 @@ export function AdminDashboard() {
         {/* Bank Training tab — payee labeling export for the classifier */}
         {adminTab === 'bank-training' && <BankTrainingDashboard />}
 
+        {/* Chat QA tab — export chatbot Q&A pairs for an LLM-judge audit */}
+        {adminTab === 'chat-audit' && <ChatAuditDashboard />}
+
         {/* Licenses tab — manage license keys, generate new ones, renew/revoke */}
         {adminTab === 'licenses' && <LicensesDashboard />}
 
@@ -301,7 +306,7 @@ export function AdminDashboard() {
         {adminTab === 'external-keys' && <ExternalKeysDashboard />}
 
         {/* Overview + Users tabs use existing content below */}
-        {adminTab !== 'api-costs' && adminTab !== 'recent-calls' && adminTab !== 'model-usage' && adminTab !== 'licenses' && adminTab !== 'payments' && adminTab !== 'external-keys' && (
+        {adminTab !== 'api-costs' && adminTab !== 'recent-calls' && adminTab !== 'model-usage' && adminTab !== 'licenses' && adminTab !== 'payments' && adminTab !== 'external-keys' && adminTab !== 'chat-audit' && (
         <>
 
         {/* Stats Cards — overview tab only (Users tab is search-focused) */}
