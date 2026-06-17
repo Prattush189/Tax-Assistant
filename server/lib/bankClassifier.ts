@@ -562,6 +562,40 @@ const RULES: Rule[] = [
   // it's a Transfers row.
   { name: 'clg-cheque', pattern: /^clg\/(?:cheque|chq)\//i, category: 'Transfers', subcategory: null },
 
+  // ─── Business counterparties (2026-06, from payee labeling) ────
+  // These fire BEFORE the generic wire-transfer rule below so an
+  // obvious business counterparty is booked as Business Income/Expense
+  // instead of a vague "Transfer" (the old "wire = always Transfers"
+  // compromise forced these to AI or a manual re-tag). Both are
+  // overridable by the learned tier / a user re-tag per firm.
+
+  // Payment-aggregator settlements: a card/UPI gateway settling money
+  // to a MERCHANT is business turnover. You only receive these as a
+  // merchant, so a credit is unambiguously Business Income.
+  {
+    name: 'payment-aggregator-settlement',
+    // Clearly-merchant settlement entities only. Generic "Paytm
+    // Payments" is deliberately excluded — it also fronts consumer
+    // wallet/UPI, so it would mislabel personal Paytm activity.
+    pattern: /\b(?:pine\s?labs|pinelab|razorpay|bharatpe|mswipe|cashfree|ccavenue|easebuzz|instamojo|phonepe\s?(?:li|priv|private))\b/i,
+    category: (input) => (input.type === 'credit' ? 'Business Income' : null),
+    subcategory: 'Payment Gateway',
+  },
+  // Business-entity counterparty by direction. A transfer whose
+  // counterparty carries a clear B2B trade-name suffix (TRADERS,
+  // DISTRIBUTORS, LUBRICANTS, AUTO PARTS, ENG WORKS, MOTOR STORES,
+  // PVT LTD, …) is a vendor/customer, not a personal transfer:
+  // money OUT = Business Expense (purchase), money IN = Business
+  // Income (sale). These suffixes are B2B-specific and rare on
+  // personal accounts, so firing ahead of the generic transfer rule
+  // is safe. Structural rules (charges/GST/EMI/etc.) above still win.
+  {
+    name: 'business-counterparty-by-direction',
+    pattern: /\b(?:traders?|trading\s?co(?:mpany)?|distributors?|lubricants?|petroleum|automobiles?|auto\s?parts?|auto\s?corp|motor\s?stores?|enterprises?|industries|eng(?:ineering)?\s?works?|& sons|pvt\.?\s?ltd|private\s?limited|\bllp\b|agencies)\b/i,
+    category: (input) => (input.type === 'credit' ? 'Business Income' : 'Business Expenses'),
+    subcategory: null,
+  },
+
   // ─── Transfers (UPI / NEFT / IMPS / RTGS / mTFR) ──────────────
   // Generic transfer rule fires LAST in this group so all the
   // specific charge / EMI / GST / salary anchors above win first.

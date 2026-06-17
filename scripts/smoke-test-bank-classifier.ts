@@ -112,11 +112,14 @@ const CASES: Case[] = [
   { narration: 'UPI/509077863301/FROM: rajabilalmatta.rb@okicici/TO: sf3458311-4@okaxis/UPI', type: 'credit', expect: { category: 'Transfers' } },
   { narration: 'mTFR/9682308046/AAMIR LIYAQAT', type: 'credit', expect: { category: 'Transfers' } },
 
-  // ─── Transfers — business counterparty (declined → null) ──
-  // These should fall through to AI because the counterparty looks
-  // like a business (PAYTM PAYMENTS, ENTERPRISES suffix).
-  { narration: 'RTGS-PAYTM PAYMENTS SERVICES LIMIT-YESB0000001', type: 'credit', expect: null },
-  { narration: 'NEFT-HDFC-ABC ENTERPRISES PVT LTD-N987654', type: 'debit', expect: null },
+  // ─── Business counterparty by direction (2026-06) ──────────
+  // A clear B2B trade-name suffix (ENTERPRISES / PVT LTD / TRADERS …)
+  // is now booked as Business Expense (debit) / Income (credit) ahead
+  // of the generic wire-transfer rule, instead of punting to AI.
+  // "PAYTM PAYMENTS SERVICES" is deliberately NOT treated as a gateway
+  // settlement (it also fronts consumer wallet), so it stays a Transfer.
+  { narration: 'RTGS-PAYTM PAYMENTS SERVICES LIMIT-YESB0000001', type: 'credit', expect: { category: 'Transfers' } },
+  { narration: 'NEFT-HDFC-ABC ENTERPRISES PVT LTD-N987654', type: 'debit', expect: { category: 'Business Expenses' } },
 
   // ─── Cloud / SaaS (Business Expenses · Software) ──────────
   { narration: 'POS AWS *EC2 INSTANCES', type: 'debit', expect: { category: 'Business Expenses', subcategory: 'Software' } },
@@ -252,8 +255,9 @@ const CASES: Case[] = [
   // a non-word char after VI, but VISA's S is a word char). Falls
   // through to AI.
   { narration: 'VISA INTERNATIONAL', type: 'debit', expect: null },
-  // "BANGALORE" contains "ola" but no word boundary inside.
-  { narration: 'NEFT-HDFC-BANGALORE BRANCH-N9876543210123', type: 'debit', expect: null },
+  // "BANGALORE" contains "ola" but no word boundary inside — and an
+  // inter-branch NEFT is a genuine Transfer (no business suffix).
+  { narration: 'NEFT-HDFC-BANGALORE BRANCH-N9876543210123', type: 'debit', expect: { category: 'Transfers' } },
 
   // ─── Genuinely ambiguous → null (AI fallback target) ────────
   { narration: 'BHAT GROCERIES', type: 'debit', expect: null },
