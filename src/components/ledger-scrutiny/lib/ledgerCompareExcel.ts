@@ -39,7 +39,12 @@
 
 import ExcelJS from 'exceljs';
 import type { LedgerComparisonReport } from '../../../services/api';
+import { ledgerEntryDirection, signedByDirection } from './ledgerDirection';
 
+// Credit = +, Debit = − (read from the narration's Tally To/By marker).
+// The number format already renders negatives in red parentheses, so a
+// signed amount shows debits in red — the same Dr/Cr cue as the on-screen
+// table — while credits stay black/positive.
 const RUPEE_FMT = '#,##,##0.00;[Red](#,##,##0.00);"—"';
 const HEADER_FILL: ExcelJS.FillPattern = {
   type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE6F4EA' },
@@ -205,8 +210,8 @@ function buildCleanMatchedSheet(
     ws.addRow({
       bill: row.bill,
       date: fmtDate(row.dateA ?? row.dateB ?? null),
-      amountA: row.amountA,
-      amountB: row.amountB,
+      amountA: signedByDirection(row.amountA, ledgerEntryDirection(row.narrationA)),
+      amountB: signedByDirection(row.amountB, ledgerEntryDirection(row.narrationB)),
       narrationA: row.narrationA,
       narrationB: row.narrationB,
     });
@@ -244,8 +249,8 @@ function buildNotesMatchedSheet(
       dateA: fmtDate(row.dateA),
       dateB: fmtDate(row.dateB),
       gap: gap === null ? '' : (gap === 0 ? '—' : `${gap}d`),
-      amountA: row.amountA,
-      amountB: row.amountB,
+      amountA: signedByDirection(row.amountA, ledgerEntryDirection(row.narrationA)),
+      amountB: signedByDirection(row.amountB, ledgerEntryDirection(row.narrationB)),
       diff: row.diff ?? '',
       narrationA: row.narrationA,
       narrationB: row.narrationB,
@@ -275,7 +280,7 @@ function buildUnmatchedSheet(
       side: labelA,
       bill: row.bill,
       date: fmtDate(row.date),
-      amount: row.amount,
+      amount: signedByDirection(row.amount, ledgerEntryDirection(row.narration)),
       narration: row.narration,
     });
   }
@@ -284,7 +289,7 @@ function buildUnmatchedSheet(
       side: labelB,
       bill: row.bill,
       date: fmtDate(row.date),
-      amount: row.amount,
+      amount: signedByDirection(row.amount, ledgerEntryDirection(row.narration)),
       narration: row.narration,
     });
   }
@@ -310,7 +315,7 @@ function buildCantMatchSheet(
     ws.addRow({
       side: labelA,
       date: fmtDate(row.date),
-      amount: row.amount,
+      amount: signedByDirection(row.amount, ledgerEntryDirection(row.narration)),
       narration: row.narration,
     });
   }
@@ -318,7 +323,7 @@ function buildCantMatchSheet(
     ws.addRow({
       side: labelB,
       date: fmtDate(row.date),
-      amount: row.amount,
+      amount: signedByDirection(row.amount, ledgerEntryDirection(row.narration)),
       narration: row.narration,
     });
   }
