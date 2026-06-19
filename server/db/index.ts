@@ -534,6 +534,49 @@ db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_learned_classifications_unique ON
   }
 }
 
+// Migration: extend partnership_deeds.template_id CHECK to allow
+// 'rent_agreement' (the Rent Agreement template added 2026-06). Same
+// table-rebuild dance as above — kept as a SEPARATE idempotent block so
+// a DB that already ran the retirement_admission_deed migration still
+// picks this up. Runs after that block, so the spliced-in
+// 'retirement_admission_deed' is present in the SQL we re-splice.
+{
+  const tbl = db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='partnership_deeds'",
+  ).get() as { sql: string } | undefined;
+  if (tbl && !tbl.sql.includes("'rent_agreement'")) {
+    const newSql = tbl.sql
+      .replace(
+        "'dissolution_deed'",
+        "'dissolution_deed',\n    'rent_agreement'",
+      )
+      .replace(
+        /CREATE TABLE(\s+IF\s+NOT\s+EXISTS)?\s+["`]?partnership_deeds["`]?/i,
+        'CREATE TABLE partnership_deeds_new',
+      );
+    db.exec('BEGIN');
+    try {
+      db.exec(newSql);
+      const cols = (db.prepare("PRAGMA table_info(partnership_deeds)").all() as Array<{ name: string }>)
+        .map(c => `"${c.name}"`)
+        .join(', ');
+      db.exec(`INSERT INTO partnership_deeds_new (${cols}) SELECT ${cols} FROM partnership_deeds`);
+      db.exec('DROP TABLE partnership_deeds');
+      db.exec('ALTER TABLE partnership_deeds_new RENAME TO partnership_deeds');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_partnership_deeds_user_id ON partnership_deeds(user_id)');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_partnership_deeds_updated_at ON partnership_deeds(updated_at DESC)');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_partnership_deeds_billing ON partnership_deeds(billing_user_id)');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_partnership_deeds_user_hash ON partnership_deeds(user_id, file_hash)');
+      db.exec('COMMIT');
+      console.log("[db] partnership_deeds CHECK extended to allow 'rent_agreement'");
+    } catch (err) {
+      db.exec('ROLLBACK');
+      console.error('[db] Failed to extend partnership_deeds CHECK constraint for rent_agreement:', err);
+      throw err;
+    }
+  }
+}
+
 // Indexes for ledger_scrutiny_* (AI ledger scrutiny analyzer)
 db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_jobs_user_id ON ledger_scrutiny_jobs(user_id)");
 db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_jobs_billing ON ledger_scrutiny_jobs(billing_user_id)");

@@ -221,7 +221,8 @@ CREATE TABLE IF NOT EXISTS partnership_deeds (
     'reconstitution_deed',
     'retirement_deed',
     'retirement_admission_deed',
-    'dissolution_deed'
+    'dissolution_deed',
+    'rent_agreement'
   )),
   name TEXT NOT NULL,
   ui_payload TEXT NOT NULL DEFAULT '{}',
