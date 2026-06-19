@@ -73,6 +73,16 @@ interface Rule {
   name: string;
 }
 
+/**
+ * Amount ceiling (INR) for the generic `small-charge-by-amount` net: a
+ * debit carrying a charge/fee keyword at or below this is treated as a
+ * bank charge. Kept low on purpose — it must not swallow genuine
+ * business "freight/labour/consultancy charges", which run far higher.
+ * Real per-transaction bank fees are well under this (SMS, NEFT, ATM,
+ * the ₹2-58 "Charges for PORD Customer Payment" lines we've seen).
+ */
+const GENERIC_CHARGE_CEILING_INR = 100;
+
 const RULES: Rule[] = [
   // ─── Bank Charges ──────────────────────────────────────────────
   // The xlsx wishlist drives this whole block. Listed in the same
@@ -125,7 +135,8 @@ const RULES: Rule[] = [
   { name: 'cash-txn-charges', pattern: /cash\s*deposit\s*charges|cash\s*dep\s*chgs|cash\s*txn\s*chgs|cash\s*chgs/i, category: 'Bank Charges', subcategory: 'Cash Txn' },
 
   // POS / SoundBox rentals (recurring fixed fees)
-  { name: 'pos-rental', pattern: /pos rental/i, category: 'Bank Charges', subcategory: 'POS Rental' },
+  // "POS RENTAL", and HDFC's spaceless "POSRENT_MAR26_62014649".
+  { name: 'pos-rental', pattern: /pos\s*rent(?:al)?\b|posrent/i, category: 'Bank Charges', subcategory: 'POS Rental' },
   { name: 'soundbox-rent', pattern: /soundbox rent/i, category: 'Bank Charges', subcategory: 'SoundBox Rent' },
 
   // Penal
@@ -155,7 +166,26 @@ const RULES: Rule[] = [
   // ahead of the loan-emi rule below — otherwise its bare "EMI" token
   // would mis-tag a *charge* as a loan repayment. Same for the POS
   // decline fee / drawdown-failure / branch-access / statement charges.
-  { name: 'misc-bank-charges', pattern: /adhoc stmt chgs|acct main charges|incidental charges|low denomination charge|drawdown failure charges?|pos txn decline fee|chrg-pos txn|branch acs chrg|emi\s*rtn\s*charges?|espa fee/i, category: 'Bank Charges', subcategory: 'Other' },
+  // "EMI RTN CHARGES" (EMI bounce fee) is intentionally caught HERE,
+  // ahead of the loan-emi rule below — otherwise its bare "EMI" token
+  // would mis-tag a *charge* as a loan repayment. Same for the POS
+  // decline fee / drawdown-failure / branch-access / statement charges.
+  //
+  // 2026-06: HDFC / Bank of Baroda levy a tiny per-payment fee narrated
+  // "Charges for PORD Customer Payment :<ref>" (PORD = the bank's
+  // outward-payment product code). The "charges for …" anchor catches
+  // it at any amount. Also folded in the unambiguous full-word charge
+  // phrases every Indian bank uses regardless of amount: bank /
+  // service / processing / collection / handling / folio / DP (demat) /
+  // DD (demand-draft) / AMC / annual-maintenance / stop-payment /
+  // ECS-or-NACH-return charges.
+  {
+    name: 'misc-bank-charges',
+    pattern: /adhoc stmt chgs|acct main charges|incidental charges|low denomination charge|drawdown failure charges?|pos txn decline fee|chrg-pos txn|branch acs chrg|emi\s*rtn\s*charges?|espa fee|charges for\b|\bpord\b|(?:bank|service|processing|proc|collection|handling|folio|incidental|outstation|misc(?:ellaneous)?)\s*charges?\b|\bdp\s*charges?\b|\bdd\s*charges?\b|\b(?:amc|annual\s*maintenance)\b|stop\s*payment|(?:ecs|nach|si)\s*(?:return|rtn|fail\w*)\s*char\w*/i,
+    category: 'Bank Charges',
+    subcategory: 'Other',
+  },
+
 
   // ─── Bank Interest ─────────────────────────────────────────────
   // "Int.Coll" = interest collected on debit balance (always Dr to
@@ -592,6 +622,30 @@ const RULES: Rule[] = [
   // rule required the word "Rejection" / "Return" with a "Charges"
   // suffix; these spare-form variants slipped through to "Other".
   { name: 'reject-bare', pattern: /^reject:\d+:|^rtnchg-?\d|return\s*charge/i, category: 'Bank Charges', subcategory: 'Rejection' },
+
+  // Generic safety-net for bank charges the specific anchors didn't
+  // name (banks invent fresh charge labels constantly). A SMALL debit
+  // carrying a charge/fee/commission keyword is almost always a bank
+  // fee — the amount ceiling is the guard: per-transaction bank fees
+  // are tiny (SMS ₹15, NEFT ₹2-25, ATM ₹20, the ₹2-58 "Charges for
+  // PORD" lines), whereas a real business "courier / freight / labour /
+  // consultancy fee" runs to hundreds-thousands and falls through.
+  //
+  // Positioned LAST among the categorising rules — after every specific
+  // merchant / subscription / investment rule (so "NETFLIX FEE" stays a
+  // subscription) but before the broad by-direction transfer catch-alls
+  // (so a small fee isn't mislabelled "Transfers"). The function form
+  // returns null above the ceiling so classifyRow keeps scanning.
+  {
+    name: 'small-charge-by-amount',
+    pattern: /\bchrgs?\b|\bchgs?\b|\bcharges?\b|\bfees?\b|\bcommission\b|\blevy\b/i,
+    direction: 'debit',
+    category: (input) =>
+      typeof input.amount === 'number' && input.amount <= GENERIC_CHARGE_CEILING_INR
+        ? 'Bank Charges'
+        : null,
+    subcategory: 'Other',
+  },
 
   // ─── ICICI BIL/INFT, BIL/NEFT — net-banking transfer prefix ──
   // "BIL/INFT/<ref>/<NAME>" — internal funds transfer between own
