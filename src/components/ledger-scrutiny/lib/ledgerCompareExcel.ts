@@ -39,7 +39,7 @@
 
 import ExcelJS from 'exceljs';
 import type { LedgerComparisonReport } from '../../../services/api';
-import { ledgerEntryDirection, signedByDirection } from './ledgerDirection';
+import { ledgerEntryDirection, signedByDirection, resolveDir } from './ledgerDirection';
 
 // Credit = +, Debit = − (read from the narration's Tally To/By marker).
 // The number format already renders negatives in red parentheses, so a
@@ -210,8 +210,8 @@ function buildCleanMatchedSheet(
     ws.addRow({
       bill: row.bill,
       date: fmtDate(row.dateA ?? row.dateB ?? null),
-      amountA: signedByDirection(row.amountA, ledgerEntryDirection(row.narrationA)),
-      amountB: signedByDirection(row.amountB, ledgerEntryDirection(row.narrationB)),
+      amountA: signedByDirection(row.amountA, resolveDir(row.narrationA, row.narrationB)),
+      amountB: signedByDirection(row.amountB, resolveDir(row.narrationB, row.narrationA)),
       narrationA: row.narrationA,
       narrationB: row.narrationB,
     });
@@ -249,8 +249,8 @@ function buildNotesMatchedSheet(
       dateA: fmtDate(row.dateA),
       dateB: fmtDate(row.dateB),
       gap: gap === null ? '' : (gap === 0 ? '—' : `${gap}d`),
-      amountA: signedByDirection(row.amountA, ledgerEntryDirection(row.narrationA)),
-      amountB: signedByDirection(row.amountB, ledgerEntryDirection(row.narrationB)),
+      amountA: signedByDirection(row.amountA, resolveDir(row.narrationA, row.narrationB)),
+      amountB: signedByDirection(row.amountB, resolveDir(row.narrationB, row.narrationA)),
       diff: row.diff ?? '',
       narrationA: row.narrationA,
       narrationB: row.narrationB,

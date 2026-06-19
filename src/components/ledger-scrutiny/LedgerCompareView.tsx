@@ -29,7 +29,7 @@ import {
   type LedgerType,
 } from '../../services/api';
 import { cn, formatDate } from '../../lib/utils';
-import { ledgerEntryDirection, signedByDirection } from './lib/ledgerDirection';
+import { ledgerEntryDirection, signedByDirection, resolveDir } from './lib/ledgerDirection';
 import { buildCompareWorkbook } from './lib/ledgerCompareExcel';
 
 // ── Tab-survival state persistence ─────────────────────────────────────
@@ -151,8 +151,8 @@ function fmtINR(n: number): string {
  * plain ₹X. Same sign convention the mapping wizard uses, so a reviewer
  * can see at a glance which side each amount sits on.
  */
-function signedAmtNode(magnitude: number, narration: string | null | undefined): React.ReactNode {
-  const dir = ledgerEntryDirection(narration);
+function signedAmtNode(magnitude: number, narration: string | null | undefined, otherNarration?: string | null): React.ReactNode {
+  const dir = resolveDir(narration, otherNarration);
   const txt = '₹' + Math.abs(magnitude).toLocaleString('en-IN', { maximumFractionDigits: 2 });
   if (dir === 'Cr') return <span className="text-green-600 dark:text-green-400">+{txt}</span>;
   if (dir === 'Dr') return <span className="text-red-600 dark:text-red-400">−{txt}</span>;
@@ -217,10 +217,10 @@ function buildCompareCsv(report: LedgerComparisonReport, labelA: string, labelB:
   // someone runs "show me all payment pairs" in Excel.
   const rows: string[][] = [];
   for (const m of report.amountMismatches) {
-    rows.push(['amount_mismatch', m.bill, formatDate(m.dateA), formatDate(m.dateB), String(signedByDirection(m.amountA, ledgerEntryDirection(m.narrationA))), String(signedByDirection(m.amountB, ledgerEntryDirection(m.narrationB))), String(m.diff), m.narrationA, m.narrationB]);
+    rows.push(['amount_mismatch', m.bill, formatDate(m.dateA), formatDate(m.dateB), String(signedByDirection(m.amountA, resolveDir(m.narrationA, m.narrationB))), String(signedByDirection(m.amountB, resolveDir(m.narrationB, m.narrationA))), String(m.diff), m.narrationA, m.narrationB]);
   }
   for (const m of report.matched) {
-    rows.push(['matched', m.bill, formatDate(m.dateA), formatDate(m.dateB), String(signedByDirection(m.amountA, ledgerEntryDirection(m.narrationA))), String(signedByDirection(m.amountB, ledgerEntryDirection(m.narrationB))), '0', m.narrationA, m.narrationB]);
+    rows.push(['matched', m.bill, formatDate(m.dateA), formatDate(m.dateB), String(signedByDirection(m.amountA, resolveDir(m.narrationA, m.narrationB))), String(signedByDirection(m.amountB, resolveDir(m.narrationB, m.narrationA))), '0', m.narrationA, m.narrationB]);
   }
   // Payment matches — pairs without a bill ref, matched by
   // date+amount (with ±₹1 tolerance for ERP rounding splits). We
@@ -238,7 +238,7 @@ function buildCompareCsv(report: LedgerComparisonReport, labelA: string, labelB:
     rows.push([
       'payment_matched', '',
       formatDate(m.date), formatDate(m.dateB ?? m.date),
-      String(signedByDirection(m.amountA, ledgerEntryDirection(m.narrationA))), String(signedByDirection(m.amountB, ledgerEntryDirection(m.narrationB))), String(m.diff),
+      String(signedByDirection(m.amountA, resolveDir(m.narrationA, m.narrationB))), String(signedByDirection(m.amountB, resolveDir(m.narrationB, m.narrationA))), String(m.diff),
       narrA, narrB,
     ]);
   }
@@ -252,7 +252,7 @@ function buildCompareCsv(report: LedgerComparisonReport, labelA: string, labelB:
     rows.push([
       'payment_date_matched', '',
       formatDate(m.date), formatDate(m.date),
-      String(signedByDirection(m.amountA, ledgerEntryDirection(m.narrationA))), String(signedByDirection(m.amountB, ledgerEntryDirection(m.narrationB))), String(m.diff),
+      String(signedByDirection(m.amountA, resolveDir(m.narrationA, m.narrationB))), String(signedByDirection(m.amountB, resolveDir(m.narrationB, m.narrationA))), String(m.diff),
       narrA, narrB,
     ]);
   }
@@ -271,7 +271,7 @@ function buildCompareCsv(report: LedgerComparisonReport, labelA: string, labelB:
     rows.push([
       'payment_bank_matched', '',
       formatDate(m.dateA), formatDate(m.dateB),
-      String(signedByDirection(m.amountA, ledgerEntryDirection(m.narrationA))), String(signedByDirection(m.amountB, ledgerEntryDirection(m.narrationB))), String(m.diff),
+      String(signedByDirection(m.amountA, resolveDir(m.narrationA, m.narrationB))), String(signedByDirection(m.amountB, resolveDir(m.narrationB, m.narrationA))), String(m.diff),
       narrA, narrB,
     ]);
   }
@@ -290,7 +290,7 @@ function buildCompareCsv(report: LedgerComparisonReport, labelA: string, labelB:
     rows.push([
       'amount_matched', m.bill,
       formatDate(m.dateA), formatDate(m.dateB),
-      String(signedByDirection(m.amountA, ledgerEntryDirection(m.narrationA))), String(signedByDirection(m.amountB, ledgerEntryDirection(m.narrationB))), String(m.diff),
+      String(signedByDirection(m.amountA, resolveDir(m.narrationA, m.narrationB))), String(signedByDirection(m.amountB, resolveDir(m.narrationB, m.narrationA))), String(m.diff),
       narrA, narrB,
     ]);
   }
@@ -1001,8 +1001,8 @@ export function LedgerCompareView() {
               { header: 'Bill', cell: (r) => r.bill },
               { header: `${labelA} date`, cell: (r) => formatDate(r.dateA) || '—' },
               { header: `${labelB} date`, cell: (r) => formatDate(r.dateB) || '—' },
-              { header: `${labelA} amount`, align: 'right', cell: (r) => signedAmtNode(r.amountA, r.narrationA) },
-              { header: `${labelB} amount`, align: 'right', cell: (r) => signedAmtNode(r.amountB, r.narrationB) },
+              { header: `${labelA} amount`, align: 'right', cell: (r) => signedAmtNode(r.amountA, r.narrationA, r.narrationB) },
+              { header: `${labelB} amount`, align: 'right', cell: (r) => signedAmtNode(r.amountB, r.narrationB, r.narrationA) },
               { header: 'Diff', align: 'right', cell: (r) => fmtINR(r.diff) },
               { header: `${labelA} narration`, cell: (r) => r.narrationA },
               { header: `${labelB} narration`, cell: (r) => r.narrationB },
@@ -1016,7 +1016,7 @@ export function LedgerCompareView() {
               { header: 'Bill', cell: (r) => r.bill },
               { header: `${labelA} date`, cell: (r) => formatDate(r.dateA) || '—' },
               { header: `${labelB} date`, cell: (r) => formatDate(r.dateB) || '—' },
-              { header: 'Amount', align: 'right', cell: (r) => signedAmtNode(r.amountA, r.narrationA) },
+              { header: 'Amount', align: 'right', cell: (r) => signedAmtNode(r.amountA, r.narrationA, r.narrationB) },
               { header: `${labelA} narration`, cell: (r) => r.narrationA },
               { header: `${labelB} narration`, cell: (r) => r.narrationB },
             ]}
@@ -1033,8 +1033,8 @@ export function LedgerCompareView() {
             rows={report.paymentMatches}
             columns={[
               { header: 'Date', cell: (r) => formatDate(r.date) || '—' },
-              { header: `${labelA} amount`, align: 'right', cell: (r) => signedAmtNode(r.amountA, r.narrationA) },
-              { header: `${labelB} amount`, align: 'right', cell: (r) => signedAmtNode(r.amountB, r.narrationB) },
+              { header: `${labelA} amount`, align: 'right', cell: (r) => signedAmtNode(r.amountA, r.narrationA, r.narrationB) },
+              { header: `${labelB} amount`, align: 'right', cell: (r) => signedAmtNode(r.amountB, r.narrationB, r.narrationA) },
               { header: 'Diff', align: 'right', cell: (r) => r.diff > 0 ? fmtINR(r.diff) : '—' },
               { header: `${labelA} bank ref`, cell: (r) => r.bankRefA || '—' },
               { header: `${labelB} bank ref`, cell: (r) => r.bankRefB || '—' },
@@ -1059,8 +1059,8 @@ export function LedgerCompareView() {
               { header: `${labelA} date`, cell: (r) => formatDate(r.dateA) || '—' },
               { header: `${labelB} date`, cell: (r) => formatDate(r.dateB) || '—' },
               { header: 'Gap', align: 'right', cell: (r) => r.dateGapDays === 0 ? 'same day' : `${r.dateGapDays}d` },
-              { header: `${labelA} amount`, align: 'right', cell: (r) => signedAmtNode(r.amountA, r.narrationA) },
-              { header: `${labelB} amount`, align: 'right', cell: (r) => signedAmtNode(r.amountB, r.narrationB) },
+              { header: `${labelA} amount`, align: 'right', cell: (r) => signedAmtNode(r.amountA, r.narrationA, r.narrationB) },
+              { header: `${labelB} amount`, align: 'right', cell: (r) => signedAmtNode(r.amountB, r.narrationB, r.narrationA) },
               { header: `${labelA} narration`, cell: (r) => r.narrationA },
               { header: `${labelB} narration`, cell: (r) => r.narrationB },
             ]}
@@ -1076,8 +1076,8 @@ export function LedgerCompareView() {
             rows={report.paymentDateMatches}
             columns={[
               { header: 'Date', cell: (r) => formatDate(r.date) || '—' },
-              { header: `${labelA} amount`, align: 'right', cell: (r) => signedAmtNode(r.amountA, r.narrationA) },
-              { header: `${labelB} amount`, align: 'right', cell: (r) => signedAmtNode(r.amountB, r.narrationB) },
+              { header: `${labelA} amount`, align: 'right', cell: (r) => signedAmtNode(r.amountA, r.narrationA, r.narrationB) },
+              { header: `${labelB} amount`, align: 'right', cell: (r) => signedAmtNode(r.amountB, r.narrationB, r.narrationA) },
               { header: 'Diff', align: 'right', cell: (r) => fmtINR(r.diff) },
               { header: `${labelA} bank ref`, cell: (r) => r.bankRefA || '—' },
               { header: `${labelB} bank ref`, cell: (r) => r.bankRefB || '—' },
@@ -1102,8 +1102,8 @@ export function LedgerCompareView() {
                 : `amount (±${fmtINR(r.diff).replace('₹', '')})` },
               { header: `${labelA} date`, cell: (r) => formatDate(r.dateA) || '—' },
               { header: `${labelB} date`, cell: (r) => formatDate(r.dateB) || '—' },
-              { header: `${labelA} amount`, align: 'right', cell: (r) => signedAmtNode(r.amountA, r.narrationA) },
-              { header: `${labelB} amount`, align: 'right', cell: (r) => signedAmtNode(r.amountB, r.narrationB) },
+              { header: `${labelA} amount`, align: 'right', cell: (r) => signedAmtNode(r.amountA, r.narrationA, r.narrationB) },
+              { header: `${labelB} amount`, align: 'right', cell: (r) => signedAmtNode(r.amountB, r.narrationB, r.narrationA) },
               { header: 'Diff', align: 'right', cell: (r) => r.diff > 0 ? fmtINR(r.diff) : '—' },
               { header: 'Bank anchor', cell: (r) => r.bankAnchor },
               { header: `${labelA} narration`, cell: (r) => r.narrationA },

@@ -34,3 +34,21 @@ export function signedByDirection(magnitude: number, dir: LedgerDir): number {
   const mag = Math.abs(magnitude);
   return dir === 'Dr' ? -mag : mag;
 }
+
+/**
+ * Direction for ONE side of a matched pair: prefer the side's OWN
+ * To/By marker; when its narration is silent (some exports — bank
+ * statements, ERPs that drop the contra prefix — leave it blank), fall
+ * back to the MIRROR of the other side. A matched ledger pair is the
+ * same economic event recorded on opposite sides — the assessee's
+ * "By Purchase" (Cr) is the supplier's debit, the assessee's payment
+ * "To Bank" (Dr) is the supplier's credit — so mirroring is the right
+ * default. Returns null only when NEITHER side carries a marker.
+ */
+export function resolveDir(ownNarration: string | null | undefined, otherNarration: string | null | undefined): LedgerDir {
+  const own = ledgerEntryDirection(ownNarration);
+  if (own) return own;
+  const other = ledgerEntryDirection(otherNarration);
+  if (other) return other === 'Dr' ? 'Cr' : 'Dr';
+  return null;
+}
