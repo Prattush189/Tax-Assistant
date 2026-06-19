@@ -51,7 +51,7 @@ const rows = await xlsToRows(buf.buffer.slice(buf.byteOffset, buf.byteOffset + b
 check('excelToRows returns rows (was null → "empty")', !!rows && rows.length > 0, `(rows=${rows?.length ?? 0})`);
 if (!rows) { console.log(`\n${pass} passed, ${fail} failed`); process.exit(1); }
 
-const { rowsToFakeGrid, suggestMapping } = await import('../src/lib/pdfGrid');
+const { rowsToFakeGrid, suggestMapping, applyMapping } = await import('../src/lib/pdfGrid');
 const grid = rowsToFakeGrid(rows);
 check('rowsToFakeGrid builds a grid', !!grid, `(cols=${grid?.columnCount}, rows=${grid?.rows.length})`);
 if (!grid) { console.log(`\n${pass} passed, ${fail} failed`); process.exit(1); }
@@ -81,6 +81,15 @@ check('col3 → reference (CHQ.NO.)', roleAt(3) === 'reference', `(got ${roleAt(
 check('col4 → debit', roleAt(4) === 'debit', `(got ${roleAt(4)})`);
 check('col5 → credit', roleAt(5) === 'credit', `(got ${roleAt(5)})`);
 check('col6 → balance', roleAt(6) === 'balance', `(got ${roleAt(6)})`);
+
+// Full pipeline: applyMapping must NOT emit the page-footer row
+// ("4/19/26 13:20 … Page 2 of 2") as a phantom ₹58-lakh transaction.
+console.log('\nFooter-row rejection (applyMapping):');
+const { rows: txns } = applyMapping(grid, m, 'bank');
+const phantom = txns.find(r => !r.narration.trim() && Math.abs(r.amount) > 1_000_000);
+check('no contentless phantom transaction emitted', !phantom, phantom ? `(date=${phantom.date} amount=${phantom.amount} bal=${phantom.balance})` : '');
+check('exactly 41 real transactions', txns.length === 41, `(got ${txns.length})`);
+check('every emitted txn has a narration', txns.every(r => r.narration.trim() !== ''));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

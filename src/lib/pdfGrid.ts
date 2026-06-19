@@ -1904,7 +1904,7 @@ export function applyMapping(
       // page's first transaction date, producing a grid row that has
       // a date AND the Page Total values). These tokens never appear
       // in legitimate transaction narrations.
-      const UNAMBIGUOUS_MARKER = /\b(?:page\s+total|grand\s+total|effective\s+available\s+amount|total\s+available\s+amount|funds\s+in\s+clearing|ffd\s+contribution|unless\s+the\s+constituent|type\s*:\s*cash\s+credit|cash\s+credit\s+scheme|type\s*:\s*general\s+saving|statement\s+of\s+account\s+for\s+the\s+period|transaction\s+details|printed\s+by\s+\d|page\s+\d+\s+of\s+\d|ifsc\s+code|micr\s+code|phone\s+code|a\/c\s+no|no\s+nomination\s+available|nomination\s+available\s+for\s+the\s+account|interest\s+rate|jammu\s+and\s+kashmir\s+bank|ckyc\s+id|cKYC|chand\s+nagar)|https?:\/\/|\.jsp\b|\.jkb\.com/i;
+      const UNAMBIGUOUS_MARKER = /\b(?:page\s+total|grand\s+total|effective\s+available\s+amount|total\s+available\s+amount|funds\s+in\s+clearing|ffd\s+contribution|unless\s+the\s+constituent|type\s*:\s*cash\s+credit|cash\s+credit\s+scheme|type\s*:\s*general\s+saving|statement\s+of\s+account\s+for\s+the\s+period|transaction\s+details|printed\s+by\s+\d|page\s+\d+\s+of\b|ifsc\s+code|micr\s+code|phone\s+code|a\/c\s+no|no\s+nomination\s+available|nomination\s+available\s+for\s+the\s+account|interest\s+rate|jammu\s+and\s+kashmir\s+bank|ckyc\s+id|cKYC|chand\s+nagar)|https?:\/\/|\.jsp\b|\.jkb\.com/i;
       const haystack = `${narr} ${voucher ?? ''} ${reference ?? ''}`.trim();
       // J&K Bank CC pages split "Page Total :" across two adjacent
       // pdfjs cells ("Page" in the narration column, "Total:" in the
@@ -1949,6 +1949,30 @@ export function applyMapping(
         // and lands here — flushing unconditionally killed the
         // cross-page pending and lost the straddling transaction
         // (amitT.pdf dropped 34 txns this way, one per page break).
+        if (pending && pending.debit == null && pending.credit == null && pending.amountSingle == null && pending.balance == null) {
+          pendingAwaitingCrossPage = true;
+        } else {
+          flushPending();
+        }
+        stats.skippedNoAmount += 1;
+        continue;
+      }
+
+      // Contentless-row guard. A bank row with NO narration AND no
+      // debit / credit / single-amount cell is not a transaction — it's
+      // a page footer / banner / statement-timestamp line. Its only
+      // populated cell is often a stray fragment the wizard mapped to
+      // "balance" (Bank of Baroda's last-page footer "4/19/26 13:20 …
+      // Page 2 of 2" → balance="Page 2 of" → parseNumber salvages "2"),
+      // which the balance-delta fallback below would otherwise turn into
+      // a giant phantom debit (₹58 L on the BoB OD statement). The
+      // marker lists above catch the labelled cases; this catches the
+      // unlabelled remainder structurally. A real transaction always
+      // carries a narration or an explicit amount, so this can't drop
+      // one — and the balance-rescue path for small charges with a
+      // mis-clustered amount still works because those rows have a
+      // narration.
+      if (!narr && debit == null && credit == null && amountSingle == null) {
         if (pending && pending.debit == null && pending.credit == null && pending.amountSingle == null && pending.balance == null) {
           pendingAwaitingCrossPage = true;
         } else {
