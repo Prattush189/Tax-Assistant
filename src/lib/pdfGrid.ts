@@ -2503,23 +2503,22 @@ export function findTableStart(grid: PdfGrid, dateCol: number | null): {
 export function rowsToFakeGrid(rows: string[][]): PdfGrid | null {
   const filtered = rows.filter(r => Array.isArray(r) && r.some(c => (c ?? '').trim()));
   if (filtered.length < 2) return null;
-  const columnCount = Math.max(...filtered.map(r => r.length));
-  const padded = filtered.map(r => {
+  const rawColumnCount = Math.max(...filtered.map(r => r.length));
+  let padded = filtered.map(r => {
     const out = [...r];
-    while (out.length < columnCount) out.push('');
+    while (out.length < rawColumnCount) out.push('');
     return out;
   });
-  // Promote the header row to columnHeaders so suggestMapping can
-  // auto-assign roles the same way it does for digital PDFs.
-  //
-  // It's USUALLY row 0 (a plain CSV), but bank Excel/CSV exports — Bank
-  // of Baroda / ICICI "OpTransactionHistory" .xls, for one — carry a
-  // metadata block (account-holder name, address, statement period)
-  // ABOVE the real "TRAN DATE | NARRATION | WITHDRAWAL | DEPOSIT |
-  // BALANCE" header. So score the first 15 rows by how many column-
-  // header keywords each contains and take the best; a strong match
-  // (>=2 keywords) anywhere wins, otherwise we fall back to the old
-  // row-0-only test so plain CSVs behave exactly as before.
+
+  // Find the header row FIRST (before compacting columns, so the index
+  // still lines up with `padded`). It's USUALLY row 0 (a plain CSV),
+  // but bank Excel/CSV exports — Bank of Baroda / ICICI
+  // "OpTransactionHistory" .xls — carry a metadata block (account
+  // holder, address, statement period) ABOVE the real "TRAN DATE |
+  // NARRATION | WITHDRAWAL | DEPOSIT | BALANCE" header. Score the first
+  // 15 rows by how many column-header keywords each contains and take
+  // the best; a strong match (>=2 keywords) anywhere wins, otherwise
+  // fall back to the old row-0-only test so plain CSVs are unchanged.
   const HEADER_RE = /date|narration|particulars|description|debit|credit|balance|withdraw|deposit|amount|reference|cheque|chq/i;
   const headerScore = (r: string[]) => r.reduce((n, c) => n + (HEADER_RE.test(c) ? 1 : 0), 0);
   let headerIdx = 0;
@@ -2532,6 +2531,40 @@ export function rowsToFakeGrid(rows: string[][]): PdfGrid | null {
   // A confident multi-keyword row anywhere in the preamble, or the
   // legacy single-keyword row-0 case.
   const looksLikeHeader = bestScore >= 2 || (headerIdx === 0 && firstRowHeaderish);
+
+  // Drop spacer columns so the wizard isn't a wall of blank dropdowns.
+  // Bank Excel exports lay the table across ~35 cells with empty columns
+  // between each real one, PLUS stray account-holder/address cells in
+  // the metadata preamble and the odd wrapped-narration/footer cell in
+  // an unlabelled column.
+  //
+  // With a confident header, the header row DEFINES the table: keep
+  // exactly its labelled columns (this also drops unlabelled overflow
+  // columns that carry a few stray data cells). Loss-free for real bank
+  // tables — every genuine column is labelled, so an all-blank Credit
+  // column on a debits-only statement is kept via its header. Without a
+  // confident header (a headerless CSV), fall back to "any non-empty
+  // cell anywhere", which preserves every data column.
+  const headerCells = padded[headerIdx];
+  const keptCols: number[] = [];
+  for (let c = 0; c < rawColumnCount; c++) {
+    const keep = looksLikeHeader
+      ? (headerCells[c] ?? '').trim() !== ''
+      : padded.some(r => (r[c] ?? '').trim() !== '');
+    if (keep) keptCols.push(c);
+  }
+  // Safety net: if a confident header somehow collapsed the table to
+  // almost nothing, fall back to the data-presence rule.
+  if (looksLikeHeader && keptCols.length < 2) {
+    keptCols.length = 0;
+    for (let c = 0; c < rawColumnCount; c++) {
+      if (padded.some(r => (r[c] ?? '').trim() !== '')) keptCols.push(c);
+    }
+  }
+  if (keptCols.length > 0 && keptCols.length < rawColumnCount) {
+    padded = padded.map(r => keptCols.map(c => r[c] ?? ''));
+  }
+  const columnCount = padded[0].length;
   const headerRow = padded[headerIdx];
   return {
     rows: padded,

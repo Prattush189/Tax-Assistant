@@ -56,24 +56,31 @@ const grid = rowsToFakeGrid(rows);
 check('rowsToFakeGrid builds a grid', !!grid, `(cols=${grid?.columnCount}, rows=${grid?.rows.length})`);
 if (!grid) { console.log(`\n${pass} passed, ${fail} failed`); process.exit(1); }
 
+// Empty spacer columns are dropped: the 35-cell raw layout compacts to
+// the 7 populated columns, so the wizard isn't a wall of blank dropdowns.
+check('empty spacer columns dropped (35 → 7)', grid.columnCount === 7, `(cols=${grid.columnCount})`);
+
 // The header row sits BEHIND a metadata block — verify rowsToFakeGrid
-// found it (not row 0) and promoted it to columnHeaders.
+// found it (not row 0) and promoted it to columnHeaders. After
+// compaction the populated headers are contiguous, indices 0..6.
 const headers = grid.columnHeaders ?? [];
-check('header row detected past the metadata preamble', /tran date/i.test(headers[1] ?? ''), `(col1="${headers[1]}")`);
-check('NARRATION header captured', /narration/i.test(headers[6] ?? ''));
-check('WITHDRAWAL(DR) header captured', /withdraw/i.test(headers[12] ?? ''));
-check('DEPOSIT(CR) header captured', /deposit/i.test(headers[19] ?? ''));
-check('BALANCE header captured', /balance/i.test(headers[26] ?? ''));
+check('TRAN DATE header captured', /tran date/i.test(headers[0] ?? ''), `(col0="${headers[0]}")`);
+check('NARRATION header captured', /narration/i.test(headers[2] ?? ''));
+check('WITHDRAWAL(DR) header captured', /withdraw/i.test(headers[4] ?? ''));
+check('DEPOSIT(CR) header captured', /deposit/i.test(headers[5] ?? ''));
+check('BALANCE header captured', /balance/i.test(headers[6] ?? ''));
+check('no blank header gaps between real columns', headers.every(h => (h ?? '').trim() !== ''), `(headers=${JSON.stringify(headers)})`);
 
 // And that suggestMapping turns those into the right roles.
 const m = suggestMapping(grid);
 const roleAt = (i: number) => (m.roles ? m.roles[i] : (m as { columns?: string[] }).columns?.[i]);
-check('col1 → date', roleAt(1) === 'date', `(got ${roleAt(1)})`);
-check('col3 → valueDate', roleAt(3) === 'valueDate', `(got ${roleAt(3)})`);
-check('col6 → narration', roleAt(6) === 'narration', `(got ${roleAt(6)})`);
-check('col12 → debit', roleAt(12) === 'debit', `(got ${roleAt(12)})`);
-check('col19 → credit', roleAt(19) === 'credit', `(got ${roleAt(19)})`);
-check('col26 → balance', roleAt(26) === 'balance', `(got ${roleAt(26)})`);
+check('col0 → date', roleAt(0) === 'date', `(got ${roleAt(0)})`);
+check('col1 → valueDate', roleAt(1) === 'valueDate', `(got ${roleAt(1)})`);
+check('col2 → narration', roleAt(2) === 'narration', `(got ${roleAt(2)})`);
+check('col3 → reference (CHQ.NO.)', roleAt(3) === 'reference', `(got ${roleAt(3)})`);
+check('col4 → debit', roleAt(4) === 'debit', `(got ${roleAt(4)})`);
+check('col5 → credit', roleAt(5) === 'credit', `(got ${roleAt(5)})`);
+check('col6 → balance', roleAt(6) === 'balance', `(got ${roleAt(6)})`);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
