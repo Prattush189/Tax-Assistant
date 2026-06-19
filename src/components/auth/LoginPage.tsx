@@ -170,7 +170,7 @@ export function LoginPage({ onSwitchToSignup, onNeedsVerification, onForgotPassw
                   autoFocus
                   value={otpCode}
                   onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                  className="w-full px-4 py-3 text-center text-2xl tracking-[0.5em] font-mono bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500"
+                  className="w-full px-4 py-3 text-center text-2xl tracking-[0.5em] font-mono text-gray-900 dark:text-white bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 placeholder:text-gray-400 dark:placeholder:text-gray-600"
                   placeholder="000000"
                   maxLength={6}
                 />
