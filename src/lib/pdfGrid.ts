@@ -2509,17 +2509,36 @@ export function rowsToFakeGrid(rows: string[][]): PdfGrid | null {
     while (out.length < columnCount) out.push('');
     return out;
   });
-  // The first row of a CSV is almost always the header — promote it
-  // to columnHeaders so suggestMapping can auto-assign roles the same
-  // way it does for digital PDFs.
-  const firstRow = padded[0];
-  const looksLikeHeader = firstRow.some(c => /date|narration|particulars|debit|credit|balance|withdraw|deposit|amount|reference/i.test(c));
+  // Promote the header row to columnHeaders so suggestMapping can
+  // auto-assign roles the same way it does for digital PDFs.
+  //
+  // It's USUALLY row 0 (a plain CSV), but bank Excel/CSV exports — Bank
+  // of Baroda / ICICI "OpTransactionHistory" .xls, for one — carry a
+  // metadata block (account-holder name, address, statement period)
+  // ABOVE the real "TRAN DATE | NARRATION | WITHDRAWAL | DEPOSIT |
+  // BALANCE" header. So score the first 15 rows by how many column-
+  // header keywords each contains and take the best; a strong match
+  // (>=2 keywords) anywhere wins, otherwise we fall back to the old
+  // row-0-only test so plain CSVs behave exactly as before.
+  const HEADER_RE = /date|narration|particulars|description|debit|credit|balance|withdraw|deposit|amount|reference|cheque|chq/i;
+  const headerScore = (r: string[]) => r.reduce((n, c) => n + (HEADER_RE.test(c) ? 1 : 0), 0);
+  let headerIdx = 0;
+  let bestScore = headerScore(padded[0]);
+  for (let i = 1; i < Math.min(padded.length, 15); i++) {
+    const s = headerScore(padded[i]);
+    if (s > bestScore) { bestScore = s; headerIdx = i; }
+  }
+  const firstRowHeaderish = padded[0].some(c => HEADER_RE.test(c));
+  // A confident multi-keyword row anywhere in the preamble, or the
+  // legacy single-keyword row-0 case.
+  const looksLikeHeader = bestScore >= 2 || (headerIdx === 0 && firstRowHeaderish);
+  const headerRow = padded[headerIdx];
   return {
     rows: padded,
     columnCount,
     columnXs: Array.from({ length: columnCount }, (_, i) => i * 100),
     columnHeaders: looksLikeHeader
-      ? firstRow.map(c => (c ?? '').trim() || null)
+      ? headerRow.map(c => (c ?? '').trim() || null)
       : Array.from({ length: columnCount }, () => null as string | null),
     pageBreaks: [],
     pageCount: 1,
@@ -2567,7 +2586,7 @@ function roleFromHeader(header: string): ColumnRole | null {
   // Account / ledger name (Tally party-wise book)
   if (/\baccount\b|^ledger$|party\s*name/.test(h)) return 'account';
   // Date — checked AFTER value-date so the real Date column wins
-  if (/^date$|\btxn\s*date\b|\btransaction\s*date\b|^dt$/.test(h)) return 'date';
+  if (/^date$|\btxn\s*date\b|\btran\.?s?\.?\s*date\b|\btransaction\s*date\b|\btran\s*dt\b|^dt$/.test(h)) return 'date';
   if (/^narration|^particulars|^description|^details|^narrative$|remarks?$|transaction\s*remarks?/.test(h)) return 'narration';
   return null;
 }
