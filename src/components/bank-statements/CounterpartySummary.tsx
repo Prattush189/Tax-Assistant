@@ -25,13 +25,23 @@
  * "Show all" toggle is the established pattern.
  */
 import { useMemo, useState } from 'react';
-import { Users, ArrowUpDown, Search, ChevronDown, ChevronRight, Download } from 'lucide-react';
+import { Users, ArrowUpDown, Search, ChevronDown, ChevronRight, Download, FileText } from 'lucide-react';
 import Papa from 'papaparse';
 import { BankTransaction } from '../../services/api';
 import { formatINRCompact, formatINR, formatDate, cn } from '../../lib/utils';
+import { downloadPartyLedgerPdf } from '../../lib/partyLedgerPdf';
 
 interface Props {
   transactions: BankTransaction[];
+  /** Statement metadata for the ledger PDF header (bank name, period).
+   *  Optional — the ledger derives a period from the txn dates when
+   *  absent. */
+  meta?: {
+    bankName?: string | null;
+    accountLabel?: string | null;
+    periodFrom?: string | null;
+    periodTo?: string | null;
+  };
 }
 
 interface PartyRow {
@@ -84,8 +94,18 @@ function downloadPartyCsv(rows: PartyRow[]) {
   window.setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
-export function CounterpartySummary({ transactions }: Props) {
+export function CounterpartySummary({ transactions, meta }: Props) {
   const [expanded, setExpanded] = useState(false);
+
+  // Same grouping key the aggregation uses (counterparty, else
+  // fingerprint), so the ledger for a row pulls exactly that row's
+  // transactions back out of the full list.
+  const partyKeyOf = (t: BankTransaction) =>
+    (t.counterparty ?? '').trim() || (t.fingerprint ?? '').trim();
+  const downloadLedger = (row: PartyRow) => {
+    const txns = transactions.filter((t) => partyKeyOf(t) === row.key);
+    downloadPartyLedgerPdf(row.display, txns, meta ?? {});
+  };
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('volume');
   const [sortDesc, setSortDesc] = useState(true);
@@ -249,6 +269,14 @@ export function CounterpartySummary({ transactions }: Props) {
                 {row.inflow > 0 && <span className="text-emerald-600 dark:text-emerald-400">+{formatINRCompact(row.inflow)}</span>}
                 {row.outflow > 0 && <span className="text-rose-600 dark:text-rose-400">−{formatINRCompact(row.outflow)}</span>}
               </div>
+              <button
+                type="button"
+                onClick={() => downloadLedger(row)}
+                title={`Download ${row.display} as a ledger PDF`}
+                className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium text-gray-500 dark:text-gray-400 hover:text-emerald-700 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 border border-transparent hover:border-emerald-200 dark:hover:border-emerald-800 transition-colors"
+              >
+                <FileText className="w-3.5 h-3.5" /> Ledger
+              </button>
             </li>
           ))}
         </ul>
@@ -288,6 +316,7 @@ export function CounterpartySummary({ transactions }: Props) {
                   <th className="px-3 py-2 text-left font-medium">Category</th>
                   <th className="px-3 py-2 text-left font-medium">First seen</th>
                   <th className="px-3 py-2 text-left font-medium">Last seen</th>
+                  <th className="px-3 py-2 text-right font-medium">Ledger</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
@@ -314,6 +343,16 @@ export function CounterpartySummary({ transactions }: Props) {
                     <td className="px-3 py-2 text-gray-700 dark:text-gray-300 text-[12px]">{row.primaryCategory}</td>
                     <td className="px-3 py-2 text-gray-500 dark:text-gray-400 text-[12px] tabular-nums">{formatDate(row.firstSeen) || '—'}</td>
                     <td className="px-3 py-2 text-gray-500 dark:text-gray-400 text-[12px] tabular-nums">{formatDate(row.lastSeen) || '—'}</td>
+                    <td className="px-3 py-2 text-right">
+                      <button
+                        type="button"
+                        onClick={() => downloadLedger(row)}
+                        title={`Download ${row.display} as a ledger PDF`}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium text-gray-500 dark:text-gray-400 hover:text-emerald-700 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 border border-transparent hover:border-emerald-200 dark:hover:border-emerald-800 transition-colors"
+                      >
+                        <FileText className="w-3.5 h-3.5" /> PDF
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>

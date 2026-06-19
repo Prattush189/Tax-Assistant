@@ -287,7 +287,15 @@ export function BankStatementView({ manager }: Props) {
             />
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
               <CategoryBreakdown transactions={manager.current.transactions} />
-              <CounterpartySummary transactions={manager.current.transactions} />
+              <CounterpartySummary
+                transactions={manager.current.transactions}
+                meta={{
+                  bankName: manager.current.statement.bankName,
+                  accountLabel: manager.current.statement.accountNumberMasked,
+                  periodFrom: manager.current.statement.periodFrom,
+                  periodTo: manager.current.statement.periodTo,
+                }}
+              />
             </div>
             <TransactionTable transactions={manager.current.transactions} manager={manager} />
           </>
