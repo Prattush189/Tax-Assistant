@@ -105,8 +105,106 @@ function paintStampBanner(doc: jsPDF, state: string | undefined, templateLabel: 
   return y + 12;
 }
 
+/** Bottom block for a rent agreement: lessor / lessee signature lines,
+ *  witnesses, and a registration placeholder under the Registration
+ *  Act, 1908 (rent / lease deeds register at the Sub-Registrar, not
+ *  the Registrar of Firms). Kept separate from the partnership footer
+ *  because the signatory roles and the registration statute differ. */
+function paintRentFooter(doc: jsPDF, draft: PartnershipDeedDraft, startY: number): number {
+  let y = startY;
+  const r = draft.rentAgreement ?? {};
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(30, 58, 138);
+  doc.text('IN WITNESS WHEREOF', MARGIN, y);
+  y += 5;
+  doc.setFont('times', 'normal');
+  doc.setFontSize(10);
+  doc.setTextColor(40, 40, 40);
+  doc.text(
+    `executed on this ${formatIstDate()} at ${r.state ?? '_______________'}`,
+    MARGIN, y,
+  );
+  y += 8;
+
+  const signatory = (role: string, name: string | undefined) => {
+    y = ensureSpace(doc, y, 16);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.setTextColor(30, 58, 138);
+    doc.text(role, MARGIN, y);
+    y += 5;
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(40, 40, 40);
+    doc.text(name?.trim() || '____________________', MARGIN, y);
+    y += LINE;
+    doc.setDrawColor(120, 120, 120);
+    doc.setLineWidth(0.3);
+    doc.line(MARGIN + 3, y, MARGIN + 70, y);
+    doc.setFontSize(8);
+    doc.setTextColor(120, 120, 120);
+    doc.text('Signature', MARGIN + 3, y + 3);
+    doc.text('Date: ____________', MARGIN + 80, y + 3);
+    y += 10;
+  };
+  signatory('LANDLORD / LESSOR', r.landlordName);
+  signatory('TENANT / LESSEE', r.tenantName);
+
+  // Witness block (2 witnesses)
+  y += 2;
+  y = ensureSpace(doc, y, 26);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.setTextColor(30, 58, 138);
+  doc.text('WITNESSES', MARGIN, y);
+  y += 5;
+  for (let i = 1; i <= 2; i++) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    doc.setTextColor(40, 40, 40);
+    doc.text(`${i}.`, MARGIN, y);
+    doc.setDrawColor(120, 120, 120);
+    doc.setLineWidth(0.3);
+    doc.line(MARGIN + 6, y, MARGIN + 80, y);
+    doc.line(MARGIN + 90, y, PAGE_W - MARGIN, y);
+    doc.setFontSize(8);
+    doc.setTextColor(120, 120, 120);
+    doc.text('Name & Signature', MARGIN + 6, y + 3);
+    doc.text('Address', MARGIN + 90, y + 3);
+    y += 8;
+  }
+
+  // Registration placeholder (Registration Act, 1908)
+  y += 4;
+  y = ensureSpace(doc, y, 16);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.setTextColor(30, 58, 138);
+  doc.text('REGISTRATION (Registration Act, 1908)', MARGIN, y);
+  y += 4.5;
+  doc.setFont('times', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(80, 80, 80);
+  doc.text(
+    'A lease for a term of 12 months or more requires compulsory registration at the office of the Sub-Registrar.',
+    MARGIN, y,
+  );
+  y += 4.5;
+  doc.text(
+    'Document No.: ______________   Sub-Registrar: ______________   Date: __________',
+    MARGIN, y,
+  );
+  y += 4.5;
+  return y;
+}
+
 /** Bottom block: witnesses, partner signature lines, notary, §58 registration placeholder. */
 function paintFooter(doc: jsPDF, draft: PartnershipDeedDraft, startY: number): number {
+  // Rent agreements use a lessor/lessee signature footer, not partners.
+  if (draft.templateId === 'rent_agreement') {
+    return paintRentFooter(doc, draft, startY);
+  }
   let y = startY;
 
   // Page break to keep the footer block together if it doesn't fit cleanly.
@@ -249,8 +347,12 @@ export async function renderPartnershipDeedPdf(
 ): Promise<void> {
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
 
-  // Stamp banner + title
-  let y = paintStampBanner(doc, draft.firm?.state, TEMPLATE_TITLES[draft.templateId]);
+  // Stamp banner + title. A rent agreement has no `firm` — its state
+  // (which drives the stamp-duty banner) lives on the rentAgreement block.
+  const bannerState = draft.templateId === 'rent_agreement'
+    ? draft.rentAgreement?.state
+    : draft.firm?.state;
+  let y = paintStampBanner(doc, bannerState, TEMPLATE_TITLES[draft.templateId]);
 
   // Markdown body via the shared renderer
   await renderMarkdownToPdf(doc, markdownBody, {

@@ -44,6 +44,12 @@ export const TEMPLATE_LIST: DeedTemplateMeta[] = [
     subtitle: 'Dissolution of the partnership firm',
     governingAct: 'Indian Partnership Act, 1932 (Sections 39–55)',
   },
+  {
+    id: 'rent_agreement',
+    title: 'Rent Agreement',
+    subtitle: 'Landlord–tenant rent / leave-and-license agreement',
+    governingAct: 'Registration Act, 1908 & the applicable State Stamp Act',
+  },
 ];
 
 export function templateById(id: PartnershipDeedTemplateId): DeedTemplateMeta {

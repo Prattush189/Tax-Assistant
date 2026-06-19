@@ -25,6 +25,31 @@ export interface ValidationResult {
 export function validateDraft(draft: PartnershipDeedDraft): ValidationResult {
   const errors: string[] = [];
 
+  // Rent agreement is a non-partnership instrument with its own
+  // landlord/tenant/property requirements. Validate those and return
+  // early — the firm / partners / banking checks below do not apply.
+  if (draft.templateId === 'rent_agreement') {
+    const r = draft.rentAgreement ?? {};
+    if (!r.landlordName?.trim()) errors.push('Landlord name is required.');
+    if (!r.tenantName?.trim()) errors.push('Tenant name is required.');
+    if (!r.propertyAddress?.trim()) errors.push('Property address is required.');
+    if (!r.state?.trim()) errors.push('State is required (drives stamp duty & jurisdiction).');
+    if (typeof r.monthlyRent !== 'number' || r.monthlyRent <= 0) {
+      errors.push('Monthly rent is required.');
+    }
+    if (typeof r.durationMonths !== 'number' || r.durationMonths <= 0) {
+      errors.push('Lease duration (in months) is required.');
+    }
+    if (!r.startDate) errors.push('Lease start date is required.');
+    if (r.landlordPan && !isValidPan(r.landlordPan)) {
+      errors.push('Landlord PAN format is invalid (expected ABCDE1234F).');
+    }
+    if (r.tenantPan && !isValidPan(r.tenantPan)) {
+      errors.push('Tenant PAN format is invalid (expected ABCDE1234F).');
+    }
+    return { ok: errors.length === 0, errors };
+  }
+
   // Firm core
   const firm = draft.firm ?? {};
   if (!firm.firmName?.trim()) errors.push('Firm name is required.');
@@ -73,6 +98,30 @@ export function validateDraft(draft: PartnershipDeedDraft): ValidationResult {
     errors.push('At least one account-operating partner must be selected.');
   }
   if (!banking.mode) errors.push('Banking signing mode is required.');
+
+  // Remuneration (Salary & Interest) — only present on formation deeds
+  // and the LLP agreement. Light validation: enforce the Section 40(b)
+  // ceilings so the deed never authorises an indefensible figure.
+  const rem = draft.remuneration ?? {};
+  if (rem.interestOnCapital) {
+    if (typeof rem.interestRatePct !== 'number' || rem.interestRatePct <= 0) {
+      errors.push('Interest-on-capital rate is required when interest on capital is enabled.');
+    } else if (rem.interestRatePct > 12) {
+      errors.push('Interest on capital cannot exceed 12% p.a. (Section 40(b)(iv) of the Income Tax Act, 1961).');
+    }
+  }
+  if (rem.partnerSalary) {
+    if (!rem.workingPartnerNames || rem.workingPartnerNames.length === 0) {
+      errors.push('Select at least one working partner — only working partners may be paid remuneration under Section 40(b).');
+    }
+    if (rem.salaryMode === 'fixed') {
+      const fixed = rem.fixedRemuneration ?? [];
+      const anyAmount = fixed.some((f) => typeof f.annualAmount === 'number' && f.annualAmount > 0);
+      if (!anyAmount) {
+        errors.push('Enter a fixed annual remuneration for at least one working partner, or switch to "as per Section 40(b) slab".');
+      }
+    }
+  }
 
   // Template-specific.
   // Retirement-cum-admission carries BOTH a retirement block (outgoing

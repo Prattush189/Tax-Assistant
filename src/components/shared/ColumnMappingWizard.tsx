@@ -56,6 +56,52 @@ const BASE_ROLES: Array<{
 
 const PREVIEW_ROWS = 12;
 
+/**
+ * Decorate an amount-bearing preview cell with an explicit +/- sign
+ * and direction colour so the user can see, during mapping, which way
+ * each amount flows — the whole point of tagging Debit vs Credit.
+ *
+ * Sign convention (Credit = +, Debit = −) — money-in is +, money-out
+ * is −. This matches the app's MappedRow data model
+ * ("positive = credit/inflow, negative = debit/outflow").
+ *
+ *   - role 'credit'  → leading magnitude shown as +<value>, green
+ *   - role 'debit'   → leading magnitude shown as −<value>, red
+ *   - role 'amount'  → single signed column; the cell's OWN sign
+ *                      decides (a leading minus = debit = −/red,
+ *                      otherwise credit = +/green)
+ *   - any other role → returned verbatim, no colour
+ *
+ * Cells with no leading numeric token (blank rows, stray header text
+ * that leaked into a data row) are returned untouched so we never
+ * stamp a "+" on a non-amount.
+ */
+function signedCellDisplay(
+  raw: string,
+  role: ColumnRole,
+): { text: string; cls: string } {
+  if (role !== 'debit' && role !== 'credit' && role !== 'amount') {
+    return { text: raw, cls: '' };
+  }
+  // Leading optional-minus + digit-group (commas / decimals allowed).
+  // The Dynamics-AX amount cell carries trailing "<date> <currency>"
+  // text after the number — we anchor on the leading token and keep
+  // the rest of the cell intact.
+  const m = raw.match(/^\s*(-)?\s*([\d,]+(?:\.\d+)?)/);
+  if (!m) return { text: raw, cls: '' };
+  const isNegative = m[1] === '-';
+  let direction: 'credit' | 'debit';
+  if (role === 'credit') direction = 'credit';
+  else if (role === 'debit') direction = 'debit';
+  else direction = isNegative ? 'debit' : 'credit'; // single signed amount
+  const sign = direction === 'credit' ? '+' : '−'; // − minus sign
+  const rest = raw.replace(/^\s*-?\s*/, '');
+  const cls = direction === 'credit'
+    ? 'text-emerald-600 dark:text-emerald-400'
+    : 'text-rose-600 dark:text-rose-400';
+  return { text: `${sign}${rest}`, cls };
+}
+
 export function ColumnMappingWizard({ kind, grid, filename, onConfirm, onCancel, onUseVision, initialMapping, detectedSource }: Props) {
   const [mapping, setMapping] = useState<ColumnMapping>(() => initialMapping ?? suggestMapping(grid));
 
@@ -254,11 +300,21 @@ export function ColumnMappingWizard({ kind, grid, filename, onConfirm, onCancel,
                         </tr>
                       )}
                       <tr className="border-t border-gray-100 dark:border-gray-800/60">
-                        {mapping.roles.map((_, c) => (
-                          <td key={c} className="p-2 text-gray-700 dark:text-gray-300 whitespace-nowrap max-w-[18rem] overflow-hidden text-ellipsis">
-                            {row[c] ?? ''}
-                          </td>
-                        ))}
+                        {mapping.roles.map((role, c) => {
+                          const decorated = signedCellDisplay(row[c] ?? '', role);
+                          return (
+                            <td
+                              key={c}
+                              className={
+                                'p-2 whitespace-nowrap max-w-[18rem] overflow-hidden text-ellipsis ' +
+                                (decorated.cls || 'text-gray-700 dark:text-gray-300') +
+                                (decorated.cls ? ' font-medium tabular-nums' : '')
+                              }
+                            >
+                              {decorated.text}
+                            </td>
+                          );
+                        })}
                       </tr>
                     </Fragment>
                   );
@@ -282,6 +338,11 @@ export function ColumnMappingWizard({ kind, grid, filename, onConfirm, onCancel,
           )}
 
           <div className="mt-4 text-xs text-gray-500 dark:text-gray-400 space-y-1">
+            <p>
+              Amounts in the mapped Debit / Credit / Amount columns are shown with a sign so you can confirm direction:{' '}
+              <span className="font-medium text-emerald-600 dark:text-emerald-400">+ credit (money in)</span>,{' '}
+              <span className="font-medium text-rose-600 dark:text-rose-400">− debit (money out)</span>.
+            </p>
             <p><strong>Tip:</strong> if your statement uses a single Amount column with Dr/Cr marker, set one column to "Amount (single column)" and another to "Dr/Cr marker".</p>
             <p>Header rows, page totals, and "Brought Forward" lines are filtered automatically — only rows with a parseable date count as transactions.</p>
           </div>

@@ -14,7 +14,8 @@ export type PartnershipDeedTemplateId =
   | 'reconstitution_deed'          // admit new partner
   | 'retirement_deed'              // partner exit
   | 'retirement_admission_deed'    // simultaneous exit + admission in one instrument
-  | 'dissolution_deed';            // dissolution
+  | 'dissolution_deed'             // dissolution
+  | 'rent_agreement';              // landlord–tenant rent / lease agreement
 
 export interface PartnerBlock {
   name?: string;
@@ -71,6 +72,59 @@ export interface DissolutionBlock {
   liabilityDischargePlan?: string;
 }
 
+// Partner remuneration (salary) and interest on capital — the
+// Clause 9 inputs. Governed by Section 40(b) of the Income Tax Act,
+// 1961: interest on capital is deductible only up to 12% p.a., and
+// remuneration is deductible only to WORKING partners up to the
+// statutory slab ceiling. Collecting these lets the generated deed
+// authorise the amounts the firm actually intends to pay.
+export interface RemunerationBlock {
+  /** Pay interest on partners' capital balances. */
+  interestOnCapital?: boolean;
+  /** Annual simple-interest rate on capital, % p.a. Section 40(b)(iv)
+   *  caps the deductible rate at 12% p.a.; the UI clamps the input. */
+  interestRatePct?: number;
+  /** Pay remuneration (salary) to the working partners. */
+  partnerSalary?: boolean;
+  /** How working-partner remuneration is fixed:
+   *   - 'as_per_40b' : the deed authorises remuneration up to the
+   *      maximum allowable under Section 40(b)(v), apportioned among
+   *      the working partners in their profit-sharing ratio.
+   *   - 'fixed'      : specific annual amounts per working partner
+   *      (still subject to the 40(b) ceiling on assessment). */
+  salaryMode?: 'as_per_40b' | 'fixed';
+  /** Names (from partners[]) who are working partners eligible for
+   *  remuneration. Only working partners may be paid under 40(b). */
+  workingPartnerNames?: string[];
+  /** Per-working-partner annual remuneration when salaryMode==='fixed'. */
+  fixedRemuneration?: { partnerName: string; annualAmount: number }[];
+}
+
+// Rent / lease agreement between a landlord (lessor) and tenant
+// (lessee). This is NOT a partnership instrument — it reuses the
+// deeds wizard's generation + PDF pipeline but collects its own
+// landlord/tenant/property fields and skips the firm/partner steps.
+export interface RentAgreementBlock {
+  landlordName?: string;
+  landlordAddress?: string;
+  landlordPan?: string;
+  tenantName?: string;
+  tenantAddress?: string;
+  tenantPan?: string;
+  propertyAddress?: string;
+  state?: string;                  // drives stamp duty + jurisdiction
+  purpose?: 'residential' | 'commercial';
+  monthlyRent?: number;            // INR
+  securityDeposit?: number;        // INR
+  startDate?: string;              // YYYY-MM-DD
+  durationMonths?: number;         // lease term, e.g. 11
+  rentDueDay?: number;             // day of month rent falls due (1-31)
+  escalationPct?: number;          // annual rent escalation %
+  noticePeriodMonths?: number;     // termination notice period
+  maintenanceBy?: 'tenant' | 'landlord';
+  furnishing?: string;             // free text: furnished/semi/unfurnished + notes
+}
+
 export interface PartnershipDeedDraft {
   templateId: PartnershipDeedTemplateId;
   firm?: FirmCore;
@@ -81,6 +135,8 @@ export interface PartnershipDeedDraft {
   reconstitution?: ReconstitutionBlock;
   retirement?: RetirementBlock;
   dissolution?: DissolutionBlock;
+  remuneration?: RemunerationBlock;   // formation deeds + LLP agreement
+  rentAgreement?: RentAgreementBlock;  // rent_agreement only
 }
 
 export type StepId =
@@ -88,10 +144,12 @@ export type StepId =
   | 'firm'
   | 'partners'
   | 'banking'
+  | 'remuneration'
   | 'clauses'
   | 'reconstitution'
   | 'retirement'
   | 'dissolution'
+  | 'rentAgreement'
   | 'review';
 
 export const STEP_LABELS: Record<StepId, string> = {
@@ -99,10 +157,12 @@ export const STEP_LABELS: Record<StepId, string> = {
   firm: 'Firm',
   partners: 'Partners',
   banking: 'Banking',
+  remuneration: 'Salary & Interest',
   clauses: 'Clauses',
   reconstitution: 'New Partner(s)',
   retirement: 'Retiring Partner',
   dissolution: 'Dissolution',
+  rentAgreement: 'Rent Agreement',
   review: 'Review & Generate',
 };
 
@@ -111,11 +171,13 @@ export const STEP_DESCRIPTIONS: Record<StepId, string> = {
   firm: 'Firm name, business, state, commencement, duration.',
   partners: 'Each partner\'s identity, capital and profit share.',
   banking: 'Account-operating partners and signing mode.',
+  remuneration: 'Partner remuneration and interest on capital (Section 40(b)).',
   clauses: 'Arbitration toggle and any special clauses.',
   reconstitution: 'Incoming partners and revised profit shares.',
   retirement: 'Retiring partner, effective date, settlement.',
   dissolution: 'Dissolution date, asset and liability plan.',
-  review: 'Generate the deed (AI) and download as PDF.',
+  rentAgreement: 'Landlord, tenant, property, rent, deposit and term.',
+  review: 'Generate the document (AI) and download as PDF.',
 };
 
 export const TEMPLATE_TITLES: Record<PartnershipDeedTemplateId, string> = {
@@ -125,6 +187,7 @@ export const TEMPLATE_TITLES: Record<PartnershipDeedTemplateId, string> = {
   retirement_deed: 'Retirement Deed',
   retirement_admission_deed: 'Retirement cum Admission Deed',
   dissolution_deed: 'Dissolution Deed',
+  rent_agreement: 'Rent Agreement',
 };
 
 export function emptyDraft(templateId: PartnershipDeedTemplateId): PartnershipDeedDraft {
@@ -135,12 +198,28 @@ export function emptyDraft(templateId: PartnershipDeedTemplateId): PartnershipDe
  *  Retirement-cum-admission needs BOTH the retirement AND the reconstitution
  *  steps because the same instrument carries an exit and an entry. We show
  *  retirement first (the outgoing partner), then reconstitution (the
- *  incoming partner + revised shares post-both-changes). */
+ *  incoming partner + revised shares post-both-changes).
+ *
+ *  Rent agreement is a separate, non-partnership instrument: it skips the
+ *  firm / partners / banking / remuneration / clauses steps entirely and
+ *  collects only its own landlord/tenant/property block.
+ *
+ *  The Salary & Interest (remuneration) step appears only on the formation
+ *  instruments (partnership deed + LLP agreement). Amendment deeds inherit
+ *  the original firm's Clause 9 terms, so the step is omitted there. */
 export function getStepOrder(templateId: PartnershipDeedTemplateId): StepId[] {
-  const base: StepId[] = ['templatePicker', 'firm', 'partners', 'banking', 'clauses'];
-  if (templateId === 'reconstitution_deed') return [...base, 'reconstitution', 'review'];
-  if (templateId === 'retirement_deed') return [...base, 'retirement', 'review'];
-  if (templateId === 'retirement_admission_deed') return [...base, 'retirement', 'reconstitution', 'review'];
-  if (templateId === 'dissolution_deed') return [...base, 'dissolution', 'review'];
-  return [...base, 'review'];
+  if (templateId === 'rent_agreement') {
+    return ['templatePicker', 'rentAgreement', 'review'];
+  }
+  const order: StepId[] = ['templatePicker', 'firm', 'partners', 'banking'];
+  if (templateId === 'partnership_deed' || templateId === 'llp_agreement') {
+    order.push('remuneration');
+  }
+  order.push('clauses');
+  if (templateId === 'reconstitution_deed') order.push('reconstitution');
+  else if (templateId === 'retirement_deed') order.push('retirement');
+  else if (templateId === 'retirement_admission_deed') { order.push('retirement', 'reconstitution'); }
+  else if (templateId === 'dissolution_deed') order.push('dissolution');
+  order.push('review');
+  return order;
 }

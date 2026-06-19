@@ -13,7 +13,7 @@ interface Props {
 const TABS: { id: LegalTab; label: string; icon: typeof FileText; ai?: boolean }[] = [
   { id: 'notices', label: 'Notice Replies', icon: FileText, ai: true },
   { id: 'board_resolutions', label: 'Board Resolutions', icon: Gavel },
-  { id: 'partnership_deeds', label: 'Partnership Deeds', icon: ScrollText, ai: true },
+  { id: 'partnership_deeds', label: 'Deeds & Agreements', icon: ScrollText, ai: true },
 ];
 
 /**

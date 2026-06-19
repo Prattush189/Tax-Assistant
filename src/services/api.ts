@@ -1101,7 +1101,8 @@ export type PartnershipDeedTemplateId =
   | 'reconstitution_deed'
   | 'retirement_deed'
   | 'retirement_admission_deed'
-  | 'dissolution_deed';
+  | 'dissolution_deed'
+  | 'rent_agreement';
 
 export type PartnershipDeedStatus = 'draft' | 'generating' | 'generated' | 'error';
 

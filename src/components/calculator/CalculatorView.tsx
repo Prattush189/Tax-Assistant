@@ -6,13 +6,14 @@ import { AdvanceTaxTab } from './AdvanceTaxTab';
 import { SalaryOptimizerTab } from './SalaryOptimizerTab';
 import { InvestmentPlannerTab } from './InvestmentPlannerTab';
 import { RentReceiptTab } from './RentReceiptTab';
+import { SalarySlipTab } from './SalarySlipTab';
 import { Challan280Tab } from './Challan280Tab';
 import { ProfileSelector } from './ProfileSelector';
 import { ProLock } from '../ui/ProLock';
 import { motion, AnimatePresence } from 'motion/react';
-import { Calculator, TrendingUp, Receipt, Briefcase, Lightbulb, FileText, Home, CreditCard } from 'lucide-react';
+import { Calculator, TrendingUp, Receipt, Briefcase, Lightbulb, FileText, Home, CreditCard, ReceiptText } from 'lucide-react';
 
-export type CalculatorTab = 'income' | 'capitalGains' | 'gst' | 'tds' | 'advanceTax' | 'salary' | 'investment' | 'rentReceipt' | 'challan280';
+export type CalculatorTab = 'income' | 'capitalGains' | 'gst' | 'tds' | 'advanceTax' | 'salary' | 'investment' | 'rentReceipt' | 'salarySlip' | 'challan280';
 
 // `ai: true` tabs render a small [AI] badge in the sidebar to flag tabs that
 // call an AI model (e.g. Investment Planner's optimize-suggestions endpoint).
@@ -25,6 +26,7 @@ export const CALCULATOR_TABS: { id: CalculatorTab; label: string; icon: typeof C
   { id: 'salary', label: 'Salary Optimizer', icon: Briefcase, pro: true },
   { id: 'investment', label: 'Investment Planner', icon: Lightbulb, ai: true },
   { id: 'rentReceipt', label: 'Rent Receipts', icon: Home },
+  { id: 'salarySlip', label: 'Salary Slip', icon: ReceiptText },
   { id: 'challan280', label: 'Challan 280', icon: CreditCard },
 ];
 
@@ -62,6 +64,7 @@ export function CalculatorView({ activeTab }: CalculatorViewProps) {
             )}
             {activeTab === 'investment' && <InvestmentPlannerTab />}
             {activeTab === 'rentReceipt' && <RentReceiptTab />}
+            {activeTab === 'salarySlip' && <SalarySlipTab />}
             {activeTab === 'challan280' && <Challan280Tab />}
           </motion.div>
         </AnimatePresence>

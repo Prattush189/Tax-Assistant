@@ -17,10 +17,12 @@ import { TemplatePickerStep } from './steps/TemplatePickerStep';
 import { FirmInfoStep } from './steps/FirmInfoStep';
 import { PartnersStep } from './steps/PartnersStep';
 import { BankingStep } from './steps/BankingStep';
+import { RemunerationStep } from './steps/RemunerationStep';
 import { ClausesStep } from './steps/ClausesStep';
 import { ReconstitutionStep } from './steps/ReconstitutionStep';
 import { RetirementStep } from './steps/RetirementStep';
 import { DissolutionStep } from './steps/DissolutionStep';
+import { RentAgreementStep } from './steps/RentAgreementStep';
 import { ReviewStep } from './steps/ReviewStep';
 
 interface Props {
@@ -44,7 +46,12 @@ export function PartnershipDeedView({ manager }: Props) {
         ...payload,
         templateId: manager.currentDraft.template_id,
       });
-      setStep('firm');
+      // Jump to the first data-collection step for THIS template — not a
+      // hardcoded 'firm', because rent_agreement skips the firm step and
+      // starts at 'rentAgreement'. stepOrder[0] is always 'templatePicker';
+      // [1] is the first real input step.
+      const order = getStepOrder(manager.currentDraft.template_id);
+      setStep(order[1] ?? 'review');
     } else {
       setLocalDraft(emptyDraft('partnership_deed'));
       setStep('templatePicker');
@@ -230,6 +237,8 @@ function StepBody(props: StepBodyProps) {
       return <PartnersStep draft={draft} onChange={onChange} />;
     case 'banking':
       return <BankingStep draft={draft} onChange={onChange} />;
+    case 'remuneration':
+      return <RemunerationStep draft={draft} onChange={onChange} />;
     case 'clauses':
       return <ClausesStep draft={draft} onChange={onChange} />;
     case 'reconstitution':
@@ -238,6 +247,8 @@ function StepBody(props: StepBodyProps) {
       return <RetirementStep draft={draft} onChange={onChange} />;
     case 'dissolution':
       return <DissolutionStep draft={draft} onChange={onChange} />;
+    case 'rentAgreement':
+      return <RentAgreementStep draft={draft} onChange={onChange} />;
     case 'review':
       return (
         <ReviewStep
@@ -286,10 +297,10 @@ function NoDraftSelected({ manager }: { manager: PartnershipDeedsManager }) {
           <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-emerald-100 dark:bg-emerald-900/30 mb-4">
             <ScrollText className="w-7 h-7 text-emerald-600 dark:text-emerald-400" />
           </div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-1">Partnership Deeds</h1>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-1">Deeds &amp; Agreements</h1>
           <p className="text-sm text-gray-500 dark:text-gray-500 max-w-md mx-auto">
-            Generate Indian Partnership Act 1932 / LLP Act 2008 deeds and amendments. Stamp duty is
-            looked up live for your selected state.
+            Generate Partnership Act 1932 / LLP Act 2008 deeds and amendments, plus rent agreements.
+            Stamp duty is looked up live for your selected state.
           </p>
         </div>
 
