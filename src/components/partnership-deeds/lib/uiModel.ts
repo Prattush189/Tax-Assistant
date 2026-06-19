@@ -24,6 +24,9 @@ export interface PartnerBlock {
   age?: number;                  // must be >= 18
   capitalContribution?: number;  // INR
   profitSharePct?: number;       // 0-100; partners must sum to 100
+  /** UI convenience (partners #2+): mirror partner #1's address.
+   *  While true the address field is read-only and tracks #1. */
+  sameAddressAsFirst?: boolean;
 }
 
 export type DurationKind = 'at_will' | 'fixed';

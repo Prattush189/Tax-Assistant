@@ -22,6 +22,27 @@ export function PartnersStep({ draft, onChange }: Props) {
   const patchPartner = (idx: number, patch: Partial<PartnerBlock>) => {
     setPartners(partners.map((p, i) => (i === idx ? { ...p, ...patch } : p)));
   };
+  // Address writes propagate from partner #1 to every partner that has
+  // "same as #1" ticked, so editing the primary address keeps the
+  // mirrored ones in sync.
+  const setPartnerAddress = (idx: number, v: string) => {
+    setPartners(
+      partners.map((p, i) => {
+        if (i === idx) return { ...p, address: v };
+        if (idx === 0 && p.sameAddressAsFirst) return { ...p, address: v };
+        return p;
+      }),
+    );
+  };
+  const setSameAsFirst = (idx: number, checked: boolean) => {
+    setPartners(
+      partners.map((p, i) =>
+        i === idx
+          ? { ...p, sameAddressAsFirst: checked, address: checked ? (partners[0]?.address ?? '') : p.address }
+          : p,
+      ),
+    );
+  };
   const addPartner = () => setPartners([...partners, { ...BLANK_PARTNER }]);
   const removePartner = (idx: number) => setPartners(partners.filter((_, i) => i !== idx));
 
@@ -83,10 +104,22 @@ export function PartnersStep({ draft, onChange }: Props) {
                 </Field>
               </Grid2>
               <Field label="Address" required>
+                {idx > 0 && (
+                  <label className="flex items-center gap-2 mb-1.5 text-xs font-medium text-gray-600 dark:text-gray-400 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={!!p.sameAddressAsFirst}
+                      onChange={(e) => setSameAsFirst(idx, e.target.checked)}
+                      className="w-3.5 h-3.5 rounded border-gray-300 dark:border-gray-600 text-emerald-600 focus:ring-emerald-500/30"
+                    />
+                    Same as Partner #1
+                  </label>
+                )}
                 <TextInput
-                  value={p.address}
-                  onChange={(v) => patchPartner(idx, { address: v })}
+                  value={p.sameAddressAsFirst ? (partners[0]?.address ?? '') : p.address}
+                  onChange={(v) => setPartnerAddress(idx, v)}
                   placeholder="Full residential address with PIN"
+                  disabled={idx > 0 && !!p.sameAddressAsFirst}
                 />
               </Field>
               <Grid2>
