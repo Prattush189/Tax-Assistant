@@ -3,7 +3,7 @@
  *  narrations, and a single-txn party. Run:
  *    npx tsx scripts/smoke-party-ledger.mts
  */
-import { buildPartyLedgerDoc } from '../src/lib/partyLedgerPdf.ts';
+import { buildPartyLedgerDoc, buildCombinedLedgerDoc } from '../src/lib/partyLedgerPdf.ts';
 import type { BankTransaction } from '../src/services/api.ts';
 
 let pass = 0, fail = 0;
@@ -69,6 +69,30 @@ const looksLikePdf = (b: Uint8Array) => b.length > 800 && b[0] === 0x25 && b[1] 
 {
   const doc = buildPartyLedgerDoc('EMPTY', []);
   check('empty ledger → valid PDF (no throw)', looksLikePdf(pdfBytes(doc)));
+}
+
+// 6. Combined ledger book — many parties, each a section, in one PDF.
+{
+  const parties = Array.from({ length: 24 }, (_, p) => ({
+    name: `PARTY ${p} ${p % 3 === 0 ? 'PVT LTD' : ''}`.trim(),
+    txns: Array.from({ length: 1 + (p % 6) }, (_, i) =>
+      tx({ date: `2026-0${(p % 9) + 1}-${String((i % 28) + 1).padStart(2, '0')}`, amount: (i % 2 ? -1 : 1) * (5000 + p * 100 + i), narration: `Party ${p} txn ${i} narration` })),
+  }));
+  const doc = buildCombinedLedgerDoc(parties, { bankName: 'Bank of Baroda', periodFrom: '2026-04-01', periodTo: '2026-04-19' });
+  const b = pdfBytes(doc);
+  check('combined 24-party ledger → valid PDF', looksLikePdf(b), `(pages=${doc.getNumberOfPages()})`);
+  check('combined ledger spans multiple pages', doc.getNumberOfPages() > 1);
+}
+
+// 7. Combined ledger skips empty parties and survives an all-empty list.
+{
+  const doc = buildCombinedLedgerDoc([
+    { name: 'HAS TXNS', txns: [tx({ amount: -1000 })] },
+    { name: 'EMPTY', txns: [] },
+  ]);
+  check('combined ledger with an empty party → valid PDF', looksLikePdf(pdfBytes(doc)));
+  const docEmpty = buildCombinedLedgerDoc([]);
+  check('combined ledger, zero parties → valid PDF (no throw)', looksLikePdf(pdfBytes(docEmpty)));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -1,27 +1,28 @@
 /**
  * Party-wise ledger PDF, built from a bank statement's transactions.
  *
- * The "Top counterparties" panel groups every transaction by party; this
- * turns ONE party's slice into a printable T-account-style ledger the
- * user can hand to a CA or attach to the party's file:
+ * Two products share one section renderer:
+ *   - buildPartyLedgerDoc()    : a single party's ledger.
+ *   - buildCombinedLedgerDoc() : a "ledger book" — every party, each as
+ *                                its own ledger-account section, in one
+ *                                document.
  *
+ * Each section is a T-account-style ledger:
  *   Date | Particulars | Debit | Credit | Balance(Dr/Cr)
  *
  * Sign convention (from the account holder's books):
- *   - money PAID to the party (statement outflow, amount < 0) → Debit
- *     (the party's account is debited)
- *   - money RECEIVED from the party (statement inflow, amount > 0) →
- *     Credit
- *   - running Balance is Debit-positive (Dr) and carries a Dr/Cr suffix,
- *     the way Tally prints a party ledger.
+ *   - money PAID to the party   (outflow, amount < 0) → Debit
+ *   - money RECEIVED from party  (inflow,  amount > 0) → Credit
+ *   - running Balance is Debit-positive (Dr), with a Dr/Cr suffix the
+ *     way Tally prints a party ledger.
  *
- * Opening balance is 0 — a bank statement doesn't carry the party's
- * brought-forward balance, so we start fresh and the footer says so.
+ * Opening balance is 0 — a bank statement carries no brought-forward
+ * party balance, so each section starts fresh and the footer says so.
  *
  * jsPDF's default Helvetica is WinAnsi-encoded: a single non-Latin-1
  * code point (₹, en-dash, curly quote, …) breaks glyph shaping for the
- * WHOLE string, so every user-supplied string is run through sanitize()
- * and money is printed "Rs." not "₹".
+ * WHOLE string, so every user-supplied string goes through sanitize()
+ * and money prints "Rs." not "₹".
  */
 import { jsPDF } from 'jspdf';
 import type { BankTransaction } from '../services/api';
@@ -49,7 +50,6 @@ function fmtDate(d: string | null | undefined): string {
 }
 
 function balanceLabel(n: number): string {
-  // Dr-positive convention; 0 carries no suffix.
   return rs(n) + (n > 0.005 ? ' Dr' : n < -0.005 ? ' Cr' : '');
 }
 
@@ -60,18 +60,92 @@ export interface PartyLedgerMeta {
   periodTo?: string | null;
 }
 
-/** Build the ledger doc (no download) — separated so it's unit-testable
- *  without a DOM. */
-export function buildPartyLedgerDoc(
-  partyName: string,
-  txns: BankTransaction[],
-  meta: PartyLedgerMeta = {},
-): jsPDF {
-  const doc = new jsPDF('p', 'mm', 'a4');
+export interface LedgerParty {
+  name: string;
+  txns: BankTransaction[];
+}
+
+// ── Shared layout ──────────────────────────────────────────────────
+const M_L = 12, M_R = 12;
+const LINE_H = 4.2;
+
+interface Ctx {
+  doc: jsPDF;
+  pageW: number;
+  pageH: number;
+  right: number;
+  X: { date: number; part: number; debitR: number; creditR: number; balR: number };
+  partWrap: number;
+  /** Slim banner text repeated atop every continuation page. */
+  runningTitle: string;
+  y: number;
+}
+
+function makeCtx(doc: jsPDF, runningTitle: string): Ctx {
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
-  const mL = 12, mR = 12;
-  const right = pageW - mR;
+  const right = pageW - M_R;
+  const X = { date: M_L, part: M_L + 23, debitR: 132, creditR: 165, balR: right };
+  return { doc, pageW, pageH, right, X, partWrap: X.debitR - X.part - 4, runningTitle, y: 0 };
+}
+
+/** Slim running banner drawn at the top of every continuation page. */
+function pageBanner(ctx: Ctx) {
+  const { doc, right } = ctx;
+  ctx.y = 12;
+  doc.setFont('helvetica', 'italic'); doc.setFontSize(8); doc.setTextColor(130);
+  doc.text(sanitize(ctx.runningTitle) + ' (contd.)', M_L, ctx.y);
+  doc.setTextColor(0); doc.setDrawColor(210); doc.line(M_L, ctx.y + 1.5, right, ctx.y + 1.5);
+  ctx.y += 5;
+}
+
+function colHead(ctx: Ctx) {
+  const { doc, X, right } = ctx;
+  doc.setDrawColor(170); doc.line(M_L, ctx.y, right, ctx.y); ctx.y += 4;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
+  doc.text('Date', X.date, ctx.y);
+  doc.text('Particulars', X.part, ctx.y);
+  doc.text('Debit', X.debitR, ctx.y, { align: 'right' });
+  doc.text('Credit', X.creditR, ctx.y, { align: 'right' });
+  doc.text('Balance', X.balR, ctx.y, { align: 'right' });
+  ctx.y += 1.5; doc.line(M_L, ctx.y, right, ctx.y); ctx.y += 4.5;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+}
+
+/** Document title block (page 1 only). */
+function docTitle(ctx: Ctx, title: string, meta: PartyLedgerMeta, derivedFrom: string | null, derivedTo: string | null) {
+  const { doc } = ctx;
+  ctx.y = 16;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(15);
+  doc.text(sanitize(title) || 'Ledger', M_L, ctx.y); ctx.y += 6;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5);
+  const sub: string[] = [];
+  if (meta.bankName) sub.push(sanitize(meta.bankName));
+  if (meta.accountLabel) sub.push('A/c ' + sanitize(meta.accountLabel));
+  if (sub.length) { doc.text(sub.join('   |   '), M_L, ctx.y); ctx.y += 5; }
+  const pf = meta.periodFrom ?? derivedFrom;
+  const pt = meta.periodTo ?? derivedTo;
+  if (pf || pt) { doc.text(`Period: ${fmtDate(pf) || '...'} to ${fmtDate(pt) || '...'}`, M_L, ctx.y); ctx.y += 5; }
+  doc.setFontSize(7.5); doc.setTextColor(120);
+  doc.text('Generated from a bank statement by Smartbiz AI - opening balance not carried; verify against books of account.', M_L, ctx.y);
+  doc.setTextColor(0); ctx.y += 4;
+}
+
+/** Render ONE party's ledger section at ctx.y, handling page breaks.
+ *  Returns nothing; advances ctx.y past the section. */
+function renderPartySection(ctx: Ctx, partyName: string, txns: BankTransaction[]) {
+  const { doc, X, right, pageH } = ctx;
+  ctx.runningTitle = partyName;
+
+  // Keep the heading + column head + first row together: if we're too
+  // far down the page to fit them, break first.
+  if (ctx.y > pageH - 40) { doc.addPage(); pageBanner(ctx); }
+
+  // Party heading.
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
+  doc.text(sanitize(partyName) || '(unnamed)', M_L, ctx.y); ctx.y += 5;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+  colHead(ctx);
 
   // Chronological, undated rows last.
   const rows = [...txns].sort((a, b) => {
@@ -80,88 +154,69 @@ export function buildPartyLedgerDoc(
     return a.date < b.date ? -1 : a.date > b.date ? 1 : 0;
   });
 
-  const X = { date: mL, part: mL + 23, debitR: 132, creditR: 165, balR: right };
-  const partWrap = X.debitR - X.part - 4;
-  const lineH = 4.2;
-  let y = 0;
-
-  const drawColHead = () => {
-    doc.setDrawColor(170); doc.line(mL, y, right, y); y += 4;
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
-    doc.text('Date', X.date, y);
-    doc.text('Particulars', X.part, y);
-    doc.text('Debit', X.debitR, y, { align: 'right' });
-    doc.text('Credit', X.creditR, y, { align: 'right' });
-    doc.text('Balance', X.balR, y, { align: 'right' });
-    y += 1.5; doc.line(mL, y, right, y); y += 4.5;
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
-  };
-
-  const header = () => {
-    y = 16;
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(15);
-    doc.text(sanitize(partyName) || 'Ledger', mL, y); y += 6;
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5);
-    doc.text('Ledger Account', mL, y); y += 5;
-    const sub: string[] = [];
-    if (meta.bankName) sub.push(sanitize(meta.bankName));
-    if (meta.accountLabel) sub.push('A/c ' + sanitize(meta.accountLabel));
-    if (sub.length) { doc.text(sub.join('   |   '), mL, y); y += 5; }
-    const pf = meta.periodFrom ?? (rows.length ? rows[0].date : null);
-    const pt = meta.periodTo ?? (rows.length ? rows[rows.length - 1].date : null);
-    if (pf || pt) {
-      doc.text(`Period: ${fmtDate(pf) || '...'} to ${fmtDate(pt) || '...'}`, mL, y); y += 5;
-    }
-    doc.setFontSize(7.5); doc.setTextColor(120);
-    doc.text('Generated from a bank statement by Smartbiz AI - opening balance not carried; verify against books of account.', mL, y);
-    doc.setTextColor(0); y += 3;
-    drawColHead();
-  };
-
-  header();
-
-  // Opening balance line.
+  // Opening balance.
   let balance = 0;
   doc.setFont('helvetica', 'italic');
-  doc.text('Opening Balance', X.part, y);
-  doc.text(rs(0), X.balR, y, { align: 'right' });
+  doc.text('Opening Balance', X.part, ctx.y);
+  doc.text(rs(0), X.balR, ctx.y, { align: 'right' });
   doc.setFont('helvetica', 'normal');
-  y += 6;
+  ctx.y += 6;
 
   let totalDr = 0, totalCr = 0;
   for (const t of rows) {
-    const debit = t.amount < 0 ? Math.abs(t.amount) : 0;   // paid to party
-    const credit = t.amount > 0 ? t.amount : 0;            // received from party
+    const debit = t.amount < 0 ? Math.abs(t.amount) : 0;
+    const credit = t.amount > 0 ? t.amount : 0;
     totalDr += debit; totalCr += credit;
     balance += debit - credit;
 
     const narr = sanitize(t.narration || t.counterparty || '-') || '-';
-    const partLines = doc.splitTextToSize(narr, partWrap) as string[];
+    const partLines = doc.splitTextToSize(narr, ctx.partWrap) as string[];
     const allLines = t.reference ? [...partLines, sanitize('Ref: ' + t.reference)] : partLines;
-    const rowH = Math.max(lineH, allLines.length * lineH) + 1.5;
+    const rowH = Math.max(LINE_H, allLines.length * LINE_H) + 1.5;
 
-    if (y + rowH > pageH - 20) { doc.addPage(); header(); }
+    if (ctx.y + rowH > pageH - 20) { doc.addPage(); pageBanner(ctx); colHead(ctx); }
 
-    const yTop = y;
+    const yTop = ctx.y;
     doc.text(fmtDate(t.date), X.date, yTop);
-    allLines.forEach((ln, i) => doc.text(ln, X.part, yTop + i * lineH));
+    allLines.forEach((ln, i) => doc.text(ln, X.part, yTop + i * LINE_H));
     if (debit) doc.text(rs(debit), X.debitR, yTop, { align: 'right' });
     if (credit) doc.text(rs(credit), X.creditR, yTop, { align: 'right' });
     doc.text(balanceLabel(balance), X.balR, yTop, { align: 'right' });
-    y = yTop + rowH;
+    ctx.y = yTop + rowH;
   }
 
-  if (y + 18 > pageH - 12) { doc.addPage(); header(); }
-  y += 1.5; doc.setDrawColor(120); doc.line(mL, y, right, y); y += 5;
+  // Section totals.
+  if (ctx.y + 12 > pageH - 14) { doc.addPage(); pageBanner(ctx); colHead(ctx); }
+  ctx.y += 1; doc.setDrawColor(120); doc.line(M_L, ctx.y, right, ctx.y); ctx.y += 5;
   doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
-  doc.text(`${rows.length} transaction${rows.length === 1 ? '' : 's'}`, X.date, y);
-  doc.text(rs(totalDr), X.debitR, y, { align: 'right' });
-  doc.text(rs(totalCr), X.creditR, y, { align: 'right' });
-  doc.text('Closing ' + balanceLabel(balance), X.balR, y, { align: 'right' });
-  y += 6;
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(120);
-  doc.text('Debit = paid to party (outflow).  Credit = received from party (inflow).', mL, y);
+  doc.text(`${rows.length} transaction${rows.length === 1 ? '' : 's'}`, X.date, ctx.y);
+  doc.text(rs(totalDr), X.debitR, ctx.y, { align: 'right' });
+  doc.text(rs(totalCr), X.creditR, ctx.y, { align: 'right' });
+  doc.text('Closing ' + balanceLabel(balance), X.balR, ctx.y, { align: 'right' });
+  ctx.y += 9;
+  doc.setFont('helvetica', 'normal');
+}
 
+function txnRange(txns: BankTransaction[]): [string | null, string | null] {
+  const dated = txns.map(t => t.date).filter((d): d is string => !!d).sort();
+  return [dated[0] ?? null, dated[dated.length - 1] ?? null];
+}
+
+// ── Single-party ledger ────────────────────────────────────────────
+export function buildPartyLedgerDoc(
+  partyName: string,
+  txns: BankTransaction[],
+  meta: PartyLedgerMeta = {},
+): jsPDF {
+  const doc = new jsPDF('p', 'mm', 'a4');
+  const ctx = makeCtx(doc, partyName);
+  const [from, to] = txnRange(txns);
+  docTitle(ctx, partyName, meta, from, to);
+  ctx.y += 1;
+  renderPartySection(ctx, partyName, txns);
+  doc.setFontSize(7.5); doc.setTextColor(120);
+  doc.text('Debit = paid to party (outflow).  Credit = received from party (inflow).', M_L, Math.min(ctx.y, ctx.pageH - 8));
+  doc.setTextColor(0);
   return doc;
 }
 
@@ -171,6 +226,39 @@ export function downloadPartyLedgerPdf(
   meta: PartyLedgerMeta = {},
 ): void {
   const doc = buildPartyLedgerDoc(partyName, txns, meta);
-  const safe = (partyName || 'party').replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'party';
-  doc.save(`ledger-${safe}.pdf`);
+  doc.save(`ledger-${safeName(partyName)}.pdf`);
+}
+
+// ── Combined ledger book (all parties) ─────────────────────────────
+export function buildCombinedLedgerDoc(
+  parties: LedgerParty[],
+  meta: PartyLedgerMeta = {},
+): jsPDF {
+  const doc = new jsPDF('p', 'mm', 'a4');
+  const ctx = makeCtx(doc, 'Combined Ledger');
+  const allTxns = parties.flatMap(p => p.txns);
+  const [from, to] = txnRange(allTxns);
+  docTitle(ctx, 'Combined Ledger', meta, from, to);
+  doc.setFontSize(8.5); doc.setTextColor(90);
+  doc.text(`${parties.length} part${parties.length === 1 ? 'y' : 'ies'} · ${allTxns.length} transaction${allTxns.length === 1 ? '' : 's'}`, M_L, ctx.y);
+  doc.setTextColor(0); ctx.y += 6;
+
+  for (const p of parties) {
+    if (!p.txns.length) continue;
+    renderPartySection(ctx, p.name, p.txns);
+  }
+  return doc;
+}
+
+export function downloadCombinedLedgerPdf(
+  parties: LedgerParty[],
+  meta: PartyLedgerMeta = {},
+): void {
+  const doc = buildCombinedLedgerDoc(parties, meta);
+  const today = new Date().toISOString().slice(0, 10);
+  doc.save(`combined-ledger-${today}.pdf`);
+}
+
+function safeName(s: string): string {
+  return (s || 'party').replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'party';
 }

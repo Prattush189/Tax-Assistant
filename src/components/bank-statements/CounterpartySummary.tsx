@@ -29,7 +29,7 @@ import { Users, ArrowUpDown, Search, ChevronDown, ChevronRight, Download, FileTe
 import Papa from 'papaparse';
 import { BankTransaction } from '../../services/api';
 import { formatINRCompact, formatINR, formatDate, cn } from '../../lib/utils';
-import { downloadPartyLedgerPdf } from '../../lib/partyLedgerPdf';
+import { downloadPartyLedgerPdf, downloadCombinedLedgerPdf } from '../../lib/partyLedgerPdf';
 
 interface Props {
   transactions: BankTransaction[];
@@ -105,6 +105,21 @@ export function CounterpartySummary({ transactions, meta }: Props) {
   const downloadLedger = (row: PartyRow) => {
     const txns = transactions.filter((t) => partyKeyOf(t) === row.key);
     downloadPartyLedgerPdf(row.display, txns, meta ?? {});
+  };
+  // One PDF, every party as its own ledger-account section. Ordered by
+  // volume (largest first) so the parties that matter lead the book.
+  const downloadCombined = () => {
+    const byKey = new Map<string, BankTransaction[]>();
+    for (const t of transactions) {
+      const k = partyKeyOf(t);
+      if (!k) continue;
+      (byKey.get(k) ?? byKey.set(k, []).get(k)!).push(t);
+    }
+    const ordered = [...rows]
+      .sort((a, b) => (b.inflow + b.outflow) - (a.inflow + a.outflow))
+      .map((r) => ({ name: r.display, txns: byKey.get(r.key) ?? [] }))
+      .filter((p) => p.txns.length > 0);
+    downloadCombinedLedgerPdf(ordered, meta ?? {});
   };
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('volume');
@@ -240,17 +255,27 @@ export function CounterpartySummary({ transactions, meta }: Props) {
           </h3>
           <span className="text-xs text-gray-400">({rows.length})</span>
         </div>
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          className="flex items-center gap-1 text-xs font-medium text-emerald-700 dark:text-emerald-400 hover:text-emerald-800"
-        >
-          {expanded ? (
-            <>Show top {COLLAPSED_LIMIT} <ChevronRight className="w-3 h-3 rotate-90" /></>
-          ) : (
-            <>Show all <ChevronDown className="w-3 h-3" /></>
-          )}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={downloadCombined}
+            title="Download every party as one combined ledger PDF"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border border-gray-200 dark:border-gray-700 hover:border-emerald-400 dark:hover:border-emerald-600 text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-900"
+          >
+            <FileText className="w-3.5 h-3.5" /> Combined ledger
+          </button>
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="flex items-center gap-1 text-xs font-medium text-emerald-700 dark:text-emerald-400 hover:text-emerald-800"
+          >
+            {expanded ? (
+              <>Show top {COLLAPSED_LIMIT} <ChevronRight className="w-3 h-3 rotate-90" /></>
+            ) : (
+              <>Show all <ChevronDown className="w-3 h-3" /></>
+            )}
+          </button>
+        </div>
       </div>
 
       {!expanded && (
