@@ -9,6 +9,11 @@ import { BANK_STATEMENT_CATEGORIES, CATEGORY_META, BankStatementCategory } from 
 interface Props {
   transactions: BankTransaction[];
   manager: BankStatementManager;
+  /** Optional controlled search box. When provided, the parent owns the
+   *  query (e.g. clicking a category in the breakdown filters the
+   *  table); otherwise the table keeps its own internal search state. */
+  query?: string;
+  onQueryChange?: (q: string) => void;
 }
 
 // Accumulator for the "Remember selected" batch toast. One entry per
@@ -30,7 +35,7 @@ interface PendingLearn {
 
 const PENDING_TOAST_ID = 'pending-learns';
 
-export function TransactionTable({ transactions, manager }: Props) {
+export function TransactionTable({ transactions, manager, query: controlledQuery, onQueryChange }: Props) {
   if (!transactions.length) {
     return (
       <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900/40 p-8 text-center text-gray-500 dark:text-gray-400">
@@ -64,7 +69,9 @@ export function TransactionTable({ transactions, manager }: Props) {
   // reference + category + formatted amount + date — anything visible
   // in the row, so a user typing "phonepe", "2025-05-07", "135000",
   // or "transfers" all just work. Case-insensitive substring.
-  const [query, setQuery] = useState('');
+  const [internalQuery, setInternalQuery] = useState('');
+  const query = controlledQuery ?? internalQuery;
+  const setQuery = onQueryChange ?? setInternalQuery;
   const filteredTransactions = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return transactions;

@@ -5,6 +5,10 @@ import { BANK_STATEMENT_CATEGORIES, BankStatementCategory, CATEGORY_META } from 
 
 interface Props {
   transactions: BankTransaction[];
+  /** Clicking a category row calls this with the category name — the
+   *  parent uses it to filter the transaction table (by seeding its
+   *  search box). Omit to render the breakdown read-only. */
+  onSelectCategory?: (category: string) => void;
 }
 
 interface Row {
@@ -14,7 +18,7 @@ interface Row {
   count: number;
 }
 
-export function CategoryBreakdown({ transactions }: Props) {
+export function CategoryBreakdown({ transactions, onSelectCategory }: Props) {
   const rows: Row[] = useMemo(() => {
     const map = new Map<BankStatementCategory, Row>();
     for (const t of transactions) {
@@ -44,7 +48,14 @@ export function CategoryBreakdown({ transactions }: Props) {
           const total = row.inflow + row.outflow;
           const widthPct = Math.round((total / maxTotal) * 100);
           return (
-            <div key={row.category} className="space-y-1.5">
+            <button
+              key={row.category}
+              type="button"
+              onClick={() => onSelectCategory?.(row.category)}
+              disabled={!onSelectCategory}
+              title={onSelectCategory ? `Show only ${row.category} transactions` : undefined}
+              className={`w-full text-left space-y-1.5 rounded-lg -mx-1.5 px-1.5 py-1 transition-colors ${onSelectCategory ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50' : 'cursor-default'}`}
+            >
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
                   <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${meta.bg}`}>
@@ -61,7 +72,7 @@ export function CategoryBreakdown({ transactions }: Props) {
               <div className="h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
                 <div className={`h-full ${meta.bg}`} style={{ width: `${widthPct}%` }} />
               </div>
-            </div>
+            </button>
           );
         })}
       </div>

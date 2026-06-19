@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Landmark, Loader2, RefreshCw } from 'lucide-react';
 import { motion } from 'motion/react';
 import toast from 'react-hot-toast';
@@ -24,6 +24,17 @@ export function BankStatementView({ manager }: Props) {
   const [cancelPending, setCancelPending] = useState(false);
 
   const [isReapplying, setIsReapplying] = useState(false);
+
+  // Search box for the transaction table, lifted here so clicking a
+  // category in the breakdown can seed it (the table search already
+  // matches the category column). Ref lets us scroll the table into
+  // view on a category click.
+  const [txSearch, setTxSearch] = useState('');
+  const txTableRef = useRef<HTMLDivElement>(null);
+  const selectCategory = (category: string) => {
+    setTxSearch(category);
+    requestAnimationFrame(() => txTableRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  };
 
   const handleDelete = async () => {
     if (!manager.current) return;
@@ -286,7 +297,7 @@ export function BankStatementView({ manager }: Props) {
               transactions={manager.current.transactions}
             />
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-              <CategoryBreakdown transactions={manager.current.transactions} />
+              <CategoryBreakdown transactions={manager.current.transactions} onSelectCategory={selectCategory} />
               <CounterpartySummary
                 transactions={manager.current.transactions}
                 meta={{
@@ -297,7 +308,14 @@ export function BankStatementView({ manager }: Props) {
                 }}
               />
             </div>
-            <TransactionTable transactions={manager.current.transactions} manager={manager} />
+            <div ref={txTableRef}>
+              <TransactionTable
+                transactions={manager.current.transactions}
+                manager={manager}
+                query={txSearch}
+                onQueryChange={setTxSearch}
+              />
+            </div>
           </>
         )}
       </div>
