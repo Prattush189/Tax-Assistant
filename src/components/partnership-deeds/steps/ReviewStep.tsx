@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Sparkles, Download, AlertTriangle, Loader2 } from 'lucide-react';
+import { Sparkles, Download, FileText, AlertTriangle, Loader2 } from 'lucide-react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { PartnershipDeedDraft } from '../lib/uiModel';
@@ -7,6 +7,7 @@ import { TEMPLATE_TITLES } from '../lib/uiModel';
 import { templateById } from '../lib/templates';
 import { validateDraft } from '../lib/validation';
 import { renderPartnershipDeedPdf } from '../lib/pdfExport';
+import { downloadPartnershipDeedWord } from '../lib/wordExport';
 import { markPartnershipDeedExported } from '../../../services/api';
 import { Card } from '../../itr/shared/Inputs';
 import { cn } from '../../../lib/utils';
@@ -52,6 +53,13 @@ export function ReviewStep({
     } finally {
       setDownloading(false);
     }
+  };
+
+  const handleDownloadWord = () => {
+    if (!generatedContent) return;
+    // Synchronous (client-side HTML blob) — no spinner needed.
+    downloadPartnershipDeedWord(draft, generatedContent);
+    markPartnershipDeedExported(draftId).catch(() => { /* ignore */ });
   };
 
   return (
@@ -131,20 +139,37 @@ export function ReviewStep({
         <Card
           title="Preview"
           action={
-            <button
-              type="button"
-              onClick={handleDownload}
-              disabled={!generatedContent || downloading}
-              className={cn(
-                'flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors',
-                generatedContent && !downloading
-                  ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/30'
-                  : 'bg-gray-100 dark:bg-gray-800 text-gray-400 cursor-not-allowed',
-              )}
-            >
-              <Download className="w-3.5 h-3.5" />
-              {downloading ? 'Preparing…' : 'Download PDF'}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleDownload}
+                disabled={!generatedContent || downloading}
+                className={cn(
+                  'flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors',
+                  generatedContent && !downloading
+                    ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/30'
+                    : 'bg-gray-100 dark:bg-gray-800 text-gray-400 cursor-not-allowed',
+                )}
+              >
+                <Download className="w-3.5 h-3.5" />
+                {downloading ? 'Preparing…' : 'Download PDF'}
+              </button>
+              <button
+                type="button"
+                onClick={handleDownloadWord}
+                disabled={!generatedContent}
+                title="Download as an editable Word document"
+                className={cn(
+                  'flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors',
+                  generatedContent
+                    ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/30'
+                    : 'bg-gray-100 dark:bg-gray-800 text-gray-400 cursor-not-allowed',
+                )}
+              >
+                <FileText className="w-3.5 h-3.5" />
+                Word
+              </button>
+            </div>
           }
         >
           <div className="max-h-[500px] overflow-y-auto px-1 prose prose-sm dark:prose-invert max-w-none prose-headings:text-gray-900 dark:prose-headings:text-gray-100 prose-p:text-gray-700 dark:prose-p:text-gray-300">
