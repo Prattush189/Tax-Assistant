@@ -236,7 +236,7 @@ function AppContent() {
               transition={{ duration: 0.15 }}
               className="flex-1 flex flex-col min-h-0"
             >
-              {activeView === 'chat' && <ChatView isPluginMode={isPluginMode} chatManager={chatManager} />}
+              {activeView === 'chat' && <ChatView isPluginMode={isPluginMode} chatManager={chatManager} onNavigate={(v) => navigateTo(v as ActiveView)} />}
               {activeView === 'calculator' && <CalculatorView activeTab={calculatorTab} />}
               {activeView === 'dashboard' && <DashboardView />}
               {activeView === 'admin' && user?.role === 'admin' && <AdminDashboard />}

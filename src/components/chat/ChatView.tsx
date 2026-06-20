@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Upload, FileText, Loader2, ExternalLink } from 'lucide-react';
+import { Upload, FileText, Loader2, ExternalLink, Landmark, Scale, FileSignature, ScrollText, Calculator, Stamp } from 'lucide-react';
 import { useChatManager } from '../../hooks/useChatManager';
 import { useFileUpload } from '../../hooks/useFileUpload';
 import { useAuth } from '../../contexts/AuthContext';
@@ -41,11 +41,13 @@ function formatNotificationDate(iso: string | null): string {
 interface ChatViewProps {
   isPluginMode: boolean;
   chatManager: ReturnType<typeof useChatManager>;
+  /** Jump to another tool from the home-screen feature guide. */
+  onNavigate?: (view: string) => void;
 }
 
 const ATTACHMENT_LIMITS: Record<string, number> = { free: 1, pro: 3, enterprise: 5 };
 
-export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewProps) {
+export function ChatView({ isPluginMode: _isPluginMode, chatManager, onNavigate }: ChatViewProps) {
   const { messages, input, setInput, isLoading, messagesEndRef, scrollAreaRef, lastUserMsgRef, send, activeDocuments, attachDocument, detachDocument, continueResponse, referencedProfile, setReferencedProfile, injectExchange } = chatManager;
   const { user } = useAuth();
   const fileUpload = useFileUpload();
@@ -397,6 +399,7 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
                 </div>
               )}
             </div>
+            <FeaturesGuide onNavigate={onNavigate} />
           </div>
         ) : (
           <div className="max-w-4xl mx-auto space-y-6">
@@ -451,6 +454,67 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager }: ChatViewP
         onClearReference={() => setReferencedProfile(null)}
         isPro={isPro}
       />
+    </div>
+  );
+}
+
+/** Home-screen guide: a short, clickable tour of the main tools.
+ *  Deliberately omits ITR, TB→Statement and CMA per product scoping. */
+const GUIDE_FEATURES: Array<{
+  view: string;
+  title: string;
+  desc: string;
+  icon: typeof Landmark;
+}> = [
+  { view: 'bank_statements', icon: Landmark, title: 'Bank Statement Analyzer',
+    desc: 'Upload PDF / Excel / CSV statements — auto-categorised transactions, party-wise ledgers (PDF or Word), and anomaly flags.' },
+  { view: 'ledger_scrutiny', icon: Scale, title: 'Ledger Scrutiny & Compare',
+    desc: 'AI audit of Tally / Busy / Marg ledgers, and reconcile two parties’ books bill-by-bill side by side.' },
+  { view: 'notices', icon: FileSignature, title: 'Notice Reply Drafting',
+    desc: 'Draft replies to Income-Tax / GST notices with correct, verified section citations.' },
+  { view: 'partnership_deeds', icon: ScrollText, title: 'Deeds & Agreements',
+    desc: 'Generate partnership deeds, LLP & rent agreements — download as PDF or editable Word.' },
+  { view: 'board_resolutions', icon: Stamp, title: 'Board Resolutions',
+    desc: 'Ready-to-sign company board resolutions for common corporate actions.' },
+  { view: 'calculator', icon: Calculator, title: 'Calculators & Slips',
+    desc: 'Income-tax computation, Challan 280, salary slips and rent receipts.' },
+];
+
+function FeaturesGuide({ onNavigate }: { onNavigate?: (view: string) => void }) {
+  return (
+    <div className="w-full max-w-4xl px-2">
+      <div className="text-center mb-4">
+        <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-200">What you can do here</h3>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+          A quick tour of the tools — or just ask the assistant a question below.
+        </p>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {GUIDE_FEATURES.map((f) => {
+          const Icon = f.icon;
+          const interactive = !!onNavigate;
+          return (
+            <button
+              key={f.view}
+              type="button"
+              onClick={() => onNavigate?.(f.view)}
+              disabled={!interactive}
+              className={cn(
+                'text-left p-3.5 rounded-xl border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800/40 transition-all',
+                interactive ? 'hover:border-emerald-400 dark:hover:border-emerald-600 hover:shadow-md cursor-pointer' : 'cursor-default',
+              )}
+            >
+              <div className="flex items-center gap-2.5 mb-1.5">
+                <div className="w-8 h-8 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 flex items-center justify-center shrink-0">
+                  <Icon className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                </div>
+                <span className="text-sm font-semibold text-gray-800 dark:text-gray-100">{f.title}</span>
+              </div>
+              <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">{f.desc}</p>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
