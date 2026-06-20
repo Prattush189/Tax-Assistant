@@ -642,7 +642,134 @@ const SBI: BankRule = {
 // reshaped — its preprocess gates on columnCount === 4 anyway) and
 // before JK_BANK (whose header rule can never satisfy this format's
 // all-null headers, so ordering only saves a wasted attempt).
-const RULES: BankRule[] = [HDFC, ICICI, CANARA, PNB, YES_BANK, KOTAK, SBI, JK_BANK_DCR, JK_BANK_SAVINGS, JK_BANK];
+// ─── Bank of Maharashtra ──────────────────────────────────────────
+//
+// BOM's digital PDF is the hardest layout we've met. extractPdfGrid
+// collapses its 8-column table (Sr No | Date | Particulars |
+// Cheque/Reference No | Debit | Credit | Balance | Channel) into 6
+// columns with Date+Particulars and Balance+Channel fused, AND every
+// transaction is split across ~3 grid rows: a narration-prefix line
+// above the data line, the data line itself (Sr No / Date / amounts /
+// Balance), and one or more narration-suffix lines below. Worse, the
+// Debit/Credit amounts frequently bleed into the Reference column, so
+// the printed amount columns can't be trusted.
+//
+// The one rock-solid signal is the running Balance — present and
+// parseable on every data row. So the preprocess rebuilds clean
+// one-row-per-transaction records and derives each amount from the
+// BALANCE DELTA (balance(N) − balance(N-1)), which self-corrects the
+// misaligned amount columns. On the user's 17-page Part_1 (2,626
+// transactions, Sr No 1→2626 with zero gaps) this reconciles to the
+// paisa: opening 36,558.20 + credits 35,93,237.61 − debits
+// 36,27,082.81 = 2,713.00 = the printed closing balance.
+const BOM_DATE_RE = /\b(\d{2}\/\d{2}\/\d{4})\b/;
+function bomParseNum(s: string | undefined): number | null {
+  if (!s) return null;
+  const m = s.replace(/(\d),(\d)/g, '$1$2').match(/-?\d+\.\d{2}|-?\d{2,}/);
+  return m ? parseFloat(m[0]) : null;
+}
+function preprocessBom(grid: PdfGrid): PdfGrid {
+  // A "data row": col 0 is a bare Sr No integer AND col 1 carries a date.
+  const mainSet = new Set<number>();
+  const mainIdx: number[] = [];
+  for (let i = 0; i < grid.rows.length; i++) {
+    const r = grid.rows[i];
+    if (/^\d+$/.test((r[0] ?? '').trim()) && BOM_DATE_RE.test(r[1] ?? '')) {
+      mainIdx.push(i);
+      mainSet.add(i);
+    }
+  }
+  // Not the BOM transaction table (or extraction differed) — leave the
+  // grid untouched so detection falls through to the wizard.
+  if (mainIdx.length < 3) return grid;
+
+  type Rec = { date: string; narr: string; ref: string; bal: number | null; exDr: number | null; exCr: number | null };
+  const recs: Rec[] = [];
+  for (let k = 0; k < mainIdx.length; k++) {
+    const i = mainIdx[k];
+    const r = grid.rows[i];
+    const dm = (r[1] ?? '').match(BOM_DATE_RE);
+    const inline = (r[1] ?? '').replace(BOM_DATE_RE, '').trim();
+    // Narration = the line just above the data row (prefix) + any inline
+    // text on the data row + the lines below up to the next data row.
+    const parts: string[] = [];
+    const prev = i - 1;
+    if (prev >= 0 && !mainSet.has(prev)) {
+      const t = (grid.rows[prev]?.[1] ?? '').trim();
+      if (t && !/sr no|particulars|reference no/i.test(t)) parts.push(t);
+    }
+    if (inline) parts.push(inline);
+    const nextMain = k + 1 < mainIdx.length ? mainIdx[k + 1] : grid.rows.length;
+    const suffixEnd = Math.min(nextMain - 2, i + 5); // last txn's tail is capped
+    for (let s = i + 1; s <= suffixEnd; s++) {
+      if (mainSet.has(s)) break;
+      const t = (grid.rows[s]?.[1] ?? '').trim();
+      if (t && !/sr no|particulars|page \d|statement (date|for)|closing balance/i.test(t)) parts.push(t);
+    }
+    recs.push({
+      date: dm ? dm[1] : '',
+      narr: parts.join(' ').replace(/\s+/g, ' ').trim(),
+      ref: ((r[3] ?? '').match(/\d{6,}/) ?? [''])[0],
+      bal: bomParseNum(r[5]),
+      exDr: bomParseNum(r[2]),
+      exCr: bomParseNum(r[4]),
+    });
+  }
+
+  // Amounts from the balance chain. Seed the opening balance from the
+  // first row's explicit Debit/Credit cell so transaction #1 is signed
+  // correctly; every later amount is balance(N) − balance(N-1).
+  const out: string[][] = [];
+  let prevBal: number | null = null;
+  if (recs[0]) {
+    const amt1 = (recs[0].exCr ?? 0) - (recs[0].exDr ?? 0);
+    prevBal = recs[0].bal != null ? +(recs[0].bal - amt1).toFixed(2) : null;
+  }
+  for (const rec of recs) {
+    let amt: number;
+    if (prevBal != null && rec.bal != null) amt = +(rec.bal - prevBal).toFixed(2);
+    else amt = (rec.exCr ?? 0) - (rec.exDr ?? 0);
+    out.push([
+      rec.date,
+      rec.narr || rec.ref || '-',
+      rec.ref,
+      amt < 0 ? Math.abs(amt).toFixed(2) : '',
+      amt > 0 ? amt.toFixed(2) : '',
+      rec.bal != null ? rec.bal.toFixed(2) : '',
+    ]);
+    if (rec.bal != null) prevBal = rec.bal;
+  }
+
+  return {
+    rows: out,
+    columnCount: 6,
+    columnXs: [0, 60, 120, 180, 240, 300],
+    columnHeaders: ['Date', 'Narration', 'Reference', 'Debit', 'Credit', 'Balance'],
+    pageBreaks: [],
+    pageCount: 1,
+  };
+}
+
+const BANK_OF_MAHARASHTRA: BankRule = {
+  name: 'Bank of Maharashtra',
+  // "mahabank" (the bank's email domain on its banner) is unique to a
+  // BOM statement; a stray "/MAHB/" inside another bank's UPI narration
+  // won't match it, and the IFSC form mahb0NNNN only prints on BOM's
+  // own header.
+  fingerprints: ['mahabank', 'bank of maharashtra', /\bmahb0\d{3,}/],
+  preprocess: preprocessBom,
+  headerRules: [
+    { pattern: /^date$/i, role: 'date' },
+    { pattern: /^narration$/i, role: 'narration' },
+    { pattern: /^reference$/i, role: 'reference' },
+    { pattern: /^debit$/i, role: 'debit' },
+    { pattern: /^credit$/i, role: 'credit' },
+    { pattern: /^balance$/i, role: 'balance' },
+  ],
+  required: ['date', 'narration', 'debit', 'credit', 'balance'],
+};
+
+const RULES: BankRule[] = [HDFC, ICICI, CANARA, PNB, YES_BANK, KOTAK, SBI, BANK_OF_MAHARASHTRA, JK_BANK_DCR, JK_BANK_SAVINGS, JK_BANK];
 
 export interface DetectedBankMapping {
   bank: string;
