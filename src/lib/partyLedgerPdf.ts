@@ -189,10 +189,13 @@ function renderPartySection(ctx: Ctx, partyName: string, txns: BankTransaction[]
   if (ctx.y + 12 > pageH - 14) { doc.addPage(); pageBanner(ctx); colHead(ctx); }
   ctx.y += 1; doc.setDrawColor(120); doc.line(M_L, ctx.y, right, ctx.y); ctx.y += 5;
   doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
-  doc.text(`${rows.length} transaction${rows.length === 1 ? '' : 's'}`, X.date, ctx.y);
+  // "Closing balance" label lives on the LEFT (plenty of room there);
+  // the balance value sits in its own column on the right with no
+  // prefix, so it can't collide with the credit total a column over.
+  doc.text(`Closing balance  -  ${rows.length} txn${rows.length === 1 ? '' : 's'}`, X.date, ctx.y);
   doc.text(rs(totalDr), X.debitR, ctx.y, { align: 'right' });
   doc.text(rs(totalCr), X.creditR, ctx.y, { align: 'right' });
-  doc.text('Closing ' + balanceLabel(balance), X.balR, ctx.y, { align: 'right' });
+  doc.text(balanceLabel(balance), X.balR, ctx.y, { align: 'right' });
   ctx.y += 9;
   doc.setFont('helvetica', 'normal');
 }

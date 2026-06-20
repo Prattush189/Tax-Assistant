@@ -29,7 +29,8 @@ import { Users, ArrowUpDown, Search, ChevronDown, ChevronRight, Download, FileTe
 import Papa from 'papaparse';
 import { BankTransaction } from '../../services/api';
 import { formatINRCompact, formatINR, formatDate, cn } from '../../lib/utils';
-import { downloadPartyLedgerPdf, downloadCombinedLedgerPdf } from '../../lib/partyLedgerPdf';
+import { downloadPartyLedgerPdf, downloadCombinedLedgerPdf, type LedgerParty } from '../../lib/partyLedgerPdf';
+import { downloadPartyLedgerWord, downloadCombinedLedgerWord } from '../../lib/partyLedgerWord';
 
 interface Props {
   transactions: BankTransaction[];
@@ -102,24 +103,36 @@ export function CounterpartySummary({ transactions, meta }: Props) {
   // transactions back out of the full list.
   const partyKeyOf = (t: BankTransaction) =>
     (t.counterparty ?? '').trim() || (t.fingerprint ?? '').trim();
-  const downloadLedger = (row: PartyRow) => {
-    const txns = transactions.filter((t) => partyKeyOf(t) === row.key);
-    downloadPartyLedgerPdf(row.display, txns, meta ?? {});
-  };
-  // One PDF, every party as its own ledger-account section. Ordered by
-  // volume (largest first) so the parties that matter lead the book.
-  const downloadCombined = () => {
+
+  // Clicking a Ledger button opens a small PDF/Word chooser instead of
+  // downloading immediately. `pick` holds what was asked for.
+  const [pick, setPick] = useState<{ kind: 'party'; row: PartyRow } | { kind: 'combined' } | null>(null);
+
+  const orderedParties = (): LedgerParty[] => {
     const byKey = new Map<string, BankTransaction[]>();
     for (const t of transactions) {
       const k = partyKeyOf(t);
       if (!k) continue;
       (byKey.get(k) ?? byKey.set(k, []).get(k)!).push(t);
     }
-    const ordered = [...rows]
+    return [...rows]
       .sort((a, b) => (b.inflow + b.outflow) - (a.inflow + a.outflow))
       .map((r) => ({ name: r.display, txns: byKey.get(r.key) ?? [] }))
       .filter((p) => p.txns.length > 0);
-    downloadCombinedLedgerPdf(ordered, meta ?? {});
+  };
+
+  const runDownload = (format: 'pdf' | 'word') => {
+    if (!pick) return;
+    if (pick.kind === 'party') {
+      const txns = transactions.filter((t) => partyKeyOf(t) === pick.row.key);
+      if (format === 'pdf') downloadPartyLedgerPdf(pick.row.display, txns, meta ?? {});
+      else downloadPartyLedgerWord(pick.row.display, txns, meta ?? {});
+    } else {
+      const parties = orderedParties();
+      if (format === 'pdf') downloadCombinedLedgerPdf(parties, meta ?? {});
+      else downloadCombinedLedgerWord(parties, meta ?? {});
+    }
+    setPick(null);
   };
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('volume');
@@ -258,7 +271,7 @@ export function CounterpartySummary({ transactions, meta }: Props) {
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={downloadCombined}
+            onClick={() => setPick({ kind: 'combined' })}
             title="Download every party as one combined ledger PDF"
             className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border border-gray-200 dark:border-gray-700 hover:border-emerald-400 dark:hover:border-emerald-600 text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-900"
           >
@@ -296,7 +309,7 @@ export function CounterpartySummary({ transactions, meta }: Props) {
               </div>
               <button
                 type="button"
-                onClick={() => downloadLedger(row)}
+                onClick={() => setPick({ kind: 'party', row })}
                 title={`Download ${row.display} as a ledger PDF`}
                 className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium text-gray-500 dark:text-gray-400 hover:text-emerald-700 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 border border-transparent hover:border-emerald-200 dark:hover:border-emerald-800 transition-colors"
               >
@@ -371,7 +384,7 @@ export function CounterpartySummary({ transactions, meta }: Props) {
                     <td className="px-3 py-2 text-right">
                       <button
                         type="button"
-                        onClick={() => downloadLedger(row)}
+                        onClick={() => setPick({ kind: 'party', row })}
                         title={`Download ${row.display} as a ledger PDF`}
                         className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium text-gray-500 dark:text-gray-400 hover:text-emerald-700 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 border border-transparent hover:border-emerald-200 dark:hover:border-emerald-800 transition-colors"
                       >
@@ -388,6 +401,48 @@ export function CounterpartySummary({ transactions, meta }: Props) {
               No parties match "{search}"
             </p>
           )}
+        </div>
+      )}
+
+      {/* PDF / Word chooser — shown after any Ledger button is clicked. */}
+      {pick && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setPick(null)}
+        >
+          <div
+            className="w-full max-w-xs rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">Download ledger</p>
+            <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400 truncate">
+              {pick.kind === 'party' ? pick.row.display : 'Combined — all parties'}
+            </p>
+            <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">Choose a format:</p>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => runDownload('pdf')}
+                className="flex items-center justify-center gap-2 px-3 py-2.5 text-sm font-medium rounded-lg bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 border border-emerald-200 dark:border-emerald-800"
+              >
+                <Download className="w-4 h-4" /> PDF
+              </button>
+              <button
+                type="button"
+                onClick={() => runDownload('word')}
+                className="flex items-center justify-center gap-2 px-3 py-2.5 text-sm font-medium rounded-lg bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/30 border border-blue-200 dark:border-blue-800"
+              >
+                <FileText className="w-4 h-4" /> Word
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => setPick(null)}
+              className="mt-3 w-full text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 py-1"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
     </div>

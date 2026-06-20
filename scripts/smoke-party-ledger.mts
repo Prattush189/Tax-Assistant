@@ -4,6 +4,7 @@
  *    npx tsx scripts/smoke-party-ledger.mts
  */
 import { buildPartyLedgerDoc, buildCombinedLedgerDoc } from '../src/lib/partyLedgerPdf.ts';
+import { buildPartyLedgerDocHtml, buildCombinedLedgerDocHtml } from '../src/lib/partyLedgerWord.ts';
 import type { BankTransaction } from '../src/services/api.ts';
 
 let pass = 0, fail = 0;
@@ -93,6 +94,33 @@ const looksLikePdf = (b: Uint8Array) => b.length > 800 && b[0] === 0x25 && b[1] 
   check('combined ledger with an empty party → valid PDF', looksLikePdf(pdfBytes(doc)));
   const docEmpty = buildCombinedLedgerDoc([]);
   check('combined ledger, zero parties → valid PDF (no throw)', looksLikePdf(pdfBytes(docEmpty)));
+}
+
+// 8. Word (.doc) ledger builders.
+console.log('Word (.doc) ledger:');
+{
+  const txns = [
+    tx({ date: '2026-04-08', amount: 500000, narration: 'By Cash deposit' }),
+    tx({ date: '2026-04-12', amount: -541000, narration: 'To RTGS payment', reference: 'BARBR52026' }),
+  ];
+  const html = buildPartyLedgerDocHtml('NAVYA WINDLAS', txns, { bankName: 'Bank of Baroda' });
+  check('party Word: Word-flavoured HTML doc', html.startsWith('<!DOCTYPE html>') && html.includes('xmlns:w="urn:schemas-microsoft-com:office:word"'));
+  check('party Word: has a table with Dr/Cr balance', html.includes('<table>') && html.includes('Dr') && html.includes('Cr'));
+  check('party Word: debit + credit cells', html.includes('5,41,000.00') && html.includes('5,00,000.00'));
+  check('party Word: title + party heading', html.includes('<h1>NAVYA WINDLAS</h1>') && html.includes('<h2>NAVYA WINDLAS</h2>'));
+  // HTML injection in a party name is escaped.
+  const inj = buildPartyLedgerDocHtml('<script>x</script>', [tx({ amount: -1 })]);
+  check('party Word: name HTML-escaped', !inj.includes('<script>') && inj.includes('&lt;script&gt;'));
+}
+{
+  const parties = Array.from({ length: 5 }, (_, p) => ({
+    name: `PARTY ${p}`,
+    txns: [tx({ amount: (p % 2 ? -1 : 1) * (1000 + p), narration: `txn ${p}` })],
+  }));
+  const html = buildCombinedLedgerDocHtml(parties, { bankName: 'BOM' });
+  check('combined Word: title + per-party sections', html.includes('<h1>Combined Ledger</h1>') && (html.match(/<h2>/g) || []).length === 5);
+  check('combined Word: party + txn counts subtitle', html.includes('5 parties') && html.includes('5 transactions'));
+  check('combined Word: empty list → still a valid doc', buildCombinedLedgerDocHtml([]).startsWith('<!DOCTYPE html>'));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
