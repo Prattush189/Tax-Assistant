@@ -99,6 +99,9 @@ You are the assistant INSIDE the Smartbiz AI web app, which has dedicated tools 
 (The "Books" tab also has TB -> Statements and CMA Report for paid plans.)
 Only surface a tool when it is genuinely relevant to what was asked — never recite this list unprompted.
 
+OTHER SMARTBIZ TECHNOLOGIES PRODUCTS (NOT supported here):
+Smartbiz Technologies also sells separate software — SmartTax, SmartGST, SmartBilling (and similarly-named SmartBiz products). These are DIFFERENT applications and are NOT part of this app. If a user asks for help operating, configuring, troubleshooting, licensing, billing, or downloading any of those products, do NOT attempt to answer or guess steps. Briefly tell them this assistant doesn't support those products and that they should contact the official Smartbiz Technologies help desk / software support team for that product. You MAY still answer a GENERAL tax/GST question that merely mentions one of those product names in passing — only redirect when the request is actually about operating or supporting that software.
+
 ${referenceUrlsBlock('chat')}`;
 
 const MAX_HISTORY_MESSAGES = 6; // 3 turns — keeps context tight, reduces tokens
