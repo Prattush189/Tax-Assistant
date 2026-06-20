@@ -70,6 +70,12 @@ const BANK_PATTERNS: Array<{ name: string; regex: RegExp }> = [
   { name: 'IDFC First Bank', regex: /\bIDFC\b/gi },
   { name: 'IDBI Bank', regex: /\bIDBI\b/gi },
   { name: 'Bank of Baroda', regex: /\b(BOB|BARODA)\b/gi },
+  // Bank of Maharashtra: "BOM" in the download filename
+  // (BOM_Statement_...), the "MAHB" IFSC prefix, the mahabank.co.in
+  // banner, and the full name. \bmahb\d only matches the IFSC form
+  // (MAHB0001245) — NOT a "/MAHB/" UPI counterparty short-code — so it
+  // doesn't over-count when another bank's customer pays a BOM account.
+  { name: 'Bank of Maharashtra', regex: /bank\s*of\s*maharashtra|mahabank|\bmahb\d|\bBOM(?=[_\s.\-]|$)/gi },
   { name: 'Punjab National Bank', regex: /\b(PNB|PUNJAB\s*NATIONAL)\b/gi },
   { name: 'Canara Bank', regex: /\bCANARA\b/gi },
   { name: 'Union Bank of India', regex: /\bUNION\s*BANK\b/gi },
@@ -110,18 +116,40 @@ const BANK_PATTERNS: Array<{ name: string; regex: RegExp }> = [
  * decider for unnamed files ("statement (3).pdf").
  */
 function detectBankName(filename: string | null, rows: NormalizedRow[]): string | null {
-  // Scan ALL transaction narrations — frequency-weighted matching
-  // is robust against high counterparty diversity, so a deeper sample
-  // gives the customer's own bank an even stronger lead.
-  const text = rows.map(r => r.narration).join(' ');
-  const FILENAME_WEIGHT = 100;
+  // 1. The FILENAME is authoritative when it names a bank. Banks name
+  //    their statement downloads with their OWN code (BOM_Statement,
+  //    "HDFC BANK-1", "ICICI BANK FORMAT-2", Canara_Bank_...). Narration
+  //    frequency must NOT override this: a UPI-heavy statement mentions
+  //    dozens of COUNTERPARTY banks (UPI/HDFC/, UPI/SBIN/) far more often
+  //    than the account's own bank — that's exactly how a Bank of
+  //    Maharashtra account, full of /HDFC/ UPI rows, was being labelled
+  //    "HDFC Bank". A weighted blend couldn't win against thousands of
+  //    counterparty hits; a hard filename override can. When the filename
+  //    names more than one bank (rare), the one mentioned most wins.
+  if (filename) {
+    // Normalise the filename's separators to spaces first: bank names in
+    // download filenames are glued with _ / - / . ("Canara_Bank_2025",
+    // "BOM_Statement"), and a trailing \b in the patterns won't fire
+    // against "Canara_" (underscore is a word char). Spaces restore the
+    // boundary.
+    const fnameNorm = filename.replace(/[_.\-]+/g, ' ');
+    const fileHits = BANK_PATTERNS
+      .map(({ name, regex }) => ({ name, n: fnameNorm.match(regex)?.length ?? 0 }))
+      .filter(x => x.n > 0)
+      .sort((a, b) => b.n - a.n);
+    if (fileHits.length > 0) return fileHits[0].name;
+  }
 
+  // 2. No bank named in the filename — fall back to narration frequency.
+  //    The customer's own bank still tends to lead on accounts whose own
+  //    bank appears in charges rows / internal IFSC references; pure
+  //    UPI-passthrough accounts with a generic filename remain a known
+  //    weak spot, but those are rare.
+  const text = rows.map(r => r.narration).join(' ');
   let bestName: string | null = null;
   let bestCount = 0;
   for (const { name, regex } of BANK_PATTERNS) {
-    const narrCount = text.match(regex)?.length ?? 0;
-    const fileCount = filename ? (filename.match(regex)?.length ?? 0) : 0;
-    const count = narrCount + fileCount * FILENAME_WEIGHT;
+    const count = text.match(regex)?.length ?? 0;
     if (count > bestCount) {
       bestCount = count;
       bestName = name;
