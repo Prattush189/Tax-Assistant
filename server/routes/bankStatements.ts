@@ -25,6 +25,8 @@ import { detectAnomalies } from '../lib/bankAnomalyDetector.js';
 import { bankTransactionAnomalyRepo } from '../db/repositories/bankTransactionAnomalyRepo.js';
 import { costForModel } from '../lib/gemini.js';
 import { creditsForPages, creditsForCsvRows, PAGES_PER_CREDIT, CSV_ROWS_PER_CREDIT } from '../lib/creditPolicy.js';
+import { enforceTokenQuota, type TokenQuotaOk } from '../lib/tokenQuota.js';
+import { estimateGeminiVision } from '../lib/tokenEstimate.js';
 import { bankStatementRepo } from '../db/repositories/bankStatementRepo.js';
 import { bankTransactionRepo, BankTransactionInput } from '../db/repositories/bankTransactionRepo.js';
 import { bankStatementRuleRepo, BankStatementRuleRow } from '../db/repositories/bankStatementRuleRepo.js';
@@ -1341,19 +1343,22 @@ router.post(
   async (req: AuthRequest, res: Response) => {
     if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
 
-    // Bank Statement Analyzer no longer draws on the shared token
-    // budget. It runs mostly on the LOCAL model (deterministic
-    // classifier + semantic tier), so analysis is FREE for everyone:
-    //   - Pro / Enterprise: unlimited statements.
-    //   - Free plan: up to FREE_BANK_STATEMENT_LIMIT total.
-    // The residual Gemini spend on genuinely-ambiguous rows is still
-    // logged to api_usage for admin cost visibility, but bank_statement
-    // rows are excluded from the budget sum (see usageRepo), so the
-    // user is never billed tokens for it.
+    // Bank Statement Analyzer billing, by path:
+    //   - DIGITAL (CSV / browser-extracted grid): runs mostly on the
+    //     LOCAL model (deterministic classifier + semantic tier), so it's
+    //     FREE — bank_statement rows are excluded from the token-budget
+    //     sum (see usageRepo). Pro/Enterprise unlimited; free plan up to
+    //     FREE_BANK_STATEMENT_LIMIT total.
+    //   - SCANNED (a PDF/image uploaded for server-side OCR + vision):
+    //     genuinely costs Gemini tokens, so it DOES draw on the token
+    //     budget (logged under category 'bank_statement_ocr', which the
+    //     budget sum counts) and is gated by enforceTokenQuota below.
+    const isOcrPath = !!req.file; // file upload → server OCR / vision
     const quota = enforceQuota(req, res);
     if (!quota.ok) return;
     const billingUserRow = userRepo.findById(quota.billingUserId);
     const effectivePlan = billingUserRow ? getEffectivePlan(billingUserRow) : 'free';
+    // Free-plan statement cap applies to every path.
     if (effectivePlan === 'free') {
       const analyzed = bankStatementRepo.countAnalyzedByBillingUser(quota.billingUserId);
       if (analyzed >= FREE_BANK_STATEMENT_LIMIT) {
@@ -1365,6 +1370,17 @@ router.post(
         });
         return;
       }
+    }
+    // Scanned PDFs (OCR + vision) use Gemini tokens → enforce the token
+    // budget for them. Pre-flight estimate from the file size lets a run
+    // that would clearly bust the remaining budget fail up front. The
+    // digital path skips this entirely (it's free).
+    let tokenQuota: TokenQuotaOk | null = null;
+    if (isOcrPath) {
+      const tq = enforceTokenQuota(req, res, estimateGeminiVision(req.file!.size));
+      if (!tq.ok) return;
+      res.once('close', () => tq.release());
+      tokenQuota = tq;
     }
 
     // 2026-06: User conditions are NO LONGER prepended to the
@@ -2236,7 +2252,7 @@ INPUT_ROWS — TSV, one row per line, columns narration<TAB>type<TAB>amount:
               try {
                 const failedClientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
                 const failedCost = costForModel(result.modelUsed, result.inputTokens, result.outputTokens);
-                usageRepo.logWithBilling(failedClientIp, req.user!.id, quota.billingUserId, result.inputTokens, result.outputTokens, failedCost, false, result.modelUsed, false, 'bank_statement', 0, 'failed');
+                usageRepo.logWithBilling(failedClientIp, req.user!.id, quota.billingUserId, result.inputTokens, result.outputTokens, failedCost, false, result.modelUsed, false, isOcrPath ? 'bank_statement_ocr' : 'bank_statement', 0, 'failed');
               } catch (e) {
                 console.error('[bank-statements] failed-batch log error', e);
               }
@@ -2489,10 +2505,9 @@ INPUT_ROWS — TSV, one row per line, columns narration<TAB>type<TAB>amount:
         // status='cancelled'. The chunks ran (Node doesn't abort
         // handlers on cancel — they completed before the cancel
         // detection check); their tokens are real spend that should
-        // appear in the admin Recent API Calls dashboard for cost
-        // visibility. (bank_statement rows are excluded from the user's
-        // token-budget sum, so the user isn't billed for the dead-end
-        // run either way.)
+        // appear in the admin Recent API Calls dashboard. For the OCR
+        // path they also count toward the user's budget (category
+        // 'bank_statement_ocr'); the digital path stays free.
         try {
           const cancelClientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
           const usages = (res.locals as Record<string, unknown>).geminiUsages as
@@ -2501,7 +2516,7 @@ INPUT_ROWS — TSV, one row per line, columns narration<TAB>type<TAB>amount:
             const inputTok = usages.reduce((a, u) => a + u.inputTokens, 0);
             const outputTok = usages.reduce((a, u) => a + u.outputTokens, 0);
             const cost = usages.reduce((a, u) => a + costForModel(u.modelUsed, u.inputTokens, u.outputTokens), 0);
-            usageRepo.logWithBilling(cancelClientIp, req.user.id, quota.billingUserId, inputTok, outputTok, cost, false, usages[0].modelUsed, false, 'bank_statement', 0, 'cancelled');
+            usageRepo.logWithBilling(cancelClientIp, req.user.id, quota.billingUserId, inputTok, outputTok, cost, false, usages[0].modelUsed, false, isOcrPath ? 'bank_statement_ocr' : 'bank_statement', 0, 'cancelled');
           }
         } catch (err) {
           console.error('[bank-statements] cancelled-run cost log failed:', err);
@@ -2579,11 +2594,13 @@ INPUT_ROWS — TSV, one row per line, columns narration<TAB>type<TAB>amount:
 
       // Log Gemini-side cost — aggregated across vision or pdfText-chunk
       // calls — so this feature appears in the admin API-cost dashboard.
-      // Bank-statement rows are excluded from the user's token-budget sum
-      // (see usageRepo), so these are recorded for admin visibility only,
-      // never billed to the user.
+      // Category drives budgeting: the digital path logs 'bank_statement'
+      // (excluded from the user's token-budget sum — free), while the
+      // OCR/vision path logs 'bank_statement_ocr' (counted toward the
+      // budget — scanned PDFs genuinely cost tokens).
       try {
         const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
+        const bankCategory = isOcrPath ? 'bank_statement_ocr' : 'bank_statement';
         const usages = (res.locals as Record<string, unknown>).geminiUsages as
           Array<{ inputTokens: number; outputTokens: number; modelUsed: string }> | undefined;
         if (usages && usages.length > 0) {
@@ -2593,7 +2610,7 @@ INPUT_ROWS — TSV, one row per line, columns narration<TAB>type<TAB>amount:
           // runs on gemini-2.5-flash / gemini-3-flash-preview; flat T2
           // rates were under-counting by 3-6x.
           const cost = usages.reduce((a, u) => a + costForModel(u.modelUsed, u.inputTokens, u.outputTokens), 0);
-          usageRepo.logWithBilling(clientIp, req.user.id, quota.billingUserId, inputTok, outputTok, cost, false, usages[0].modelUsed, false, 'bank_statement', txCount, 'success', 0, Date.now() - analyzeStartMs);
+          usageRepo.logWithBilling(clientIp, req.user.id, quota.billingUserId, inputTok, outputTok, cost, false, usages[0].modelUsed, false, bankCategory, txCount, 'success', tokenQuota?.estimatedTokens ?? 0, Date.now() - analyzeStartMs);
         }
         // Local-model row: deterministic + semantic + cache hits cost no
         // tokens, but we record them under model='local' so the optimized

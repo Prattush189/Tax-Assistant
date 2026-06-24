@@ -60,13 +60,13 @@ const stmts = {
   // populated (the boot backfill should fill all of them, but this
   // is defence in depth).
   //
-  // bank_statement rows are EXCLUDED: the Bank Statement Analyzer is
-  // free on every plan (it runs mostly on the local model and is gated
-  // separately — unlimited for paid, a fixed count for free). Its
-  // residual Gemini spend is still logged for admin cost visibility but
-  // must not draw down the user's token budget. The local-model rows
-  // (model='local') are 0-token anyway; this also drops any residual
-  // Gemini bank rows from the sum.
+  // category='bank_statement' rows are EXCLUDED: that's the DIGITAL bank
+  // path (CSV / browser-extracted grid), which runs mostly on the local
+  // model and is free on every plan. Its residual Gemini spend is logged
+  // for admin cost visibility but must not draw down the user's budget.
+  // Scanned PDFs go through OCR + vision and DO cost tokens — those are
+  // logged under category='bank_statement_ocr', which is NOT excluded
+  // here, so they correctly count against the budget.
   sumTokensThisMonthByBillingUser: db.prepare(`
     SELECT
       COALESCE(SUM(CASE WHEN weighted_tokens > 0 THEN weighted_tokens ELSE (input_tokens + output_tokens) END), 0) AS tokens

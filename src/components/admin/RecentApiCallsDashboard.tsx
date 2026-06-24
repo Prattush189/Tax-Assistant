@@ -13,6 +13,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   partnership_deed: 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-400',
   suggestion: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400',
   bank_statement: 'bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-400',
+  bank_statement_ocr: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-400',
   ledger_scrutiny: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400',
   ledger_extract: 'bg-lime-100 text-lime-700 dark:bg-lime-900/40 dark:text-lime-400',
   style_profile: 'bg-pink-100 text-pink-700 dark:bg-pink-900/40 dark:text-pink-400',
@@ -27,6 +28,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   partnership_deed: 'Partnership Deed',
   suggestion: 'Suggestion',
   bank_statement: 'Bank Statement',
+  bank_statement_ocr: 'Bank Statement (OCR)',
   ledger_scrutiny: 'Ledger Scrutiny',
   ledger_extract: 'Ledger Extract',
   style_profile: 'Style Profile',
@@ -68,6 +70,7 @@ function inputUnitLabel(category: string | null, units: number): string {
   if (!units || units === 0) return '—';
   switch (category) {
     case 'bank_statement':
+    case 'bank_statement_ocr':
     case 'ledger_extract':
     case 'ledger_scrutiny':
       return `${units.toLocaleString('en-IN')} txns`;

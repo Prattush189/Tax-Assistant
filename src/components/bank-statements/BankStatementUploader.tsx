@@ -558,7 +558,7 @@ export function BankStatementUploader({ manager }: Props) {
               providerFallback={inFlight?.providerFallback}
             />
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-              Scanned PDFs use OCR — extraction can take 30-90 seconds.
+              Scanned PDFs use OCR + AI — this uses tokens and can take 2–3 minutes.
             </p>
           </>
         ) : (
@@ -568,7 +568,10 @@ export function BankStatementUploader({ manager }: Props) {
             </p>
             <p className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 rounded-full px-2.5 py-1">
               <Sparkles className="w-3.5 h-3.5" />
-              Optimised &amp; free — statement analysis no longer uses your tokens
+              Digital statements (CSV / text PDF) are free — no tokens used
+            </p>
+            <p className="mt-1.5 text-xs text-gray-400 dark:text-gray-500">
+              Scanned PDFs use OCR + AI, which does use tokens.
             </p>
           </>
         )}
