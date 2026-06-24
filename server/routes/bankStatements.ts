@@ -25,8 +25,6 @@ import { detectAnomalies } from '../lib/bankAnomalyDetector.js';
 import { bankTransactionAnomalyRepo } from '../db/repositories/bankTransactionAnomalyRepo.js';
 import { costForModel } from '../lib/gemini.js';
 import { creditsForPages, creditsForCsvRows, PAGES_PER_CREDIT, CSV_ROWS_PER_CREDIT } from '../lib/creditPolicy.js';
-import { enforceTokenQuota } from '../lib/tokenQuota.js';
-import { estimateGeminiVision, estimateFromChars } from '../lib/tokenEstimate.js';
 import { bankStatementRepo } from '../db/repositories/bankStatementRepo.js';
 import { bankTransactionRepo, BankTransactionInput } from '../db/repositories/bankTransactionRepo.js';
 import { bankStatementRuleRepo, BankStatementRuleRow } from '../db/repositories/bankStatementRuleRepo.js';
@@ -35,10 +33,16 @@ import { userRepo } from '../db/repositories/userRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { getBillingUser } from '../lib/billing.js';
-import { getUserLimits, getUsagePeriodStart } from '../lib/planLimits.js';
+import { getUserLimits, getUsagePeriodStart, getEffectivePlan } from '../lib/planLimits.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
+
+/** Bank Statement Analyzer is free on every plan (it runs mostly on the
+ *  local model, so it no longer draws on the shared token budget). Pro
+ *  and Enterprise get unlimited statements; free-plan accounts get this
+ *  many total. */
+const FREE_BANK_STATEMENT_LIMIT = 3;
 
 const ALLOWED_MIME_TYPES = [
   'application/pdf',
@@ -1337,36 +1341,31 @@ router.post(
   async (req: AuthRequest, res: Response) => {
     if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
 
-    // Bank Statement Analyzer is available on all plans (including free).
-    // Token-budget gate — the HARD quota check. Per-feature credit
-    // logic below is computed for analytics display only and doesn't
-    // reject. enforceTokenQuota responds 429 itself when the budget
-    // is exhausted; we early-return on ok=false.
-    //
-    // Pre-flight estimate: compute the rough Gemini cost from the
-    // upload size BEFORE we call the gate, so the gate can reject
-    // a single-call overshoot up front instead of after the fact.
-    // Gate also reserves the estimate for the duration of the request,
-    // so two parallel uploads can't both pass on a thin remaining
-    // budget and collectively bust the cap.
-    const preflightEstimate = (() => {
-      if (req.file) return estimateGeminiVision(req.file.size);
-      // The pdfText / TSV path used to live here too — killed after the
-      // wizard's column threshold loosened to 3, which routed every
-      // grid-extractable PDF through the cheap CSV path and left only
-      // genuinely-un-grid-able uploads to the vision path above.
-      if (typeof req.body?.csvText === 'string') return estimateFromChars(req.body.csvText.length + 800);
-      return 0;
-    })();
-    const tokenQuota = enforceTokenQuota(req, res, preflightEstimate);
-    if (!tokenQuota.ok) return;
-    // Reservation lives until the response closes — covers success,
-    // failure, and client-aborted cases. The api_usage row written by
-    // the route below replaces the reservation with real usage on the
-    // next gate call.
-    res.once('close', () => tokenQuota.release());
+    // Bank Statement Analyzer no longer draws on the shared token
+    // budget. It runs mostly on the LOCAL model (deterministic
+    // classifier + semantic tier), so analysis is FREE for everyone:
+    //   - Pro / Enterprise: unlimited statements.
+    //   - Free plan: up to FREE_BANK_STATEMENT_LIMIT total.
+    // The residual Gemini spend on genuinely-ambiguous rows is still
+    // logged to api_usage for admin cost visibility, but bank_statement
+    // rows are excluded from the budget sum (see usageRepo), so the
+    // user is never billed tokens for it.
     const quota = enforceQuota(req, res);
     if (!quota.ok) return;
+    const billingUserRow = userRepo.findById(quota.billingUserId);
+    const effectivePlan = billingUserRow ? getEffectivePlan(billingUserRow) : 'free';
+    if (effectivePlan === 'free') {
+      const analyzed = bankStatementRepo.countAnalyzedByBillingUser(quota.billingUserId);
+      if (analyzed >= FREE_BANK_STATEMENT_LIMIT) {
+        res.status(429).json({
+          error: `Free accounts can analyze up to ${FREE_BANK_STATEMENT_LIMIT} bank statements. Upgrade to Pro or Enterprise for unlimited statement analysis — it's completely free on those plans.`,
+          bankStatementLimit: FREE_BANK_STATEMENT_LIMIT,
+          bankStatementsUsed: analyzed,
+          upgrade: true,
+        });
+        return;
+      }
+    }
 
     // 2026-06: User conditions are NO LONGER prepended to the
     // extraction or enrichment prompts. The previous architecture
@@ -1883,14 +1882,14 @@ router.post(
         const learnedLookup = (fp: string, dir: 'credit' | 'debit') =>
           learnedClassificationsRepo.lookupForClassify(quota.billingUserId, fp, dir);
 
-        // EXPERIMENTAL semantic tier (admin + SEMANTIC_TIER=1 only). Embed
-        // every narration's fingerprint ONCE and load the firm's vector
-        // index, so the per-row pass below can nearest-neighbour match
-        // between the exact learned-rules and the AI call. Entirely
-        // best-effort: any failure (model load, hub fetch) disables it for
-        // this run and we fall through to the existing path. Non-admins
-        // never enter this block — zero added cost or risk for real users
-        // while it's under test.
+        // Semantic tier (PUBLIC — on for every firm). Embed every
+        // narration's fingerprint ONCE and load the firm's vector index,
+        // so the per-row pass below can nearest-neighbour match between
+        // the exact learned-rules and the AI call. Entirely best-effort:
+        // any failure (model load, hub fetch) disables it for this run
+        // and we fall through to the existing path. Firms with an empty
+        // index skip the embed entirely — zero cost until they've taught
+        // corrections.
         const semanticOn = semanticTierEnabledFor(quota.billingUserId);
         // Experimental classifier heuristics (business-counterparty-by-
         // direction, aggregator settlements) are admin-gated while under
@@ -1931,11 +1930,11 @@ router.post(
             tierCounts[out.tier]++;
             return { index, row, classified: out.result, needsAi: false };
           }
-          // EXPERIMENTAL: semantic nearest-neighbour over the firm's past
-          // corrections — catches near-duplicate narrations the exact
-          // fingerprint match missed. Below threshold → falls through to
-          // the AI path unchanged. (semVecs/semIndex are null unless the
-          // admin-gated tier is on, so this is a no-op for real users.)
+          // Semantic nearest-neighbour over the firm's past corrections —
+          // catches near-duplicate narrations the exact fingerprint match
+          // missed. Below threshold → falls through to the AI path
+          // unchanged. (semVecs/semIndex are null until the firm has
+          // taught corrections, so this is a no-op for a fresh firm.)
           if (semIndex && semVecs) {
             const m = bestMatch(semVecs[index], semIndex, row.type as 'credit' | 'debit');
             if (m) {
@@ -1982,6 +1981,13 @@ router.post(
         });
         let ambiguous = ruleResults.filter(r => r.needsAi);
         let classified = ruleResults.filter(r => !r.needsAi);
+
+        // How many rows the LOCAL model (deterministic classifier +
+        // semantic tier + AI-decision cache) resolved with no Gemini
+        // call. Captured BEFORE Gemini fills `ambiguous`. Surfaced in
+        // Recent API Calls as a 'local' row so the free, no-token path
+        // is visible to admins (see the cost-logging block below).
+        (res.locals as Record<string, unknown>).localResolved = classified.length;
 
         // LOCAL-ONLY mode (admin firm + LOCAL_ONLY=1): instead of sending
         // the unmatched rows to Gemini, give each a best-effort category
@@ -2483,10 +2489,10 @@ INPUT_ROWS — TSV, one row per line, columns narration<TAB>type<TAB>amount:
         // status='cancelled'. The chunks ran (Node doesn't abort
         // handlers on cancel — they completed before the cancel
         // detection check); their tokens are real spend that should
-        // (a) appear in the admin Recent API Calls dashboard, and
-        // (b) count toward the user's monthly token budget. Without
-        // this, the chunked-TSV path leaks tokens into a dead-end
-        // run that nobody sees and nobody pays for.
+        // appear in the admin Recent API Calls dashboard for cost
+        // visibility. (bank_statement rows are excluded from the user's
+        // token-budget sum, so the user isn't billed for the dead-end
+        // run either way.)
         try {
           const cancelClientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
           const usages = (res.locals as Record<string, unknown>).geminiUsages as
@@ -2573,6 +2579,9 @@ INPUT_ROWS — TSV, one row per line, columns narration<TAB>type<TAB>amount:
 
       // Log Gemini-side cost — aggregated across vision or pdfText-chunk
       // calls — so this feature appears in the admin API-cost dashboard.
+      // Bank-statement rows are excluded from the user's token-budget sum
+      // (see usageRepo), so these are recorded for admin visibility only,
+      // never billed to the user.
       try {
         const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
         const usages = (res.locals as Record<string, unknown>).geminiUsages as
@@ -2584,10 +2593,14 @@ INPUT_ROWS — TSV, one row per line, columns narration<TAB>type<TAB>amount:
           // runs on gemini-2.5-flash / gemini-3-flash-preview; flat T2
           // rates were under-counting by 3-6x.
           const cost = usages.reduce((a, u) => a + costForModel(u.modelUsed, u.inputTokens, u.outputTokens), 0);
-          // Attach the gate's pre-flight estimate to the summary row so
-          // the admin dashboard can show estimate-vs-actual on this
-          // request. Per-chunk / failure / cancel rows stay at 0.
-          usageRepo.logWithBilling(clientIp, req.user.id, quota.billingUserId, inputTok, outputTok, cost, false, usages[0].modelUsed, false, 'bank_statement', txCount, 'success', tokenQuota.estimatedTokens, Date.now() - analyzeStartMs);
+          usageRepo.logWithBilling(clientIp, req.user.id, quota.billingUserId, inputTok, outputTok, cost, false, usages[0].modelUsed, false, 'bank_statement', txCount, 'success', 0, Date.now() - analyzeStartMs);
+        }
+        // Local-model row: deterministic + semantic + cache hits cost no
+        // tokens, but we record them under model='local' so the optimized
+        // free path is auditable in Recent API Calls (tagged "local").
+        const localResolved = Number((res.locals as Record<string, unknown>).localResolved ?? 0);
+        if (localResolved > 0) {
+          usageRepo.logWithBilling(clientIp, req.user.id, quota.billingUserId, 0, 0, 0, false, 'local', false, 'bank_statement', localResolved, 'success', 0, Date.now() - analyzeStartMs);
         }
       } catch (err) {
         console.error('[bank-statements] Failed to log cost:', err);

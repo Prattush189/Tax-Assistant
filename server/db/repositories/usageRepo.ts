@@ -59,6 +59,14 @@ const stmts = {
   // gate stays correct for any row written before the column was
   // populated (the boot backfill should fill all of them, but this
   // is defence in depth).
+  //
+  // bank_statement rows are EXCLUDED: the Bank Statement Analyzer is
+  // free on every plan (it runs mostly on the local model and is gated
+  // separately — unlimited for paid, a fixed count for free). Its
+  // residual Gemini spend is still logged for admin cost visibility but
+  // must not draw down the user's token budget. The local-model rows
+  // (model='local') are 0-token anyway; this also drops any residual
+  // Gemini bank rows from the sum.
   sumTokensThisMonthByBillingUser: db.prepare(`
     SELECT
       COALESCE(SUM(CASE WHEN weighted_tokens > 0 THEN weighted_tokens ELSE (input_tokens + output_tokens) END), 0) AS tokens
@@ -66,6 +74,7 @@ const stmts = {
     WHERE (billing_user_id = ? OR (billing_user_id IS NULL AND user_id = ?))
       AND created_at >= ?
       AND status != 'failed'
+      AND COALESCE(category, '') != 'bank_statement'
   `),
   getByIp: db.prepare(`
     SELECT

@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { Upload, FileText, Loader2 } from 'lucide-react';
+import { Upload, FileText, Loader2, Sparkles } from 'lucide-react';
 import Papa from 'papaparse';
 import toast from 'react-hot-toast';
 import { BankStatementManager } from '../../hooks/useBankStatementManager';
@@ -562,9 +562,15 @@ export function BankStatementUploader({ manager }: Props) {
             </p>
           </>
         ) : (
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-            PDF up to 25 MB — or a CSV / Excel export from your bank
-          </p>
+          <>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+              PDF up to 25 MB — or a CSV / Excel export from your bank
+            </p>
+            <p className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 rounded-full px-2.5 py-1">
+              <Sparkles className="w-3.5 h-3.5" />
+              Optimised &amp; free — statement analysis no longer uses your tokens
+            </p>
+          </>
         )}
       </div>
       <div className="flex items-center gap-2">

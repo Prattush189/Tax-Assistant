@@ -1,5 +1,5 @@
 /**
- * Semantic classification tier (EXPERIMENTAL — admin-gated).
+ * Semantic classification tier (PUBLIC — on for every firm by default).
  *
  * Sits between the exact learned-rules table and the AI call. For a row
  * the exact fingerprint match missed, it finds the nearest past
@@ -9,10 +9,12 @@
  * retraining — the "learning" is just appending a vector on each
  * correction.
  *
- * Gating: OFF unless `SEMANTIC_TIER=1` AND the firm (billing user) is an
- * admin. So it can be validated on the author's own statements without
- * touching real users. Threshold is conservative by default (high
- * precision) and tunable via SEMANTIC_TIER_THRESHOLD.
+ * Gating: ON for all firms. Self-limiting — a firm with an empty
+ * embedding index is a no-op, so it costs nothing until that firm has
+ * corrections to match against, and the index self-populates as users
+ * correct rows (appendCorrectionEmbedding). Kill-switch: set
+ * SEMANTIC_TIER=0 to disable globally. Threshold is conservative by
+ * default (high precision) and tunable via SEMANTIC_TIER_THRESHOLD.
  */
 import { learnedEmbeddingsRepo, type EmbeddingRecord, type DirectionScope } from '../db/repositories/learnedEmbeddingsRepo.js';
 import { embedTexts } from './embedder.js';
@@ -29,12 +31,13 @@ export const SEMANTIC_THRESHOLD = (() => {
   return Number.isFinite(v) && v > 0 && v <= 1 ? v : 0.88;
 })();
 
-/** On for ALL firms when the `SEMANTIC_TIER` env flag is set (the global
- *  kill-switch). Self-limiting: a firm with an empty embedding index is
- *  a no-op, so this costs nothing until that firm has corrections to
- *  match against. (Was admin-gated during the test phase.) */
+/** On for ALL firms by default — the local model is public. Set
+ *  `SEMANTIC_TIER=0` to disable globally (kill-switch). Self-limiting: a
+ *  firm with an empty embedding index is a no-op, so this costs nothing
+ *  until that firm has corrections to match against. (Was admin + env
+ *  gated during the test phase; now public.) */
 export function semanticTierEnabledFor(_billingUserId: string): boolean {
-  return process.env.SEMANTIC_TIER === '1';
+  return process.env.SEMANTIC_TIER !== '0';
 }
 
 export interface SemanticMatch {

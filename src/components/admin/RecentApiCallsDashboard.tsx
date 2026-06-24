@@ -42,6 +42,7 @@ const MODEL_COLORS: Record<string, string> = {
   'gemini-3-flash-preview':        'bg-gray-400',     // retired
   'gemini-2.5-flash':              'bg-gray-400',     // retired
   'claude-haiku-4-5':              'bg-gray-400',     // retired
+  'local':                         'bg-emerald-500',  // local model — no AI, no tokens
   'unknown':                       'bg-gray-400',
 };
 
@@ -51,6 +52,7 @@ const MODEL_LABELS: Record<string, string> = {
   'gemini-3-flash-preview':        'Gemini 3 Flash (retired)',
   'gemini-2.5-flash':              'Gemini 2.5 Flash (retired)',
   'claude-haiku-4-5':              'Claude Haiku 4.5 (retired)',
+  'local':                         'Local model (no tokens)',
 };
 
 function fmtTokens(n: number): string {

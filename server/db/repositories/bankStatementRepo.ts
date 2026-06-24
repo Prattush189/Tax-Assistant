@@ -157,6 +157,13 @@ const stmts = {
   countByBillingUser: db.prepare(
     'SELECT COUNT(*) as count FROM bank_statements WHERE billing_user_id = ?'
   ),
+  // Counts statements that consumed an analysis slot — completed ('done')
+  // or currently running ('analyzing'). Errored / cancelled runs don't
+  // count, so a failed upload doesn't burn a free-plan slot. Used by the
+  // free-plan FREE_BANK_STATEMENT_LIMIT gate.
+  countAnalyzedByBillingUser: db.prepare(
+    "SELECT COUNT(*) as count FROM bank_statements WHERE billing_user_id = ? AND status IN ('done','analyzing')"
+  ),
 };
 
 export const bankStatementRepo = {
@@ -285,5 +292,11 @@ export const bankStatementRepo = {
 
   countByBillingUser(billingUserId: string): number {
     return (stmts.countByBillingUser.get(billingUserId) as { count: number }).count;
+  },
+
+  /** Statements that used an analysis slot (done or in-progress) for this
+   *  billing user. Drives the free-plan statement cap. */
+  countAnalyzedByBillingUser(billingUserId: string): number {
+    return (stmts.countAnalyzedByBillingUser.get(billingUserId) as { count: number }).count;
   },
 };
