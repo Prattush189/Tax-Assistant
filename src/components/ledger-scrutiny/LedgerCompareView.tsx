@@ -138,7 +138,7 @@ interface SideState {
 }
 
 const ACCEPT = '.pdf,.csv,.xlsx,.xls,application/pdf,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel';
-const MAX_BYTES = 25 * 1024 * 1024;
+const MAX_BYTES = 50 * 1024 * 1024;
 
 function fmtINR(n: number): string {
   const sign = n < 0 ? '-' : '';
@@ -413,7 +413,7 @@ function SideUploader({
         >
           <Upload className="w-6 h-6 text-gray-400" />
           <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Choose ledger PDF / CSV / Excel</span>
-          <span className="text-xs text-gray-400">max 25 MB</span>
+          <span className="text-xs text-gray-400">max 50 MB</span>
         </button>
       )}
     </div>
@@ -621,7 +621,7 @@ export function LedgerCompareView() {
       return;
     }
     if (file.size > MAX_BYTES) {
-      toast.error('File exceeds 25 MB. Split the export and try again.');
+      toast.error('File exceeds 50 MB. Split the export and try again.');
       return;
     }
 

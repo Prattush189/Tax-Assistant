@@ -99,7 +99,7 @@ function ScrutinyProgressBar({
 }
 
 const ACCEPT = '.pdf,.csv,.xlsx,.xls,application/pdf,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel';
-const MAX_BYTES = 25 * 1024 * 1024;
+const MAX_BYTES = 50 * 1024 * 1024;
 
 export function LedgerUploader({ manager }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -143,7 +143,7 @@ export function LedgerUploader({ manager }: Props) {
       return;
     }
     if (file.size > MAX_BYTES) {
-      toast.error('Ledger file exceeds the 25 MB size limit. Split the export and re-upload.');
+      toast.error('Ledger file exceeds the 50 MB size limit. Split the export and re-upload.');
       return;
     }
     // Hard guard against starting a second audit while the first is
@@ -424,7 +424,7 @@ export function LedgerUploader({ manager }: Props) {
         ) : (
           <>
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-              Tally / Busy / Marg PDF, CSV, or Excel export · max 25 MB
+              Tally / Busy / Marg PDF, CSV, or Excel export · max 50 MB
             </p>
             <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
               Extract + audit run as one step — no buttons to click after upload.
