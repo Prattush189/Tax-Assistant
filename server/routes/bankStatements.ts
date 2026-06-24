@@ -25,7 +25,7 @@ import { detectAnomalies } from '../lib/bankAnomalyDetector.js';
 import { bankTransactionAnomalyRepo } from '../db/repositories/bankTransactionAnomalyRepo.js';
 import { costForModel } from '../lib/gemini.js';
 import { creditsForPages, creditsForCsvRows, PAGES_PER_CREDIT, CSV_ROWS_PER_CREDIT } from '../lib/creditPolicy.js';
-import { enforceTokenQuota, type TokenQuotaOk } from '../lib/tokenQuota.js';
+import { enforceTokenQuota } from '../lib/tokenQuota.js';
 import { estimateGeminiVision } from '../lib/tokenEstimate.js';
 import { bankStatementRepo } from '../db/repositories/bankStatementRepo.js';
 import { bankTransactionRepo, BankTransactionInput } from '../db/repositories/bankTransactionRepo.js';
@@ -1343,16 +1343,14 @@ router.post(
   async (req: AuthRequest, res: Response) => {
     if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
 
-    // Bank Statement Analyzer billing, by path:
-    //   - DIGITAL (CSV / browser-extracted grid): runs mostly on the
-    //     LOCAL model (deterministic classifier + semantic tier), so it's
-    //     FREE — bank_statement rows are excluded from the token-budget
-    //     sum (see usageRepo). Pro/Enterprise unlimited; free plan up to
-    //     FREE_BANK_STATEMENT_LIMIT total.
-    //   - SCANNED (a PDF/image uploaded for server-side OCR + vision):
-    //     genuinely costs Gemini tokens, so it DOES draw on the token
-    //     budget (logged under category 'bank_statement_ocr', which the
-    //     budget sum counts) and is gated by enforceTokenQuota below.
+    // Bank Statement Analyzer billing: AI usage counts toward the token
+    // budget like every other feature. The local model just means a
+    // DIGITAL statement (CSV / browser-extracted grid) uses very few
+    // tokens — most rows resolve on-device (model='local' = 0 tokens) and
+    // only the genuinely-ambiguous ones hit Gemini. SCANNED PDFs go
+    // through OCR + vision and use far more (logged under the separate
+    // 'bank_statement_ocr' category so admin cost reporting can tell them
+    // apart). Free plan also caps the count at FREE_BANK_STATEMENT_LIMIT.
     const isOcrPath = !!req.file; // file upload → server OCR / vision
     const quota = enforceQuota(req, res);
     if (!quota.ok) return;
@@ -1363,7 +1361,7 @@ router.post(
       const analyzed = bankStatementRepo.countAnalyzedByBillingUser(quota.billingUserId);
       if (analyzed >= FREE_BANK_STATEMENT_LIMIT) {
         res.status(429).json({
-          error: `Free accounts can analyze up to ${FREE_BANK_STATEMENT_LIMIT} bank statements. Upgrade to Pro or Enterprise for unlimited statement analysis — it's completely free on those plans.`,
+          error: `Free accounts can analyze up to ${FREE_BANK_STATEMENT_LIMIT} bank statements. Upgrade to Pro or Enterprise for a much larger token budget.`,
           bankStatementLimit: FREE_BANK_STATEMENT_LIMIT,
           bankStatementsUsed: analyzed,
           upgrade: true,
@@ -1371,17 +1369,15 @@ router.post(
         return;
       }
     }
-    // Scanned PDFs (OCR + vision) use Gemini tokens → enforce the token
-    // budget for them. Pre-flight estimate from the file size lets a run
-    // that would clearly bust the remaining budget fail up front. The
-    // digital path skips this entirely (it's free).
-    let tokenQuota: TokenQuotaOk | null = null;
-    if (isOcrPath) {
-      const tq = enforceTokenQuota(req, res, estimateGeminiVision(req.file!.size));
-      if (!tq.ok) return;
-      res.once('close', () => tq.release());
-      tokenQuota = tq;
-    }
+    // Token-budget gate. Scanned PDFs get a size-based pre-flight estimate
+    // so a clearly over-budget run fails up front; the digital path passes
+    // estimate=0 (its real Gemini spend is small and unpredictable — most
+    // rows are local — so we just check the user is within budget rather
+    // than reserve a large, mostly-wrong estimate).
+    const preflightEstimate = isOcrPath ? estimateGeminiVision(req.file!.size) : 0;
+    const tokenQuota = enforceTokenQuota(req, res, preflightEstimate);
+    if (!tokenQuota.ok) return;
+    res.once('close', () => tokenQuota.release());
 
     // 2026-06: User conditions are NO LONGER prepended to the
     // extraction or enrichment prompts. The previous architecture
@@ -2593,11 +2589,11 @@ INPUT_ROWS — TSV, one row per line, columns narration<TAB>type<TAB>amount:
       }
 
       // Log Gemini-side cost — aggregated across vision or pdfText-chunk
-      // calls — so this feature appears in the admin API-cost dashboard.
-      // Category drives budgeting: the digital path logs 'bank_statement'
-      // (excluded from the user's token-budget sum — free), while the
-      // OCR/vision path logs 'bank_statement_ocr' (counted toward the
-      // budget — scanned PDFs genuinely cost tokens).
+      // calls — so this feature appears in the admin API-cost dashboard
+      // and counts toward the user's token budget. Category is just a
+      // reporting split: 'bank_statement' for the digital path (few
+      // tokens — mostly local) vs 'bank_statement_ocr' for scanned PDFs
+      // (OCR + vision, far more tokens). Both count toward the budget.
       try {
         const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
         const bankCategory = isOcrPath ? 'bank_statement_ocr' : 'bank_statement';
@@ -2610,7 +2606,7 @@ INPUT_ROWS — TSV, one row per line, columns narration<TAB>type<TAB>amount:
           // runs on gemini-2.5-flash / gemini-3-flash-preview; flat T2
           // rates were under-counting by 3-6x.
           const cost = usages.reduce((a, u) => a + costForModel(u.modelUsed, u.inputTokens, u.outputTokens), 0);
-          usageRepo.logWithBilling(clientIp, req.user.id, quota.billingUserId, inputTok, outputTok, cost, false, usages[0].modelUsed, false, bankCategory, txCount, 'success', tokenQuota?.estimatedTokens ?? 0, Date.now() - analyzeStartMs);
+          usageRepo.logWithBilling(clientIp, req.user.id, quota.billingUserId, inputTok, outputTok, cost, false, usages[0].modelUsed, false, bankCategory, txCount, 'success', tokenQuota.estimatedTokens, Date.now() - analyzeStartMs);
         }
         // Local-model row: deterministic + semantic + cache hits cost no
         // tokens, but we record them under model='local' so the optimized

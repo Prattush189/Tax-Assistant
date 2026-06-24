@@ -60,13 +60,11 @@ const stmts = {
   // populated (the boot backfill should fill all of them, but this
   // is defence in depth).
   //
-  // category='bank_statement' rows are EXCLUDED: that's the DIGITAL bank
-  // path (CSV / browser-extracted grid), which runs mostly on the local
-  // model and is free on every plan. Its residual Gemini spend is logged
-  // for admin cost visibility but must not draw down the user's budget.
-  // Scanned PDFs go through OCR + vision and DO cost tokens — those are
-  // logged under category='bank_statement_ocr', which is NOT excluded
-  // here, so they correctly count against the budget.
+  // Bank-statement AI usage counts toward the budget like every other
+  // feature — the local model just means a digital statement uses very
+  // few tokens (most rows resolve on-device, model='local' = 0 tokens),
+  // while scanned PDFs (OCR + vision, category='bank_statement_ocr') use
+  // more. Nothing is excluded here: only failed calls are dropped.
   sumTokensThisMonthByBillingUser: db.prepare(`
     SELECT
       COALESCE(SUM(CASE WHEN weighted_tokens > 0 THEN weighted_tokens ELSE (input_tokens + output_tokens) END), 0) AS tokens
@@ -74,7 +72,6 @@ const stmts = {
     WHERE (billing_user_id = ? OR (billing_user_id IS NULL AND user_id = ?))
       AND created_at >= ?
       AND status != 'failed'
-      AND COALESCE(category, '') != 'bank_statement'
   `),
   getByIp: db.prepare(`
     SELECT

@@ -568,10 +568,10 @@ export function BankStatementUploader({ manager }: Props) {
             </p>
             <p className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 rounded-full px-2.5 py-1">
               <Sparkles className="w-3.5 h-3.5" />
-              Digital statements (CSV / text PDF) are free — they don&apos;t use your token budget
+              Optimised — most rows are categorised on-device, so statements use very few tokens
             </p>
             <p className="mt-1.5 text-xs text-gray-400 dark:text-gray-500">
-              Most rows are categorised on-device; only a few tricky ones use a little AI (still free). Scanned PDFs (OCR) do use tokens.
+              Only the few AI-assisted rows count toward your token budget; scanned PDFs (OCR) use more.
             </p>
           </>
         )}
