@@ -43,19 +43,21 @@ const cases: Case[] = [
   { narration: 'CashTxnChgs-Branch-Dec25+GST',               type: 'debit',  expectCategory: 'Bank Charges', expectSubcategory: 'Cash Txn' },
   { narration: 'CashDepChgs',                                type: 'debit',  expectCategory: 'Bank Charges', expectSubcategory: 'Cash Txn' },
 
-  // ICICI 5-segment UPI format — `transfer-personal` rule should fire
-  // via the new `upi-icici-2nd-seg` counterparty pattern. Counterparty
-  // is a personal-looking VPA local-part or short name → Transfers.
-  { narration: 'UPI/ahlamfarooq36-2/UPI/AXIS BANK/545722638994/ICI7357b1518bc44a999604e46e3810a83c/', type: 'debit',  expectCategory: 'Transfers' },
-  { narration: 'UPI/iddyakhan713@ok/UPI/Jammu and Kashm/509377881329/ICI14da96dd17f943d0ba5ca296c6daadcf/', type: 'debit',  expectCategory: 'Transfers' },
-  { narration: 'UPI/MOHSIN NAY/wanimohsin161@U/UPI/Jammu and/605845207468/IClc3256395aa8413f809488902fe5db5c/', type: 'credit', expectCategory: 'Transfers' },
+  // 2026-06: a wire/UPI to a THIRD party is no longer "Transfers" — it's
+  // Business Income (credit) / Business Expenses (debit). With no account
+  // holder name passed here, these counterparties are not self, so they
+  // split by direction. ("Transfers" is now reserved for own-account
+  // movements — counterparty matches the holder name.)
+  { narration: 'UPI/ahlamfarooq36-2/UPI/AXIS BANK/545722638994/ICI7357b1518bc44a999604e46e3810a83c/', type: 'debit',  expectCategory: 'Business Expenses' },
+  { narration: 'UPI/iddyakhan713@ok/UPI/Jammu and Kashm/509377881329/ICI14da96dd17f943d0ba5ca296c6daadcf/', type: 'debit',  expectCategory: 'Business Expenses' },
+  { narration: 'UPI/MOHSIN NAY/wanimohsin161@U/UPI/Jammu and/605845207468/IClc3256395aa8413f809488902fe5db5c/', type: 'credit', expectCategory: 'Business Income' },
 
-  // TRFR FROM:/TO: internal transfer rule (J&K / ICICI).
-  { narration: 'TRFR FROM:THE WANI FOOTWEAR',                type: 'credit', expectCategory: 'Transfers' },
-  { narration: 'TRFR TO:PARTY NAME LTD',                     type: 'debit',  expectCategory: 'Transfers' },
+  // TRFR FROM:/TO: to a third party → Income/Expense by direction.
+  { narration: 'TRFR FROM:THE WANI FOOTWEAR',                type: 'credit', expectCategory: 'Business Income' },
+  { narration: 'TRFR TO:PARTY NAME LTD',                     type: 'debit',  expectCategory: 'Business Expenses' },
 
-  // MMT/IMPS — ICICI's IMPS prefix.
-  { narration: 'MMT/IMPS/509523467771/irham shaf/JAKA0HKADAL', type: 'debit', expectCategory: 'Transfers' },
+  // MMT/IMPS to a third party → expense (debit).
+  { narration: 'MMT/IMPS/509523467771/irham shaf/JAKA0HKADAL', type: 'debit', expectCategory: 'Business Expenses' },
 ];
 
 let passed = 0;

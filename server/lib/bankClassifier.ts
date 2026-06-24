@@ -36,6 +36,13 @@ export interface ClassifierInput {
    *  rules but plumbed in case future rules need amount thresholds
    *  (e.g. ATM > ₹X is rare → Personal/large-cash, not Bank Charges). */
   amount?: number;
+  /** The statement's own account-holder name(s), when known. Used to
+   *  decide whether a wire/UPI is a genuine TRANSFER (counterparty is
+   *  the account holder = own account ↔ own account, no P&L impact) or
+   *  really Business Income / Business Expenses. Null/absent → the
+   *  transfer rules fall back to direction (credit→Income, debit→
+   *  Expense). Set by the user on the statement (optional). */
+  accountHolder?: string | null;
 }
 
 export interface ClassifierResult {
@@ -82,6 +89,78 @@ interface Rule {
  * the ₹2-58 "Charges for PORD Customer Payment" lines we've seen).
  */
 const GENERIC_CHARGE_CEILING_INR = 100;
+
+// ─── Self-transfer detection (own account ↔ own account) ──────────
+//
+// A wire/UPI is a true TRANSFER only when the counterparty is the
+// account holder themselves (money moved between accounts you own — a
+// contra entry, no P&L impact). Otherwise an outbound wire is a
+// Business Expense and an inbound one is Business Income. We detect
+// "self" by matching the counterparty name against the statement's own
+// account-holder name (when the user has provided it).
+
+// Generic entity/structural words that don't help identity matching, so
+// "JAGJIT CHEMIST & DRUG STORE" and a NEFT to "JAGJIT CHEMIST" still
+// match on the meaningful tokens.
+const NAME_NOISE = /\b(?:pvt|private|ltd|limited|llp|inc|co|company|and|the|m\/s|mr|mrs|ms|shri|smt|prop|proprietor|huf|enterprises?|traders?|industries|corp(?:oration)?|services?|solutions?|stores?|firm|account|a\/c)\b/gi;
+function nameTokens(s: string): Set<string> {
+  const norm = (s || '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9 ]+/g, ' ')
+    .replace(NAME_NOISE, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return new Set(norm.split(' ').filter(t => t.length >= 3));
+}
+
+/** True when `counterparty` is (very likely) the same identity as
+ *  `accountHolder`. Requires ≥2 shared significant tokens AND ≥50%
+ *  Jaccard overlap, so a vendor that merely shares ONE common word
+ *  (e.g. "JAGJIT TRADERS" vs holder "JAGJIT CHEMIST") is NOT treated
+ *  as self — that would wrongly hide a real expense/income in
+ *  Transfers. */
+function counterpartyIsSelf(counterparty: string | null | undefined, accountHolder: string | null | undefined): boolean {
+  if (!counterparty || !accountHolder) return false;
+  const a = nameTokens(accountHolder);
+  const b = nameTokens(counterparty);
+  if (a.size === 0 || b.size === 0) return false;
+  let inter = 0;
+  for (const t of a) if (b.has(t)) inter += 1;
+  if (inter < 2) return false;
+  const union = a.size + b.size - inter;
+  return inter / union >= 0.5;
+}
+
+/** Some banks (HDFC IMPS "IMPS/48/<ref>/**0000 /<NAME>/IMP") don't
+ *  surface a clean counterparty for the extractor, but the holder's own
+ *  name still appears verbatim in the narration of a self-transfer. So
+ *  also check whether MOST of the holder's significant tokens appear
+ *  anywhere in the narration. High bar (≥2 tokens AND ≥60% of the
+ *  holder name) so a third party that shares one common word doesn't
+ *  trip it — safe for distinctive (business) holder names. */
+function narrationNamesHolder(narration: string, accountHolder: string | null | undefined): boolean {
+  if (!accountHolder) return false;
+  const holder = nameTokens(accountHolder);
+  if (holder.size < 2) return false;
+  const inNarr = nameTokens(narration);
+  let inter = 0;
+  for (const t of holder) if (inNarr.has(t)) inter += 1;
+  return inter >= 2 && inter / holder.size >= 0.6;
+}
+
+/** Category for a wire/UPI/branch transfer line: own-account (self) →
+ *  Transfers; otherwise by direction — credit = Business Income, debit
+ *  = Business Expenses. An explicit "self" in the narration also counts
+ *  as a transfer even without a holder name. */
+function transferCategory(input: ClassifierInput): BankStatementCategory {
+  const cp = extractCounterparty(input.narration);
+  const isSelf =
+    /\bself\b/i.test(input.narration) ||
+    counterpartyIsSelf(cp, input.accountHolder) ||
+    narrationNamesHolder(input.narration, input.accountHolder);
+  if (isSelf) return 'Transfers';
+  return input.type === 'credit' ? 'Business Income' : 'Business Expenses';
+}
 
 const RULES: Rule[] = [
   // ─── Bank Charges ──────────────────────────────────────────────
@@ -398,12 +477,13 @@ const RULES: Rule[] = [
     direction: 'debit',
   },
 
-  // ─── TRFR FROM: / TRFR TO: (J&K Bank-style internal transfer) ──
-  // "TRFR FROM:THE WANI FOOTWEAR" / "TRFR TO:PARTY NAME". Direction-
-  // agnostic: the type column says credit/debit and the rule simply
-  // tags it as Transfers — counterparty is extracted from the segment
-  // after the colon. Without this rule a clean ₹1,00,000 transfer-in
-  // defaulted to "Other" in the ICICI sample.
+  // ─── TRFR FROM: / TRFR TO: (J&K Bank-style branch transfer) ──
+  // "TRFR FROM:THE WANI FOOTWEAR" / "TRFR TO:PARTY NAME". The party
+  // after the colon is the counterparty: it's a genuine Transfer only
+  // when that party is the account holder themselves (own account),
+  // otherwise it's Business Income (in) / Business Expenses (out) —
+  // "TRFR FROM:THE WANI FOOTWEAR" ₹1,00,000 is money received from a
+  // customer, not a self-transfer.
   {
     name: 'trfr-internal',
     // 2026-06: not start-anchored. ICICI emits "CHEQUE 615 TRFR TO:
@@ -412,7 +492,7 @@ const RULES: Rule[] = [
     // followed by a colon is too specific to false-match on benign
     // text. (`\b` keeps it from biting into "TRANSFR" etc.)
     pattern: /\btrfr\s+(?:from|to)\s*:/i,
-    category: 'Transfers',
+    category: transferCategory,
     subcategory: null,
   },
 
@@ -648,19 +728,19 @@ const RULES: Rule[] = [
   },
 
   // ─── ICICI BIL/INFT, BIL/NEFT — net-banking transfer prefix ──
-  // "BIL/INFT/<ref>/<NAME>" — internal funds transfer between own
-  // ICICI accounts. "BIL/NEFT/<ref>/<NAME>" — NEFT via net-banking.
-  // Both belong in Transfers. Listed BEFORE the BIL/BPAY rules
-  // because rule order is top-down and BIL/BPAY is direction-locked
-  // to a telecom merchant pattern — they don't overlap.
+  // "BIL/INFT/<ref>/<NAME>" — INTERNAL funds transfer between the
+  // user's OWN ICICI accounts → always a genuine Transfer. "BIL/NEFT/
+  // <ref>/<NAME>" — NEFT via net-banking to a beneficiary that may be a
+  // third party → Transfer only when that beneficiary is the account
+  // holder, else Business Income/Expenses by direction.
   { name: 'bil-inft', pattern: /^bil\/inft\//i, category: 'Transfers', subcategory: null },
-  { name: 'bil-neft', pattern: /^bil\/neft\//i, category: 'Transfers', subcategory: null },
+  { name: 'bil-neft', pattern: /^bil\/neft\//i, category: transferCategory, subcategory: null },
 
   // ─── Cheque clearing — CLG/CHEQUE/<no>/... ────────────────────
-  // J&K Bank's cheque-clearing narration. Direction-agnostic — could
-  // be an outward cheque debit OR an inward cheque credit; either way
-  // it's a Transfers row.
-  { name: 'clg-cheque', pattern: /^clg\/(?:cheque|chq)\//i, category: 'Transfers', subcategory: null },
+  // J&K Bank's cheque-clearing narration. Transfer only for own-account
+  // cheques; otherwise an outward cheque debit is an expense and an
+  // inward cheque credit is income.
+  { name: 'clg-cheque', pattern: /^clg\/(?:cheque|chq)\//i, category: transferCategory, subcategory: null },
 
   // ─── Business counterparties (2026-06, from payee labeling) ────
   // These fire BEFORE the generic wire-transfer rule below so an
@@ -696,64 +776,35 @@ const RULES: Rule[] = [
     subcategory: null,
   },
 
-  // ─── Transfers (UPI / NEFT / IMPS / RTGS / mTFR) ──────────────
-  // Generic transfer rule fires LAST in this group so all the
-  // specific charge / EMI / GST / salary anchors above win first.
-  // Direction is irrelevant for Transfers — both inbound NEFT
-  // credits and outbound UPI debits classify as Transfers when
-  // counterparty looks personal. The classifier returns Transfers;
-  // if the user wants Business Income / Business Expenses split,
-  // that requires AI judgment on the counterparty (handled by the
-  // unclassified-AI-fallback the routes still keep).
+  // ─── Wire / UPI movements (NEFT / IMPS / RTGS / mTFR / UPI) ────
+  // Fires LAST in this block so specific charge / EMI / GST / salary /
+  // merchant anchors above win first.
   //
-  // Note: this rule alone is NOT enough to safely classify every
-  // UPI/NEFT line — an outgoing NEFT to a vendor is Business
-  // Expenses, not Transfers. So we ONLY apply this rule when the
-  // counterparty looks personal (lowercase VPA, or short personal
-  // name). The fallback path (return null → AI) handles the rest.
-  // Implementation: only fire when narration is a clean transfer
-  // pattern with NO business-expense markers.
-  // 2026-06: NEFT / IMPS / RTGS / MMT / TRFR are wire/branch transfers
-  // and almost always belong in Transfers regardless of counterparty.
-  // The earlier per-rule prefix did "personal vs business" gating to
-  // keep vendor payments in Business Expenses, but in practice that
-  // dropped clean transfers like `NEFT-JAKAN1...-BEING WANI PROP...`
-  // (6-word counterparty) into "Other" because the heuristic punted
-  // to AI and AI defaulted to Other. Wire transfers always = Transfers;
-  // re-tagging is one click away if the user wants a different bucket.
+  // 2026-06 (accounting-correct rewrite): a wire/UPI is a true TRANSFER
+  // only when the counterparty is the account holder themselves (own
+  // account ↔ own account — a contra entry with no P&L impact).
+  // Otherwise it's revenue or cost: an inbound IMPS from a customer
+  // ("IMPS .../GOOGLEINDIADIGITAL/") is Business Income, an outbound
+  // UPI/NEFT to a vendor or individual is Business Expenses. So these
+  // rules route through transferCategory(), which checks the
+  // counterparty against the statement's own account-holder name
+  // (when provided) and otherwise splits by direction. The previous
+  // "wire = always Transfers" behaviour lumped real income/expenses
+  // into Transfers and broke the P&L.
   {
     name: 'transfer-wire',
-    // 2026-06: optional "MOBILE BANKING " prefix — ICICI prefixes
-    // every IMPS/NEFT/MMT row with this when the txn was initiated
-    // via the iMobile / net-banking app. The original anchor missed
-    // all 20+ of these in the v3 ICICI sample. The prefix is the
-    // only legitimate boilerplate that appears before the wire-type
-    // token; the start-anchor still keeps narrations that merely
-    // *mention* MMT/IMPS in the middle from hijacking the rule.
+    // Optional "MOBILE BANKING " prefix — ICICI prefixes every IMPS/
+    // NEFT/MMT row with this for app-initiated txns. The start-anchor
+    // keeps narrations that merely *mention* MMT/IMPS mid-string from
+    // hijacking the rule.
     pattern: /^(?:mobile\s+banking\s+)?(?:neft[-\s]?cr|neft[-\s]?dr|neft-[a-z]|imps[-/]|rtgs[-/]|mtfr\/|mmt\/imps\/|trf\b)/i,
-    category: 'Transfers',
+    category: transferCategory,
     subcategory: null,
   },
-  // UPI keeps the personal-vs-business heuristic since UPI to a
-  // business merchant is more often a Business Expense / Personal
-  // Shopping than a true Transfer. Only fires on UPI prefix; wire
-  // transfers above already handled NEFT/IMPS/RTGS.
   {
-    name: 'transfer-upi-personal',
+    name: 'transfer-upi',
     pattern: /^upi[-/]/i,
-    category: (input) => {
-      const cp = extractCounterparty(input.narration) ?? '';
-      if (!cp) return null;
-      if (/(?:enterprises|traders|pvt|ltd|llp|limited|industries|company|corporation|services|solutions)\b/i.test(cp)) {
-        return null; // business-looking — punt to AI
-      }
-      if (/@(?:ok[a-z]+|paytm|ybl|axl|upi|airtel|ibl|hdfc|sbi|icici)/i.test(cp)) {
-        return 'Transfers';
-      }
-      const words = cp.split(/\s+/).filter(Boolean);
-      if (words.length <= 3) return 'Transfers';
-      return null;
-    },
+    category: transferCategory,
     subcategory: null,
   },
   // "BY CASH" credit was already caught by the cash-deposit-counter
