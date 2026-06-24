@@ -2044,6 +2044,9 @@ export interface BankStatementSummary {
   name: string;
   bankName: string | null;
   accountNumberMasked: string | null;
+  /** The account holder's own name(s), set by the user — used to tell a
+   *  genuine own-account Transfer from a third-party wire (Income/Expense). */
+  accountHolder: string | null;
   periodFrom: string | null;
   periodTo: string | null;
   sourceFilename: string | null;
@@ -2405,6 +2408,19 @@ export async function deleteBankStatementCondition(id: string): Promise<void> {
  *  are left alone. */
 export async function reclassifyBankStatement(id: string): Promise<{ success: boolean; scanned: number; updated: number }> {
   return authFetch(`/api/bank-statements/${id}/reclassify`, { method: 'POST' });
+}
+
+/** Set the account holder name(s) on a statement and re-run
+ *  classification so own-account transfers are separated from
+ *  third-party wires. Pass empty string to clear. */
+export async function setBankStatementAccountHolder(
+  id: string,
+  accountHolder: string,
+): Promise<{ success: boolean; accountHolder: string | null; scanned: number; updated: number }> {
+  return authFetch(`/api/bank-statements/${id}/account-holder`, {
+    method: 'PATCH',
+    body: JSON.stringify({ accountHolder }),
+  });
 }
 
 /** Negate every transaction's amount + balance in a statement. The

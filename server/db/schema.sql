@@ -300,6 +300,10 @@ CREATE TABLE IF NOT EXISTS bank_statements (
   name TEXT NOT NULL,
   bank_name TEXT,
   account_number_masked TEXT,
+  -- The account holder's own name(s), set by the user (optional). Used
+  -- to tell a genuine own-account Transfer from a third-party wire that
+  -- is really Business Income / Expenses.
+  account_holder TEXT,
   period_from TEXT,
   period_to TEXT,
   source_filename TEXT,

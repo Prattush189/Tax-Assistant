@@ -358,6 +358,11 @@ db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_learned_classifications_unique ON
   if (!names.includes('error_message')) {
     db.exec("ALTER TABLE bank_statements ADD COLUMN error_message TEXT");
   }
+  // Account holder name(s) — set by the user to distinguish a genuine
+  // own-account Transfer from a third-party wire (Income/Expense).
+  if (!names.includes('account_holder')) {
+    db.exec("ALTER TABLE bank_statements ADD COLUMN account_holder TEXT");
+  }
   // Credit accounting columns (added together so existing DBs pick
   // both up on the same restart). pages_total stays 0 for runs that
   // started before this migration — they fall through to the legacy

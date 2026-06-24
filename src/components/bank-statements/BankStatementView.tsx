@@ -1,7 +1,8 @@
 import { useRef, useState } from 'react';
-import { Landmark, Loader2, RefreshCw } from 'lucide-react';
+import { Landmark, Loader2, RefreshCw, UserCheck } from 'lucide-react';
 import { motion } from 'motion/react';
 import toast from 'react-hot-toast';
+import { setBankStatementAccountHolder } from '../../services/api';
 import { BankStatementManager } from '../../hooks/useBankStatementManager';
 import { BankStatementUploader } from './BankStatementUploader';
 import { BankStatementSummary } from './BankStatementSummary';
@@ -288,6 +289,11 @@ export function BankStatementView({ manager }: Props) {
                 </button>
               </div>
             )}
+            <AccountHolderBanner
+              statementId={manager.current.statement.id}
+              accountHolder={manager.current.statement.accountHolder}
+              onSaved={() => { void manager.load(manager.current!.statement.id); }}
+            />
             {/* Phase 2 anomaly callouts. Renders nothing when no
                 anomalies fired (silence is good news — no false
                 "0 issues" banner). Clicking a row scrolls to the
@@ -343,5 +349,78 @@ export function BankStatementView({ manager }: Props) {
         onCancel={() => setCancelOpen(false)}
       />
     </motion.div>
+  );
+}
+
+/** Lets the user record the account holder's own name(s). When set, a
+ *  wire/UPI whose counterparty matches that name is treated as a genuine
+ *  own-account Transfer; everything else is Business Income / Expenses.
+ *  Saving re-runs classification on the statement. Optional — skipping
+ *  leaves all wires classified by direction. */
+function AccountHolderBanner({
+  statementId,
+  accountHolder,
+  onSaved,
+}: {
+  statementId: string;
+  accountHolder: string | null;
+  onSaved: () => void;
+}) {
+  const [value, setValue] = useState(accountHolder ?? '');
+  const [saving, setSaving] = useState(false);
+  // Reset the field when switching to a different statement.
+  const [lastId, setLastId] = useState(statementId);
+  if (lastId !== statementId) {
+    setLastId(statementId);
+    setValue(accountHolder ?? '');
+  }
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const res = await setBankStatementAccountHolder(statementId, value.trim());
+      toast.success(
+        value.trim()
+          ? `Saved — re-checked ${res.scanned} rows, updated ${res.updated}.`
+          : 'Cleared — transfers re-checked by direction.',
+      );
+      onSaved();
+    } catch {
+      toast.error('Could not save the account name.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const dirty = value.trim() !== (accountHolder ?? '').trim();
+  return (
+    <div className="rounded-xl border border-indigo-200 dark:border-indigo-800/50 bg-indigo-50/50 dark:bg-indigo-900/15 px-4 py-3">
+      <div className="flex items-center gap-2 mb-1.5">
+        <UserCheck className="w-4 h-4 text-indigo-500" />
+        <p className="text-sm font-medium text-gray-800 dark:text-gray-100">Your account name (for transfer detection)</p>
+      </div>
+      <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+        A NEFT/UPI to your <span className="font-medium">own</span> account is a Transfer; to anyone else it's Business Income / Expense.
+        Enter the name(s) on this account so we can tell them apart — or skip, and we'll classify every wire by direction.
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="e.g. JAGJIT CHEMIST & DRUG STORE"
+          className="flex-1 min-w-[12rem] px-3 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
+        />
+        <button
+          type="button"
+          onClick={() => void save()}
+          disabled={saving || !dirty}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UserCheck className="w-3.5 h-3.5" />}
+          {saving ? 'Re-checking…' : 'Save & re-check'}
+        </button>
+      </div>
+    </div>
   );
 }

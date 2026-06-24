@@ -10,6 +10,7 @@ export interface BankStatementRow {
   name: string;
   bank_name: string | null;
   account_number_masked: string | null;
+  account_holder: string | null;
   period_from: string | null;
   period_to: string | null;
   source_filename: string | null;
@@ -143,6 +144,9 @@ const stmts = {
   updateName: db.prepare(
     "UPDATE bank_statements SET name = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ? AND user_id = ?"
   ),
+  updateAccountHolder: db.prepare(
+    "UPDATE bank_statements SET account_holder = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ? AND user_id = ?"
+  ),
   updateTotals: db.prepare(
     `UPDATE bank_statements
        SET total_inflow = ?, total_outflow = ?, tx_count = ?,
@@ -265,6 +269,10 @@ export const bankStatementRepo = {
 
   updateName(id: string, userId: string, name: string): boolean {
     return stmts.updateName.run(name, id, userId).changes > 0;
+  },
+
+  updateAccountHolder(id: string, userId: string, accountHolder: string | null): boolean {
+    return stmts.updateAccountHolder.run(accountHolder, id, userId).changes > 0;
   },
 
   updateTotals(id: string, inflow: number, outflow: number, txCount: number): void {

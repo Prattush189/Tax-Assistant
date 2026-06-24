@@ -877,6 +877,7 @@ function serializeStatement(row: ReturnType<typeof bankStatementRepo.findByIdFor
     name: row.name,
     bankName: row.bank_name,
     accountNumberMasked: row.account_number_masked,
+    accountHolder: row.account_holder ?? null,
     periodFrom: row.period_from,
     periodTo: row.period_to,
     sourceFilename: row.source_filename,
@@ -1154,42 +1155,65 @@ router.delete('/conditions/:conditionId', (req: AuthRequest, res: Response) => {
 // Direction-validator runs after the per-row classify so mistakes
 // stay self-healing (debit + Cash Deposit auto-flips to Cash
 // Withdrawal, etc., matching the upload path exactly).
-router.post('/:id/reclassify', (req: AuthRequest, res: Response) => {
-  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
-  const stmt = bankStatementRepo.findByIdForUser(req.params.id, req.user.id);
-  if (!stmt) { res.status(404).json({ error: 'Statement not found' }); return; }
-  const reclassifyExperimental = userRepo.findById(req.user.id)?.role === 'admin';
-  const result = bankTransactionRepo.reclassifyStatement(stmt.id, (row) => {
+// Per-row reclassification callback. Shared by /reclassify and the
+// account-holder PATCH so both apply the SAME deterministic logic,
+// including the self-transfer check (which needs the holder name).
+function makeReclassifyCallback(accountHolder: string | null, includeExperimental: boolean) {
+  return (row: { narration: string | null; amount: number; category: string }) => {
     const r = classifyRow({
       narration: row.narration ?? '',
       type: row.amount >= 0 ? 'credit' : 'debit',
       amount: Math.abs(row.amount),
-    }, { includeExperimental: reclassifyExperimental });
+      accountHolder,
+    }, { includeExperimental });
     if (!r) {
       // No deterministic rule matched. If the row is currently sitting
       // in "Other" (or blank), forward it to a business head by
-      // direction — same catch-all the upload path applies — so a
-      // reclassify also fixes already-stored "Other" rows. Rows already
+      // direction — same catch-all the upload path applies. Rows already
       // in a real category are left untouched (return null = no change).
       if (row.category === 'Other' || !row.category) {
         return { category: row.amount >= 0 ? 'Business Income' : 'Business Expenses', subcategory: 'Uncategorised' };
       }
       return null;
     }
-    // Apply the direction-mismatch flip / demote pass to the single
-    // row by wrapping it in a one-element array (the validator
-    // mutates in place and returns a count).
     const candidate = { type: row.amount >= 0 ? 'credit' as const : 'debit' as const, category: r.category, subcategory: r.subcategory };
     validateDirectionCategory([candidate]);
-    // A row the validator demoted to "Other" (wrong-direction, no safe
-    // flip) also gets the by-direction catch-all rather than landing in
-    // Other.
     if (candidate.category === 'Other') {
       return { category: row.amount >= 0 ? 'Business Income' : 'Business Expenses', subcategory: 'Uncategorised' };
     }
     return { category: candidate.category, subcategory: candidate.subcategory };
-  });
+  };
+}
+
+router.post('/:id/reclassify', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const stmt = bankStatementRepo.findByIdForUser(req.params.id, req.user.id);
+  if (!stmt) { res.status(404).json({ error: 'Statement not found' }); return; }
+  const reclassifyExperimental = userRepo.findById(req.user.id)?.role === 'admin';
+  const result = bankTransactionRepo.reclassifyStatement(
+    stmt.id,
+    makeReclassifyCallback(stmt.account_holder, reclassifyExperimental),
+  );
   res.json({ success: true, ...result });
+});
+
+// PATCH /api/bank-statements/:id/account-holder — set the account
+// holder name(s) and re-run classification so wire/UPI rows to the
+// holder's OWN accounts become Transfers while third-party wires stay
+// Business Income / Expenses. Pass an empty/blank name to clear it.
+router.patch('/:id/account-holder', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const stmt = bankStatementRepo.findByIdForUser(req.params.id, req.user.id);
+  if (!stmt) { res.status(404).json({ error: 'Statement not found' }); return; }
+  const raw = typeof req.body?.accountHolder === 'string' ? req.body.accountHolder.trim() : '';
+  const accountHolder = raw.length > 0 ? raw.slice(0, 200) : null;
+  bankStatementRepo.updateAccountHolder(stmt.id, req.user.id, accountHolder);
+  const reclassifyExperimental = userRepo.findById(req.user.id)?.role === 'admin';
+  const result = bankTransactionRepo.reclassifyStatement(
+    stmt.id,
+    makeReclassifyCallback(accountHolder, reclassifyExperimental),
+  );
+  res.json({ success: true, accountHolder, ...result });
 });
 
 // POST /api/bank-statements/:id/flip-signs — escape hatch for the
