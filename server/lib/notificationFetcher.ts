@@ -964,6 +964,35 @@ export async function fetchLatestNotifications(opts: { dryRun?: boolean; logUsag
     });
   }
 
+  // Resilience: if the e-Filing scrape FAILED this run (even after
+  // retries), carry forward the e-Filing items from the previous batch
+  // so a portal outage doesn't wipe the ITR-utility releases from the
+  // feed — they come ONLY from this source, and replaceLatest below
+  // would otherwise drop them. e-Filing items are identifiable by their
+  // /foportal/ source URL (CBDT notification PDFs never live there).
+  // listLatest still reads the PRIOR batch at this point (we haven't
+  // called replaceLatest yet), and they re-run through the 90-day age
+  // filter, so genuinely stale carried items eventually drop out.
+  if (efilingResult.status === 'rejected') {
+    const seen = new Set(items.map(i => i.sourceUrl));
+    let carried = 0;
+    for (const row of notificationsRepo.listLatest(80)) {
+      if (!row.source_url || !/\/foportal\//i.test(row.source_url) || seen.has(row.source_url)) continue;
+      items.push({
+        category: row.category,
+        heading: row.heading,
+        summary: row.summary ?? null,
+        notificationDate: row.notification_date ?? null,
+        sourceUrl: row.source_url,
+      });
+      seen.add(row.source_url);
+      carried += 1;
+    }
+    if (carried > 0) {
+      console.warn(`[notificationFetcher] e-Filing scrape failed — carried forward ${carried} prior e-Filing item(s) so they don't vanish from the feed`);
+    }
+  }
+
   // ── Server-side validation layer (2, 3, 4 from the 2026-05-30 fix) ──
   //
   // The prompt asks the model to honour these rules, but production

@@ -68,26 +68,56 @@ function stripHtml(html: string): string {
     .trim();
 }
 
-/**
- * Fetch and parse. Returns items in the order they appear on the page
- * (the site sorts by publication date DESC; we don't re-sort).
- */
-export async function fetchEfilingItems(): Promise<EfilingItem[]> {
+const MAX_ATTEMPTS = 3;
+
+async function fetchEfilingHtmlOnce(): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  let html: string;
   try {
     const res = await fetch(PAGE_URL, {
       method: 'GET',
       headers: REQUEST_HEADERS,
       signal: controller.signal,
     });
-    if (!res.ok) throw new Error(`e-Filing portal returned ${res.status}`);
-    html = await res.text();
+    if (!res.ok) {
+      const err = new Error(`e-Filing portal returned ${res.status}`) as Error & { status?: number };
+      err.status = res.status;
+      throw err;
+    }
+    return await res.text();
   } finally {
     clearTimeout(timer);
   }
-  return parseEfilingHtml(html);
+}
+
+/**
+ * Fetch and parse. Returns items in the order they appear on the page
+ * (the site sorts by publication date DESC; we don't re-sort).
+ *
+ * The portal 503s / times out intermittently (it sits behind a WAF that
+ * rate-limits and occasionally sheds load). A single failure used to
+ * drop the WHOLE e-Filing source for that run — and because the feed is
+ * rebuilt with replaceLatest, the ITR-utility releases (which ONLY come
+ * from here) vanished until the next good run. So retry transient
+ * failures (5xx / 429 / network / timeout) a few times with backoff
+ * before giving up; a 4xx is not retried (it won't recover).
+ */
+export async function fetchEfilingItems(): Promise<EfilingItem[]> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      return parseEfilingHtml(await fetchEfilingHtmlOnce());
+    } catch (err) {
+      lastErr = err;
+      const status = (err as { status?: number }).status;
+      const retryable = status === undefined || status >= 500 || status === 429; // undefined = network/abort/timeout
+      if (!retryable || attempt === MAX_ATTEMPTS) break;
+      const backoffMs = 1500 * attempt; // 1.5s, 3s
+      console.warn(`[efilingPortalScraper] attempt ${attempt}/${MAX_ATTEMPTS} failed (${(err as Error).message}) — retrying in ${backoffMs}ms`);
+      await new Promise(r => setTimeout(r, backoffMs));
+    }
+  }
+  throw lastErr;
 }
 
 /**
