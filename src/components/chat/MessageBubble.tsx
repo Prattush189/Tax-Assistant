@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { User, FileText, Copy, Check, Flag, ChevronRight, BarChart3 } from 'lucide-react';
+import { User, FileText, Copy, Check, Flag, ChevronRight, BarChart3, Download, Loader2 } from 'lucide-react';
 import { Message } from '../../types';
 import { cn } from '../../lib/utils';
 import { ChartRenderer } from './ChartRenderer';
@@ -57,14 +57,66 @@ const markdownComponents = {
   ),
 };
 
-function renderContent(content: string, role: 'user' | 'model') {
-  const parts = content.split(/```json-chart([\s\S]*?)```/);
+// A downloadable document the assistant produced on request. The model
+// wraps it in [[PDF:Title]] … [[/PDF]]; we show it inline (so the user sees
+// it) plus a button that renders it to a branded PDF via the local skill.
+const PDF_BLOCK = /\[\[PDF:([^\]\n]*)\]\]\n?([\s\S]*?)\n?\[\[\/PDF\]\]/g;
+
+function PdfDocBlock({ title, body, role }: { title: string; body: string; role: 'user' | 'model' }) {
+  const [busy, setBusy] = useState(false);
+  const download = async () => {
+    setBusy(true);
+    try {
+      const { downloadChatPdf } = await import('../../lib/chatPdf');
+      await downloadChatPdf(body, title || 'Document');
+      toast.success('PDF downloaded');
+    } catch {
+      toast.error('Could not generate the PDF');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="my-2 rounded-xl border border-emerald-200 dark:border-emerald-800/50 overflow-hidden">
+      <div className="flex items-center justify-between gap-2 px-3 py-2 bg-emerald-50 dark:bg-emerald-950/20 border-b border-emerald-100 dark:border-emerald-900/40">
+        <div className="flex items-center gap-2 min-w-0">
+          <FileText className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+          <span className="text-sm font-medium text-emerald-800 dark:text-emerald-300 truncate">{title || 'Document'}</span>
+        </div>
+        <button
+          type="button"
+          onClick={() => void download()}
+          disabled={busy}
+          className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+        >
+          {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+          Download PDF
+        </button>
+      </div>
+      <div className={cn(
+        "markdown-body prose max-w-none prose-sm sm:prose-base overflow-x-auto px-3 py-2",
+        role === 'user' ? 'prose-invert' : 'prose-gray dark:prose-invert'
+      )}>
+        <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{body}</Markdown>
+      </div>
+    </div>
+  );
+}
+
+/** Render normal (non-PDF) content: chart-aware, with any stray PDF marker
+ *  tokens stripped (e.g. a half-streamed `[[PDF:…` before its close). */
+function renderPlain(content: string, role: 'user' | 'model', baseKey: number) {
+  const cleaned = content
+    .replace(/\[\[PDF:[^\]\n]*\]\]/g, '')
+    .replace(/\[\[\/PDF\]\]/g, '');
+  const parts = cleaned.split(/```json-chart([\s\S]*?)```/);
   return parts.map((part, index) => {
     if (index % 2 === 1) {
-      return <ChartRenderer key={index} jsonString={part.trim()} />;
+      return <ChartRenderer key={`${baseKey}-${index}`} jsonString={part.trim()} />;
     }
+    if (!part) return null;
     return (
-      <div key={index} className={cn(
+      <div key={`${baseKey}-${index}`} className={cn(
         "markdown-body prose max-w-none prose-sm sm:prose-base overflow-x-auto",
         role === 'user' ? 'prose-invert' : 'prose-gray dark:prose-invert'
       )}>
@@ -72,6 +124,21 @@ function renderContent(content: string, role: 'user' | 'model') {
       </div>
     );
   });
+}
+
+function renderContent(content: string, role: 'user' | 'model') {
+  const nodes: React.ReactNode[] = [];
+  let last = 0;
+  let key = 0;
+  PDF_BLOCK.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = PDF_BLOCK.exec(content)) !== null) {
+    if (m.index > last) nodes.push(...renderPlain(content.slice(last, m.index), role, key++));
+    nodes.push(<PdfDocBlock key={`pdf-${key++}`} title={m[1].trim()} body={m[2].trim()} role={role} />);
+    last = m.index + m[0].length;
+  }
+  nodes.push(...renderPlain(content.slice(last), role, key++));
+  return nodes;
 }
 
 /** Fade-edge wrapper: soft gradient at bottom while streaming, fades away when done */
@@ -118,7 +185,9 @@ export function MessageBubble({ message, onContinue, isLastModel, isLoading }: M
   const isStreaming = !!(role === 'model' && isLastModel && isLoading && content.length > 0);
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(content);
+    // Strip the internal [[PDF:…]] markers so copied text reads cleanly.
+    const clean = content.replace(/\[\[PDF:[^\]\n]*\]\]/g, '').replace(/\[\[\/PDF\]\]/g, '');
+    await navigator.clipboard.writeText(clean);
     setCopied(true);
     toast.success('Copied to clipboard');
     setTimeout(() => setCopied(false), 2000);
