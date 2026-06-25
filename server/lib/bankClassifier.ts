@@ -331,6 +331,8 @@ const RULES: Rule[] = [
   // ─── Investments ───────────────────────────────────────────────
   // SIP / mutual-fund platforms have very recognizable narrations.
   { name: 'investments', pattern: /\bsip\b|mutual fund|\bmf-|\bzerodha\b|\bgroww\b|\bupstox\b|\bicici prudential\b/i, category: 'Investments', subcategory: 'MF' },
+  // Atal Pension Yojana installment auto-debit ("APY6052665_042025_…INSTALLME").
+  { name: 'apy-pension', pattern: /\bapy\d|atal\s*pension|\bapy[-_\s]/i, category: 'Investments', subcategory: 'Pension (APY)', direction: 'debit' },
 
   // ─── GST / TDS / Taxes ────────────────────────────────────────
   // These match before generic NEFT/UPI rules so a GST payment via
@@ -344,6 +346,12 @@ const RULES: Rule[] = [
   // from the "Bank Interest (Cr)" anchor above which is the
   // bank-statement-specific Int.Pd line.
   { name: 'interest-income', pattern: /\bsb int\b|\bfd int\b|interest paid|fixed deposit interest/i, category: 'Interest Income', subcategory: 'Other', direction: 'credit' },
+  // Auto-sweep interest ("INT. ON SWCR ON-…") and FD redemption interest
+  // ("FD REDEEM INTEREST -…"). Must fire BEFORE sweep-fd-transfer so the
+  // interest portion is booked as income, not lumped into the contra
+  // Transfer. (Principal redemption falls through to sweep-fd-transfer.)
+  { name: 'sweep-interest', pattern: /\bint\.?\s*on\s*sw(?:cr|eep)|sweep\s*interest/i, category: 'Interest Income', subcategory: 'Sweep', direction: 'credit' },
+  { name: 'fd-interest', pattern: /fd\s*redeem\s*interest/i, category: 'Interest Income', subcategory: 'FD', direction: 'credit' },
 
   // ─── Dividends ─────────────────────────────────────────────────
   { name: 'dividend', pattern: /\bdividend\b|\bdiv\b.*credit/i, category: 'Dividends', direction: 'credit' },
@@ -771,9 +779,43 @@ const RULES: Rule[] = [
   // is safe. Structural rules (charges/GST/EMI/etc.) above still win.
   {
     name: 'business-counterparty-by-direction',
-    pattern: /\b(?:traders?|trading\s?co(?:mpany)?|distributors?|lubricants?|petroleum|automobiles?|auto\s?parts?|auto\s?corp|motor\s?stores?|enterprises?|industries|eng(?:ineering)?\s?works?|& sons|pvt\.?\s?ltd|private\s?limited|\bllp\b|agencies)\b/i,
+    pattern: /\b(?:traders?|trading\s?co(?:mpany)?|distributors?|lubricants?|petroleum|automobiles?|auto\s?parts?|auto\s?corp|motor\s?stores?|enterprises?|industries|eng(?:ineering)?\s?works?|& sons|pvt\.?\s?ltd|private\s?ltd|private\s?limited|\bllp\b|agencies)\b/i,
     category: (input) => (input.type === 'credit' ? 'Business Income' : 'Business Expenses'),
     subcategory: null,
+  },
+
+  // ─── Auto-sweep / FD treasury movements (2026-06) ─────────────
+  // Current/savings accounts with an auto-sweep facility shuttle idle
+  // balance to/from a linked deposit. Principal movements are CONTRA
+  // entries (no P&L) → Transfers; only the interest portion is income
+  // (handled by sweep-interest / fd-interest up in the Interest block,
+  // which fire FIRST, so "FD REDEEM INTEREST" is booked as income and
+  // only "FD REDEEM PRINCIPAL" / "FD PREMAT PROCEEDS" / "SWEEP …" land
+  // here). Booking these by direction would wrongly inflate turnover.
+  {
+    name: 'sweep-fd-transfer',
+    pattern: /\bsweep[-\s]?(?:transfer|trf|in|out|cr|credit|dr|debit)?\b|\bfd\s*premat|premat\s*proceeds|fd\s*redeem(?:\s*principal)?/i,
+    category: 'Transfers',
+    subcategory: 'Sweep/FD',
+  },
+  // "WDL TFR" / "WITHDRAWAL TRANSFER" — a withdrawal-transfer is a
+  // movement between accounts, not P&L. Tax-safe default is Transfers
+  // (often the proprietor's own account; if it's actually a third-party
+  // payment the user re-tags).
+  {
+    name: 'wdl-tfr',
+    pattern: /\bwdl\s*tfr\b|\bwithdrawal\s*transfer\b/i,
+    category: 'Transfers',
+    subcategory: null,
+  },
+  // ACH mandate auto-debits ("ACH D- CHOLAMANDALAM…", "ACH D- HDFC…").
+  // Recurring loan/SIP/insurance pulls — coarse by direction (the user
+  // can refine to Loan EMI / Investments per firm).
+  {
+    name: 'ach-mandate',
+    pattern: /\bach\s*[dc][-\s]|\bach\s+(?:debit|credit)\b/i,
+    category: (input) => (input.type === 'credit' ? 'Business Income' : 'Business Expenses'),
+    subcategory: 'ACH Mandate',
   },
 
   // ─── Wire / UPI movements (NEFT / IMPS / RTGS / mTFR / UPI) ────
@@ -793,17 +835,29 @@ const RULES: Rule[] = [
   // into Transfers and broke the P&L.
   {
     name: 'transfer-wire',
-    // Optional "MOBILE BANKING " prefix — ICICI prefixes every IMPS/
-    // NEFT/MMT row with this for app-initiated txns. The start-anchor
-    // keeps narrations that merely *mention* MMT/IMPS mid-string from
-    // hijacking the rule.
-    pattern: /^(?:mobile\s+banking\s+)?(?:neft[-\s]?cr|neft[-\s]?dr|neft-[a-z]|imps[-/]|rtgs[-/]|mtfr\/|mmt\/imps\/|trf\b)/i,
+    // UN-ANCHORED (2026-06): real statements put a bank name, a "Sent"/
+    // "Recd:" prefix, or a leading slash in front of the channel marker
+    // ("SentIMPS510…", "Recd:IMPS/…", "NEFT 000452… DELSEAL…"), so the
+    // old start-anchor missed ~all of them and dumped them on the AI.
+    // The markers below are channel-exclusive (NEFT/IMPS/RTGS/MMT/MTFR/
+    // FT funds-transfer) and any charge variant ("IMPS CHARGES" etc.) is
+    // already caught by the Bank-Charges rules far above, so matching
+    // them mid-string is safe. `imps\d{6,}` catches the jammed
+    // "SentIMPS<ref>" form where there's no separator before IMPS.
+    pattern: /\bneft[-\s/:]|\bneft\s?[cd]r\b|\bimps[-/:]|imps\d{6,}|\brtgs[-/:\s]|\bmtfr\/|\bmmt\/imps\/|\bft[\s-]+[a-z]|\btrf\b/i,
     category: transferCategory,
     subcategory: null,
   },
   {
     name: 'transfer-upi',
-    pattern: /^upi[-/]/i,
+    // UN-ANCHORED (2026-06): UPI rows arrive as "/UPI/…", "COLLECT/UPI/…",
+    // "AXIS BANK UPI/P2M/…", "/Paymen/…", "S/PUNB/Payment/ UPI/P2A/…".
+    // `\bupi[-/]` matches "UPI/" / "UPI-" anywhere; `\bp2[ma]\/` is the
+    // UPI-exclusive person-to-merchant / person-to-account marker; and
+    // `\/paymen` catches the PhonePe/GPay "Payment" UPI form. All route
+    // through transferCategory → self-transfer when the counterparty is
+    // the account holder, else Business Income/Expense by direction.
+    pattern: /\bupi[-/]|\bp2[ma]\/|\/paymen/i,
     category: transferCategory,
     subcategory: null,
   },
