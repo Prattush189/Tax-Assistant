@@ -55,5 +55,15 @@ console.log('\nWDL TFR → Transfers (tax-safe; often the holder’s own account
 check('0044285527320 OF Mr. JAGDISH WDL TFR', 40000, 'Transfers');
 check('000050 10123947130 WDL TFR', -40000, 'Transfers');
 
+console.log('\nRound 2 — structured residue (charges / POS / ATM-cash / cheque / bare IFSC):');
+check('4200097368-11 04 2025-HDFC0733611', 25000, 'Business Income');       // bare IFSC wire
+check('JANMAR25 INSTAALERTCHG 23 SMS 040425-MIR 2615427773677', -23, 'Bank Charges');
+check('Chrg: IMPS Transaction Dated On 05-May-2025', -5, 'Bank Charges');
+check('POS 512967XXXXXX0697 CHOLAMANDALAM MS', -1200, 'Business Expenses');
+check('POS 416021XXXXXX0523 PRIME FUEL POINT', -2000, 'Business Expenses');
+check('AXIS/DPRH152901/7758/180326/AMRITSAR ATM-CASH-', -3000, 'Cash Withdrawal');
+check('CHQ PAID-CTS S4-MUMB-AXIS BANK LTD', -75000, 'Business Expenses');
+check('BY CLG INST 366/14-07-25/BOB/NOIDA', -40000, 'Business Expenses');
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);

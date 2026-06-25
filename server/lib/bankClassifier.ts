@@ -178,10 +178,10 @@ const RULES: Rule[] = [
   // "NEFT-CHARGES-JAKA...", "RTGS CHGS BRN INCL GST", "CHRGS/NEFT/MBK".
   // "BENE VALIDTN CHRG" (beneficiary-validation fee charged when you add
   // a new payee) rides the same wire-transfer fee bucket.
-  { name: 'wire-charges', pattern: /chrgs?\/(neft|imps|rtgs)|(?:neft|imps|rtgs)[-\s]chgs|(?:neft|imps|rtgs)[-\s]gst[-\s]commission|(?:neft|imps|rtgs)[-\s]charges|imps charges|bene\s*validtn\s*chrg/i, category: 'Bank Charges', subcategory: 'NEFT/IMPS/RTGS' },
+  { name: 'wire-charges', pattern: /chrgs?[:\/]\s*(?:neft|imps|rtgs)|(?:neft|imps|rtgs)[-\s]chgs|(?:neft|imps|rtgs)[-\s]gst[-\s]commission|(?:neft|imps|rtgs)[-\s]charges|imps charges|bene\s*validtn\s*chrg/i, category: 'Bank Charges', subcategory: 'NEFT/IMPS/RTGS' },
 
   // SMS
-  { name: 'sms-charges', pattern: /sms (?:charges|chrg)/i, category: 'Bank Charges', subcategory: 'SMS' },
+  { name: 'sms-charges', pattern: /sms\s*(?:charges|chrg)|instaalert\s*chg|insta\s*alert/i, category: 'Bank Charges', subcategory: 'SMS' },
 
   // Min Balance — distinct subcategory because the user tracks it.
   // Cover both "Min Bal Chrg", "MAB CHRG" (Monthly Average Balance),
@@ -479,7 +479,7 @@ const RULES: Rule[] = [
   // explicit ATM context.
   {
     name: 'cash-withdrawal-atm-codes',
-    pattern: /\b(?:atw|nwd|eaw|cwdr|cwd)\b|\batm[\s\/_-]+(?:wdl|wdr|nwd|nfs|cw)\b|\bnfs[\s\/_-]+atm\b/i,
+    pattern: /\b(?:atw|nwd|eaw|cwdr|cwd)\b|\batm[\s\/_-]+(?:wdl|wdr|nwd|nfs|cw|cash)\b|\bnfs[\s\/_-]+atm\b/i,
     category: 'Cash Withdrawal',
     subcategory: 'ATM',
     direction: 'debit',
@@ -817,6 +817,28 @@ const RULES: Rule[] = [
     category: (input) => (input.type === 'credit' ? 'Business Income' : 'Business Expenses'),
     subcategory: 'ACH Mandate',
   },
+  // POS card purchases ("POS 512967XXXXXX0697 CHOLAMANDALAM MS",
+  // "POS 416021XXXXXX0523 PRIME FUEL POINT"). The masked card number is
+  // the tell. By direction — a POS debit is a purchase (Business Expense),
+  // a POS credit is a refund/settlement (Business Income). POS rental /
+  // charges are caught by the Bank-Charges block far above, so this only
+  // sees genuine card transactions.
+  {
+    name: 'pos-purchase',
+    pattern: /\bpos\s+\d{2,6}x{4,8}\d{2,6}\b/i,
+    category: (input) => (input.type === 'credit' ? 'Business Income' : 'Business Expenses'),
+    subcategory: 'POS',
+  },
+  // Cheque clearing — the un-prefixed forms the anchored clg-cheque rule
+  // misses ("CHQ PAID-CTS S4-MUMB-AXIS BANK LTD", "BY CLG INST 366/…/BOB").
+  // Own-account cheque → Transfer; otherwise an outward cheque debit is an
+  // expense and an inward cheque credit is income.
+  {
+    name: 'cheque-clearing',
+    pattern: /\bchq\s*paid\b|\bby\s*clg\b|\bclg\s*inst\b|\bcts\s*clg\b/i,
+    category: transferCategory,
+    subcategory: 'Cheque',
+  },
 
   // ─── Wire / UPI movements (NEFT / IMPS / RTGS / mTFR / UPI) ────
   // Fires LAST in this block so specific charge / EMI / GST / salary /
@@ -867,6 +889,20 @@ const RULES: Rule[] = [
     name: 'transfer-bycash',
     pattern: /^by cash\b/i,
     category: 'Transfers',
+    subcategory: null,
+  },
+  // Bare-IFSC fallback (fires LAST). A narration carrying a standalone
+  // IFSC code ("4200097368-11 04 2025-HDFC0733611") but no NEFT/IMPS/UPI
+  // keyword is still a bank wire — the IFSC identifies the counterparty's
+  // branch. Because every keyword rule above has already had its turn,
+  // this only mops up the residue. IFSC format (4 letters + 0 + 6
+  // alphanumerics) is specific enough that a chance match on non-wire
+  // text is rare. Routes by direction (self → Transfer when the holder
+  // name is known).
+  {
+    name: 'wire-bare-ifsc',
+    pattern: /\b[a-z]{4}0[a-z0-9]{6}\b/i,
+    category: transferCategory,
     subcategory: null,
   },
 ];
