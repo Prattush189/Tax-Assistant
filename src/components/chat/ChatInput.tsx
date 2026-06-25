@@ -1,10 +1,15 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useLayoutEffect } from 'react';
 import { Send, Paperclip, FileText, X, BookUser, Lock, BarChart3 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { UploadPhase } from '../../hooks/useFileUpload';
 import { DocumentContext } from '../../types';
 import { LoadingAnimation } from '../ui/LoadingAnimation';
 import toast from 'react-hot-toast';
+
+/** Tallest the composer grows before it starts scrolling internally
+ *  (~9 lines). Keeps a long question fully visible without letting the
+ *  input box swallow the conversation. */
+const MAX_COMPOSER_HEIGHT = 200;
 
 interface ChatInputProps {
   input: string;
@@ -29,7 +34,19 @@ export function ChatInput({
   profiles, referencedProfile, onReferenceProfile, onClearReference, isPro,
 }: ChatInputProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [showProfileDropdown, setShowProfileDropdown] = useState(false);
+
+  // Auto-grow the composer with the message: reset to natural height, then
+  // size to content up to MAX_COMPOSER_HEIGHT, after which it scrolls.
+  // Runs on every `input` change so it also shrinks back after a send
+  // clears the field. useLayoutEffect avoids a one-frame flicker.
+  useLayoutEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, MAX_COMPOSER_HEIGHT)}px`;
+  }, [input]);
 
   const canAttachMore = activeDocuments.length < attachmentLimit;
 
@@ -190,8 +207,10 @@ export function ChatInput({
               )}
             </div>
 
-            {/* Textarea */}
+            {/* Textarea — auto-grows with content (see useLayoutEffect),
+                capped at MAX_COMPOSER_HEIGHT, then scrolls. */}
             <textarea
+              ref={textareaRef}
               value={input}
               onChange={(e) => onInputChange(e.target.value)}
               onKeyDown={(e) => {
@@ -202,7 +221,8 @@ export function ChatInput({
               }}
               onPaste={handlePaste}
               placeholder={isUploading ? 'Wait for document to finish analyzing...' : 'Ask about income tax, GST, or tax saving...'}
-              className="flex-1 bg-transparent border-0 outline-none px-2 py-2 resize-none min-h-[36px] max-h-32 text-gray-800 dark:text-gray-100 text-sm placeholder:text-gray-400"
+              className="flex-1 bg-transparent border-0 outline-none px-2 py-2 resize-none min-h-[36px] overflow-y-auto text-gray-800 dark:text-gray-100 text-sm placeholder:text-gray-400"
+              style={{ maxHeight: MAX_COMPOSER_HEIGHT }}
               rows={1}
             />
 
