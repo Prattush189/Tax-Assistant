@@ -11,16 +11,11 @@ import {
   fetchBankStatementRules,
   createBankStatementRule,
   deleteBankStatementRule,
-  fetchBankStatementConditions,
-  createBankStatementCondition,
-  deleteBankStatementCondition,
   reapplyBankStatementRules,
-  reapplyBankStatementConditions,
   BankStatementSummary,
   BankTransaction,
   BankTransactionAnomaly,
   BankStatementRule,
-  BankStatementCondition,
   BankStatementAnalyzeProgress,
 } from '../services/api';
 
@@ -68,22 +63,19 @@ export function useBankStatementManager(enabled: boolean) {
   const [analyzeProgress, setAnalyzeProgress] = useState<BankStatementAnalyzeProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rules, setRules] = useState<BankStatementRule[]>([]);
-  const [conditions, setConditions] = useState<BankStatementCondition[]>([]);
 
   useEffect(() => {
     if (!enabled) return;
     (async () => {
       setIsLoading(true);
       try {
-        const [list, ruleList, condList] = await Promise.all([
+        const [list, ruleList] = await Promise.all([
           fetchBankStatements(),
           fetchBankStatementRules(),
-          fetchBankStatementConditions(),
         ]);
         setStatements(list.statements);
         if (list.usage) setUsage(list.usage);
         setRules(ruleList.rules);
-        setConditions(condList.conditions);
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to load statements');
       } finally {
@@ -316,33 +308,19 @@ export function useBankStatementManager(enabled: boolean) {
     setRules((prev) => prev.filter((r) => r.id !== id));
   }, []);
 
-  const addCondition = useCallback(async (text: string): Promise<BankStatementCondition> => {
-    const { condition } = await createBankStatementCondition(text);
-    setConditions((prev) => [condition, ...prev]);
-    return condition;
-  }, []);
-
-  const removeCondition = useCallback(async (id: string) => {
-    await deleteBankStatementCondition(id);
-    setConditions((prev) => prev.filter((c) => c.id !== id));
-  }, []);
-
-  // Push the user's CURRENT rules + conditions onto an already-processed
+  // Push the user's CURRENT auto-tagging rules onto an already-processed
   // statement, then reload its detail so the table reflects the new
-  // categories + hidden flags. Returns counts for a summary toast.
-  const reapplyTagging = useCallback(async (id: string): Promise<{ ruleUpdated: number; hidden: number }> => {
-    const [ruleRes, condRes] = await Promise.all([
-      reapplyBankStatementRules(id),
-      reapplyBankStatementConditions(id),
-    ]);
+  // categories. Returns the count for a summary toast.
+  const reapplyTagging = useCallback(async (id: string): Promise<{ ruleUpdated: number }> => {
+    const ruleRes = await reapplyBankStatementRules(id);
     await load(id);
-    return { ruleUpdated: ruleRes.updated, hidden: condRes.hidden };
+    return { ruleUpdated: ruleRes.updated };
   }, [load]);
 
   // Any analysis still running on the server, derived from the persisted
   // status flag rather than the in-flight isAnalyzing boolean (which
-  // resets on tab reload). UI uses this to gate Add rule / Add condition
-  // / Choose file etc. so the user can't kick off a parallel run.
+  // resets on tab reload). UI uses this to gate Add rule / Choose file
+  // etc. so the user can't kick off a parallel run.
   const hasInProgressJob = isAnalyzing || statements.some(s => s.status === 'analyzing');
 
   return {
@@ -356,7 +334,6 @@ export function useBankStatementManager(enabled: boolean) {
     analyzeProgress,
     error,
     rules,
-    conditions,
     refresh,
     clear,
     load,
@@ -368,8 +345,6 @@ export function useBankStatementManager(enabled: boolean) {
     reassignCategory,
     addRule,
     removeRule,
-    addCondition,
-    removeCondition,
     reapplyTagging,
   };
 }

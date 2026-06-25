@@ -11,7 +11,6 @@ import { CounterpartySummary } from './CounterpartySummary';
 import { TransactionTable } from './TransactionTable';
 import { FlaggedTransactions } from './FlaggedTransactions';
 import { BankStatementRules } from './BankStatementRules';
-import { BankStatementConditions } from './BankStatementConditions';
 import { LearnedClassificationsPanel } from './LearnedClassificationsPanel';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { scrubProviderName } from '../../lib/utils';
@@ -48,20 +47,19 @@ export function BankStatementView({ manager }: Props) {
     }
   };
 
-  // Push the user's current auto-tagging rules + conditions onto THIS
-  // already-processed statement (no re-upload, no AI re-extraction). The
-  // manager reloads the detail afterwards so the table reflects the new
-  // categories and hidden rows immediately.
+  // Push the user's current auto-tagging rules onto THIS already-processed
+  // statement (no re-upload, no AI re-extraction). The manager reloads the
+  // detail afterwards so the table reflects the new categories immediately.
   const handleReapply = async () => {
     if (!manager.current) return;
     setIsReapplying(true);
     try {
-      const { ruleUpdated, hidden } = await manager.reapplyTagging(manager.current.statement.id);
+      const { ruleUpdated } = await manager.reapplyTagging(manager.current.statement.id);
       toast.success(
-        `Re-applied — ${ruleUpdated} row${ruleUpdated === 1 ? '' : 's'} re-tagged by rules, ${hidden} hidden by conditions.`,
+        `Re-applied — ${ruleUpdated} row${ruleUpdated === 1 ? '' : 's'} re-tagged by rules.`,
       );
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to re-apply rules & conditions');
+      toast.error(err instanceof Error ? err.message : 'Failed to re-apply rules');
     } finally {
       setIsReapplying(false);
     }
@@ -139,8 +137,6 @@ export function BankStatementView({ manager }: Props) {
               same data). */}
 
           <BankStatementRules manager={manager} />
-
-          <BankStatementConditions manager={manager} />
 
           {/* Per-firm memory layer — accumulates from "Remember"
               actions on individual row corrections. Distinct from
@@ -269,23 +265,23 @@ export function BankStatementView({ manager }: Props) {
         )}
         {!isAnalyzing && !isError && !isCancelled && (
           <>
-            {/* Re-apply the user's current auto-tagging rules + conditions
-                to this already-processed statement. Only shown when the
-                user actually has rules/conditions to apply. Rules/
-                conditions are applied at upload time; this lets the user
-                push a later edit onto an existing statement without
-                re-uploading and re-paying for AI extraction. */}
-            {(manager.rules.length > 0 || manager.conditions.length > 0) && (
+            {/* Re-apply the user's current auto-tagging rules to this
+                already-processed statement. Only shown when the user
+                actually has rules to apply. Rules are applied at upload
+                time; this lets the user push a later edit onto an existing
+                statement without re-uploading and re-paying for AI
+                extraction. */}
+            {manager.rules.length > 0 && (
               <div className="flex justify-end -mb-1">
                 <button
                   type="button"
                   onClick={() => void handleReapply()}
                   disabled={isReapplying}
-                  title="Apply your current auto-tagging rules and conditions to this statement"
+                  title="Apply your current auto-tagging rules to this statement"
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${isReapplying ? 'animate-spin' : ''}`} />
-                  {isReapplying ? 'Re-applying…' : 'Re-apply rules & conditions'}
+                  {isReapplying ? 'Re-applying…' : 'Re-apply rules'}
                 </button>
               </div>
             )}

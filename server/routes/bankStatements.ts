@@ -5,14 +5,13 @@ import multer, { MulterError } from 'multer';
 import Papa from 'papaparse';
 import { extractVisionWithFallback } from '../lib/visionFallback.js';
 import { getPdfPageCount, splitPdfByPages, PDF_VISION_CHUNK_THRESHOLD } from '../lib/pdfChunker.js';
-import { applyConditionsToStatement } from '../lib/bankConditionFilter.js';
 import { extractPdfTextWithPaddleOcr } from '../lib/paddleOcr.js';
 import { structureOcrTextIntoRows } from '../lib/paddleStructurer.js';
 import { parsePrintedTotals, grossTotalNote } from '../lib/bankGrossReconcile.js';
 import type { GeminiJsonResult } from '../lib/geminiJson.js';
 import { callBankEnrichment } from '../lib/bankEnrichmentClient.js';
 import { getBreakerStatus } from '../lib/circuitBreaker.js';
-import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_CATEGORIES, buildConditionsBlock, countWords, MAX_CONDITION_WORDS, type BankStatementCategory } from '../lib/bankStatementPrompt.js';
+import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_CATEGORIES, type BankStatementCategory } from '../lib/bankStatementPrompt.js';
 import { classifyWithLearning, classifyRow, extractCounterpartyAndReference, extractNarrationFingerprint, markRecurring, unifyAmbiguousCounterparties, validateDirectionCategory, applyRetailBusinessPromotion, remapOtherByDirection } from '../lib/bankClassifier.js';
 import { learnedClassificationsRepo } from '../db/repositories/learnedClassificationsRepo.js';
 import { learnedEmbeddingsRepo, type EmbeddingRecord } from '../db/repositories/learnedEmbeddingsRepo.js';
@@ -30,7 +29,6 @@ import { estimateGeminiVision } from '../lib/tokenEstimate.js';
 import { bankStatementRepo } from '../db/repositories/bankStatementRepo.js';
 import { bankTransactionRepo, BankTransactionInput } from '../db/repositories/bankTransactionRepo.js';
 import { bankStatementRuleRepo, BankStatementRuleRow } from '../db/repositories/bankStatementRuleRepo.js';
-import { bankStatementConditionRepo, BankStatementConditionRow } from '../db/repositories/bankStatementConditionRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
@@ -918,10 +916,6 @@ function serializeTransaction(row: ReturnType<typeof bankTransactionRepo.listByS
     // fingerprint when counterparty extraction returned null. Legacy
     // rows pre-Phase-2 stay null; the UI handles both cases.
     fingerprint: row.fingerprint,
-    // 2026-06 — visibility flag set by the post-extraction condition
-    // filter. UI default: hide these rows from the main grid; surface
-    // a "Show hidden (N)" toggle.
-    hiddenByCondition: row.hidden_by_condition === 1,
   };
 }
 
@@ -1118,38 +1112,6 @@ router.get('/admin/payee-export', (req: AuthRequest, res: Response) => {
   res.json({ minCount, count: data.length, rowsCovered: data.reduce((a, b) => a + b.count, 0), payees: data });
 });
 
-function serializeCondition(row: BankStatementConditionRow) {
-  return { id: row.id, text: row.text, createdAt: row.created_at };
-}
-
-// GET /api/bank-statements/conditions — list user-defined parsing conditions.
-router.get('/conditions', (req: AuthRequest, res: Response) => {
-  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
-  const conditions = bankStatementConditionRepo.listByUser(req.user.id).map(serializeCondition);
-  res.json({ conditions, maxWords: MAX_CONDITION_WORDS });
-});
-
-// POST /api/bank-statements/conditions — create a new condition.
-router.post('/conditions', (req: AuthRequest, res: Response) => {
-  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
-  const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
-  if (!text) { res.status(400).json({ error: 'text is required' }); return; }
-  if (countWords(text) > MAX_CONDITION_WORDS) {
-    res.status(400).json({ error: `Condition exceeds the ${MAX_CONDITION_WORDS}-word limit` });
-    return;
-  }
-  const row = bankStatementConditionRepo.create(req.user.id, text.slice(0, 1000));
-  res.status(201).json({ condition: serializeCondition(row) });
-});
-
-// DELETE /api/bank-statements/conditions/:conditionId
-router.delete('/conditions/:conditionId', (req: AuthRequest, res: Response) => {
-  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
-  const ok = bankStatementConditionRepo.delete(req.user.id, req.params.conditionId);
-  if (!ok) { res.status(404).json({ error: 'Condition not found' }); return; }
-  res.json({ success: true });
-});
-
 // POST /api/bank-statements/:id/reclassify — re-run the deterministic
 // classifier (the same anchors used at upload time) against every row
 // of this statement. Rows that the user has manually overridden
@@ -1251,28 +1213,6 @@ router.post('/:id/flip-signs', (req: AuthRequest, res: Response) => {
     totalInflow: inflow,
     totalOutflow: outflow,
   });
-});
-
-// POST /api/bank-statements/:id/reapply-conditions — re-run the
-// post-extraction filter against the user's CURRENT conditions list.
-// Useful after the user adds/edits/removes a condition: the stored
-// rows don't change, only their hidden_by_condition flag, so this is
-// cheap (one AI batch per 150 rows) and fully reversible.
-router.post('/:id/reapply-conditions', async (req: AuthRequest, res: Response) => {
-  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
-  const stmt = bankStatementRepo.findByIdForUser(req.params.id, req.user.id);
-  if (!stmt) { res.status(404).json({ error: 'Statement not found' }); return; }
-  const conditions = bankStatementConditionRepo.listByUser(req.user.id);
-  try {
-    const hidden = await applyConditionsToStatement(
-      stmt.id,
-      conditions.map((c) => ({ id: c.id, text: c.text })),
-    );
-    res.json({ success: true, hidden, total: bankTransactionRepo.listByStatement(stmt.id).length });
-  } catch (err) {
-    console.warn('[bank-statements] reapply-conditions failed:', err instanceof Error ? err.message : err);
-    res.status(500).json({ error: 'Failed to re-apply conditions' });
-  }
 });
 
 // POST /api/bank-statements/:id/reapply-rules — apply the user's CURRENT
@@ -1378,20 +1318,6 @@ router.post(
     const tokenQuota = enforceTokenQuota(req, res, preflightEstimate);
     if (!tokenQuota.ok) return;
     res.once('close', () => tokenQuota.release());
-
-    // 2026-06: User conditions are NO LONGER prepended to the
-    // extraction or enrichment prompts. The previous architecture
-    // asked the model to "skip rows matching X" mid-extraction, which
-    // produced silently-corrupted output: the AI obeyed inconsistently
-    // (skipped some rows, kept others) AND rewrote the next row's
-    // amount to make balance reconcile (a ₹1,500 credit became ₹1,480
-    // after a ₹20 debit was skipped). Extraction must be a FAITHFUL
-    // copy of the PDF; conditions apply as a post-extraction filter
-    // against the stored rows (see `applyConditionsToStatement` below).
-    // We still LOAD the conditions here because the post-extraction
-    // pass needs them.
-    const userConditions = bankStatementConditionRepo.listByUser(req.user.id);
-    const conditionsBlock = ''; // empty — conditions no longer injected into prompts
 
     const isCsv = !req.file && typeof req.body?.csvText === 'string';
 
@@ -1594,7 +1520,7 @@ router.post(
         // Vision fallback path — runs ONLY when PaddleOCR isn't
         // available / failed, or when the upload is a single image
         // (jpeg/png/webp) where OCR adds no value over direct vision.
-        const fullPrompt = `${conditionsBlock}${BANK_STATEMENT_PROMPT}`;
+        const fullPrompt = BANK_STATEMENT_PROMPT;
         if (!extractedFromOcr) {
           // 2026-06: For PDFs above PDF_VISION_CHUNK_THRESHOLD pages
           // (default 40), split into page-range chunks before vision.
@@ -2111,9 +2037,9 @@ router.post(
         //
         // Because the prompt has zero per-batch variance, the cache
         // key is identical across every batch within a statement and
-        // across every statement uploaded by the same user with the
-        // same conditions block within the cache TTL.
-        const STATIC_PREFIX = `${conditionsBlock}You categorise Indian bank-statement rows the rule-based pre-pass could not auto-tag. Return ONE JSON array, no fences, no prose:
+        // across every statement uploaded by the same user within the
+        // cache TTL.
+        const STATIC_PREFIX = `You categorise Indian bank-statement rows the rule-based pre-pass could not auto-tag. Return ONE JSON array, no fences, no prose:
 
 [[category, subcategory_or_null], ...]
 
@@ -2619,27 +2545,6 @@ INPUT_ROWS — TSV, one row per line, columns narration<TAB>type<TAB>amount:
         console.error('[bank-statements] Failed to log cost:', err);
       }
 
-      // 2026-06: post-extraction filter pass. Conditions are no
-      // longer injected into the extraction prompt (the AI was
-      // corrupting amounts to keep balances reconciled across
-      // skipped rows). Instead, we now apply them deterministically
-      // against the stored, faithful rows AFTER insertion. Each
-      // matching row gets hidden_by_condition=1; the row itself stays
-      // in the table so balances reconcile and the user can toggle
-      // visibility. Failures here are non-fatal — the rows just stay
-      // visible. Done before the listByStatement call below so the
-      // returned payload already carries the hidden flag.
-      if (userConditions.length > 0) {
-        try {
-          const hiddenCount = await applyConditionsToStatement(
-            placeholder.id,
-            userConditions.map((c) => ({ id: c.id, text: c.text })),
-          );
-          console.log(`[bank-statements] post-extraction filter: ${hiddenCount} of ${txCount} rows hidden by user conditions`);
-        } catch (err) {
-          console.warn('[bank-statements] post-extraction filter failed:', err instanceof Error ? err.message : err);
-        }
-      }
       const transactions = bankTransactionRepo.listByStatement(placeholder.id).map(serializeTransaction);
       const warning = (res.locals as Record<string, unknown>).analyzerWarning as string | undefined;
       // Reconciliation banner. The vision path now derives every

@@ -82,19 +82,6 @@ const stmts = {
   deleteByStatement: db.prepare(
     'DELETE FROM bank_transactions WHERE statement_id = ?'
   ),
-  // Bulk-update the hidden_by_condition flag for one statement. Used
-  // by applyConditionsToStatement after the AI filter pass — clears
-  // every row to 0, then sets the flagged subset to 1 in one
-  // transaction so re-applying conditions is idempotent.
-  clearHidden: db.prepare(
-    'UPDATE bank_transactions SET hidden_by_condition = 0 WHERE statement_id = ?'
-  ),
-  setHidden: db.prepare(
-    'UPDATE bank_transactions SET hidden_by_condition = 1 WHERE id = ? AND statement_id = ?'
-  ),
-  countHidden: db.prepare(
-    'SELECT COUNT(*) AS n FROM bank_transactions WHERE statement_id = ? AND hidden_by_condition = 1'
-  ),
   // updateCategory scopes by statement_id joined to user_id — callers pass both
   updateCategory: db.prepare(
     `UPDATE bank_transactions
@@ -212,24 +199,6 @@ export const bankTransactionRepo = {
   hasPriorStatementForBillingUser(billingUserId: string, excludeStatementId: string): boolean {
     const row = stmts.hasPriorStatement.get(billingUserId, excludeStatementId) as { has_prior: number };
     return row.has_prior === 1;
-  },
-
-  /**
-   * Re-apply the user's conditions: clear every row's hidden flag,
-   * then set the flag on the ids the AI filter returned. Wrapped in
-   * a single transaction so a partial failure rolls back cleanly.
-   */
-  replaceHiddenSet(statementId: string, hiddenIds: string[]): void {
-    const apply = db.transaction(() => {
-      stmts.clearHidden.run(statementId);
-      for (const id of hiddenIds) stmts.setHidden.run(id, statementId);
-    });
-    apply();
-  },
-
-  countHidden(statementId: string): number {
-    const row = stmts.countHidden.get(statementId) as { n: number };
-    return row.n;
   },
 
   /**
