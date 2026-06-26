@@ -240,9 +240,10 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager, onNavigate 
                 </p>
               </div>
             </div>
-            {/* Marquee breaks out of the centered max-w-2xl column above
-               so the ticker spans the full chat-area width. */}
-            <div className="w-full">
+            {/* Notifications marquee — pinned to the TOP of the welcome
+               column (order-first) so the live tax updates sit just below
+               the nav tabs, above the welcome heading. Full chat-area width. */}
+            <div className="w-full order-first">
               {notificationsLoading ? (
                 <div className="flex items-center justify-center gap-2 py-12 text-sm text-gray-500 dark:text-gray-400">
                   <Loader2 className="w-4 h-4 animate-spin" />
