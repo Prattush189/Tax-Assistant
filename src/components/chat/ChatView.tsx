@@ -239,28 +239,6 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager, onNavigate 
                   Latest GST, TDS, and Income Tax notifications — click any item for a detailed explanation.
                 </p>
               </div>
-
-              {/* What's new — surfaces the recent upgrades on the empty state. */}
-              <div className="w-full rounded-xl border border-emerald-200 dark:border-emerald-800/50 bg-emerald-50/60 dark:bg-emerald-900/15 px-4 py-3 text-left">
-                <div className="flex items-center gap-2 mb-2">
-                  <Sparkles className="w-4 h-4 text-emerald-500" />
-                  <span className="text-sm font-semibold text-gray-800 dark:text-gray-100">What's new</span>
-                </div>
-                <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-300">
-                  <li className="flex items-start gap-2">
-                    <Brain className="w-4 h-4 text-emerald-500 mt-0.5 shrink-0" />
-                    <span>
-                      <span className="font-medium text-gray-800 dark:text-gray-100">Smarter answers.</span> Upgraded to a stronger reasoning model with live tax-law search. Use the <span className="font-medium">Fast / Deep</span> toggle in the box below — pick Deep for notices, computations, and complex cases.
-                    </span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <FileText className="w-4 h-4 text-emerald-500 mt-0.5 shrink-0" />
-                    <span>
-                      <span className="font-medium text-gray-800 dark:text-gray-100">PDF export.</span> Just ask — e.g. “give me this as a PDF” — and download a clean, branded document.
-                    </span>
-                  </li>
-                </ul>
-              </div>
             </div>
             {/* Marquee breaks out of the centered max-w-2xl column above
                so the ticker spans the full chat-area width. */}
@@ -420,6 +398,28 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager, onNavigate 
                   </div>
                 </div>
               )}
+            </div>
+
+            {/* What's new — recent upgrades, below the live notifications. */}
+            <div className="w-full max-w-2xl rounded-xl border border-emerald-200 dark:border-emerald-800/50 bg-emerald-50/60 dark:bg-emerald-900/15 px-4 py-3 text-left">
+              <div className="flex items-center gap-2 mb-2">
+                <Sparkles className="w-4 h-4 text-emerald-500" />
+                <span className="text-sm font-semibold text-gray-800 dark:text-gray-100">What's new</span>
+              </div>
+              <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-300">
+                <li className="flex items-start gap-2">
+                  <Brain className="w-4 h-4 text-emerald-500 mt-0.5 shrink-0" />
+                  <span>
+                    <span className="font-medium text-gray-800 dark:text-gray-100">Smarter answers.</span> Upgraded to a stronger reasoning model with live tax-law search. Use the <span className="font-medium">Fast / Deep</span> toggle in the box below — pick Deep for notices, computations, and complex cases.
+                  </span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <FileText className="w-4 h-4 text-emerald-500 mt-0.5 shrink-0" />
+                  <span>
+                    <span className="font-medium text-gray-800 dark:text-gray-100">PDF export.</span> Just ask — e.g. “give me this as a PDF” — and download a clean, branded document.
+                  </span>
+                </li>
+              </ul>
             </div>
             <FeaturesGuide onNavigate={onNavigate} />
           </div>
