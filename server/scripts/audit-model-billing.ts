@@ -67,6 +67,29 @@ console.log(`Rows with token data           : ${detail.length}`);
 console.log(`weighted_tokens mismatches     : ${wtDrift}  (stored ≠ recompute — stale backfill / weight change)`);
 console.log(`cost mismatches (>5%)          : ${costDrift}  (stored ≠ costForModel — pricing drift; Flex rows expected if logged Standard)`);
 
+// Characterise NULL-model token rows (model not logged → fallback weight,
+// possibly under-counted). Break down by category/status + recency so we
+// can tell a live code-path gap from harmless historic data.
+const nullRows = db.prepare(`
+  SELECT COALESCE(category,'(none)') AS category, status,
+         COUNT(*) AS n,
+         COALESCE(SUM(input_tokens + output_tokens),0) AS tok,
+         MAX(created_at) AS last
+    FROM api_usage
+   WHERE model IS NULL AND (input_tokens > 0 OR output_tokens > 0)
+   GROUP BY category, status
+   ORDER BY n DESC
+`).all() as Array<{ category: string; status: string; n: number; tok: number; last: string }>;
+if (nullRows.length > 0) {
+  console.log('\n=== NULL-model token rows (which feature? how recent?) ===');
+  console.log('category'.padEnd(22), 'status'.padStart(10), 'rows'.padStart(6), 'raw-tok'.padStart(10), '  last seen');
+  for (const r of nullRows) {
+    console.log(r.category.padEnd(22), r.status.padStart(10), String(r.n).padStart(6), String(r.tok).padStart(10), '  ' + r.last);
+  }
+  console.log('→ If "last seen" is recent, that category logs usage without a model — fix the call site.');
+  console.log('  If it is all old, it is pre-fix historic data (under-counted at 1x/4x); safe to leave.');
+}
+
 console.log('\n=== Coverage verdict ===');
 if (unweighted.length === 0) {
   console.log('OK — every real-token model resolves to an explicit weight.');
