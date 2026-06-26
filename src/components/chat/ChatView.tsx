@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Upload, FileText, Loader2, ExternalLink, Landmark, Scale, FileSignature, ScrollText, Calculator, Stamp } from 'lucide-react';
+import { Upload, FileText, Loader2, ExternalLink, Landmark, Scale, FileSignature, ScrollText, Calculator, Stamp, Sparkles, Brain } from 'lucide-react';
 import { useChatManager } from '../../hooks/useChatManager';
 import { useFileUpload } from '../../hooks/useFileUpload';
 import { useAuth } from '../../contexts/AuthContext';
@@ -238,6 +238,28 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager, onNavigate 
                 <p className="text-gray-500 dark:text-gray-400 text-base sm:text-lg">
                   Latest GST, TDS, and Income Tax notifications — click any item for a detailed explanation.
                 </p>
+              </div>
+
+              {/* What's new — surfaces the recent upgrades on the empty state. */}
+              <div className="w-full rounded-xl border border-emerald-200 dark:border-emerald-800/50 bg-emerald-50/60 dark:bg-emerald-900/15 px-4 py-3 text-left">
+                <div className="flex items-center gap-2 mb-2">
+                  <Sparkles className="w-4 h-4 text-emerald-500" />
+                  <span className="text-sm font-semibold text-gray-800 dark:text-gray-100">What's new</span>
+                </div>
+                <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-300">
+                  <li className="flex items-start gap-2">
+                    <Brain className="w-4 h-4 text-emerald-500 mt-0.5 shrink-0" />
+                    <span>
+                      <span className="font-medium text-gray-800 dark:text-gray-100">Smarter answers.</span> Upgraded to a stronger reasoning model with live tax-law search. Use the <span className="font-medium">Fast ⚡ / Deep 🧠</span> toggle in the box below — pick Deep for notices, computations, and complex cases.
+                    </span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <FileText className="w-4 h-4 text-emerald-500 mt-0.5 shrink-0" />
+                    <span>
+                      <span className="font-medium text-gray-800 dark:text-gray-100">PDF export.</span> Just ask — e.g. “give me this as a PDF” — and download a clean, branded document.
+                    </span>
+                  </li>
+                </ul>
               </div>
             </div>
             {/* Marquee breaks out of the centered max-w-2xl column above
