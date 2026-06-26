@@ -35,6 +35,7 @@ export async function sendChatMessage(
   fileContexts?: { filename: string; mimeType: string; extractedData?: unknown }[],
   onDone?: (stopReason: string | null) => void,
   profileContext?: { name: string; data: Record<string, unknown> },
+  reasoningLevel?: 'low' | 'high',
 ): Promise<void> {
   const body: Record<string, unknown> = {
     message,
@@ -46,6 +47,7 @@ export async function sendChatMessage(
         ? { fileContexts }
         : { fileContext: null }),
     ...(profileContext ? { profileContext } : {}),
+    ...(reasoningLevel ? { reasoningLevel } : {}),
   };
 
   const controller = new AbortController();

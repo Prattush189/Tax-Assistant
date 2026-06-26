@@ -11,6 +11,7 @@ import {
 } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { postToParent } from '../lib/pluginProtocol';
+import { getReasoningLevel } from '../lib/chatReasoning';
 
 const isPluginMode = typeof window !== 'undefined'
   && new URLSearchParams(window.location.search).get('plugin') === 'true';
@@ -233,6 +234,7 @@ export function useChatManager() {
           if (stopReason === 'max_tokens') wasTruncated = true;
         },
         referencedProfile ? { name: referencedProfile.name, data: referencedProfile.data } : undefined,
+        getReasoningLevel(),
       );
 
       setReferencedProfile(null);
@@ -360,6 +362,8 @@ export function useChatManager() {
         (stopReason) => {
           if (stopReason === 'max_tokens') contTruncated = true;
         },
+        undefined,
+        getReasoningLevel(),
       );
 
       cFlushAll();

@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useLayoutEffect } from 'react';
-import { Send, Paperclip, FileText, X, BookUser, Lock, BarChart3 } from 'lucide-react';
+import { Send, Paperclip, FileText, X, BookUser, Lock, BarChart3, Brain, Zap } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { getReasoningLevel, setReasoningLevel, type ReasoningLevel } from '../../lib/chatReasoning';
 import { UploadPhase } from '../../hooks/useFileUpload';
 import { DocumentContext } from '../../types';
 import { LoadingAnimation } from '../ui/LoadingAnimation';
@@ -36,6 +37,13 @@ export function ChatInput({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [showProfileDropdown, setShowProfileDropdown] = useState(false);
+  // Reasoning level (Fast/Deep) — persisted; read by the send path.
+  const [reasoning, setReasoning] = useState<ReasoningLevel>(() => getReasoningLevel());
+  const toggleReasoning = () => {
+    const next: ReasoningLevel = reasoning === 'high' ? 'low' : 'high';
+    setReasoning(next);
+    setReasoningLevel(next);
+  };
 
   // Auto-grow the composer with the message: reset to natural height, then
   // size to content up to MAX_COMPOSER_HEIGHT, after which it scrolls.
@@ -206,6 +214,25 @@ export function ChatInput({
                 </div>
               )}
             </div>
+
+            {/* Reasoning toggle — Fast (low) ↔ Deep (high). Deep makes
+                Gemini 3 think harder on multi-step problems (a bit slower). */}
+            <button
+              type="button"
+              onClick={toggleReasoning}
+              title={reasoning === 'high'
+                ? 'Deep reasoning — thorough, slower. Click for Fast.'
+                : 'Fast — quick answers. Click for Deep reasoning.'}
+              className={cn(
+                "inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium transition-all shrink-0",
+                reasoning === 'high'
+                  ? "text-emerald-700 dark:text-emerald-300 bg-emerald-100/70 dark:bg-emerald-900/30"
+                  : "text-gray-400 hover:text-emerald-600 hover:bg-emerald-100/50 dark:hover:bg-emerald-900/20"
+              )}
+            >
+              {reasoning === 'high' ? <Brain className="w-4 h-4" /> : <Zap className="w-4 h-4" />}
+              <span className="hidden sm:inline">{reasoning === 'high' ? 'Deep' : 'Fast'}</span>
+            </button>
 
             {/* Textarea — auto-grows with content (see useLayoutEffect),
                 capped at MAX_COMPOSER_HEIGHT, then scrolls. */}

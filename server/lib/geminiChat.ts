@@ -47,6 +47,13 @@ export async function* streamGeminiChat(
   maxOutputTokens: number = 4096,
   enableSearch: boolean = false,
   useCache: boolean = false,
+  /** Gemini 3 configurable thinking: 'low' (snappy) | 'high' (deep). Omit
+   *  for the model default. Ignored by non-thinking models. */
+  thinkingLevel: 'low' | 'high' | null = null,
+  /** Service tier — e.g. 'flex' (~50% price, relaxed latency). Omit for
+   *  Standard. If the endpoint rejects the field the caller's try/catch
+   *  falls back to the next model. */
+  serviceTier: string | null = null,
 ): AsyncGenerator<GeminiChatChunk> {
   // Build Gemini contents array
   const contents: GeminiContent[] = [];
@@ -84,7 +91,13 @@ export async function* streamGeminiChat(
   // reference if Gemini rejects the combination (e.g. some preview models
   // reject `cachedContent + tools` in the same call).
   const buildBody = (withCache: boolean) => {
-    const b: Record<string, unknown> = { contents, generationConfig: { maxOutputTokens } };
+    const generationConfig: Record<string, unknown> = { maxOutputTokens };
+    // Gemini 3 configurable thinking. Internal "thought" parts are filtered
+    // out of the stream below, so this only affects answer quality/latency.
+    if (thinkingLevel) {
+      generationConfig.thinkingConfig = { thinkingLevel };
+    }
+    const b: Record<string, unknown> = { contents, generationConfig };
     if (withCache && cachedContentName) {
       b.cachedContent = cachedContentName;
     } else {
@@ -92,6 +105,11 @@ export async function* streamGeminiChat(
     }
     if (enableSearch) {
       b.tools = [{ google_search: {} }];
+    }
+    // Flex/Priority service tier (opt-in). Unknown to some endpoints — if
+    // it 400s, the caller falls back to the next model, so this is safe.
+    if (serviceTier) {
+      b.serviceTier = serviceTier;
     }
     return b;
   };

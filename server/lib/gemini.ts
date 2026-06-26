@@ -12,8 +12,23 @@ import OpenAI from 'openai';
 // up worst-case Pro/Enterprise unit economics with no proportional
 // reliability improvement on the structured-output workloads we
 // actually run.
-export const GEMINI_CHAT_MODEL_T2 = 'gemini-2.5-flash-lite';          // Fast primary
+export const GEMINI_CHAT_MODEL_T2 = 'gemini-2.5-flash-lite';          // Fast fallback (last resort)
 export const GEMINI_CHAT_MODEL_T1 = 'gemini-3.1-flash-lite-preview';  // Fast fallback (Gemini 3.x family)
+
+// Chat PRIMARY (2026-06): Gemini 3 Flash — frontier reasoning + superior
+// Search grounding + configurable thinking. Falls back to T1 → T2 if it's
+// unavailable / over capacity, so chat never breaks. Standard pricing
+// $0.50 in / $3.00 out per 1M.
+export const GEMINI_CHAT_MODEL_PRIMARY = 'gemini-3-flash-preview';
+export const GEMINI_PRIMARY_INPUT_COST  = 0.50 / 1_000_000;
+export const GEMINI_PRIMARY_OUTPUT_COST = 3.00 / 1_000_000;
+
+/** Flex service tier: ~50% price for relaxed/variable latency. Opt-in via
+ *  GEMINI_FLEX=1. Passed as `serviceTier` on the request; if the streaming
+ *  endpoint rejects the field the call falls back to the next model, so it
+ *  is safe to leave off until verified on the live endpoint. */
+export const GEMINI_FLEX = process.env.GEMINI_FLEX === '1';
+export const GEMINI_FLEX_SERVICE_TIER = 'flex';
 
 // Pricing (USD per 1M tokens). Anchor for the planned weighted-token
 // quota (see WEIGHTED_TOKENS docs):
@@ -80,8 +95,10 @@ export function costForModel(model: string, inputTokens: number, outputTokens: n
   if (model === 'gemini-2.5-flash') {
     return inputTokens * GEMINI_LEGACY_THINK_INPUT_COST + outputTokens * GEMINI_LEGACY_THINK_OUTPUT_COST;
   }
-  if (model === 'gemini-3-flash-preview') {
-    return inputTokens * GEMINI_LEGACY_THINK_FB_INPUT_COST + outputTokens * GEMINI_LEGACY_THINK_FB_OUTPUT_COST;
+  if (model === GEMINI_CHAT_MODEL_PRIMARY || model === 'gemini-3-flash-preview') {
+    // Active chat primary. Standard pricing; if you enable Flex the real
+    // bill is ~50% but we log Standard here (conservative over-report).
+    return inputTokens * GEMINI_PRIMARY_INPUT_COST + outputTokens * GEMINI_PRIMARY_OUTPUT_COST;
   }
   // Default: Flash-Lite pricing for unknown models — under-attribute
   // slightly rather than fabricate higher pricing.

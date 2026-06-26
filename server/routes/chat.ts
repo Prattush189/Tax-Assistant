@@ -1,6 +1,6 @@
 // server/routes/chat.ts
 import { Router, Response } from 'express';
-import { GEMINI_T1_INPUT_COST, GEMINI_T1_OUTPUT_COST, GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST, GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, GEMINI_API_KEYS } from '../lib/gemini.js';
+import { GEMINI_T1_INPUT_COST, GEMINI_T1_OUTPUT_COST, GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST, GEMINI_PRIMARY_INPUT_COST, GEMINI_PRIMARY_OUTPUT_COST, GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, GEMINI_CHAT_MODEL_PRIMARY, GEMINI_FLEX, GEMINI_FLEX_SERVICE_TIER, GEMINI_API_KEYS } from '../lib/gemini.js';
 import { confirmUsed, getActiveKeyIndex } from '../lib/searchQuota.js';
 import { streamGeminiChat } from '../lib/geminiChat.js';
 import { referenceUrlsBlock } from '../lib/officialReferenceUrls.js';
@@ -71,6 +71,13 @@ LATEST-DATA / WEB-SEARCH RULES (mandatory — your training data is stale):
 - If the search results contradict your prior answer or training data, **trust the search results** and update your answer.
 - If web search returns nothing for the specific point, say so explicitly ("I couldn't find an authoritative confirmation for this — please verify with a CA before relying on it") instead of guessing.
 
+STALE-MEMORY TRAPS — you MUST web-search these BEFORE answering, EVEN IF YOU FEEL CERTAIN (your training is one Budget cycle behind and is provably wrong on these):
+- Capital-gains HOLDING PERIODS and RATES. The 36-month category was ABOLISHED (Finance Act 2024, transfers on/after 23-Jul-2024) — only 12 months (listed securities) and 24 months (everything else, incl. unlisted shares, property, gold, debentures, jewellery) now exist. LTCG is 12.5% (no indexation; property has a grandfathering option), STCG on listed equity (111A) is 20%, LTCG u/s 112A exemption is ₹1.25 lakh. Never state a "36-month" holding period.
+- ITR-U (updated return, s.139(8A)): the window is 48 MONTHS (Finance Act 2025), not 24. Additional tax tiers: 25% / 50% / 60% / 70% by how late. Do not serve the old "24 months, 25%/50%" answer.
+- GST rates / HSN classifications: the Sep-2025 GST rationalization changed many slabs. NEVER state a specific HSN's GST rate as fact from memory — give the HSN code, then say the rate must be confirmed on the GST portal (gst.gov.in) or the latest rate notification. Hedge every HSN-rate answer.
+- ITR-form scope (which form, how many house properties, eligibility) and IT Act 1961→2025 section numbers — confirm via search; do not recite last year's form rules.
+If a query touches any of the above, a search is MANDATORY even when you "know" the answer. Trust the search result over your memory, and if search is inconclusive, hedge explicitly rather than stating the remembered value.
+
 TRUSTED CITATION SOURCES (prefer these, never cite anything else as primary authority):
 - incometax.gov.in, incometaxindia.gov.in, eportal.incometax.gov.in (CBDT, Income Tax Department, e-filing portal)
 - gst.gov.in, cbic.gov.in, cbic-gst.gov.in (CBIC, GST Council)
@@ -132,7 +139,10 @@ const ATTACHMENTS_PER_MESSAGE: Record<string, number> = {
 };
 
 router.post('/chat', async (req: AuthRequest, res: Response) => {
-  const { chatId, message, fileContext, fileContexts: rawFileContexts, profileContext } = req.body;
+  const { chatId, message, fileContext, fileContexts: rawFileContexts, profileContext, reasoningLevel: rawReasoning } = req.body;
+  // Configurable thinking (Gemini 3): 'high' = Deep, anything else = Fast.
+  // Defaults to Fast so ordinary chat stays snappy.
+  const thinkingLevel: 'low' | 'high' = rawReasoning === 'high' ? 'high' : 'low';
   // Normalize: support both single fileContext and array fileContexts
   const fileContexts: { filename: string; mimeType: string; extractedData?: unknown }[] =
     rawFileContexts ?? (fileContext ? [fileContext] : []);
@@ -292,13 +302,16 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
         let primaryFailedMidStream = false;
         const callStartMs = Date.now();
 
-        // ── FAST: Gemini 3.1 Flash-Lite primary ──
         const activeIdx = getActiveKeyIndex();
         const fastApiKey = GEMINI_API_KEYS[activeIdx] ?? '';
+        const flexTier = GEMINI_FLEX ? GEMINI_FLEX_SERVICE_TIER : null;
+
+        // ── PRIMARY: Gemini 3 Flash (reasoning + superior grounding) ──
+        // Configurable thinking (Fast/Deep). Optional Flex service tier.
         if (fastApiKey) {
-          usedModel = GEMINI_CHAT_MODEL_T1;
+          usedModel = GEMINI_CHAT_MODEL_PRIMARY;
           try {
-            for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_T1, SYSTEM_INSTRUCTION, historyPlain, userContent, fastApiKey, MAX_TOKENS, searchEnabled, true)) {
+            for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_PRIMARY, SYSTEM_INSTRUCTION, historyPlain, userContent, fastApiKey, MAX_TOKENS, searchEnabled, true, thinkingLevel, flexTier)) {
               if (chunk.text) { fullResponse += chunk.text; sse.writeText(chunk.text); }
               if (chunk.done) {
                 inputTok = chunk.inputTokens ?? 0;
@@ -308,25 +321,45 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
             }
             confirmUsed('gemini-3', activeIdx, searchEnabled);
           } catch (err) {
-            // If we already started streaming text, don't run the fallback —
-            // that would concatenate a second response into the same bubble.
-            // Instead, surface a truncation signal and persist what we have.
             if (fullResponse) {
               primaryFailedMidStream = true;
               stopReason = 'network_error';
-              console.warn('[chat] Fast primary failed after partial output; keeping partial response:', (err as Error).message?.slice(0, 120));
+              console.warn('[chat] Gemini 3 Flash failed after partial output; keeping partial:', (err as Error).message?.slice(0, 120));
             } else {
-              console.warn('[chat] Fast: Gemini 3.1 Flash-Lite failed, falling back to 2.5 Flash-Lite:', (err as Error).message?.slice(0, 120));
+              console.warn('[chat] Gemini 3 Flash failed, falling back to 3.1 Flash-Lite:', (err as Error).message?.slice(0, 120));
               usedModel = '';
-              // Tell the client we're switching to backup so it can show a
-              // transient "Server busy, retrying…" notice. Doesn't disturb
-              // the streaming text — the next chunks just keep arriving.
               sse.writeEvent({ providerFallback: true });
             }
           }
         }
 
-        // Gemini 2.5 Flash-Lite fallback (only when primary returned nothing).
+        // ── FALLBACK 1: Gemini 3.1 Flash-Lite (only if primary returned nothing) ──
+        if (!fullResponse && !primaryFailedMidStream && fastApiKey) {
+          usedModel = GEMINI_CHAT_MODEL_T1;
+          try {
+            for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_T1, SYSTEM_INSTRUCTION, historyPlain, userContent, fastApiKey, MAX_TOKENS, searchEnabled, true, thinkingLevel, null)) {
+              if (chunk.text) { fullResponse += chunk.text; sse.writeText(chunk.text); }
+              if (chunk.done) {
+                inputTok = chunk.inputTokens ?? 0;
+                outputTok = chunk.outputTokens ?? 0;
+                stopReason = chunk.finishReason === 'MAX_TOKENS' ? 'max_tokens' : 'end_turn';
+              }
+            }
+            confirmUsed('gemini-3', activeIdx, searchEnabled);
+          } catch (err) {
+            if (fullResponse) {
+              primaryFailedMidStream = true;
+              stopReason = 'network_error';
+              console.warn('[chat] 3.1 Flash-Lite failed after partial output; keeping partial:', (err as Error).message?.slice(0, 120));
+            } else {
+              console.warn('[chat] 3.1 Flash-Lite failed, falling back to 2.5 Flash-Lite:', (err as Error).message?.slice(0, 120));
+              usedModel = '';
+              sse.writeEvent({ providerFallback: true });
+            }
+          }
+        }
+
+        // ── FALLBACK 2: Gemini 2.5 Flash-Lite (only when nothing produced yet). ──
         // Reuses the active key — 2.5 draws on its own large daily search pool,
         // independent of the 3.1 monthly pool the primary just failed on.
         if (!fullResponse && !primaryFailedMidStream) {
@@ -370,6 +403,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
         // Log usage — cost depends on which model was actually used.
         if ((inputTok > 0 || outputTok > 0) && fullResponse.length > 0) {
           const costMap: Record<string, [number, number]> = {
+            [GEMINI_CHAT_MODEL_PRIMARY]: [GEMINI_PRIMARY_INPUT_COST, GEMINI_PRIMARY_OUTPUT_COST],
             [GEMINI_CHAT_MODEL_T1]: [GEMINI_T1_INPUT_COST, GEMINI_T1_OUTPUT_COST],
             [GEMINI_CHAT_MODEL_T2]: [GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST],
           };
