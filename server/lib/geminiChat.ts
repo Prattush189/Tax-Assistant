@@ -87,6 +87,11 @@ export async function* streamGeminiChat(
     cachedContentName = await getOrCreateCachedContent(model, systemPrompt, apiKey);
   }
 
+  // Service tier (e.g. Flex) is mutable so the recovery pass below can
+  // drop it and retry on Standard if the endpoint rejects the field —
+  // keeps us on THIS model instead of cascading to a weaker one.
+  let activeTier = serviceTier;
+
   // Build the request body. Extracted so we can retry without the cache
   // reference if Gemini rejects the combination (e.g. some preview models
   // reject `cachedContent + tools` in the same call).
@@ -106,10 +111,10 @@ export async function* streamGeminiChat(
     if (enableSearch) {
       b.tools = [{ google_search: {} }];
     }
-    // Flex/Priority service tier (opt-in). Unknown to some endpoints — if
-    // it 400s, the caller falls back to the next model, so this is safe.
-    if (serviceTier) {
-      b.serviceTier = serviceTier;
+    // Flex/Priority service tier (opt-in). Dropped + retried on Standard
+    // by the recovery pass below if the endpoint rejects the field.
+    if (activeTier) {
+      b.serviceTier = activeTier;
     }
     return b;
   };
@@ -124,24 +129,31 @@ export async function* streamGeminiChat(
 
   let response = await postBody(cachedContentName !== null);
 
-  if (!response.ok && cachedContentName) {
-    // Peek at the error — if it's cache-related (Gemini usually returns
-    // "CachedContent can not be ..." or "NOT_FOUND"), drop our local cache
-    // entry and retry once with the inline systemInstruction. This keeps
-    // chat working when a specific (model, search, cache) combination is
-    // unsupported by a preview model, without taking caching down entirely.
+  if (!response.ok && (cachedContentName || activeTier)) {
+    // One inline recovery pass. A 4xx here is usually an unsupported
+    // COMBINATION rather than a fatal error: a preview model may reject
+    // `cachedContent + tools`, or this endpoint may not know the
+    // `serviceTier` (Flex) field. Drop whichever the error points at and
+    // retry once on the SAME model — far better than cascading to a
+    // weaker model just because Flex isn't accepted on streaming.
     const errText = await response.text();
-    const cacheRelated =
+    const cacheRelated = !!cachedContentName && (
       response.status === 404 ||
       /not.?found/i.test(errText) ||
-      /cached\s*content/i.test(errText);
-    if (cacheRelated) {
-      console.warn(`[geminiChat] cache rejected by ${model} (${response.status}); retrying inline. ${errText.slice(0, 160)}`);
-      invalidateCache(model, systemPrompt, apiKey);
-      cachedContentName = null;
-      response = await postBody(false);
+      /cached\s*content/i.test(errText));
+    // Tier rejections show up as 400 INVALID_ARGUMENT / "unknown name
+    // serviceTier" / "unrecognized field". Treat any 4xx while a tier is
+    // set as tier-related so a bad-field rejection never downgrades us.
+    const tierRelated = !!activeTier && (
+      (response.status >= 400 && response.status < 500) ||
+      /service.?tier|unknown name|unrecognized|invalid/i.test(errText));
+    if (cacheRelated || tierRelated) {
+      console.warn(`[geminiChat] ${model} retry (cache=${cacheRelated}, tier=${tierRelated}) after ${response.status}: ${errText.slice(0, 160)}`);
+      if (cacheRelated) { invalidateCache(model, systemPrompt, apiKey); cachedContentName = null; }
+      if (tierRelated) { activeTier = null; }
+      response = await postBody(cachedContentName !== null);
     } else {
-      // Non-cache error — log full upstream body for ops, throw the
+      // Unrecoverable — log full upstream body for ops, throw the
       // sanitised user-facing message.
       console.warn(`[geminiChat] ${model} HTTP ${response.status}: ${errText.slice(0, 300)}`);
       throw buildGeminiUserError(response.status, errText);

@@ -308,7 +308,16 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
 
         // ── PRIMARY: Gemini 3 Flash (reasoning + superior grounding) ──
         // Configurable thinking (Fast/Deep). Optional Flex service tier.
-        if (fastApiKey) {
+        // We RETRY the primary up to PRIMARY_ATTEMPTS times (short backoff)
+        // before cascading to the lite fallback — the Flex tier and the
+        // preview model can return transient 429/503s, and we'd rather wait
+        // a beat than drop the user to a weaker model. (A bad Flex *field*
+        // is handled inside geminiChat: it drops serviceTier and retries on
+        // Standard, so that case never even reaches here.) Retries only
+        // fire when the attempt failed BEFORE any text — a mid-stream
+        // failure keeps the partial output instead of duplicating it.
+        const PRIMARY_ATTEMPTS = 3;
+        for (let pa = 0; pa < PRIMARY_ATTEMPTS && fastApiKey && !fullResponse && !primaryFailedMidStream; pa++) {
           usedModel = GEMINI_CHAT_MODEL_PRIMARY;
           try {
             for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_PRIMARY, SYSTEM_INSTRUCTION, historyPlain, userContent, fastApiKey, MAX_TOKENS, searchEnabled, true, thinkingLevel, flexTier)) {
@@ -326,9 +335,16 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
               stopReason = 'network_error';
               console.warn('[chat] Gemini 3 Flash failed after partial output; keeping partial:', (err as Error).message?.slice(0, 120));
             } else {
-              console.warn('[chat] Gemini 3 Flash failed, falling back to 3.1 Flash-Lite:', (err as Error).message?.slice(0, 120));
               usedModel = '';
-              sse.writeEvent({ providerFallback: true });
+              const last = pa === PRIMARY_ATTEMPTS - 1;
+              console.warn(`[chat] Gemini 3 Flash attempt ${pa + 1}/${PRIMARY_ATTEMPTS} failed${last ? ', falling back to 3.1 Flash-Lite' : ', retrying'}:`, (err as Error).message?.slice(0, 120));
+              if (last) {
+                sse.writeEvent({ providerFallback: true });
+              } else {
+                // Short backoff before the next primary attempt. The
+                // heartbeat interval keeps the SSE connection alive.
+                await new Promise((r) => setTimeout(r, 500 * (pa + 1)));
+              }
             }
           }
         }
