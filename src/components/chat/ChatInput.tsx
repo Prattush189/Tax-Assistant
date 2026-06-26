@@ -224,7 +224,7 @@ export function ChatInput({
                 ? 'Deep reasoning — thorough, slower. Click for Fast.'
                 : 'Fast — quick answers. Click for Deep reasoning.'}
               className={cn(
-                "inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium transition-all shrink-0",
+                "inline-flex items-center gap-1 h-9 px-2.5 rounded-lg text-xs font-medium transition-all shrink-0 self-end",
                 reasoning === 'high'
                   ? "text-emerald-700 dark:text-emerald-300 bg-emerald-100/70 dark:bg-emerald-900/30"
                   : "text-gray-400 hover:text-emerald-600 hover:bg-emerald-100/50 dark:hover:bg-emerald-900/20"

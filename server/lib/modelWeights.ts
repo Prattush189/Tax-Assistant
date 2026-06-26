@@ -37,12 +37,13 @@ export interface ModelWeight {
  */
 const MODEL_WEIGHTS: Record<string, ModelWeight> = {
   // Active: anchored on T2 input
-  'gemini-2.5-flash-lite':         { wIn: 1.0, wOut: 4.0 },    // $0.10 / $0.40
-  'gemini-3.1-flash-lite-preview': { wIn: 2.5, wOut: 15.0 },   // $0.25 / $1.50
+  'gemini-3-flash-preview':        { wIn: 5.0, wOut: 30.0 },   // $0.50 / $3.00 — chat primary
+  'gemini-3-flash-preview-flex':   { wIn: 2.5, wOut: 15.0 },   // ~50% on the Flex tier
+  'gemini-2.5-flash-lite':         { wIn: 1.0, wOut: 4.0 },    // $0.10 / $0.40 — fallback
+  'gemini-3.1-flash-lite-preview': { wIn: 2.5, wOut: 15.0 },   // $0.25 / $1.50 — fallback
 
-  // Retired (Stage: drop-think-tier). Kept for historic rows.
+  // Retired. Kept for historic rows.
   'gemini-2.5-flash':              { wIn: 3.0, wOut: 25.0 },   // $0.30 / $2.50
-  'gemini-3-flash-preview':        { wIn: 5.0, wOut: 30.0 },   // $0.50 / $3.00
 
   // Retired (2026-05 Anthropic-removal). The vision pipeline used
   // Sonnet 4.5 briefly between the original Gemini-only path and the

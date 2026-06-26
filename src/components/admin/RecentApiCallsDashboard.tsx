@@ -39,9 +39,10 @@ const CATEGORY_LABELS: Record<string, string> = {
 // Active models get distinct colours; retired models keep grey so
 // historic api_usage rows are visually deprioritised in the breakdown.
 const MODEL_COLORS: Record<string, string> = {
-  'gemini-2.5-flash-lite':         'bg-blue-500',     // T2 active primary
-  'gemini-3.1-flash-lite-preview': 'bg-violet-400',   // T1 active fallback
-  'gemini-3-flash-preview':        'bg-gray-400',     // retired
+  'gemini-3-flash-preview':        'bg-amber-500',    // chat primary (active)
+  'gemini-3-flash-preview-flex':   'bg-amber-500',    // chat primary on Flex tier
+  'gemini-2.5-flash-lite':         'bg-blue-500',     // fallback
+  'gemini-3.1-flash-lite-preview': 'bg-violet-400',   // fallback
   'gemini-2.5-flash':              'bg-gray-400',     // retired
   'claude-haiku-4-5':              'bg-gray-400',     // retired
   'local':                         'bg-emerald-500',  // local model — no AI, no tokens
@@ -49,9 +50,10 @@ const MODEL_COLORS: Record<string, string> = {
 };
 
 const MODEL_LABELS: Record<string, string> = {
+  'gemini-3-flash-preview':        'Gemini 3 Flash',
+  'gemini-3-flash-preview-flex':   'Gemini 3 Flash (Flex)',
   'gemini-2.5-flash-lite':         'Gemini 2.5 Flash-Lite',
   'gemini-3.1-flash-lite-preview': 'Gemini 3.1 Flash-Lite',
-  'gemini-3-flash-preview':        'Gemini 3 Flash (retired)',
   'gemini-2.5-flash':              'Gemini 2.5 Flash (retired)',
   'claude-haiku-4-5':              'Claude Haiku 4.5 (retired)',
   'local':                         'Local model (no tokens)',

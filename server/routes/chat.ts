@@ -408,8 +408,13 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
             [GEMINI_CHAT_MODEL_T2]: [GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST],
           };
           const [inputCost, outputCost] = costMap[usedModel] ?? [GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST];
-          const cost = (inputTok * inputCost) + (outputTok * outputCost);
-          usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, inputTok, outputTok, cost, false, usedModel || undefined, searchEnabled, 'chat', 0, 'success', 0, Date.now() - callStartMs);
+          // When the primary ran on the Flex tier, bill ~50% and log a
+          // distinct model string so the admin dashboard shows "(Flex)"
+          // and weighting reflects the discount.
+          const ranFlexPrimary = usedModel === GEMINI_CHAT_MODEL_PRIMARY && !!flexTier;
+          const cost = (inputTok * inputCost + outputTok * outputCost) * (ranFlexPrimary ? 0.5 : 1);
+          const loggedModel = ranFlexPrimary ? `${usedModel}-flex` : usedModel;
+          usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, inputTok, outputTok, cost, false, loggedModel || undefined, searchEnabled, 'chat', 0, 'success', 0, Date.now() - callStartMs);
         } else {
           console.warn('[chat] skipping usage log — no tokens reported (likely partial/truncated stream)');
         }

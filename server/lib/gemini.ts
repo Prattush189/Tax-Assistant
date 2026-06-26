@@ -95,9 +95,12 @@ export function costForModel(model: string, inputTokens: number, outputTokens: n
   if (model === 'gemini-2.5-flash') {
     return inputTokens * GEMINI_LEGACY_THINK_INPUT_COST + outputTokens * GEMINI_LEGACY_THINK_OUTPUT_COST;
   }
+  if (model === 'gemini-3-flash-preview-flex') {
+    // Chat primary on the Flex tier — ~50% of Standard.
+    return (inputTokens * GEMINI_PRIMARY_INPUT_COST + outputTokens * GEMINI_PRIMARY_OUTPUT_COST) * 0.5;
+  }
   if (model === GEMINI_CHAT_MODEL_PRIMARY || model === 'gemini-3-flash-preview') {
-    // Active chat primary. Standard pricing; if you enable Flex the real
-    // bill is ~50% but we log Standard here (conservative over-report).
+    // Active chat primary (Standard tier).
     return inputTokens * GEMINI_PRIMARY_INPUT_COST + outputTokens * GEMINI_PRIMARY_OUTPUT_COST;
   }
   // Default: Flash-Lite pricing for unknown models — under-attribute
