@@ -6,7 +6,7 @@
  * caps total Gemini token spend per user per yearly billing window,
  * regardless of which features they ran.
  *
- *   Free       250 K tokens (account lifetime — trial wall at 30 days)
+ *   Free       500 K tokens (account lifetime — trial wall at 30 days)
  *   Pro         20 M        (yearly, resets on Razorpay renewal)
  *   Enterprise  60 M        (yearly, resets on Razorpay renewal)
  *
