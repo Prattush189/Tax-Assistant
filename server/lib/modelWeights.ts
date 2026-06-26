@@ -4,7 +4,7 @@
  * Each token a model consumes is multiplied by its weight before being
  * counted against the user's monthlyTokenBudget. Anchored at the
  * cheapest active model — gemini-2.5-flash-lite input ($0.10/M) — as
- * 1× so the plan budgets (Free 500K, Pro 20M, Enterprise 60M) represent
+ * 1× so the plan budgets (Free 250K, Pro 20M, Enterprise 60M) represent
  * T2-input-equivalent units.
  *
  * The point is fairness: a 1M-token Gemini 3.1 Preview call costs us

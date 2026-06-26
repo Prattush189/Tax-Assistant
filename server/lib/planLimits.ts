@@ -44,19 +44,17 @@ export interface UserLimits {
 /** Baseline defaults for each plan tier.
  *
  *  Token budgets are in WEIGHTED tokens (see modelWeights.ts — anchored on
- *  2.5-flash-lite input = 1×). The headline-feature models are now Gemini 3
+ *  2.5-flash-lite input = 1×). The headline-feature models are Gemini 3
  *  Flash (chat/notice/ledger/deeds), which weighs ~2× the old 3.1 Flash-Lite
  *  per call — so a chat costs ~30K weighted on Standard, ~16K on Flex, and a
- *  Deep notice draft ~60K+. Rough Free-tier allowance at 500K:
- *    Free       500 K  ≈ ~15 chats (≈2× on Flex)  /  ~8 notice drafts  /  bank statements (mostly local)
+ *  Deep notice draft ~60K+. Rough Free-tier allowance at 250K:
+ *    Free       250 K  ≈ ~7 chats on Standard (≈2× on Flex)  /  ~4 Deep notice drafts  /  bank statements (mostly local)
  *    Pro         20 M  ≈ yearly budget across all features (hundreds of chats)
- *    Enterprise  60 M  ≈ 3× Pro
- *  (2026-06: Free raised 250K→500K so the 3 Flash upgrade didn't halve the
- *  free trial's real interaction count.) */
+ *    Enterprise  60 M  ≈ 3× Pro */
 export const PLAN_DEFAULTS: Record<PlanId, UserLimits> = {
   free: {
     profiles: 1,
-    monthlyTokenBudget: 500_000,
+    monthlyTokenBudget: 250_000,
   },
   pro: {
     profiles: 5,
