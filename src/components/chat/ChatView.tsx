@@ -250,7 +250,7 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager, onNavigate 
                   <li className="flex items-start gap-2">
                     <Brain className="w-4 h-4 text-emerald-500 mt-0.5 shrink-0" />
                     <span>
-                      <span className="font-medium text-gray-800 dark:text-gray-100">Smarter answers.</span> Upgraded to a stronger reasoning model with live tax-law search. Use the <span className="font-medium">Fast ⚡ / Deep 🧠</span> toggle in the box below — pick Deep for notices, computations, and complex cases.
+                      <span className="font-medium text-gray-800 dark:text-gray-100">Smarter answers.</span> Upgraded to a stronger reasoning model with live tax-law search. Use the <span className="font-medium">Fast / Deep</span> toggle in the box below — pick Deep for notices, computations, and complex cases.
                     </span>
                   </li>
                   <li className="flex items-start gap-2">
