@@ -308,19 +308,22 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
 
         // ── PRIMARY: Gemini 3 Flash (reasoning + superior grounding) ──
         // Configurable thinking (Fast/Deep). Optional Flex service tier.
-        // We RETRY the primary up to PRIMARY_ATTEMPTS times (short backoff)
-        // before cascading to the lite fallback — the Flex tier and the
-        // preview model can return transient 429/503s, and we'd rather wait
-        // a beat than drop the user to a weaker model. (A bad Flex *field*
-        // is handled inside geminiChat: it drops serviceTier and retries on
-        // Standard, so that case never even reaches here.) Retries only
-        // fire when the attempt failed BEFORE any text — a mid-stream
-        // failure keeps the partial output instead of duplicating it.
+        //
+        // The Flex tier is cheaper but capacity-constrained — it returns
+        // 503 (overloaded) under load. So we give Flex ONE shot for the
+        // discount, then retry on 3 Flash STANDARD (a much larger capacity
+        // pool) — and only after Standard also fails do we drop to the
+        // weaker 3.1 Flash-Lite. This keeps the user on 3 Flash through a
+        // Flex 503 instead of downgrading. Retries fire only on a
+        // pre-stream failure; a mid-stream failure keeps the partial.
         const PRIMARY_ATTEMPTS = 3;
+        let primaryRanFlex = false;
         for (let pa = 0; pa < PRIMARY_ATTEMPTS && fastApiKey && !fullResponse && !primaryFailedMidStream; pa++) {
+          // Flex on the first attempt only; every retry is Standard tier.
+          const tierForAttempt = (flexTier && pa === 0) ? flexTier : null;
           usedModel = GEMINI_CHAT_MODEL_PRIMARY;
           try {
-            for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_PRIMARY, SYSTEM_INSTRUCTION, historyPlain, userContent, fastApiKey, MAX_TOKENS, searchEnabled, true, thinkingLevel, flexTier)) {
+            for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_PRIMARY, SYSTEM_INSTRUCTION, historyPlain, userContent, fastApiKey, MAX_TOKENS, searchEnabled, true, thinkingLevel, tierForAttempt)) {
               if (chunk.text) { fullResponse += chunk.text; sse.writeText(chunk.text); }
               if (chunk.done) {
                 inputTok = chunk.inputTokens ?? 0;
@@ -328,6 +331,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
                 stopReason = chunk.finishReason === 'MAX_TOKENS' ? 'max_tokens' : 'end_turn';
               }
             }
+            primaryRanFlex = !!tierForAttempt; // attribute Flex only if it actually ran
             confirmUsed('gemini-3', activeIdx, searchEnabled);
           } catch (err) {
             if (fullResponse) {
@@ -337,13 +341,13 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
             } else {
               usedModel = '';
               const last = pa === PRIMARY_ATTEMPTS - 1;
-              console.warn(`[chat] Gemini 3 Flash attempt ${pa + 1}/${PRIMARY_ATTEMPTS} failed${last ? ', falling back to 3.1 Flash-Lite' : ', retrying'}:`, (err as Error).message?.slice(0, 120));
+              console.warn(`[chat] Gemini 3 Flash attempt ${pa + 1}/${PRIMARY_ATTEMPTS} (${tierForAttempt ?? 'standard'}) failed${last ? ', falling back to 3.1 Flash-Lite' : ', retrying'}:`, (err as Error).message?.slice(0, 120));
               if (last) {
                 sse.writeEvent({ providerFallback: true });
-              } else {
-                // Short backoff before the next primary attempt. The
-                // heartbeat interval keeps the SSE connection alive.
-                await new Promise((r) => setTimeout(r, 500 * (pa + 1)));
+              } else if (!tierForAttempt) {
+                // Standard retry — brief backoff. (Flex→Standard switches
+                // immediately; the heartbeat keeps the SSE alive.)
+                await new Promise((r) => setTimeout(r, 600));
               }
             }
           }
@@ -427,7 +431,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
           // When the primary ran on the Flex tier, bill ~50% and log a
           // distinct model string so the admin dashboard shows "(Flex)"
           // and weighting reflects the discount.
-          const ranFlexPrimary = usedModel === GEMINI_CHAT_MODEL_PRIMARY && !!flexTier;
+          const ranFlexPrimary = usedModel === GEMINI_CHAT_MODEL_PRIMARY && primaryRanFlex;
           const cost = (inputTok * inputCost + outputTok * outputCost) * (ranFlexPrimary ? 0.5 : 1);
           const loggedModel = ranFlexPrimary ? `${usedModel}-flex` : usedModel;
           usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, inputTok, outputTok, cost, false, loggedModel || undefined, searchEnabled, 'chat', 0, 'success', 0, Date.now() - callStartMs);
