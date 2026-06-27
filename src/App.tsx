@@ -160,7 +160,7 @@ function AppContent() {
           onClose={() => setIsSidebarOpen(false)}
           chatList={chatManager.chatList}
           currentChatId={chatManager.currentChatId}
-          onNewChat={chatManager.createNewChat}
+          onNewChat={chatManager.clearChat}
           onSwitchChat={(chatId) => {
             chatManager.switchChat(chatId);
             setIsSidebarOpen(false);
