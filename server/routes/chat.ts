@@ -309,21 +309,24 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
         // ── PRIMARY: Gemini 3 Flash (reasoning + superior grounding) ──
         // Configurable thinking (Fast/Deep). Optional Flex service tier.
         //
-        // The Flex tier is cheaper but capacity-constrained — it returns
-        // 503 (overloaded) under load. So we give Flex ONE shot for the
-        // discount, then retry on 3 Flash STANDARD (a much larger capacity
-        // pool) — and only after Standard also fails do we drop to the
-        // weaker 3.1 Flash-Lite. This keeps the user on 3 Flash through a
-        // Flex 503 instead of downgrading. Retries fire only on a
-        // pre-stream failure; a mid-stream failure keeps the partial.
-        const PRIMARY_ATTEMPTS = 3;
+        // No same-tier retries — a stalled/failed call falls straight to the
+        // next rung. The ONE retry we keep is Flex→Standard (when Flex is on,
+        // a Flex 503 is retried on 3 Flash Standard before downgrading). With
+        // Flex off it's a single 3 Flash attempt then 3.1 Flash-Lite. Each
+        // attempt is capped by streamGeminiChat's idle timeout (see below),
+        // so a hung 3 Flash bails in seconds instead of minutes. Retries fire
+        // only on a pre-stream failure; a mid-stream failure keeps the partial.
+        const PRIMARY_ATTEMPTS = flexTier ? 2 : 1;
+        // Deep reasoning can stay silent while it thinks, so give it more
+        // idle headroom before the watchdog fires; Fast bails quicker.
+        const idleMs = thinkingLevel === 'high' ? 45_000 : 25_000;
         let primaryRanFlex = false;
         for (let pa = 0; pa < PRIMARY_ATTEMPTS && fastApiKey && !fullResponse && !primaryFailedMidStream; pa++) {
-          // Flex on the first attempt only; every retry is Standard tier.
+          // Flex on the first attempt only; the retry (if any) is Standard.
           const tierForAttempt = (flexTier && pa === 0) ? flexTier : null;
           usedModel = GEMINI_CHAT_MODEL_PRIMARY;
           try {
-            for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_PRIMARY, SYSTEM_INSTRUCTION, historyPlain, userContent, fastApiKey, MAX_TOKENS, searchEnabled, true, thinkingLevel, tierForAttempt)) {
+            for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_PRIMARY, SYSTEM_INSTRUCTION, historyPlain, userContent, fastApiKey, MAX_TOKENS, searchEnabled, true, thinkingLevel, tierForAttempt, idleMs)) {
               if (chunk.text) { fullResponse += chunk.text; sse.writeText(chunk.text); }
               if (chunk.done) {
                 inputTok = chunk.inputTokens ?? 0;
@@ -357,7 +360,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
         if (!fullResponse && !primaryFailedMidStream && fastApiKey) {
           usedModel = GEMINI_CHAT_MODEL_T1;
           try {
-            for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_T1, SYSTEM_INSTRUCTION, historyPlain, userContent, fastApiKey, MAX_TOKENS, searchEnabled, true, thinkingLevel, null)) {
+            for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_T1, SYSTEM_INSTRUCTION, historyPlain, userContent, fastApiKey, MAX_TOKENS, searchEnabled, true, thinkingLevel, null, idleMs)) {
               if (chunk.text) { fullResponse += chunk.text; sse.writeText(chunk.text); }
               if (chunk.done) {
                 inputTok = chunk.inputTokens ?? 0;

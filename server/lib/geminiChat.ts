@@ -54,6 +54,12 @@ export async function* streamGeminiChat(
    *  Standard. If the endpoint rejects the field the caller's try/catch
    *  falls back to the next model. */
   serviceTier: string | null = null,
+  /** Abort the request if NO bytes arrive for this long (covers both a
+   *  stalled connect and a mid-stream stall). Reset on every chunk, so a
+   *  long-but-progressing answer is never cut. Without this a hung Gemini
+   *  request blocks for minutes until the OS socket gives up. The caller's
+   *  catch then falls to the next model. */
+  idleTimeoutMs: number = 30_000,
 ): AsyncGenerator<GeminiChatChunk> {
   // Build Gemini contents array
   const contents: GeminiContent[] = [];
@@ -121,12 +127,27 @@ export async function* streamGeminiChat(
 
   const url = `${BASE_URL}/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
 
+  // Idle-timeout guard: abort if no bytes arrive for idleTimeoutMs. Armed
+  // before the first request and reset on every chunk, so a stalled connect
+  // OR a mid-stream stall fails fast instead of hanging for minutes, while a
+  // slow-but-progressing answer is never cut.
+  const controller = new AbortController();
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  const armIdle = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => controller.abort(), idleTimeoutMs);
+  };
+  const clearIdle = () => { if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; } };
+
   const postBody = async (withCache: boolean) => fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(buildBody(withCache)),
+    signal: controller.signal,
   });
 
+  armIdle();
+  try {
   let response = await postBody(cachedContentName !== null);
 
   if (!response.ok && (cachedContentName || activeTier)) {
@@ -177,6 +198,7 @@ export async function* streamGeminiChat(
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
+    armIdle(); // bytes arrived — reset the idle watchdog
 
     buffer += decoder.decode(value, { stream: true });
 
@@ -240,4 +262,7 @@ export async function* streamGeminiChat(
     sources: uniqueSources.length > 0 ? uniqueSources : undefined,
     finishReason,
   };
+  } finally {
+    clearIdle();
+  }
 }
