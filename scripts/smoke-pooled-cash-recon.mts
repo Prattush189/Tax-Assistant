@@ -9,7 +9,8 @@
  */
 import {
   runAllFlags, classifyAccount, voucherKind, repairBalancesFromSource,
-  type DetLedger, type DetAccount, type DetTransaction,
+  applyPlausibilityGuards,
+  type DetLedger, type DetAccount, type DetTransaction, type DetObservation,
 } from '../server/lib/ledgerScrutinyFlags.ts';
 
 const acc = (p: Partial<DetAccount> & { name: string }): DetAccount => ({
@@ -120,6 +121,43 @@ check('stats counted', stats.closingRepaired === 1 && stats.openingRepaired === 
 // After repair, RECON_BREAK must be gone for the repaired vendor.
 const obs2 = runAllFlags(repairLedger);
 check('repaired vendor -> no RECON_BREAK', !obs2.some(o => o.code === 'RECON_BREAK' && o.accountName === 'A & A ENTERPRISES'));
+
+// ── 4. Plausibility guards ───────────────────────────────────────────
+const detObs = (p: Partial<DetObservation> & { code: string }): DetObservation => ({
+  accountName: p.accountName ?? null, code: p.code, severity: p.severity ?? 'high',
+  message: p.message ?? 'x', amount: p.amount ?? 10_000, dateRef: p.dateRef ?? null,
+  suggestedAction: null, source: 'deterministic',
+});
+
+// 4a. Repetition collapse: 306 same-code HIGHs on one account -> ONE warn.
+const floodLedger: DetLedger = {
+  partyName: null, gstin: null, periodFrom: null, periodTo: null,
+  accounts: [acc({ name: 'MYSTERY HEAD' })],
+};
+const flood = Array.from({ length: 306 }, (_, i) =>
+  detObs({ code: 'CASH_40A3', accountName: 'MYSTERY HEAD', amount: 16_000, dateRef: `2024-04-${String((i % 28) + 1).padStart(2, '0')}` }));
+flood.push(detObs({ code: 'CASH_40A3', accountName: 'OTHER PARTY', amount: 50_000 })); // lone finding — untouched
+const collapsed = applyPlausibilityGuards(floodLedger, flood);
+const mystery = collapsed.filter(o => o.accountName === 'MYSTERY HEAD');
+check('306-flood -> ONE collapsed observation', mystery.length === 1, `(got ${mystery.length})`);
+check('collapsed flood demoted high -> warn', mystery[0]?.severity === 'warn');
+check('collapsed flood aggregates amount', mystery[0]?.amount === 306 * 16_000, `(got ${mystery[0]?.amount})`);
+check('lone finding on other account untouched', collapsed.some(o => o.accountName === 'OTHER PARTY' && o.severity === 'high'));
+check('under-threshold groups untouched', applyPlausibilityGuards(floodLedger, flood.slice(0, 9)).length === 9);
+
+// 4b. Extraction-quality gate: 15 RECON_BREAKs over 40 eligible accounts
+// (>30%) -> ONE EXTRACTION_QUALITY info; 2 breaks over 40 -> left alone.
+const gateLedger: DetLedger = {
+  partyName: null, gstin: null, periodFrom: null, periodTo: null,
+  accounts: Array.from({ length: 40 }, (_, i) => acc({ name: `PARTY ${i} TRADERS` })),
+};
+const manyBreaks = Array.from({ length: 15 }, (_, i) =>
+  detObs({ code: 'RECON_BREAK', severity: 'info', accountName: `PARTY ${i} TRADERS`, amount: 1_00_000 }));
+const gated = applyPlausibilityGuards(gateLedger, manyBreaks);
+check('mass recon breaks -> gated to ONE notice', gated.filter(o => o.code === 'RECON_BREAK').length === 0 && gated.filter(o => o.code === 'EXTRACTION_QUALITY').length === 1, `(got ${gated.map(o => o.code).join(',')})`);
+const fewBreaks = manyBreaks.slice(0, 2);
+check('few recon breaks -> kept as findings', applyPlausibilityGuards(gateLedger, fewBreaks).filter(o => o.code === 'RECON_BREAK').length === 2);
+check('guards idempotent', applyPlausibilityGuards(gateLedger, gated).length === gated.length);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

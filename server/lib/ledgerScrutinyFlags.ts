@@ -1115,6 +1115,122 @@ export function filterMisdirectedPersonalExpense<T extends { accountName: string
   return { kept, dropped };
 }
 
+// ── Plausibility guards ──────────────────────────────────────────────
+// Self-defence against the failure mode where a rule meets a ledger
+// shape it never anticipated and floods the report (the Laj Overseas
+// sample: 306 §40A(3) HIGHs on one pooled wage head, 15 RECON_BREAKs
+// from dropped closing footers — 349 HIGHs total on a 56-account book).
+// Per-shape fixes land after the fact; these guards bound the damage of
+// the NEXT unknown shape automatically:
+//
+//   A. Repetition collapse — one (account, code) pair firing more than
+//      REPEAT_COLLAPSE_THRESHOLD times is never N genuine findings; it
+//      means the account's shape breaks the rule's assumption (pooled
+//      head, mis-classified account, extraction artifact). Collapse the
+//      run into ONE aggregate WARN that says exactly that. Even when
+//      the findings ARE genuine (a party really paid cash 20 times),
+//      one aggregate flag with the total reads better than 20 clones.
+//
+//   B. Extraction-quality gate — opening + Dr − Cr = closing is a free
+//      checksum on every account. A few breaks = real ledger gaps worth
+//      reporting; breaks across >30% of eligible accounts = OUR
+//      extraction lost balance lines, not "the client's books have 15
+//      holes". Replace the per-account RECON_BREAK spam with ONE
+//      EXTRACTION_QUALITY notice that owns the problem.
+
+const REPEAT_COLLAPSE_THRESHOLD = 10;
+const RECON_GATE_MIN_BREAKS = 5;
+const RECON_GATE_FRACTION = 0.3;
+
+export function applyPlausibilityGuards<T extends MergeableObservation>(
+  ledger: DetLedger,
+  obs: T[],
+): T[] {
+  let out: T[] = obs.slice();
+
+  // ── B. Extraction-quality gate (run first so RECON_BREAKs merged into
+  // one notice don't also trip the repetition collapse) ────────────────
+  const reconBreaks = out.filter((o) => o.code === 'RECON_BREAK');
+  // Same eligibility as flagReconBreak: nominal + bank accounts are
+  // expected not to tie and never flagged, so they don't dilute the rate.
+  const eligible = ledger.accounts.filter((a) => {
+    const cls = classifyAccount(a);
+    return cls !== 'nominal' && cls !== 'bank';
+  }).length;
+  if (
+    reconBreaks.length >= RECON_GATE_MIN_BREAKS &&
+    eligible > 0 &&
+    reconBreaks.length / eligible > RECON_GATE_FRACTION
+  ) {
+    const totalGap = reconBreaks.reduce((s, o) => s + Math.abs(o.amount ?? 0), 0);
+    const first = reconBreaks[0];
+    const summary = {
+      ...first,
+      accountName: null,
+      code: 'EXTRACTION_QUALITY',
+      severity: 'info',
+      amount: totalGap,
+      dateRef: null,
+      message:
+        `${reconBreaks.length} of ${eligible} eligible accounts fail the opening + debits - credits = closing tie-out ` +
+        `(aggregate gap Rs. ${formatINR(totalGap)}). A failure rate this high means the PDF extraction lost balance ` +
+        `lines or transaction rows — NOT that the books have ${reconBreaks.length} genuine gaps. Treat per-account ` +
+        `figures with caution; the individual recon flags have been suppressed as extraction noise.`,
+      suggestedAction:
+        'Re-upload a cleaner export (one account per page, standard Tally/Busy layout). If the rate stays high, report the file to support — the extractor needs a rule for this layout.',
+    } as T;
+    const idx = out.indexOf(first);
+    out = out.filter((o) => o.code !== 'RECON_BREAK');
+    out.splice(Math.min(idx, out.length), 0, summary);
+  }
+
+  // ── A. Repetition collapse ───────────────────────────────────────────
+  const byKey = new Map<string, T[]>();
+  for (const o of out) {
+    const key = `${(o.accountName ?? '').toLowerCase()}|${o.code}`;
+    const arr = byKey.get(key);
+    if (arr) arr.push(o); else byKey.set(key, [o]);
+  }
+  const collapsedKeys = new Set<string>();
+  for (const [key, group] of byKey) {
+    if (group.length > REPEAT_COLLAPSE_THRESHOLD) collapsedKeys.add(key);
+  }
+  if (collapsedKeys.size === 0) return out;
+
+  const emitted = new Set<string>();
+  const result: T[] = [];
+  for (const o of out) {
+    const key = `${(o.accountName ?? '').toLowerCase()}|${o.code}`;
+    if (!collapsedKeys.has(key)) { result.push(o); continue; }
+    if (emitted.has(key)) continue; // group already summarised
+    emitted.add(key);
+    const group = byKey.get(key)!;
+    const amounts = group.map((g) => g.amount ?? 0);
+    const total = amounts.reduce((s, v) => s + v, 0);
+    const maxAmt = Math.max(...amounts);
+    const dates = group.map((g) => g.dateRef).filter((d): d is string => !!d).sort();
+    const range = dates.length > 0 ? ` between ${dates[0]} and ${dates[dates.length - 1]}` : '';
+    // A flood of HIGHs demotes to ONE warn — the volume itself is the
+    // evidence that the per-instance severity was mis-assigned. An
+    // info-level flood stays info.
+    const anyAboveInfo = group.some((g) => g.severity === 'high' || g.severity === 'warn');
+    result.push({
+      ...group[0],
+      severity: anyAboveInfo ? 'warn' : 'info',
+      amount: total,
+      message:
+        `${group.length} ${o.code} findings on ${o.accountName ?? 'this ledger'}${range} collapsed into one ` +
+        `(aggregate Rs. ${formatINR(total)}, largest Rs. ${formatINR(maxAmt)}). A single rule firing ${group.length}x ` +
+        `on one account usually means the account's character breaks the rule's assumption (pooled/aggregate head, ` +
+        `mis-read account type) rather than ${group.length} separate defaults. First instance: ${group[0].message}`,
+      suggestedAction:
+        `Establish the account's true character first; only if these really are individual defaults, review the ${group.length} underlying vouchers. ` +
+        (group[0].suggestedAction ?? ''),
+    } as T);
+  }
+  return result;
+}
+
 // ── Balance repair from source page text ─────────────────────────────
 // Gemini routinely drops the Tally "Dr/Cr Closing Balance" footer (and
 // sometimes the "Opening Balance" row) even though the extract prompt

@@ -38,6 +38,7 @@ import {
   mergeObservations,
   filterMisdirectedPersonalExpense,
   repairBalancesFromSource,
+  applyPlausibilityGuards,
   DETERMINISTIC_CODES,
   type DetObservation,
   type DetLedger,
@@ -1195,7 +1196,14 @@ async function runChunkedScrutiny(
       transactions: a.transactions ?? [],
     })),
   };
-  const deterministicFlags: DetObservation[] = runAllFlags(detLedger);
+  // Plausibility guards run HERE (not just at final merge) so a flood
+  // never reaches the per-chunk LLM prompts via formatPreRaisedFlags —
+  // 306 pre-raised flags would blow the prompt budget on their own.
+  const rawDetFlags = runAllFlags(detLedger);
+  const deterministicFlags: DetObservation[] = applyPlausibilityGuards(detLedger, rawDetFlags);
+  if (deterministicFlags.length !== rawDetFlags.length) {
+    console.warn(`[ledger-scrutiny] plausibility guards: ${rawDetFlags.length} deterministic flags → ${deterministicFlags.length} (flood collapsed / recon gated)`);
+  }
   console.log(`[ledger-scrutiny] deterministic engine produced ${deterministicFlags.length} flags before LLM pass`);
 
   const groups: ExtractedAccount[][] = [];
@@ -1311,9 +1319,13 @@ async function runChunkedScrutiny(
   // partial double-write on resume. Persist deterministic flags only
   // when the full chunked run completed.
   const beforeMerge = allObservations.length;
-  const merged = pausedFlag
-    ? allObservations.slice()
-    : mergeObservations(deterministicFlags, allObservations);
+  // Second guard pass on the MERGED list: the deterministic side was
+  // guarded up-front, but the LLM can flood too (same code repeated per
+  // account across chunks). Idempotent for already-collapsed groups.
+  const merged = applyPlausibilityGuards(
+    detLedger,
+    pausedFlag ? allObservations.slice() : mergeObservations(deterministicFlags, allObservations),
+  );
   if (!pausedFlag) {
     console.log(`[ledger-scrutiny] merged ${deterministicFlags.length} deterministic + ${beforeMerge} LLM = ${merged.length} total observations`);
   }
