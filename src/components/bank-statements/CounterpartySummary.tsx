@@ -31,6 +31,8 @@ import { BankTransaction } from '../../services/api';
 import { formatINRCompact, formatINR, formatDate, cn } from '../../lib/utils';
 import { downloadPartyLedgerPdf, downloadCombinedLedgerPdf, type LedgerParty } from '../../lib/partyLedgerPdf';
 import { downloadPartyLedgerWord, downloadCombinedLedgerWord } from '../../lib/partyLedgerWord';
+import { downloadPartyLedgerXlsx, downloadCombinedLedgerXlsx } from '../../lib/partyLedgerXlsx';
+import { normalizePartyKey, displayPartyName } from '../../lib/partyKey';
 
 interface Props {
   transactions: BankTransaction[];
@@ -40,6 +42,7 @@ interface Props {
   meta?: {
     bankName?: string | null;
     accountLabel?: string | null;
+    accountHolder?: string | null;
     periodFrom?: string | null;
     periodTo?: string | null;
   };
@@ -100,9 +103,15 @@ export function CounterpartySummary({ transactions, meta }: Props) {
 
   // Same grouping key the aggregation uses (counterparty, else
   // fingerprint), so the ledger for a row pulls exactly that row's
-  // transactions back out of the full list.
-  const partyKeyOf = (t: BankTransaction) =>
-    (t.counterparty ?? '').trim() || (t.fingerprint ?? '').trim();
+  // transactions back out of the full list. The counterparty is
+  // NORMALISED (bank-routing tokens + UPI handles stripped) so one
+  // party moving money through two banks — "AMRIT PAL AXIS BANK" and
+  // "AMRIT PAL YES BANK" — lands in ONE ledger account instead of two.
+  const partyKeyOf = (t: BankTransaction) => {
+    const cp = (t.counterparty ?? '').trim();
+    if (cp) return normalizePartyKey(cp);
+    return (t.fingerprint ?? '').trim();
+  };
 
   // Clicking a Ledger button opens a small PDF/Word chooser instead of
   // downloading immediately. `pick` holds what was asked for.
@@ -121,16 +130,18 @@ export function CounterpartySummary({ transactions, meta }: Props) {
       .filter((p) => p.txns.length > 0);
   };
 
-  const runDownload = (format: 'pdf' | 'word') => {
+  const runDownload = (format: 'pdf' | 'word' | 'excel') => {
     if (!pick) return;
     if (pick.kind === 'party') {
       const txns = transactions.filter((t) => partyKeyOf(t) === pick.row.key);
       if (format === 'pdf') downloadPartyLedgerPdf(pick.row.display, txns, meta ?? {});
-      else downloadPartyLedgerWord(pick.row.display, txns, meta ?? {});
+      else if (format === 'word') downloadPartyLedgerWord(pick.row.display, txns, meta ?? {});
+      else void downloadPartyLedgerXlsx(pick.row.display, txns, meta ?? {});
     } else {
       const parties = orderedParties();
       if (format === 'pdf') downloadCombinedLedgerPdf(parties, meta ?? {});
-      else downloadCombinedLedgerWord(parties, meta ?? {});
+      else if (format === 'word') downloadCombinedLedgerWord(parties, meta ?? {});
+      else void downloadCombinedLedgerXlsx(parties, meta ?? {});
     }
     setPick(null);
   };
@@ -159,10 +170,12 @@ export function CounterpartySummary({ transactions, meta }: Props) {
       const fingerprint = (t.fingerprint ?? '').trim();
       // Pick the most stable identity available. Counterparty wins
       // because it's display-friendly; fingerprint is the fallback
-      // for rows where extraction failed.
-      const key = counterparty || fingerprint;
+      // for rows where extraction failed. The counterparty key is
+      // normalised (bank tokens / UPI handles stripped) so per-bank
+      // variants of one party aggregate into a single row.
+      const key = counterparty ? normalizePartyKey(counterparty) : fingerprint;
       if (!key) continue;
-      const display = counterparty || `(${fingerprint.slice(0, 32)})`;
+      const display = counterparty ? displayPartyName(counterparty) : `(${fingerprint.slice(0, 32)})`;
       const acc = map.get(key) ?? {
         key,
         display,
@@ -419,20 +432,28 @@ export function CounterpartySummary({ transactions, meta }: Props) {
               {pick.kind === 'party' ? pick.row.display : 'Combined — all parties'}
             </p>
             <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">Choose a format:</p>
-            <div className="mt-2 grid grid-cols-2 gap-2">
+            <div className="mt-2 grid grid-cols-3 gap-2">
               <button
                 type="button"
                 onClick={() => runDownload('pdf')}
-                className="flex items-center justify-center gap-2 px-3 py-2.5 text-sm font-medium rounded-lg bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 border border-emerald-200 dark:border-emerald-800"
+                className="flex items-center justify-center gap-1.5 px-2 py-2.5 text-sm font-medium rounded-lg bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 border border-emerald-200 dark:border-emerald-800"
               >
                 <Download className="w-4 h-4" /> PDF
               </button>
               <button
                 type="button"
                 onClick={() => runDownload('word')}
-                className="flex items-center justify-center gap-2 px-3 py-2.5 text-sm font-medium rounded-lg bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/30 border border-blue-200 dark:border-blue-800"
+                className="flex items-center justify-center gap-1.5 px-2 py-2.5 text-sm font-medium rounded-lg bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/30 border border-blue-200 dark:border-blue-800"
               >
                 <FileText className="w-4 h-4" /> Word
+              </button>
+              <button
+                type="button"
+                onClick={() => runDownload('excel')}
+                title="Bank Summary workbook with grouped receipts / payments and live subtotal formulas"
+                className="flex items-center justify-center gap-1.5 px-2 py-2.5 text-sm font-medium rounded-lg bg-teal-50 dark:bg-teal-900/20 text-teal-700 dark:text-teal-300 hover:bg-teal-100 dark:hover:bg-teal-900/30 border border-teal-200 dark:border-teal-800"
+              >
+                <FileText className="w-4 h-4" /> Excel
               </button>
             </div>
             <button

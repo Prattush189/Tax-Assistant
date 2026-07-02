@@ -305,6 +305,7 @@ export function BankStatementView({ manager }: Props) {
                 meta={{
                   bankName: manager.current.statement.bankName,
                   accountLabel: manager.current.statement.accountNumberMasked,
+                  accountHolder: manager.current.statement.accountHolder,
                   periodFrom: manager.current.statement.periodFrom,
                   periodTo: manager.current.statement.periodTo,
                 }}

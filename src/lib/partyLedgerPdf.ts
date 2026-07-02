@@ -56,6 +56,8 @@ function balanceLabel(n: number): string {
 export interface PartyLedgerMeta {
   bankName?: string | null;
   accountLabel?: string | null;
+  /** Statement owner's name — used by the Excel export's header block. */
+  accountHolder?: string | null;
   periodFrom?: string | null;
   periodTo?: string | null;
 }
