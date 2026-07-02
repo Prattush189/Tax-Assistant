@@ -270,8 +270,12 @@ ABSOLUTE RULES:
   them, and re-emitting creates duplicates: CASH_40A3, CASH_40A3_STRUCTURING,
   CASH_269ST, CASH_269SS, CASH_269T, TDS_194Q_MISSING, TDS_194C_MISSING,
   TDS_194I_MISSING, TDS_194H_MISSING, TDS_194J_MISSING, TDS_192_VERIFY,
-  RECON_BREAK, PATTERN_SQUARED_OFF, PATTERN_ONE_SIDED_CREDIT,
-  TURNOVER_AUDIT_FLAG, IT_GST_RECON.
+  CASH_EMPLOYEE_POOLED, RECON_BREAK, PATTERN_SQUARED_OFF,
+  PATTERN_ONE_SIDED_CREDIT, TURNOVER_AUDIT_FLAG, IT_GST_RECON.
+- Pooled wage/labour heads (CASUAL LABOUR, WAGES, salary/staff advances)
+  pay MANY workers through one account. Do NOT flag their per-day cash
+  totals under §40A(3)/§269SS/T — the limit is per payee per day and the
+  deterministic engine already raises the verify-muster-roll flag.
 - 'high' is reserved for findings that would attract disallowance, penalty,
   or notice. Use sparingly.
 - Cite ONLY real sections. If unsure, omit the citation.

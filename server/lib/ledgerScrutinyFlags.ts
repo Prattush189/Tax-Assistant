@@ -94,7 +94,13 @@ const BROKERAGE_NAME_HINTS = /\b(brokerage|commission)\b/i;
 const PROFESSIONAL_HEAD_HINTS = /\b(professional|consultancy|consulting|legal|audit\s*fee|technical)\b/i;
 const CASH_NAME_HINTS = /\bcash\b/i;
 const BANK_NAME_HINTS = /\b(bank|hdfc|icici|axis|sbi|kotak|yes\s*bank|pnb|bob|baroda|union|canara|jk\s*bank|jammu)\b/i;
-const SALARY_HEAD_HINTS = /\b(salary|salaries|wages|payroll)\b/i;
+const SALARY_HEAD_HINTS = /\b(salary|salaries|wages?|payroll|labour|labor|manpower|bonus)\b/i;
+// Employee-money asset heads ("Advance to Employee", "Staff Advance",
+// "Salary Advance"). Not expenditure, not loans — the per-day cash rules
+// (§40A(3), §269SS/T) misfire badly here: a Punjab forging ledger got 17
+// per-day §40A(3) HIGHs + a §269T "loan repayment" HIGH on a routine
+// salary-advance register. Handled by flagPooledEmployeeCash instead.
+const EMPLOYEE_ADVANCE_HINTS = /\badvances?\b.*\b(employees?|staff|workers?|salar(y|ies)|wages?)\b|\b(employees?|staff|workers?|salar(y|ies)|wages?)\b.*\badvances?\b/i;
 // Nominal heads close to Trading / P&L at year-end. Include sales/purchases —
 // the closing balance after transfer is zero, recon never ties on the columns
 // alone, and §194Q-on-customer logic uses Cr-side as a proxy that doesn't
@@ -111,6 +117,7 @@ export type DetAccountClass =
   | 'brokerage_expense'
   | 'professional_expense'
   | 'salary_expense'
+  | 'employee_advance' // advances to employees/staff — asset, not expenditure
   | 'nominal'     // P&L closing accounts, gross-profit transfers
   | 'capital'
   | 'transport_expense'
@@ -124,6 +131,9 @@ export function classifyAccount(a: DetAccount): DetAccountClass {
   if (NOMINAL_HEAD_HINTS.test(n)) return 'nominal';
   if (RENT_NAME_HINTS.test(n)) return 'rent_expense';
   if (BROKERAGE_NAME_HINTS.test(n)) return 'brokerage_expense';
+  // Advance check must precede salary — "SALARY ADVANCE" is an advance
+  // head, not the salary expense head.
+  if (EMPLOYEE_ADVANCE_HINTS.test(n)) return 'employee_advance';
   if (SALARY_HEAD_HINTS.test(n)) return 'salary_expense';
   if (PROFESSIONAL_HEAD_HINTS.test(n)) return 'professional_expense';
   if (TRANSPORT_NAME_HINTS.test(n)) return 'transport_expense';
@@ -159,16 +169,19 @@ export function classifyAccount(a: DetAccount): DetAccountClass {
  *
  *  Word-forms are checked first because single-letter prefix matches
  *  ('^P' against 'Payment') would otherwise misclassify Tally
- *  vouchers. 'Contra' returns null — contra entries (cash↔bank
- *  transfers) aren't §40A(3)/§269ST/§269SS triggers. */
-export function voucherKind(v: string | null | undefined): 'C' | 'J' | 'P' | 'R' | 'B' | null {
+ *  vouchers. 'Contra' returns 'X' — contra entries (cash↔bank
+ *  transfers of the assessee's OWN money) aren't §40A(3)/§269ST/§269SS
+ *  triggers, and callers need to tell "contra" apart from "unknown"
+ *  (null): §269ST must SKIP a Rs. 3L bank→cash withdrawal (contra) but
+ *  still flag a Rs. 3L receipt whose voucher type it can't read. */
+export function voucherKind(v: string | null | undefined): 'C' | 'J' | 'P' | 'R' | 'B' | 'X' | null {
   if (!v) return null;
   const t = v.trim();
   if (!t) return null;
 
   // Word forms first — most specific. Order matters: 'payment' must
   // win over 'p…' single-letter, and 'contra' must NOT match 'C'.
-  if (/^contra/i.test(t)) return null;
+  if (/^contra/i.test(t)) return 'X';
   if (/^cash/i.test(t)) return 'C';
   if (/^journ/i.test(t)) return 'J';
   if (/^purch/i.test(t)) return 'P';
@@ -188,6 +201,19 @@ export function voucherKind(v: string | null | undefined): 'C' | 'J' | 'P' | 'R'
   return null;
 }
 
+// ── Pooled employee-money heads ──────────────────────────────────────
+// The per-day cash rules (§40A(3), §269SS/T/ST) aggregate by (account,
+// date) — valid ONLY when the account is a single counterparty. Wage /
+// labour heads pool MANY payees (a Rs. 16,000 "CASUAL LABOUR" day is a
+// muster of workers on Rs. 2,000 each — nobody crossed Rs. 10,000), and
+// employee-advance heads aren't expenditure or loans at all. Running the
+// per-day rules on these produced 306 false §40A(3) HIGHs on one wage
+// head alone. They get ONE summary WARN from flagPooledEmployeeCash.
+const POOLED_EMPLOYEE_CLASSES: ReadonlySet<DetAccountClass> = new Set([
+  'salary_expense',
+  'employee_advance',
+]);
+
 // ── §40A(3) — cash payments > Rs. 10,000 ────────────────────────────
 // Trigger: voucher is type 'C' (cash) AND single-day payment to one
 // payee strictly exceeds Rs. 10,000. Transporter exception raises the
@@ -202,6 +228,10 @@ export function flag40A3(ledger: DetLedger): DetObservation[] {
     // Only consider party / expense accounts. Cash deposits to bank,
     // capital introductions, etc., aren't §40A(3) territory.
     if (cls === 'bank' || cls === 'cash' || cls === 'capital' || cls === 'nominal') continue;
+    // Pooled wage / employee-advance heads: per-(account, day) aggregation
+    // is invalid — many payees share one head. flagPooledEmployeeCash
+    // raises a single verify-the-muster-roll WARN instead.
+    if (POOLED_EMPLOYEE_CLASSES.has(cls)) continue;
 
     // Group cash transactions by date. Same day, same payee, multiple
     // cash vouchers = aggregate.
@@ -252,7 +282,16 @@ export function flag269ST(ledger: DetLedger): DetObservation[] {
     for (const tx of acct.transactions) {
       // Cash account: inflow = debit (cash coming in).
       if (tx.debit < 2_00_000) continue;
-      if (voucherKind(tx.voucher) === 'B') continue; // bank-mode entries to cash account are unusual but skip
+      const kind = voucherKind(tx.voucher);
+      if (kind === 'B') continue; // bank-mode entries to cash account are unusual but skip
+      // Contra = the assessee moving OWN money between bank and cash. A
+      // Rs. 3L bank→cash withdrawal is not a "receipt from a person" —
+      // §269ST doesn't apply (one sample cash book produced 20 false
+      // HIGHs from exactly these withdrawal rows).
+      if (kind === 'X') continue;
+      // Same movement booked without a Contra voucher type: a cash-book
+      // debit whose narration names the assessee's own bank account.
+      if (tx.narration && BANK_NAME_HINTS.test(tx.narration)) continue;
       out.push({
         accountName: acct.name,
         code: 'CASH_269ST',
@@ -280,6 +319,10 @@ export function flag269SS_269T(ledger: DetLedger): DetObservation[] {
   for (const acct of ledger.accounts) {
     const cls = classifyAccount(acct);
     if (cls === 'bank' || cls === 'cash' || cls === 'capital' || cls === 'nominal') continue;
+    // Wage heads and employee advances aren't loans/deposits — a cash
+    // salary-advance register is employer-employee money movement, not
+    // §269SS acceptance / §269T repayment.
+    if (POOLED_EMPLOYEE_CLASSES.has(cls)) continue;
     let cashCredits = 0;  // cash *into* assessee = loan accepted
     let cashDebits = 0;   // cash *out* = loan repaid
     let exampleDate: string | null = null;
@@ -635,6 +678,9 @@ export function flagSquaredOff(ledger: DetLedger): DetObservation[] {
   for (const acct of ledger.accounts) {
     const cls = classifyAccount(acct);
     if (cls === 'bank' || cls === 'cash' || cls === 'capital' || cls === 'nominal') continue;
+    // Wage / advance heads square off to P&L or per-employee ledgers by
+    // design — Dr = Cr at year end is bookkeeping, not accommodation.
+    if (POOLED_EMPLOYEE_CLASSES.has(cls)) continue;
     if (acct.totalDebit < SQUARED_OFF_MIN) continue;
     if (Math.abs(acct.totalDebit - acct.totalCredit) > 1) continue;
     if (Math.abs(acct.closing) > 1) continue;
@@ -672,6 +718,7 @@ export function flagOneSidedCredits(ledger: DetLedger): DetObservation[] {
   for (const acct of ledger.accounts) {
     const cls = classifyAccount(acct);
     if (cls === 'bank' || cls === 'cash' || cls === 'capital' || cls === 'nominal') continue;
+    if (POOLED_EMPLOYEE_CLASSES.has(cls)) continue; // wage/advance heads aren't loan-shaped parties
     // Skip clear vendor/customer accounts — those are trade payables,
     // not unsecured loans.
     if (cls === 'vendor' && acct.totalCredit > 50_00_000) continue; // big vendors covered by §194Q already
@@ -718,6 +765,7 @@ export function flag269STSameDay(ledger: DetLedger): DetObservation[] {
   for (const acct of ledger.accounts) {
     const cls = classifyAccount(acct);
     if (cls === 'bank' || cls === 'cash' || cls === 'capital' || cls === 'nominal') continue;
+    if (POOLED_EMPLOYEE_CLASSES.has(cls)) continue; // credits here are wage recoveries, not receipts from "a person"
     const byDate = new Map<string, { total: number; count: number; max: number }>();
     for (const tx of acct.transactions) {
       if (voucherKind(tx.voucher) !== 'C') continue;
@@ -768,6 +816,9 @@ export function flag40A3Structuring(ledger: DetLedger): DetObservation[] {
     const cls = classifyAccount(acct);
     if (cls === 'bank' || cls === 'cash' || cls === 'capital' || cls === 'nominal') continue;
     if (cls === 'transport_expense') continue;
+    // Pooled wage heads legitimately pay many workers Rs. 8-10K days —
+    // that's a muster roll, not structuring. Covered by the pooled WARN.
+    if (POOLED_EMPLOYEE_CLASSES.has(cls)) continue;
     const nearLimit: { amt: number; date: string | null }[] = [];
     for (const tx of acct.transactions) {
       if (voucherKind(tx.voucher) !== 'C') continue;
@@ -787,6 +838,64 @@ export function flag40A3Structuring(ledger: DetLedger): DetObservation[] {
         `${nearLimit.length} cash payments to ${acct.name} sit just below the Rs. 10,000 §40A(3) limit (${sample}${nearLimit.length > 5 ? ', …' : ''}), aggregating Rs. ${formatINR(total)}. ` +
         `Repeated near-limit cash payments to one payee are a structuring marker — if a single liability was split across vouchers to stay under the limit, the whole aggregate is disallowable u/s 40A(3).`,
       suggestedAction: 'Check whether these relate to one bill / liability split across vouchers; if so, disallow the aggregate. Otherwise document the distinct purchases and payment dates.',
+      source: 'deterministic',
+    });
+  }
+  return out;
+}
+
+// ── Pooled employee-cash summary (wage heads + employee advances) ────
+// Replacement for the per-day §40A(3)/§269SS-T HIGHs that POOLED_EMPLOYEE_
+// CLASSES accounts are excluded from. One WARN per account, framed as a
+// verify-the-register question: §40A(3) is a PER-PAYEE per-day test, and a
+// pooled head cannot establish (or rule out) a breach on its own. Fires
+// only when at least one day's aggregate cash crosses Rs. 10,000 — an
+// all-small-cash wage head is unremarkable.
+
+export function flagPooledEmployeeCash(ledger: DetLedger): DetObservation[] {
+  const out: DetObservation[] = [];
+  for (const acct of ledger.accounts) {
+    const cls = classifyAccount(acct);
+    if (!POOLED_EMPLOYEE_CLASSES.has(cls)) continue;
+    const byDate = new Map<string, number>();
+    let cashTotal = 0;
+    for (const tx of acct.transactions) {
+      if (voucherKind(tx.voucher) !== 'C') continue;
+      const amt = Math.max(tx.debit, tx.credit);
+      if (amt <= 0) continue;
+      cashTotal += amt;
+      const date = tx.date || 'undated';
+      byDate.set(date, (byDate.get(date) ?? 0) + amt);
+    }
+    let daysOver = 0;
+    let maxDay: { date: string; amt: number } | null = null;
+    for (const [date, total] of byDate) {
+      if (total > 10_000) daysOver++;
+      if (!maxDay || total > maxDay.amt) maxDay = { date, amt: total };
+    }
+    if (daysOver === 0 || !maxDay) continue;
+    const when = maxDay.date !== 'undated' ? ` on ${maxDay.date}` : '';
+    const message = cls === 'salary_expense'
+      ? `Cash payments via ${acct.name} exceed Rs. 10,000/day in aggregate on ${daysOver} day(s) ` +
+        `(max Rs. ${formatINR(maxDay.amt)}${when}; total cash Rs. ${formatINR(cashTotal)}). ` +
+        `§40A(3) tests each PAYEE per day — a pooled wage/labour head cannot establish a breach by itself ` +
+        `(e.g. Rs. 16,000 split across 8 workers is compliant). Disallowance arises only where a single ` +
+        `worker received more than Rs. 10,000 in cash in a day.`
+      : `Cash advances via ${acct.name} exceed Rs. 10,000/day in aggregate on ${daysOver} day(s) ` +
+        `(max Rs. ${formatINR(maxDay.amt)}${when}; total cash Rs. ${formatINR(cashTotal)}). ` +
+        `Advances to employees are not expenditure when paid — §40A(3) exposure arises when the advance is ` +
+        `adjusted against wages/expenses, and salary advances are employer-employee transactions outside ` +
+        `§269SS/T. Verify the adjustment entries and that these are genuine staff advances, not loans.`;
+    out.push({
+      accountName: acct.name,
+      code: 'CASH_EMPLOYEE_POOLED',
+      severity: 'warn',
+      amount: cashTotal,
+      dateRef: maxDay.date !== 'undated' ? maxDay.date : null,
+      message,
+      suggestedAction: cls === 'salary_expense'
+        ? 'Obtain the muster roll / wage register for the flagged days and confirm no individual worker crossed Rs. 10,000 in cash per day.'
+        : 'Obtain the per-employee advance register and the adjustment entries; confirm employer-employee character.',
       source: 'deterministic',
     });
   }
@@ -918,6 +1027,7 @@ export function runAllFlags(ledger: DetLedger, opts?: RunDetFlagsOptions): DetOb
   merge(flag192(ledger));
   merge(flag269STSameDay(ledger));
   merge(flag40A3Structuring(ledger));
+  merge(flagPooledEmployeeCash(ledger));
   merge(flagReconBreak(ledger));
   merge(flagSquaredOff(ledger));
   merge(flagOneSidedCredits(ledger));
@@ -943,6 +1053,7 @@ export const DETERMINISTIC_CODES: ReadonlySet<string> = new Set([
   'TDS_194J_MISSING',
   'TDS_192_VERIFY',
   'CASH_40A3_STRUCTURING',
+  'CASH_EMPLOYEE_POOLED',
   'RECON_BREAK',
   'PATTERN_SQUARED_OFF',
   'PATTERN_ONE_SIDED_CREDIT',
@@ -1002,6 +1113,99 @@ export function filterMisdirectedPersonalExpense<T extends { accountName: string
     kept.push(o);
   }
   return { kept, dropped };
+}
+
+// ── Balance repair from source page text ─────────────────────────────
+// Gemini routinely drops the Tally "Dr/Cr Closing Balance" footer (and
+// sometimes the "Opening Balance" row) even though the extract prompt
+// demands it. The merge step then defaults the balance to 0, the recon
+// identity opening + Dr − Cr = closing can never tie, and the audit
+// floods with phantom RECON_BREAKs whose "gap" exactly equals the
+// dropped balance. The footer is a rigid ERP artifact, so recover it
+// deterministically from the raw page text instead of trusting the LLM.
+//
+// Association: Tally repeats the account name in EVERY page header of
+// that account's section, so a balance line found on a page belongs to
+// the account named in that page's header (narrations further down name
+// other accounts — never match against the page body). Guard: a repair
+// is applied only when it strictly IMPROVES the account's tie-out, so a
+// misattributed line can't make anything worse.
+
+export interface BalanceRepairStats {
+  openingRepaired: number;
+  closingRepaired: number;
+}
+
+export function repairBalancesFromSource(ledger: DetLedger, rawText: string): BalanceRepairStats {
+  const stats: BalanceRepairStats = { openingRepaired: 0, closingRepaired: 0 };
+  if (!rawText || ledger.accounts.length === 0) return stats;
+  const pages = rawText.split(/\n?---\s*PAGE BREAK\s*---\n?/);
+
+  // Longest-name-first so a long account name wins over a shorter one
+  // that happens to be a substring of the same header.
+  const names = ledger.accounts
+    .map((a, i) => ({ key: a.name.toLowerCase().replace(/\s+/g, ' ').trim(), i }))
+    .filter((n) => n.key.length >= 3)
+    .sort((a, b) => b.key.length - a.key.length);
+
+  const OPEN_RE = /\b(dr|cr)\.?\s+opening\s+balance\s+([\d,]+(?:\.\d+)?)/i;
+  const CLOSE_RE = /\b(dr|cr)\.?\s+closing\s+balance\s+([\d,]+(?:\.\d+)?)/i;
+  // Sign convention matches the extract prompt: Dr balance positive,
+  // Cr balance negative.
+  const signed = (drcr: string, raw: string): number | null => {
+    const v = parseFloat(raw.replace(/,/g, ''));
+    if (!Number.isFinite(v)) return null;
+    return /^cr$/i.test(drcr) ? -v : v;
+  };
+
+  const openingCand = new Map<number, number>();
+  const closingCand = new Map<number, number>();
+
+  for (const page of pages) {
+    const lines = page.split('\n');
+    // Header region: everything above the column-header row (fallback:
+    // first 15 lines). Only this region is matched against account names.
+    let headerEnd = Math.min(lines.length, 15);
+    for (let i = 0; i < Math.min(lines.length, 20); i++) {
+      if (/^date\s+particulars/i.test(lines[i].trim())) { headerEnd = i; break; }
+    }
+    const header = lines.slice(0, headerEnd).join('\n').toLowerCase().replace(/\s+/g, ' ');
+    const match = names.find((n) => header.includes(n.key));
+    if (!match) continue;
+
+    const om = OPEN_RE.exec(page);
+    if (om && !openingCand.has(match.i)) { // first page of the section wins
+      const v = signed(om[1], om[2]);
+      if (v !== null) openingCand.set(match.i, v);
+    }
+    const cm = CLOSE_RE.exec(page);
+    if (cm) { // last page of the section wins
+      const v = signed(cm[1], cm[2]);
+      if (v !== null) closingCand.set(match.i, v);
+    }
+  }
+
+  for (let i = 0; i < ledger.accounts.length; i++) {
+    const acct = ledger.accounts[i];
+    // Only repair values the extractor left at 0 — never override a
+    // non-zero extracted balance.
+    const oOpts = acct.opening === 0 && openingCand.has(i) ? [acct.opening, openingCand.get(i)!] : [acct.opening];
+    const cOpts = acct.closing === 0 && closingCand.has(i) ? [acct.closing, closingCand.get(i)!] : [acct.closing];
+    if (oOpts.length === 1 && cOpts.length === 1) continue;
+    const gapFor = (o: number, c: number) => Math.abs(o + acct.totalDebit - acct.totalCredit - c);
+    const curGap = gapFor(acct.opening, acct.closing);
+    let best = { o: acct.opening, c: acct.closing, gap: curGap };
+    for (const o of oOpts) {
+      for (const c of cOpts) {
+        const g = gapFor(o, c);
+        if (g < best.gap) best = { o, c, gap: g };
+      }
+    }
+    if (best.gap >= curGap - 0.5) continue; // no strict improvement — leave as extracted
+    if (best.o !== acct.opening) { acct.opening = best.o; stats.openingRepaired++; }
+    if (best.c !== acct.closing) { acct.closing = best.c; stats.closingRepaired++; }
+  }
+  return stats;
 }
 
 // ── Merge: deterministic + LLM observations ─────────────────────────

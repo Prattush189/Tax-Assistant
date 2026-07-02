@@ -37,6 +37,7 @@ import {
   runAllFlags,
   mergeObservations,
   filterMisdirectedPersonalExpense,
+  repairBalancesFromSource,
   DETERMINISTIC_CODES,
   type DetObservation,
   type DetLedger,
@@ -1845,6 +1846,23 @@ router.post(
         const chunkResults = chunkResultLists.flat();
 
         extracted = mergeLedgerChunks(chunkResults);
+
+        // Deterministic balance repair: Gemini routinely drops the Tally
+        // "Dr/Cr Closing Balance" footer despite the prompt demanding it,
+        // which zeroes the closing and floods the audit with phantom
+        // RECON_BREAKs (one sample: 15 accounts at "closing Rs. 0" whose
+        // gap exactly equalled the dropped footer). Recover balances from
+        // the raw page text; each repair is applied only when it strictly
+        // improves the account's opening + Dr − Cr = closing tie-out.
+        try {
+          const rep = repairBalancesFromSource(extracted, pdfText);
+          if (rep.openingRepaired || rep.closingRepaired) {
+            console.log(`[ledger-scrutiny] balance repair: recovered ${rep.closingRepaired} closing / ${rep.openingRepaired} opening balance(s) from source text`);
+          }
+        } catch (e) {
+          console.warn('[ledger-scrutiny] balance repair failed:', (e as Error).message);
+        }
+
         const totalTx = extracted.accounts.reduce((s, a) => s + a.transactions.length, 0);
 
         // Cross-check: candidate-date count vs extracted transaction count.

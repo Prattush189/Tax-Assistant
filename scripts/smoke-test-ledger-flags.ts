@@ -46,7 +46,9 @@ expectEq('voucherKind("Bank")', voucherKind('Bank'), 'B', helperFails);
 expectEq('voucherKind("Payment")', voucherKind('Payment'), 'B', helperFails);
 expectEq('voucherKind(null)', voucherKind(null), null, helperFails);
 expectEq('voucherKind("")', voucherKind(''), null, helperFails);
-expectEq('voucherKind("Contra")', voucherKind('Contra'), null, helperFails);
+// 'X' (not null) so §269ST can tell an own-money bank→cash contra apart
+// from a voucher type it simply couldn't read.
+expectEq('voucherKind("Contra")', voucherKind('Contra'), 'X', helperFails);
 
 // classifyAccount: structural detection
 expectEq('classify Rent', classifyAccount({ name: 'RENT', accountType: null, opening: 0, closing: 0, totalDebit: 84_000, totalCredit: 84_000, transactions: [] }), 'rent_expense', helperFails);
