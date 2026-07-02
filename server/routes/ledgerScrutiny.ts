@@ -56,12 +56,18 @@ import { userRepo } from '../db/repositories/userRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { getBillingUser } from '../lib/billing.js';
-import { getUserLimits, getUsagePeriodStart } from '../lib/planLimits.js';
+import { getUserLimits, getUsagePeriodStart, getEffectivePlan } from '../lib/planLimits.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
 
 const MAX_FILE_BYTES = 50 * 1024 * 1024; // 50 MB
+
+// Free-plan ceiling for Ledger Scrutiny. A 100-page Tally export runs
+// ~300K+ tokens across extract + scrutiny — beyond the free budget —
+// so larger files are refused up front (see the gate in the upload
+// handler) rather than dying mid-run after the tokens are spent.
+const FREE_LEDGER_PAGE_LIMIT = 100;
 
 const ALLOWED_MIME_TYPES = ['application/pdf'] as const;
 
@@ -1715,6 +1721,31 @@ router.post(
     // Per-feature credit caps are no longer enforced — the token budget
     // (enforceTokenQuota at the route entry) is the sole quota gate.
     void ledgerCreditsNeeded;
+
+    // Free-plan page cap. Extract + scrutiny on a 100+-page ledger runs
+    // 300K+ tokens — more than the entire free budget — so the job would
+    // die mid-run after burning most of the user's allowance. Refuse up
+    // front with a clear message instead. Only the digital-PDF path has a
+    // deterministic page count; the vision path's 10-page floor estimate
+    // never trips this, and the pre-extracted path (rows) skips the
+    // expensive extract pass, so the token pre-flight covers it.
+    if (ledgerUnit === 'pages' && ledgerPagesTotal > FREE_LEDGER_PAGE_LIMIT) {
+      const billingUserRow = userRepo.findById(quota.billingUserId);
+      const effectivePlan = billingUserRow ? getEffectivePlan(billingUserRow) : 'free';
+      if (effectivePlan === 'free') {
+        res.status(413).json({
+          error:
+            `This ledger has ${ledgerPagesTotal} pages. On the Free plan, Ledger Scrutiny is limited to ` +
+            `${FREE_LEDGER_PAGE_LIMIT} pages — a ledger this large would exhaust your free token budget before ` +
+            `the audit could finish. To try the feature, please upload a smaller ledger ` +
+            `(${FREE_LEDGER_PAGE_LIMIT} pages or fewer), or upgrade to Pro for full-length ledgers.`,
+          pageLimit: FREE_LEDGER_PAGE_LIMIT,
+          pagesTotal: ledgerPagesTotal,
+          upgrade: true,
+        });
+        return;
+      }
+    }
 
     // If the user uploaded the same file before, reuse the extraction —
     // creates a fresh job row but skips re-running the extract pass.
