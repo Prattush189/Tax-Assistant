@@ -696,6 +696,71 @@ export function buildGridFromItems(
       }
     }
 
+    // ── Left-aligned text-column discovery (headerless statements) ────
+    // When NO header row was found, the numeric-augmentation pass above
+    // may have produced the right-aligned amount columns (Debit / Credit
+    // / Balance) purely from data clustering — but the LEFT-aligned text
+    // columns (Date, Narration) still have no anchor. Because the
+    // fallback below only runs when there are fewer than 2 anchors, those
+    // text columns were silently swallowed into whichever numeric anchor
+    // sat nearest by left-edge, collapsing Date + Narration into column 0.
+    // This is exactly the J&K Bank dot-matrix savings statement (no
+    // "Date/Particulars/Withdrawal/…" header row printed): it extracted
+    // as 3 columns [date+narration fused, credit, balance] and no per-bank
+    // rule could satisfy its required roles.
+    //
+    // Fix: cluster the left-edges of the NON-numeric tokens that sit to
+    // the left of the leftmost numeric column and add each dense cluster
+    // as its own left-aligned text anchor. A wider gap tolerance than the
+    // numeric pass keeps a multi-word narration (whose sub-tokens spread
+    // 12-40 units apart) as ONE column while still separating it from the
+    // Date column ~70 units to its left. Gated on "no header found" so
+    // header-bearing layouts (every other bank) are untouched.
+    {
+      const headerWasFound = columnAnchors.some(a => a.headerText !== null);
+      const rightAnchors = columnAnchors.filter(a => a.align === 'right');
+      if (!headerWasFound && rightAnchors.length >= 2) {
+        const leftmostNumeric = Math.min(...columnAnchors.map(a => a.align === 'right' ? a.x : a.leftX));
+        // A token is "numeric" if it looks like a formatted amount /
+        // Dr-Cr balance — same shape the numeric pass clustered on. Those
+        // belong to the right-aligned columns, not a text column.
+        const NUMERIC_TOKEN = /^-?\d{1,3}(?:,\d{2,3})+(?:\.\d+)?(?:\s*[CD]r\.?)?$|^-?\d+\.\d{2}(?:\s*[CD]r\.?)?$/;
+        // Collect left-edges of text tokens sitting clearly left of the
+        // numeric block (60-unit margin clears amount tokens whose own
+        // left-edge drifts left of their right-aligned anchor).
+        const textLefts: number[] = [];
+        for (const it of allItems) {
+          const t = it.text.trim();
+          if (!t || NUMERIC_TOKEN.test(t)) continue;
+          if (it.x < leftmostNumeric - 60) textLefts.push(it.x);
+        }
+        if (textLefts.length >= 5) {
+          const TEXT_COL_GAP = 40; // wider than X_GAP_TOLERANCE so a
+                                   // multi-word narration stays one column
+          const minDensity = Math.max(3, Math.floor(rowBuckets.length * 0.05));
+          textLefts.sort((a, b) => a - b);
+          const textAnchors: ColumnAnchor[] = [];
+          let sum = textLefts[0], count = 1, prev = textLefts[0];
+          const flush = () => {
+            if (count >= minDensity) {
+              const mean = sum / count;
+              textAnchors.push({ x: mean, align: 'left', leftX: mean, headerText: null });
+            }
+          };
+          for (let i = 1; i < textLefts.length; i++) {
+            if (textLefts[i] - prev <= TEXT_COL_GAP) { sum += textLefts[i]; count++; }
+            else { flush(); sum = textLefts[i]; count = 1; }
+            prev = textLefts[i];
+          }
+          flush();
+          if (textAnchors.length > 0) {
+            columnAnchors.push(...textAnchors);
+            columnAnchors.sort((a, b) => (a.align === 'right' ? a.x : a.leftX) - (b.align === 'right' ? b.x : b.leftX));
+          }
+        }
+      }
+    }
+
     if (columnAnchors.length < 2) {
       // Fallback: gap-based clustering of all items' left-edges.
       // Without a header row we can't tell numeric from text columns,
@@ -891,6 +956,23 @@ export function buildGridFromItems(
     // compare item.left-edge to header.left-edge. This is what fixes
     // the narrow-number swap (₹9.42 vs ₹90.58 mis-classified between
     // Withdrawal and Balance columns).
+    // On a HEADERLESS statement the left-aligned text columns (Date,
+    // Narration) have no right boundary, so wide narration content — a
+    // 10-digit NACH/UPI reference sitting halfway across the page — can
+    // land nearer a right-aligned amount column's frame than the
+    // narration's left edge, and get mis-filed as a bogus Debit/Credit
+    // (e.g. J&K savings: ref "2510100127" booked as a ₹2,510,100,127
+    // withdrawal). A non-numeric token never belongs in a numeric
+    // column, so when the nearest anchor is right-aligned we re-file
+    // such a token into the nearest LEFT-aligned (text) column instead.
+    // Gated on "no header row found" so every header-bearing bank's
+    // assignment is byte-for-byte unchanged.
+    const anyHeader = columnAnchors.some(a => a.headerText !== null);
+    const hasLeftAnchor = columnAnchors.some(a => a.align === 'left');
+    // Strict amount shape: comma-grouped or decimal number, optional
+    // Dr/Cr suffix. Bare integers (cheque / reference numbers) are NOT
+    // amounts and so are treated as text for routing purposes.
+    const AMOUNT_SHAPE = /^-?\d{1,3}(?:,\d{2,3})+(?:\.\d+)?(?:\s*[CD]r\.?)?$|^-?\d+\.\d{2}(?:\s*[CD]r\.?)?$/;
     const rows: string[][] = [];
     for (const bucket of rowBuckets) {
       bucket.sort((a, b) => a.x - b.x);
@@ -906,6 +988,19 @@ export function buildGridFromItems(
           const ref = columnAnchors[c].align === 'right' ? itRight : itLeft;
           const d = Math.abs(ref - columnAnchors[c].x);
           if (d < bestDist) { bestDist = d; bestCol = c; }
+        }
+        if (!anyHeader && hasLeftAnchor && columnAnchors[bestCol].align === 'right'
+            && !AMOUNT_SHAPE.test(it.text.trim())) {
+          // Non-numeric token pulled toward a numeric column — re-file
+          // into the nearest left-aligned text column by left-edge.
+          let textCol = -1;
+          let textDist = Infinity;
+          for (let c = 0; c < columnAnchors.length; c++) {
+            if (columnAnchors[c].align !== 'left') continue;
+            const d = Math.abs(itLeft - columnAnchors[c].leftX);
+            if (d < textDist) { textDist = d; textCol = c; }
+          }
+          if (textCol !== -1) bestCol = textCol;
         }
         cells[bestCol] = cells[bestCol] ? `${cells[bestCol]} ${it.text}`.trim() : it.text.trim();
       }

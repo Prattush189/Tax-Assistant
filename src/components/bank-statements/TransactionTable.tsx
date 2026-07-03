@@ -34,6 +34,26 @@ interface PendingLearn {
 }
 
 const PENDING_TOAST_ID = 'pending-learns';
+const APPLY_SIMILAR_TOAST_ID = 'apply-similar';
+
+// Similarity signature for the "apply to all" prompt. Mirrors the
+// server's grouping (bankTransactionRepo.updateCategoryForSimilar):
+//   1. narration fingerprint — stable per transaction TYPE / party, so
+//      every "ATM WDR …" row shares one key, as does every UPI to the
+//      same person.
+//   2. counterparty — same person / merchant (fallback when the
+//      fingerprint is null on legacy rows).
+// Direction (credit vs debit) is folded in so a vendor refund isn't
+// swept up when the user retags a payment. Returns null when the row
+// carries no groupable signal (can't offer "apply to all").
+function similarityGroup(t: BankTransaction): string | null {
+  const key =
+    t.fingerprint && t.fingerprint.trim() ? `fp:${t.fingerprint.trim().toLowerCase()}`
+    : t.counterparty && t.counterparty.trim() ? `cp:${t.counterparty.trim().toLowerCase()}`
+    : null;
+  if (!key) return null;
+  return `${key}|${t.amount >= 0 ? 'C' : 'D'}`;
+}
 
 export function TransactionTable({ transactions, manager, query: controlledQuery, onQueryChange }: Props) {
   if (!transactions.length) {
@@ -254,6 +274,27 @@ export function TransactionTable({ transactions, manager, query: controlledQuery
   // 2. Append/replace the row in pendingLearns so the accumulating
   //    panel surfaces it.
   // Same row corrected multiple times keeps only the latest category.
+  // Run the bulk "apply to all similar" and report the outcome. Kept
+  // separate so the confirm toast's button can call it directly.
+  const applySimilar = useCallback(async (txId: string, category: string) => {
+    toast.dismiss(APPLY_SIMILAR_TOAST_ID);
+    try {
+      const { updated } = await manager.applyCategoryToSimilarTx(txId, category);
+      // `updated` counts the seed row too; the seed was already set by
+      // the single change, so the newly-affected sibling count is
+      // updated - 1.
+      const others = Math.max(0, updated - 1);
+      toast.success(
+        others > 0
+          ? `Applied ${category} to ${others} more similar transaction${others === 1 ? '' : 's'}.`
+          : `Applied ${category}.`,
+        { duration: 4000 },
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to apply to similar transactions');
+    }
+  }, [manager]);
+
   const handleChange = async (txId: string, category: string) => {
     const tx = transactions.find((t) => t.id === txId);
     try {
@@ -269,6 +310,58 @@ export function TransactionTable({ transactions, manager, query: controlledQuery
       next.set(txId, { txId, category, sample: truncatedSample, fullSample, checked: true });
       return next;
     });
+
+    // Offer "apply to all similar" when other rows in THIS statement
+    // share the seed's counterparty / transaction-type and direction
+    // and aren't already in the chosen category. Only prompt when there
+    // is at least one such row — otherwise the button would be a no-op.
+    if (tx) {
+      const group = similarityGroup(tx);
+      if (group) {
+        const similar = transactions.filter(
+          (o) => o.id !== txId && similarityGroup(o) === group && o.category !== category,
+        );
+        if (similar.length > 0) {
+          const label = tx.counterparty?.trim()
+            ? tx.counterparty.trim()
+            : (tx.narration?.trim().slice(0, 40) || 'this type');
+          toast.custom(
+            () => (
+              <div className="w-80 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl shadow-lg overflow-hidden">
+                <div className="px-4 py-3">
+                  <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                    Apply to all similar?
+                  </p>
+                  <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
+                    {similar.length} other {similar.length === 1 ? 'transaction' : 'transactions'} like
+                    {' '}<span className="font-medium text-gray-700 dark:text-gray-300">{label}</span>
+                    {' '}in this statement. Set {similar.length === 1 ? 'it' : 'them all'} to{' '}
+                    <span className="font-medium text-gray-800 dark:text-gray-200">{category}</span>?
+                  </p>
+                </div>
+                <div className="px-3 py-2 border-t border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/60 flex items-center justify-end gap-1">
+                  <button
+                    type="button"
+                    onClick={() => toast.dismiss(APPLY_SIMILAR_TOAST_ID)}
+                    className="text-xs px-2 py-1 rounded text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
+                  >
+                    Just this one
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { void applySimilar(txId, category); }}
+                    className="text-xs font-medium px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
+                  >
+                    Apply to all {similar.length}
+                  </button>
+                </div>
+              </div>
+            ),
+            { id: APPLY_SIMILAR_TOAST_ID, duration: 8000, position: 'top-center' },
+          );
+        }
+      }
+    }
   };
 
   return (

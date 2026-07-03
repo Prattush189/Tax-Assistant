@@ -2775,6 +2775,34 @@ router.patch('/:id/transactions/:txId', (req: AuthRequest, res: Response) => {
   res.json({ success: true, learned });
 });
 
+// POST /api/bank-statements/:id/transactions/:txId/apply-similar —
+// "apply to all": take the category the user just set on ONE row and
+// spread it across every OTHER row in the same statement that shares
+// the seed row's counterparty / transaction-type signature (and
+// direction). This is the immediate, within-statement counterpart to
+// the learned-rules "remember" flow (which only affects FUTURE
+// statements). Returns the affected transaction ids so the client can
+// patch its in-memory table without a full reload.
+//
+// Body: { category: string, subcategory?: string | null }
+router.post('/:id/transactions/:txId/apply-similar', (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+  const { id, txId } = req.params;
+  const category = typeof req.body?.category === 'string' ? normalizeCategory(req.body.category) : null;
+  const subcategory = typeof req.body?.subcategory === 'string' ? req.body.subcategory : null;
+  if (!category) { res.status(400).json({ error: 'category is required' }); return; }
+
+  // Verify the statement belongs to the caller BEFORE the repo bulk
+  // update (which scopes on statement_id alone for speed).
+  const statement = bankStatementRepo.findByIdForUser(id, req.user.id);
+  if (!statement) { res.status(404).json({ error: 'Statement not found' }); return; }
+
+  const result = bankTransactionRepo.updateCategoryForSimilar(id, txId, category, subcategory);
+  if (!result.seedFound) { res.status(404).json({ error: 'Transaction not found' }); return; }
+
+  res.json({ updated: result.txIds.length, txIds: result.txIds, basis: result.basis, category, subcategory });
+});
+
 // GET /api/bank-statements/:id/export.csv — download categorized CSV
 router.get('/:id/export.csv', (req: AuthRequest, res: Response) => {
   if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }

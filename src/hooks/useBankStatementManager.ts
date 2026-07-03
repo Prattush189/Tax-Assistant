@@ -8,6 +8,7 @@ import {
   deleteBankStatement,
   cancelBankStatement,
   updateBankTransaction,
+  applyCategoryToSimilar,
   fetchBankStatementRules,
   createBankStatementRule,
   deleteBankStatementRule,
@@ -293,6 +294,40 @@ export function useBankStatementManager(enabled: boolean) {
     [current],
   );
 
+  // "Apply to all similar" — recategorize every row in the current
+  // statement that shares the seed row's counterparty / transaction-type
+  // and direction. Patches the in-memory table for all returned ids so
+  // the change shows immediately without a reload.
+  const applyCategoryToSimilarTx = useCallback(
+    async (
+      txId: string,
+      category: string,
+      subcategory?: string | null,
+    ): Promise<{ updated: number; basis: 'type' | 'counterparty' | 'self' }> => {
+      if (!current) return { updated: 0, basis: 'self' };
+      const result = await applyCategoryToSimilar(
+        current.statement.id,
+        txId,
+        category,
+        subcategory ?? null,
+      );
+      const changed = new Set(result.txIds);
+      setCurrent((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          transactions: prev.transactions.map((t) =>
+            changed.has(t.id)
+              ? { ...t, category, subcategory: subcategory ?? null, userOverride: true }
+              : t,
+          ),
+        };
+      });
+      return { updated: result.updated, basis: result.basis };
+    },
+    [current],
+  );
+
   const addRule = useCallback(async (input: {
     matchText: string;
     category?: string | null;
@@ -343,6 +378,7 @@ export function useBankStatementManager(enabled: boolean) {
     remove,
     cancel,
     reassignCategory,
+    applyCategoryToSimilarTx,
     addRule,
     removeRule,
     reapplyTagging,

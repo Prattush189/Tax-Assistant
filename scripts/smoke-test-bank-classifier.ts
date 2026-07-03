@@ -25,7 +25,12 @@ const CASES: Case[] = [
   // ─── Bank Charges (xlsx anchor list) ────────────────────────
   { narration: 'ATM CHARGES QUARTERLY', type: 'debit', expect: { category: 'Bank Charges', subcategory: 'ATM' } },
   { narration: 'ATM ANN.CHRG INCL GST', type: 'debit', expect: { category: 'Bank Charges', subcategory: 'ATM' } },
-  { narration: 'ATM WDR', type: 'debit', expect: { category: 'Bank Charges', subcategory: 'ATM' } },
+  // "ATM WDR" / "ATM WDL" = ATM cash withdrawal (WDR/WDL = withdrawal),
+  // NOT a bank charge. Only the fee variant "ATM WDL CHG" is a charge.
+  { narration: 'ATM WDR', type: 'debit', expect: { category: 'Cash Withdrawal', subcategory: 'ATM' } },
+  { narration: 'ATM WDL', type: 'debit', expect: { category: 'Cash Withdrawal', subcategory: 'ATM' } },
+  { narration: 'ATM WDL CHG', type: 'debit', expect: { category: 'Bank Charges', subcategory: 'ATM' } },
+  { narration: 'ATM WDR CHARGE', type: 'debit', expect: { category: 'Bank Charges', subcategory: 'ATM' } },
   { narration: 'DEBIT ATM CARD', type: 'debit', expect: { category: 'Bank Charges', subcategory: 'ATM' } },
   { narration: 'CHRGS/NEFT/MBK', type: 'debit', expect: { category: 'Bank Charges', subcategory: 'NEFT/IMPS/RTGS' } },
   { narration: 'CHRGS/IMPS/MBK', type: 'debit', expect: { category: 'Bank Charges', subcategory: 'NEFT/IMPS/RTGS' } },

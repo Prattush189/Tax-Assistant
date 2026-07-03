@@ -168,8 +168,14 @@ const RULES: Rule[] = [
   // order as the user's reference document so future edits map
   // 1:1 onto the source.
 
-  // ATM
-  { name: 'atm-charges-quarterly', pattern: /\batm charges\b|atm ann\.?chrg|atm ann chrg|atm wdr\b|atm wdl chg|debit atm card|atm.* annual fee|atm\s*\/\s*imps transaction charges/i, category: 'Bank Charges', subcategory: 'ATM' },
+  // ATM — genuine ATM FEES only. Must NOT swallow ATM cash
+  // withdrawals: "ATM WDR" / "ATM WDL" (WDR/WDL = withdrawal) is a
+  // cash-out, handled by the `cash-withdrawal-atm-codes` rule further
+  // down. Only the CHARGE variants belong here, so every withdrawal
+  // token requires an explicit fee word ("chg"/"charge"). Bare
+  // "ATM WDR" previously matched here and every ATM withdrawal was
+  // mis-booked as a Bank Charge.
+  { name: 'atm-charges-quarterly', pattern: /\batm charges\b|atm ann\.?chrg|atm ann chrg|atm wd[lr]\s*(?:chg|charge)|debit atm card|atm.* annual fee|atm\s*\/\s*imps transaction charges/i, category: 'Bank Charges', subcategory: 'ATM' },
 
   // Wire-transfer fees (NEFT/IMPS/RTGS) — anchor on the CHRGS/CHGS
   // prefix the bank uses for charges so we don't confuse with the

@@ -89,6 +89,16 @@ const stmts = {
       WHERE id = ?
         AND statement_id IN (SELECT id FROM bank_statements WHERE id = ? AND user_id = ?)`
   ),
+  // Bulk "apply to all similar" path. Statement ownership is verified
+  // by the caller (route) BEFORE this runs, so it scopes on
+  // statement_id alone. Sets user_override so the applied rows survive
+  // later reclassify / reapply-rule passes.
+  updateCategoryByIdInStatement: db.prepare(
+    `UPDATE bank_transactions
+        SET category = ?, subcategory = ?, user_override = 1
+      WHERE id = ?
+        AND statement_id = ?`
+  ),
   // Re-classify path: overwrite category/subcategory for a row WITHOUT
   // setting user_override. Used by POST /:id/reclassify so previously
   // mis-tagged rows from older classifier deploys can be corrected
@@ -170,6 +180,58 @@ export const bankTransactionRepo = {
 
   updateCategory(txId: string, statementId: string, userId: string, category: string, subcategory: string | null): boolean {
     return stmts.updateCategory.run(category, subcategory, txId, statementId, userId).changes > 0;
+  },
+
+  /**
+   * "Apply to all similar" — recategorize every row in a statement that
+   * shares the seed row's counterparty / transaction-type signature and
+   * direction. Statement ownership MUST be verified by the caller.
+   *
+   * Similarity key, in priority order:
+   *   1. narration fingerprint (stable per transaction TYPE / party —
+   *      e.g. every "ATM WDR …" row collapses to the same fingerprint,
+   *      every UPI to the same person too). Falls through when null
+   *      (legacy pre-fingerprint rows).
+   *   2. counterparty (same person / merchant).
+   * Direction (credit vs debit) must also match, so a vendor refund
+   * (credit) is never swept up when the user retags a payment (debit) —
+   * that would produce an impossible direction/category combo.
+   *
+   * Returns the seed (null when not found), the affected row ids, and
+   * the human-readable grouping basis for the confirmation copy.
+   */
+  updateCategoryForSimilar(
+    statementId: string,
+    seedTxId: string,
+    category: string,
+    subcategory: string | null,
+  ): { seedFound: boolean; txIds: string[]; basis: 'type' | 'counterparty' | 'self' } {
+    const rows = stmts.listByStatement.all(statementId) as BankTransactionRow[];
+    const seed = rows.find((r) => r.id === seedTxId);
+    if (!seed) return { seedFound: false, txIds: [], basis: 'self' };
+
+    const seedDir = seed.amount >= 0 ? 1 : -1;
+    const seedFp = (seed.fingerprint ?? '').trim().toLowerCase();
+    const seedCp = (seed.counterparty ?? '').trim().toLowerCase();
+    const basis: 'type' | 'counterparty' | 'self' = seedFp ? 'type' : seedCp ? 'counterparty' : 'self';
+
+    const targets = rows.filter((r) => {
+      const dir = r.amount >= 0 ? 1 : -1;
+      if (dir !== seedDir) return false;
+      if (basis === 'self') return r.id === seedTxId;
+      if (basis === 'type') return (r.fingerprint ?? '').trim().toLowerCase() === seedFp;
+      return (r.counterparty ?? '').trim().toLowerCase() === seedCp;
+    });
+
+    const txIds: string[] = [];
+    const apply = db.transaction(() => {
+      for (const r of targets) {
+        stmts.updateCategoryByIdInStatement.run(category, subcategory, r.id, statementId);
+        txIds.push(r.id);
+      }
+    });
+    apply();
+    return { seedFound: true, txIds, basis };
   },
 
   /**

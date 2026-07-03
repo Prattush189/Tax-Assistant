@@ -2298,6 +2298,26 @@ export async function updateBankTransaction(
   return { learned: data.learned ?? null };
 }
 
+/**
+ * "Apply to all similar" — spread the category the user just set on one
+ * transaction across every other row in the same statement that shares
+ * its counterparty / transaction-type signature and direction. Returns
+ * the affected transaction ids so the caller can patch state locally.
+ * `basis` says how the group was matched, for the confirmation copy.
+ */
+export async function applyCategoryToSimilar(
+  statementId: string,
+  txId: string,
+  category: string,
+  subcategory?: string | null,
+): Promise<{ updated: number; txIds: string[]; basis: 'type' | 'counterparty' | 'self' }> {
+  const data = (await authFetch(`/api/bank-statements/${statementId}/transactions/${txId}/apply-similar`, {
+    method: 'POST',
+    body: JSON.stringify({ category, subcategory: subcategory ?? null }),
+  })) as { updated?: number; txIds?: string[]; basis?: 'type' | 'counterparty' | 'self' };
+  return { updated: data.updated ?? 0, txIds: data.txIds ?? [], basis: data.basis ?? 'self' };
+}
+
 // ── Learned classifications management ───────────────────────────
 
 export async function listLearnedClassifications(): Promise<{ rules: LearnedClassification[] }> {
