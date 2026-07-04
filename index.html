@@ -4,9 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/png" href="/logoAI.png" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet" />
+    <!-- DM Sans is self-hosted (public/fonts/ + @font-face in src/index.css).
+         No external font CDN: QuickHeal's web-shield flagged the Google Fonts
+         background requests as the site "opening another site". Preload the
+         main latin file so text doesn't flash on first paint. -->
+    <link rel="preload" href="/fonts/dm-sans-latin.woff2" as="font" type="font/woff2" crossorigin />
     <title>Smartbiz AI</title>
   </head>
   <body>
