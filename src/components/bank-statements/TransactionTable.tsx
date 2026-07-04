@@ -47,12 +47,35 @@ const APPLY_SIMILAR_TOAST_ID = 'apply-similar';
 // swept up when the user retags a payment. Returns null when the row
 // carries no groupable signal (can't offer "apply to all").
 function similarityGroup(t: BankTransaction): string | null {
-  const key =
-    t.fingerprint && t.fingerprint.trim() ? `fp:${t.fingerprint.trim().toLowerCase()}`
-    : t.counterparty && t.counterparty.trim() ? `cp:${t.counterparty.trim().toLowerCase()}`
-    : null;
+  const key = similarityBase(t);
   if (!key) return null;
   return `${key}|${t.amount >= 0 ? 'C' : 'D'}`;
+}
+
+/** The direction-free half of similarityGroup — used to find the same
+ *  party's OPPOSITE-direction rows for the mirrored category. */
+function similarityBase(t: BankTransaction): string | null {
+  return t.fingerprint && t.fingerprint.trim() ? `fp:${t.fingerprint.trim().toLowerCase()}`
+    : t.counterparty && t.counterparty.trim() ? `cp:${t.counterparty.trim().toLowerCase()}`
+    : null;
+}
+
+/** What the chosen category means on the OTHER side of the account.
+ *  Money paid TO a party is Business Expenses; money received FROM the
+ *  same party is Business Income — when the user spreads a category
+ *  across a party, the opposite-direction rows must get the MIRROR,
+ *  not a copy (copying "Business Income" onto a debit would book a
+ *  payment as income). Categories with no clean mirror (Salary, GST
+ *  Payments, Insurance, …) return null → opposite-direction rows are
+ *  left untouched. */
+const CATEGORY_MIRROR: Record<string, string> = {
+  'Business Income': 'Business Expenses',
+  'Business Expenses': 'Business Income',
+  'Bank Interest (Cr)': 'Bank Interest (Dr)',
+  'Bank Interest (Dr)': 'Bank Interest (Cr)',
+};
+function mirrorCategoryFor(category: string): string | null {
+  return CATEGORY_MIRROR[category] ?? null;
 }
 
 export function TransactionTable({ transactions, manager, query: controlledQuery, onQueryChange }: Props) {
@@ -276,20 +299,18 @@ export function TransactionTable({ transactions, manager, query: controlledQuery
   // Same row corrected multiple times keeps only the latest category.
   // Run the bulk "apply to all similar" and report the outcome. Kept
   // separate so the confirm toast's button can call it directly.
-  const applySimilar = useCallback(async (txId: string, category: string) => {
+  const applySimilar = useCallback(async (txId: string, category: string, mirrorCategory: string | null) => {
     toast.dismiss(APPLY_SIMILAR_TOAST_ID);
     try {
-      const { updated } = await manager.applyCategoryToSimilarTx(txId, category);
+      const { updated, mirrored } = await manager.applyCategoryToSimilarTx(txId, category, null, mirrorCategory);
       // `updated` counts the seed row too; the seed was already set by
       // the single change, so the newly-affected sibling count is
-      // updated - 1.
-      const others = Math.max(0, updated - 1);
-      toast.success(
-        others > 0
-          ? `Applied ${category} to ${others} more similar transaction${others === 1 ? '' : 's'}.`
-          : `Applied ${category}.`,
-        { duration: 4000 },
-      );
+      // updated - mirrored - 1.
+      const others = Math.max(0, updated - mirrored - 1);
+      const parts: string[] = [];
+      if (others > 0) parts.push(`Applied ${category} to ${others} more similar transaction${others === 1 ? '' : 's'}`);
+      if (mirrored > 0 && mirrorCategory) parts.push(`${mirrorCategory} to ${mirrored} on the other side`);
+      toast.success(parts.length > 0 ? parts.join('; ') + '.' : `Applied ${category}.`, { duration: 4000 });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to apply to similar transactions');
     }
@@ -321,10 +342,25 @@ export function TransactionTable({ transactions, manager, query: controlledQuery
         const similar = transactions.filter(
           (o) => o.id !== txId && similarityGroup(o) === group && o.category !== category,
         );
-        if (similar.length > 0) {
+        // Opposite-direction rows of the same party get the MIRRORED
+        // category (Business Income ↔ Business Expenses) — only offered
+        // for categories with a clean mirror.
+        const mirrorCat = mirrorCategoryFor(category);
+        const base = similarityBase(tx);
+        const mirrorRows = mirrorCat && base
+          ? transactions.filter(
+              (o) =>
+                o.id !== txId &&
+                similarityBase(o) === base &&
+                (o.amount >= 0) !== (tx.amount >= 0) &&
+                o.category !== mirrorCat,
+            )
+          : [];
+        if (similar.length > 0 || mirrorRows.length > 0) {
           const label = tx.counterparty?.trim()
             ? tx.counterparty.trim()
             : (tx.narration?.trim().slice(0, 40) || 'this type');
+          const total = similar.length + mirrorRows.length;
           toast.custom(
             () => (
               <div className="w-80 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl shadow-lg overflow-hidden">
@@ -333,10 +369,17 @@ export function TransactionTable({ transactions, manager, query: controlledQuery
                     Apply to all similar?
                   </p>
                   <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
-                    {similar.length} other {similar.length === 1 ? 'transaction' : 'transactions'} like
+                    {total} other {total === 1 ? 'transaction' : 'transactions'} like
                     {' '}<span className="font-medium text-gray-700 dark:text-gray-300">{label}</span>
-                    {' '}in this statement. Set {similar.length === 1 ? 'it' : 'them all'} to{' '}
-                    <span className="font-medium text-gray-800 dark:text-gray-200">{category}</span>?
+                    {' '}in this statement.
+                    {similar.length > 0 && (
+                      <> Set {similar.length} to <span className="font-medium text-gray-800 dark:text-gray-200">{category}</span></>
+                    )}
+                    {mirrorRows.length > 0 && mirrorCat && (
+                      <>{similar.length > 0 ? ' and' : ' Set'} {mirrorRows.length} on the opposite side to{' '}
+                        <span className="font-medium text-gray-800 dark:text-gray-200">{mirrorCat}</span>
+                        {' '}(direction flips the category)</>
+                    )}?
                   </p>
                 </div>
                 <div className="px-3 py-2 border-t border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/60 flex items-center justify-end gap-1">
@@ -349,10 +392,10 @@ export function TransactionTable({ transactions, manager, query: controlledQuery
                   </button>
                   <button
                     type="button"
-                    onClick={() => { void applySimilar(txId, category); }}
+                    onClick={() => { void applySimilar(txId, category, mirrorRows.length > 0 ? mirrorCat : null); }}
                     className="text-xs font-medium px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
                   >
-                    Apply to all {similar.length}
+                    Apply to all {total}
                   </button>
                 </div>
               </div>

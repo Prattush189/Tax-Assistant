@@ -197,41 +197,61 @@ export const bankTransactionRepo = {
    * (credit) is never swept up when the user retags a payment (debit) —
    * that would produce an impossible direction/category combo.
    *
-   * Returns the seed (null when not found), the affected row ids, and
-   * the human-readable grouping basis for the confirmation copy.
+   * Optional `mirror`: apply a DIFFERENT category to the opposite-
+   * direction rows of the same group in the same pass. Money paid TO a
+   * party is Business Expenses while money received FROM the same party
+   * is Business Income — the client sends the direction-correct mirror
+   * (e.g. retagging credits to Business Income mirrors the party's
+   * debits to Business Expenses) instead of copying the category across
+   * the sign. Omitted / null = opposite-direction rows untouched.
+   *
+   * Returns the seed (null when not found), the affected row ids (split
+   * by side), and the human-readable grouping basis for the
+   * confirmation copy.
    */
   updateCategoryForSimilar(
     statementId: string,
     seedTxId: string,
     category: string,
     subcategory: string | null,
-  ): { seedFound: boolean; txIds: string[]; basis: 'type' | 'counterparty' | 'self' } {
+    mirror?: { category: string; subcategory: string | null } | null,
+  ): { seedFound: boolean; txIds: string[]; mirroredTxIds: string[]; basis: 'type' | 'counterparty' | 'self' } {
     const rows = stmts.listByStatement.all(statementId) as BankTransactionRow[];
     const seed = rows.find((r) => r.id === seedTxId);
-    if (!seed) return { seedFound: false, txIds: [], basis: 'self' };
+    if (!seed) return { seedFound: false, txIds: [], mirroredTxIds: [], basis: 'self' };
 
     const seedDir = seed.amount >= 0 ? 1 : -1;
     const seedFp = (seed.fingerprint ?? '').trim().toLowerCase();
     const seedCp = (seed.counterparty ?? '').trim().toLowerCase();
     const basis: 'type' | 'counterparty' | 'self' = seedFp ? 'type' : seedCp ? 'counterparty' : 'self';
 
-    const targets = rows.filter((r) => {
-      const dir = r.amount >= 0 ? 1 : -1;
-      if (dir !== seedDir) return false;
+    const inGroup = (r: BankTransactionRow): boolean => {
       if (basis === 'self') return r.id === seedTxId;
       if (basis === 'type') return (r.fingerprint ?? '').trim().toLowerCase() === seedFp;
       return (r.counterparty ?? '').trim().toLowerCase() === seedCp;
-    });
+    };
+    const targets = rows.filter((r) => (r.amount >= 0 ? 1 : -1) === seedDir && inGroup(r));
+    // Opposite-direction slice of the same group — only when the caller
+    // supplied a direction-correct mirror category ('self' basis has no
+    // group to mirror).
+    const mirrorTargets = mirror && basis !== 'self'
+      ? rows.filter((r) => (r.amount >= 0 ? 1 : -1) !== seedDir && inGroup(r))
+      : [];
 
     const txIds: string[] = [];
+    const mirroredTxIds: string[] = [];
     const apply = db.transaction(() => {
       for (const r of targets) {
         stmts.updateCategoryByIdInStatement.run(category, subcategory, r.id, statementId);
         txIds.push(r.id);
       }
+      for (const r of mirrorTargets) {
+        stmts.updateCategoryByIdInStatement.run(mirror!.category, mirror!.subcategory, r.id, statementId);
+        mirroredTxIds.push(r.id);
+      }
     });
     apply();
-    return { seedFound: true, txIds, basis };
+    return { seedFound: true, txIds, mirroredTxIds, basis };
   },
 
   /**

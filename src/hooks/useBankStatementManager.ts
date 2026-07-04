@@ -296,22 +296,28 @@ export function useBankStatementManager(enabled: boolean) {
 
   // "Apply to all similar" — recategorize every row in the current
   // statement that shares the seed row's counterparty / transaction-type
-  // and direction. Patches the in-memory table for all returned ids so
-  // the change shows immediately without a reload.
+  // and direction. Optional mirrorCategory covers the party's OPPOSITE-
+  // direction rows with the direction-correct label (Business Income on
+  // credits ↔ Business Expenses on debits) instead of copying the
+  // category across the sign. Patches the in-memory table for all
+  // returned ids so the change shows immediately without a reload.
   const applyCategoryToSimilarTx = useCallback(
     async (
       txId: string,
       category: string,
       subcategory?: string | null,
-    ): Promise<{ updated: number; basis: 'type' | 'counterparty' | 'self' }> => {
-      if (!current) return { updated: 0, basis: 'self' };
+      mirrorCategory?: string | null,
+    ): Promise<{ updated: number; mirrored: number; basis: 'type' | 'counterparty' | 'self' }> => {
+      if (!current) return { updated: 0, mirrored: 0, basis: 'self' };
       const result = await applyCategoryToSimilar(
         current.statement.id,
         txId,
         category,
         subcategory ?? null,
+        mirrorCategory ?? null,
       );
       const changed = new Set(result.txIds);
+      const mirrored = new Set(result.mirroredTxIds);
       setCurrent((prev) => {
         if (!prev) return prev;
         return {
@@ -319,11 +325,13 @@ export function useBankStatementManager(enabled: boolean) {
           transactions: prev.transactions.map((t) =>
             changed.has(t.id)
               ? { ...t, category, subcategory: subcategory ?? null, userOverride: true }
-              : t,
+              : mirrored.has(t.id) && mirrorCategory
+                ? { ...t, category: mirrorCategory, subcategory: null, userOverride: true }
+                : t,
           ),
         };
       });
-      return { updated: result.updated, basis: result.basis };
+      return { updated: result.updated, mirrored: result.mirroredTxIds.length, basis: result.basis };
     },
     [current],
   );

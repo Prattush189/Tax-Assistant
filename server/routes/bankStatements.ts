@@ -2784,23 +2784,43 @@ router.patch('/:id/transactions/:txId', (req: AuthRequest, res: Response) => {
 // statements). Returns the affected transaction ids so the client can
 // patch its in-memory table without a full reload.
 //
-// Body: { category: string, subcategory?: string | null }
+// Body: { category: string, subcategory?: string | null,
+//         mirrorCategory?: string | null }
+// mirrorCategory, when present, is applied to the OPPOSITE-direction
+// rows of the same group — the direction-correct counterpart (e.g.
+// Business Income on credits mirrors to Business Expenses on the same
+// party's debits), so a category is never blindly copied across the
+// sign. The client sends it only for categories with a clean mirror.
 router.post('/:id/transactions/:txId/apply-similar', (req: AuthRequest, res: Response) => {
   if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
   const { id, txId } = req.params;
   const category = typeof req.body?.category === 'string' ? normalizeCategory(req.body.category) : null;
   const subcategory = typeof req.body?.subcategory === 'string' ? req.body.subcategory : null;
   if (!category) { res.status(400).json({ error: 'category is required' }); return; }
+  const mirrorCategory = typeof req.body?.mirrorCategory === 'string'
+    ? normalizeCategory(req.body.mirrorCategory)
+    : null;
 
   // Verify the statement belongs to the caller BEFORE the repo bulk
   // update (which scopes on statement_id alone for speed).
   const statement = bankStatementRepo.findByIdForUser(id, req.user.id);
   if (!statement) { res.status(404).json({ error: 'Statement not found' }); return; }
 
-  const result = bankTransactionRepo.updateCategoryForSimilar(id, txId, category, subcategory);
+  const result = bankTransactionRepo.updateCategoryForSimilar(
+    id, txId, category, subcategory,
+    mirrorCategory ? { category: mirrorCategory, subcategory: null } : null,
+  );
   if (!result.seedFound) { res.status(404).json({ error: 'Transaction not found' }); return; }
 
-  res.json({ updated: result.txIds.length, txIds: result.txIds, basis: result.basis, category, subcategory });
+  res.json({
+    updated: result.txIds.length + result.mirroredTxIds.length,
+    txIds: result.txIds,
+    mirroredTxIds: result.mirroredTxIds,
+    basis: result.basis,
+    category,
+    subcategory,
+    mirrorCategory,
+  });
 });
 
 // GET /api/bank-statements/:id/export.csv — download categorized CSV

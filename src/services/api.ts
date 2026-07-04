@@ -2310,12 +2310,21 @@ export async function applyCategoryToSimilar(
   txId: string,
   category: string,
   subcategory?: string | null,
-): Promise<{ updated: number; txIds: string[]; basis: 'type' | 'counterparty' | 'self' }> {
+  /** Direction-correct category for the party's OPPOSITE-direction rows
+   *  (e.g. Business Expenses when retagging credits to Business Income).
+   *  Omit/null = leave opposite-direction rows untouched. */
+  mirrorCategory?: string | null,
+): Promise<{ updated: number; txIds: string[]; mirroredTxIds: string[]; basis: 'type' | 'counterparty' | 'self' }> {
   const data = (await authFetch(`/api/bank-statements/${statementId}/transactions/${txId}/apply-similar`, {
     method: 'POST',
-    body: JSON.stringify({ category, subcategory: subcategory ?? null }),
-  })) as { updated?: number; txIds?: string[]; basis?: 'type' | 'counterparty' | 'self' };
-  return { updated: data.updated ?? 0, txIds: data.txIds ?? [], basis: data.basis ?? 'self' };
+    body: JSON.stringify({ category, subcategory: subcategory ?? null, mirrorCategory: mirrorCategory ?? null }),
+  })) as { updated?: number; txIds?: string[]; mirroredTxIds?: string[]; basis?: 'type' | 'counterparty' | 'self' };
+  return {
+    updated: data.updated ?? 0,
+    txIds: data.txIds ?? [],
+    mirroredTxIds: data.mirroredTxIds ?? [],
+    basis: data.basis ?? 'self',
+  };
 }
 
 // ── Learned classifications management ───────────────────────────
