@@ -30,90 +30,44 @@ const DEFAULT_DEDUCTIONS: PayslipLineItem[] = [
 
 const inr = (n: number) => '₹' + Math.round(n).toLocaleString('en-IN');
 
-export function SalarySlipTab() {
-  const [form, setForm] = useState({
-    companyName: '',
-    companyAddress: '',
-    month: 4,
-    year: 2025,
-    employeeName: '',
-    employeeId: '',
-    designation: '',
-    department: '',
-    pan: '',
-    bankAccount: '',
-    paidDays: '',
-    lopDays: '',
-  });
-  const [earnings, setEarnings] = useState<PayslipLineItem[]>(DEFAULT_EARNINGS);
-  const [deductions, setDeductions] = useState<PayslipLineItem[]>(DEFAULT_DEDUCTIONS);
+const inputCls =
+  'w-full px-3 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/30 text-gray-900 dark:text-gray-100';
+const labelCls =
+  'block text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1';
 
-  const patch = (p: Partial<typeof form>) => setForm((prev) => ({ ...prev, ...p }));
+const setLine = (
+  list: PayslipLineItem[],
+  setList: (v: PayslipLineItem[]) => void,
+  idx: number,
+  patchItem: Partial<PayslipLineItem>,
+) => {
+  setList(list.map((it, i) => (i === idx ? { ...it, ...patchItem } : it)));
+};
+const addLine = (
+  list: PayslipLineItem[],
+  setList: (v: PayslipLineItem[]) => void,
+) => setList([...list, { label: '', amount: 0 }]);
+const removeLine = (
+  list: PayslipLineItem[],
+  setList: (v: PayslipLineItem[]) => void,
+  idx: number,
+) => setList(list.filter((_, i) => i !== idx));
 
-  const gross = sumLineItems(earnings);
-  const totalDed = sumLineItems(deductions);
-  const net = gross - totalDed;
-
-  const canGenerate =
-    form.companyName.trim().length > 0 &&
-    form.employeeName.trim().length > 0 &&
-    gross > 0;
-
-  const setLine = (
-    list: PayslipLineItem[],
-    setList: (v: PayslipLineItem[]) => void,
-    idx: number,
-    patchItem: Partial<PayslipLineItem>,
-  ) => {
-    setList(list.map((it, i) => (i === idx ? { ...it, ...patchItem } : it)));
-  };
-  const addLine = (
-    list: PayslipLineItem[],
-    setList: (v: PayslipLineItem[]) => void,
-  ) => setList([...list, { label: '', amount: 0 }]);
-  const removeLine = (
-    list: PayslipLineItem[],
-    setList: (v: PayslipLineItem[]) => void,
-    idx: number,
-  ) => setList(list.filter((_, i) => i !== idx));
-
-  const handleGenerate = () => {
-    const input: SalarySlipInput = {
-      companyName: form.companyName.trim(),
-      companyAddress: form.companyAddress.trim() || undefined,
-      month: form.month,
-      year: form.year,
-      employeeName: form.employeeName.trim(),
-      employeeId: form.employeeId.trim() || undefined,
-      designation: form.designation.trim() || undefined,
-      department: form.department.trim() || undefined,
-      pan: form.pan.trim() || undefined,
-      bankAccount: form.bankAccount.trim() || undefined,
-      paidDays: form.paidDays.trim() ? Number(form.paidDays) : undefined,
-      lopDays: form.lopDays.trim() ? Number(form.lopDays) : undefined,
-      // Drop fully-blank rows (no label and zero amount).
-      earnings: earnings.filter((e) => e.label.trim() || (Number(e.amount) || 0) !== 0),
-      deductions: deductions.filter((d) => d.label.trim() || (Number(d.amount) || 0) !== 0),
-    };
-    generateSalarySlip(input);
-  };
-
-  const inputCls =
-    'w-full px-3 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/30 text-gray-900 dark:text-gray-100';
-  const labelCls =
-    'block text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1';
-
-  const LineTable = ({
-    title,
-    list,
-    setList,
-    accent,
-  }: {
-    title: string;
-    list: PayslipLineItem[];
-    setList: (v: PayslipLineItem[]) => void;
-    accent: 'emerald' | 'rose';
-  }) => (
+// Hoisted to module scope so its component identity is stable across
+// renders — defining it inside SalarySlipTab remounted the subtree on
+// every keystroke and stole focus from the active input.
+function LineTable({
+  title,
+  list,
+  setList,
+  accent,
+}: {
+  title: string;
+  list: PayslipLineItem[];
+  setList: (v: PayslipLineItem[]) => void;
+  accent: 'emerald' | 'rose';
+}) {
+  return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <h4 className="text-xs font-semibold text-gray-700 dark:text-gray-200 uppercase tracking-wider">{title}</h4>
@@ -161,6 +115,57 @@ export function SalarySlipTab() {
       </div>
     </div>
   );
+}
+
+export function SalarySlipTab() {
+  const [form, setForm] = useState({
+    companyName: '',
+    companyAddress: '',
+    month: 4,
+    year: 2025,
+    employeeName: '',
+    employeeId: '',
+    designation: '',
+    department: '',
+    pan: '',
+    bankAccount: '',
+    paidDays: '',
+    lopDays: '',
+  });
+  const [earnings, setEarnings] = useState<PayslipLineItem[]>(DEFAULT_EARNINGS);
+  const [deductions, setDeductions] = useState<PayslipLineItem[]>(DEFAULT_DEDUCTIONS);
+
+  const patch = (p: Partial<typeof form>) => setForm((prev) => ({ ...prev, ...p }));
+
+  const gross = sumLineItems(earnings);
+  const totalDed = sumLineItems(deductions);
+  const net = gross - totalDed;
+
+  const canGenerate =
+    form.companyName.trim().length > 0 &&
+    form.employeeName.trim().length > 0 &&
+    gross > 0;
+
+  const handleGenerate = () => {
+    const input: SalarySlipInput = {
+      companyName: form.companyName.trim(),
+      companyAddress: form.companyAddress.trim() || undefined,
+      month: form.month,
+      year: form.year,
+      employeeName: form.employeeName.trim(),
+      employeeId: form.employeeId.trim() || undefined,
+      designation: form.designation.trim() || undefined,
+      department: form.department.trim() || undefined,
+      pan: form.pan.trim() || undefined,
+      bankAccount: form.bankAccount.trim() || undefined,
+      paidDays: form.paidDays.trim() ? Number(form.paidDays) : undefined,
+      lopDays: form.lopDays.trim() ? Number(form.lopDays) : undefined,
+      // Drop fully-blank rows (no label and zero amount).
+      earnings: earnings.filter((e) => e.label.trim() || (Number(e.amount) || 0) !== 0),
+      deductions: deductions.filter((d) => d.label.trim() || (Number(d.amount) || 0) !== 0),
+    };
+    generateSalarySlip(input);
+  };
 
   return (
     <div className="max-w-3xl mx-auto space-y-5">
