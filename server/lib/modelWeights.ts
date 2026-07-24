@@ -36,13 +36,18 @@ export interface ModelWeight {
  * correctly when the gate sums across the period.
  */
 const MODEL_WEIGHTS: Record<string, ModelWeight> = {
-  // Active: anchored on T2 input
-  'gemini-3-flash-preview':        { wIn: 5.0, wOut: 30.0 },   // $0.50 / $3.00 — chat primary
-  'gemini-3-flash-preview-flex':   { wIn: 2.5, wOut: 15.0 },   // ~50% on the Flex tier
-  'gemini-2.5-flash-lite':         { wIn: 1.0, wOut: 4.0 },    // $0.10 / $0.40 — fallback
-  'gemini-3.1-flash-lite-preview': { wIn: 2.5, wOut: 15.0 },   // $0.25 / $1.50 — fallback
+  // Active (2026-07): anchored on T2 input ($0.10/M = 1×). Flex variants
+  // weigh 50% (a "-flex" model string is logged when the call ran Flex).
+  'gemini-3.6-flash':              { wIn: 15.0, wOut: 75.0 },  // $1.50 / $7.50 — chat primary
+  'gemini-3.6-flash-flex':         { wIn: 7.5,  wOut: 37.5 },  // ~50% on the Flex tier
+  'gemini-3.5-flash-lite':         { wIn: 3.0,  wOut: 25.0 },  // $0.30 / $2.50 — T1 fallback
+  'gemini-3.5-flash-lite-flex':    { wIn: 1.5,  wOut: 12.5 },  // ~50% on the Flex tier
+  'gemini-2.5-flash-lite':         { wIn: 1.0,  wOut: 4.0 },   // $0.10 / $0.40 — anchor / last resort
 
   // Retired. Kept for historic rows.
+  'gemini-3-flash-preview':        { wIn: 5.0, wOut: 30.0 },   // $0.50 / $3.00 — old chat primary
+  'gemini-3-flash-preview-flex':   { wIn: 2.5, wOut: 15.0 },   // ~50% on the Flex tier
+  'gemini-3.1-flash-lite-preview': { wIn: 2.5, wOut: 15.0 },   // $0.25 / $1.50 — old T1
   'gemini-2.5-flash':              { wIn: 3.0, wOut: 25.0 },   // $0.30 / $2.50
 
   // Retired (2026-05 Anthropic-removal). The vision pipeline used

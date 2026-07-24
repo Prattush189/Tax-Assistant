@@ -39,10 +39,14 @@ const CATEGORY_LABELS: Record<string, string> = {
 // Active models get distinct colours; retired models keep grey so
 // historic api_usage rows are visually deprioritised in the breakdown.
 const MODEL_COLORS: Record<string, string> = {
-  'gemini-3-flash-preview':        'bg-amber-500',    // chat primary (active)
-  'gemini-3-flash-preview-flex':   'bg-amber-500',    // chat primary on Flex tier
-  'gemini-2.5-flash-lite':         'bg-blue-500',     // fallback
-  'gemini-3.1-flash-lite-preview': 'bg-violet-400',   // fallback
+  'gemini-3.6-flash':              'bg-amber-500',    // chat primary (active)
+  'gemini-3.6-flash-flex':         'bg-amber-400',    // chat primary on Flex tier
+  'gemini-3.5-flash-lite':         'bg-violet-400',   // T1 fallback (active)
+  'gemini-3.5-flash-lite-flex':    'bg-violet-300',   // T1 fallback on Flex tier
+  'gemini-2.5-flash-lite':         'bg-blue-500',     // T2 last-resort
+  'gemini-3-flash-preview':        'bg-gray-400',     // retired
+  'gemini-3-flash-preview-flex':   'bg-gray-400',     // retired
+  'gemini-3.1-flash-lite-preview': 'bg-gray-400',     // retired
   'gemini-2.5-flash':              'bg-gray-400',     // retired
   'claude-haiku-4-5':              'bg-gray-400',     // retired
   'local':                         'bg-emerald-500',  // local model — no AI, no tokens
@@ -50,10 +54,14 @@ const MODEL_COLORS: Record<string, string> = {
 };
 
 const MODEL_LABELS: Record<string, string> = {
-  'gemini-3-flash-preview':        'Gemini 3 Flash',
-  'gemini-3-flash-preview-flex':   'Gemini 3 Flash (Flex)',
+  'gemini-3.6-flash':              'Gemini 3.6 Flash',
+  'gemini-3.6-flash-flex':         'Gemini 3.6 Flash (Flex)',
+  'gemini-3.5-flash-lite':         'Gemini 3.5 Flash-Lite',
+  'gemini-3.5-flash-lite-flex':    'Gemini 3.5 Flash-Lite (Flex)',
   'gemini-2.5-flash-lite':         'Gemini 2.5 Flash-Lite',
-  'gemini-3.1-flash-lite-preview': 'Gemini 3.1 Flash-Lite',
+  'gemini-3-flash-preview':        'Gemini 3 Flash (retired)',
+  'gemini-3-flash-preview-flex':   'Gemini 3 Flash · Flex (retired)',
+  'gemini-3.1-flash-lite-preview': 'Gemini 3.1 Flash-Lite (retired)',
   'gemini-2.5-flash':              'Gemini 2.5 Flash (retired)',
   'claude-haiku-4-5':              'Claude Haiku 4.5 (retired)',
   'local':                         'Local model (no tokens)',
@@ -159,9 +167,13 @@ export function RecentApiCallsDashboard() {
             Recent API Calls
           </h2>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500 dark:text-gray-400">
+            <span><span className="font-semibold text-gray-700 dark:text-gray-300">Gemini 3.6 Flash (Flex):</span> $0.75 in / $3.75 out per 1M (weight 7.5× / 37.5×)</span>
+            <span className="text-gray-300 dark:text-gray-700">·</span>
+            <span><span className="font-semibold text-gray-700 dark:text-gray-300">Gemini 3.5 Flash-Lite (Flex):</span> $0.15 in / $1.25 out per 1M (weight 1.5× / 12.5×)</span>
+            <span className="text-gray-300 dark:text-gray-700">·</span>
             <span><span className="font-semibold text-gray-700 dark:text-gray-300">Gemini 2.5 Flash-Lite:</span> $0.10 in / $0.40 out per 1M (weight 1× / 4×)</span>
             <span className="text-gray-300 dark:text-gray-700">·</span>
-            <span><span className="font-semibold text-gray-700 dark:text-gray-300">Gemini 3.1 Flash-Lite:</span> $0.25 in / $1.50 out per 1M (weight 2.5× / 15×)</span>
+            <span className="italic">Primary + T1 run Flex by default (½ of Standard $1.50/$7.50 &amp; $0.30/$2.50).</span>
           </div>
         </div>
         <div className="flex items-center gap-2">

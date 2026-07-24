@@ -306,35 +306,47 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
         const fastApiKey = GEMINI_API_KEYS[activeIdx] ?? '';
         const flexTier = GEMINI_FLEX ? GEMINI_FLEX_SERVICE_TIER : null;
 
-        // ── PRIMARY: Gemini 3 Flash (reasoning + superior grounding) ──
-        // Configurable thinking (Fast/Deep). Optional Flex service tier.
-        //
-        // No same-tier retries — a stalled/failed call falls straight to the
-        // next rung. The ONE retry we keep is Flex→Standard (when Flex is on,
-        // a Flex 503 is retried on 3 Flash Standard before downgrading). With
-        // Flex off it's a single 3 Flash attempt then 3.1 Flash-Lite. Each
-        // attempt is capped by streamGeminiChat's idle timeout (see below),
-        // so a hung 3 Flash bails in seconds instead of minutes. Retries fire
-        // only on a pre-stream failure; a mid-stream failure keeps the partial.
-        const PRIMARY_ATTEMPTS = flexTier ? 2 : 1;
-        // WAIT for 3 Flash rather than cut it off. It goes SILENT while it
-        // does Google-Search grounding + thinks (no bytes until the first
-        // answer token), and aborting mid-work wastes the grounding + thinking
-        // tokens we already paid Google for AND re-runs the whole thing on
-        // 3.1 Flash-Lite — double waste. So the primary gets a patient window
-        // (~100/130s); a genuine failure returns an HTTP error fast and falls
-        // back immediately anyway, so this only bites a true silent hang. The
-        // watchdog resets on every token, so a streaming answer is never cut.
-        // The lite fallback responds fast, so it keeps a tight cap.
-        const primaryIdleMs = thinkingLevel === 'high' ? 130_000 : 100_000;
-        const fallbackIdleMs = 30_000;
-        let primaryRanFlex = false;
-        for (let pa = 0; pa < PRIMARY_ATTEMPTS && fastApiKey && !fullResponse && !primaryFailedMidStream; pa++) {
-          // Flex on the first attempt only; the retry (if any) is Standard.
-          const tierForAttempt = (flexTier && pa === 0) ? flexTier : null;
-          usedModel = GEMINI_CHAT_MODEL_PRIMARY;
+        // ── Model ladder ──────────────────────────────────────────────
+        // Fast/Deep now picks the TOP model (not a thinking budget):
+        //   Deep → Gemini 3.6 Flash (frontier reasoning + grounding)
+        //   Fast → Gemini 3.5 Flash-Lite (skips the pricey 3.6 rung)
+        // Both then degrade through 3.5 Flash-Lite → 2.5 Flash-Lite. Flex
+        // rungs (~50% price) run first; a Flex failure retries the SAME
+        // model on Standard before the next model down. There is no 3.6
+        // Standard rung — a 3.6 Flex miss drops straight to 3.5 Flash-Lite.
+        //   Deep+Flex: 3.6(flex) → 3.5-lite(flex) → 3.5-lite(std) → 2.5-lite
+        //   Fast+Flex:            3.5-lite(flex) → 3.5-lite(std) → 2.5-lite
+        const deep = thinkingLevel === 'high';
+        type Rung = { model: string; tier: string | null };
+        const ladder: Rung[] = [
+          ...(deep ? [{ model: GEMINI_CHAT_MODEL_PRIMARY, tier: flexTier }] : []),
+          ...(flexTier ? [{ model: GEMINI_CHAT_MODEL_T1, tier: flexTier }] : []),
+          { model: GEMINI_CHAT_MODEL_T1, tier: null },
+          { model: GEMINI_CHAT_MODEL_T2, tier: null },
+        ];
+        // WAIT for 3.6 Flash rather than cut it off — it goes SILENT while
+        // grounding + thinking (no bytes until the first answer token), and
+        // aborting wastes the grounding/thinking tokens already paid for.
+        // The Flash-Lite rungs respond fast, so they keep a tight cap. The
+        // idle watchdog resets on every token, so a streaming answer is
+        // never cut mid-flight.
+        const idleFor = (model: string): number => {
+          if (model === GEMINI_CHAT_MODEL_PRIMARY) return deep ? 130_000 : 100_000;
+          if (model === GEMINI_CHAT_MODEL_T1) return 45_000;
+          return 30_000;
+        };
+        // Only 3.6 Flash still uses a thinking budget; the Lite rungs run
+        // thinking-off (their speed is the point of the Fast path).
+        const thinkingFor = (model: string): 'low' | 'high' =>
+          model === GEMINI_CHAT_MODEL_PRIMARY ? 'high' : 'low';
+
+        let ranFlexWinner = false;
+        let providerFallbackFired = false;
+        for (let i = 0; i < ladder.length && fastApiKey && !fullResponse && !primaryFailedMidStream; i++) {
+          const rung = ladder[i];
+          usedModel = rung.model;
           try {
-            for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_PRIMARY, SYSTEM_INSTRUCTION, historyPlain, userContent, fastApiKey, MAX_TOKENS, searchEnabled, true, thinkingLevel, tierForAttempt, primaryIdleMs)) {
+            for await (const chunk of streamGeminiChat(rung.model, SYSTEM_INSTRUCTION, historyPlain, userContent, fastApiKey, MAX_TOKENS, searchEnabled, true, thinkingFor(rung.model), rung.tier, idleFor(rung.model))) {
               if (chunk.text) { fullResponse += chunk.text; sse.writeText(chunk.text); }
               if (chunk.done) {
                 inputTok = chunk.inputTokens ?? 0;
@@ -342,74 +354,23 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
                 stopReason = chunk.finishReason === 'MAX_TOKENS' ? 'max_tokens' : 'end_turn';
               }
             }
-            primaryRanFlex = !!tierForAttempt; // attribute Flex only if it actually ran
-            confirmUsed('gemini-3', activeIdx, searchEnabled);
+            ranFlexWinner = !!rung.tier; // attribute Flex only if it actually ran
+            confirmUsed(rung.model === GEMINI_CHAT_MODEL_T2 ? 'gemini-2.5' : 'gemini-3', activeIdx, searchEnabled);
           } catch (err) {
             if (fullResponse) {
               primaryFailedMidStream = true;
               stopReason = 'network_error';
-              console.warn('[chat] Gemini 3 Flash failed after partial output; keeping partial:', (err as Error).message?.slice(0, 120));
+              console.warn(`[chat] ${rung.model} failed after partial output; keeping partial:`, (err as Error).message?.slice(0, 120));
             } else {
               usedModel = '';
-              const last = pa === PRIMARY_ATTEMPTS - 1;
-              console.warn(`[chat] Gemini 3 Flash attempt ${pa + 1}/${PRIMARY_ATTEMPTS} (${tierForAttempt ?? 'standard'}) failed${last ? ', falling back to 3.1 Flash-Lite' : ', retrying'}:`, (err as Error).message?.slice(0, 120));
-              if (last) {
+              const next = ladder[i + 1];
+              console.warn(`[chat] ${rung.model} (${rung.tier ?? 'standard'}) failed${next ? `, trying ${next.model} (${next.tier ?? 'standard'})` : ''}:`, (err as Error).message?.slice(0, 120));
+              // Notify the client once, the first time we drop to a WEAKER
+              // model (a same-model Flex→Standard step isn't a downgrade).
+              if (next && next.model !== rung.model && !providerFallbackFired) {
+                providerFallbackFired = true;
                 sse.writeEvent({ providerFallback: true });
-              } else if (!tierForAttempt) {
-                // Standard retry — brief backoff. (Flex→Standard switches
-                // immediately; the heartbeat keeps the SSE alive.)
-                await new Promise((r) => setTimeout(r, 600));
               }
-            }
-          }
-        }
-
-        // ── FALLBACK 1: Gemini 3.1 Flash-Lite (only if primary returned nothing) ──
-        if (!fullResponse && !primaryFailedMidStream && fastApiKey) {
-          usedModel = GEMINI_CHAT_MODEL_T1;
-          try {
-            for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_T1, SYSTEM_INSTRUCTION, historyPlain, userContent, fastApiKey, MAX_TOKENS, searchEnabled, true, thinkingLevel, null, fallbackIdleMs)) {
-              if (chunk.text) { fullResponse += chunk.text; sse.writeText(chunk.text); }
-              if (chunk.done) {
-                inputTok = chunk.inputTokens ?? 0;
-                outputTok = chunk.outputTokens ?? 0;
-                stopReason = chunk.finishReason === 'MAX_TOKENS' ? 'max_tokens' : 'end_turn';
-              }
-            }
-            confirmUsed('gemini-3', activeIdx, searchEnabled);
-          } catch (err) {
-            if (fullResponse) {
-              primaryFailedMidStream = true;
-              stopReason = 'network_error';
-              console.warn('[chat] 3.1 Flash-Lite failed after partial output; keeping partial:', (err as Error).message?.slice(0, 120));
-            } else {
-              console.warn('[chat] 3.1 Flash-Lite failed, falling back to 2.5 Flash-Lite:', (err as Error).message?.slice(0, 120));
-              usedModel = '';
-              sse.writeEvent({ providerFallback: true });
-            }
-          }
-        }
-
-        // ── FALLBACK 2: Gemini 2.5 Flash-Lite (only when nothing produced yet). ──
-        // Reuses the active key — 2.5 draws on its own large daily search pool,
-        // independent of the 3.1 monthly pool the primary just failed on.
-        if (!fullResponse && !primaryFailedMidStream) {
-          const fbApiKey = GEMINI_API_KEYS[activeIdx] ?? '';
-          if (fbApiKey) {
-            usedModel = GEMINI_CHAT_MODEL_T2;
-            try {
-              for await (const chunk of streamGeminiChat(GEMINI_CHAT_MODEL_T2, SYSTEM_INSTRUCTION, historyPlain, userContent, fbApiKey, MAX_TOKENS, searchEnabled, true)) {
-                if (chunk.text) { fullResponse += chunk.text; sse.writeText(chunk.text); }
-                if (chunk.done) {
-                  inputTok = chunk.inputTokens ?? 0;
-                  outputTok = chunk.outputTokens ?? 0;
-                  stopReason = chunk.finishReason === 'MAX_TOKENS' ? 'max_tokens' : 'end_turn';
-                }
-              }
-              confirmUsed('gemini-2.5', activeIdx, searchEnabled);
-            } catch (err) {
-              console.warn('[chat] Fast fallback also failed:', (err as Error).message?.slice(0, 120));
-              if (!fullResponse) { usedModel = ''; }
             }
           }
         }
@@ -439,12 +400,13 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
             [GEMINI_CHAT_MODEL_T2]: [GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST],
           };
           const [inputCost, outputCost] = costMap[usedModel] ?? [GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST];
-          // When the primary ran on the Flex tier, bill ~50% and log a
-          // distinct model string so the admin dashboard shows "(Flex)"
-          // and weighting reflects the discount.
-          const ranFlexPrimary = usedModel === GEMINI_CHAT_MODEL_PRIMARY && primaryRanFlex;
-          const cost = (inputTok * inputCost + outputTok * outputCost) * (ranFlexPrimary ? 0.5 : 1);
-          const loggedModel = ranFlexPrimary ? `${usedModel}-flex` : usedModel;
+          // When the winning rung ran on the Flex tier, bill ~50% and log a
+          // distinct "-flex" model string so the admin dashboard shows
+          // "(Flex)" and the quota weighting reflects the discount. Only the
+          // primary + T1 rungs carry a Flex tier; T2 never does.
+          const ranFlex = ranFlexWinner;
+          const cost = (inputTok * inputCost + outputTok * outputCost) * (ranFlex ? 0.5 : 1);
+          const loggedModel = ranFlex ? `${usedModel}-flex` : usedModel;
           usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, inputTok, outputTok, cost, false, loggedModel || undefined, searchEnabled, 'chat', 0, 'success', 0, Date.now() - callStartMs);
         } else {
           console.warn('[chat] skipping usage log — no tokens reported (likely partial/truncated stream)');

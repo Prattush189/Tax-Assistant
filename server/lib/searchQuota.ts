@@ -4,7 +4,7 @@
  *
  *   Tier 'gemini-2.5' — gemini-2.5-flash-lite        (primary)
  *                       1,500 free searches/day per key
- *   Tier 'gemini-3'   — gemini-3.1-flash-lite-preview (fallback)
+ *   Tier 'gemini-3'   — gemini-3.5-flash-lite            (fallback)
  *                       5,000 free searches/month per key
  *
  * Tier names ('gemini-3' / 'gemini-2.5') refer to the model FAMILY
@@ -262,7 +262,7 @@ export function getQuotaStatus() {
       index: i,
       label: k.label,
       active: i === activeKeyIndex,
-      tier1: { model: 'Gemini 3.1 Flash-Lite Preview', used: k.t1Count, limit: t1Limit, remaining: Math.max(0, t1Limit - k.t1Count), period: 'monthly' },
+      tier1: { model: 'Gemini 3.5 Flash-Lite', used: k.t1Count, limit: t1Limit, remaining: Math.max(0, t1Limit - k.t1Count), period: 'monthly' },
       tier2: { model: 'Gemini 2.5 Flash-Lite', used: k.t2Count, limit: t2Limit, remaining: Math.max(0, t2Limit - k.t2Count), period: 'daily' },
     })),
     totalFreeSearchCapacity: {

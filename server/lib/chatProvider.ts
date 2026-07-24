@@ -66,13 +66,16 @@ export const geminiChatProvider: ChatProvider = {
     // to 2.5 Flash-Lite, which uses a different thinking config.)
     const THINKING: 'low' | 'high' = 'high';
 
-    // Same model ladder as chat: Gemini 3 Flash (Flex → Standard) →
-    // 3.1 Flash-Lite → 2.5 Flash-Lite. Flex only when GEMINI_FLEX=1; a Flex
-    // 503 (capacity) drops to 3 Flash Standard before any weaker model.
+    // Notice drafting is always "Deep" → Gemini 3.6 Flash on top. Ladder:
+    //   3.6 Flash (Flex) → 3.5 Flash-Lite (Flex) → 3.5 Flash-Lite (Std) → 2.5 Flash-Lite
+    // Flex on by default (GEMINI_FLEX, ~50% price). There is no 3.6 Standard
+    // rung — a 3.6 Flex miss drops straight to 3.5 Flash-Lite; a 3.5 Flex miss
+    // retries 3.5 on Standard before the last-resort 2.5. With Flex off, the
+    // top rung is simply 3.6 Standard.
     const flexTier = GEMINI_FLEX ? GEMINI_FLEX_SERVICE_TIER : null;
     const ladder: Array<{ model: string; tier: string | null; thinking: 'low' | 'high' | null }> = [
-      ...(flexTier ? [{ model: GEMINI_CHAT_MODEL_PRIMARY, tier: flexTier, thinking: THINKING }] : []),
-      { model: GEMINI_CHAT_MODEL_PRIMARY, tier: null, thinking: THINKING },
+      { model: GEMINI_CHAT_MODEL_PRIMARY, tier: flexTier, thinking: THINKING },
+      ...(flexTier ? [{ model: GEMINI_CHAT_MODEL_T1, tier: flexTier, thinking: THINKING }] : []),
       { model: GEMINI_CHAT_MODEL_T1, tier: null, thinking: THINKING },
       { model: GEMINI_CHAT_MODEL_T2, tier: null, thinking: null },
     ];
@@ -143,18 +146,20 @@ export const geminiChatProvider: ChatProvider = {
     if (!used) throw new Error('All notice models failed to produce output');
 
     // Cost + logged model string, with the Flex half-rate + "(Flex)" label.
-    const ranFlex = used.model === GEMINI_CHAT_MODEL_PRIMARY && !!used.tier;
-    let inCost: number, outCost: number, modelUsed: string;
+    // Flex applies to primary and T1 (T2 never runs Flex).
+    const ranFlex = !!used.tier
+      && (used.model === GEMINI_CHAT_MODEL_PRIMARY || used.model === GEMINI_CHAT_MODEL_T1);
+    const mul = ranFlex ? 0.5 : 1;
+    let inCost: number, outCost: number, baseModel: string;
     if (used.model === GEMINI_CHAT_MODEL_PRIMARY) {
-      const mul = ranFlex ? 0.5 : 1;
-      inCost = GEMINI_PRIMARY_INPUT_COST * mul;
-      outCost = GEMINI_PRIMARY_OUTPUT_COST * mul;
-      modelUsed = ranFlex ? `${GEMINI_CHAT_MODEL_PRIMARY}-flex` : GEMINI_CHAT_MODEL_PRIMARY;
+      inCost = GEMINI_PRIMARY_INPUT_COST; outCost = GEMINI_PRIMARY_OUTPUT_COST; baseModel = GEMINI_CHAT_MODEL_PRIMARY;
     } else if (used.model === GEMINI_CHAT_MODEL_T1) {
-      inCost = GEMINI_T1_INPUT_COST; outCost = GEMINI_T1_OUTPUT_COST; modelUsed = GEMINI_CHAT_MODEL_T1;
+      inCost = GEMINI_T1_INPUT_COST; outCost = GEMINI_T1_OUTPUT_COST; baseModel = GEMINI_CHAT_MODEL_T1;
     } else {
-      inCost = GEMINI_T2_INPUT_COST; outCost = GEMINI_T2_OUTPUT_COST; modelUsed = GEMINI_CHAT_MODEL_T2;
+      inCost = GEMINI_T2_INPUT_COST; outCost = GEMINI_T2_OUTPUT_COST; baseModel = GEMINI_CHAT_MODEL_T2;
     }
+    inCost *= mul; outCost *= mul;
+    const modelUsed = ranFlex ? `${baseModel}-flex` : baseModel;
 
     return {
       inputTokens: result.inputTokens,
