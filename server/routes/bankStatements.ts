@@ -4,6 +4,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
 import Papa from 'papaparse';
 import { extractVisionWithFallback } from '../lib/visionFallback.js';
+import { downsampleForVision, VISION_DOWNSAMPLE_MAX_PX } from '../lib/rasterizePdf.js';
 import { getPdfPageCount, splitPdfByPages, PDF_VISION_CHUNK_THRESHOLD } from '../lib/pdfChunker.js';
 import { extractPdfTextWithPaddleOcr } from '../lib/paddleOcr.js';
 import { structureOcrTextIntoRows } from '../lib/paddleStructurer.js';
@@ -1464,11 +1465,17 @@ router.post(
         // is caught and falls back to vision so uploads never break
         // entirely while the operator debugs the OCR pipeline.
         let extractedFromOcr = false;
+        // Page count (cheap pdf-lib metadata read, no rasterization). Used
+        // to (a) scale the PaddleOCR subprocess timeout so large statements
+        // aren't SIGKILLed mid-OCR and dumped into the expensive vision
+        // path, and (b) decide vision chunking below. Computed once, reused.
+        let pdfPageCount: number | null = null;
         if (mimeType === 'application/pdf') {
+          pdfPageCount = await getPdfPageCount(req.file.buffer);
           try {
             const ocrStart = Date.now();
-            console.log(`[bank-statements] PaddleOCR start: ${filename} (${req.file.size} bytes)`);
-            const ocr = await extractPdfTextWithPaddleOcr(req.file.buffer);
+            console.log(`[bank-statements] PaddleOCR start: ${filename} (${req.file.size} bytes, ${pdfPageCount ?? '?'} pages)`);
+            const ocr = await extractPdfTextWithPaddleOcr(req.file.buffer, { pageCount: pdfPageCount ?? undefined });
             console.log(`[bank-statements] PaddleOCR done: ${ocr.pages.length} pages, ${ocr.items.length} tokens in ${ocr.durationMs}ms`);
             // Bank's printed Grand Total row, for the gross-turnover
             // cross-check in persistStatement. Same OCR text both paths see.
@@ -1521,6 +1528,28 @@ router.post(
         // available / failed, or when the upload is a single image
         // (jpeg/png/webp) where OCR adds no value over direct vision.
         const fullPrompt = BANK_STATEMENT_PROMPT;
+        // Downsample pages to ~1200px JPEGs before vision so each page
+        // tiles into ~4 Gemini tiles (~1K tokens) instead of ~12-16
+        // (~3-4K) at full resolution — a 3-4x input-token cut on the
+        // path that was burning ~2M tokens. Best-effort: any rasterizer
+        // failure (poppler missing, timeout) returns null and we send
+        // the raw bytes, so an upload never breaks over this.
+        const downsampleToParts = async (
+          buf: Buffer,
+          mime: string,
+          label: string,
+        ): Promise<Array<{ mimeType: string; data: Buffer }> | undefined> => {
+          try {
+            const pages = await downsampleForVision(buf, mime, VISION_DOWNSAMPLE_MAX_PX);
+            if (pages.length === 0) return undefined;
+            const bytes = pages.reduce((a, p) => a + p.buffer.length, 0);
+            console.log(`[bank-statements] vision downsample ${label}: ${pages.length} page(s), ${(bytes / 1024).toFixed(0)}KB @ ${VISION_DOWNSAMPLE_MAX_PX}px`);
+            return pages.map((p) => ({ mimeType: p.mimeType, data: p.buffer }));
+          } catch (err) {
+            console.warn(`[bank-statements] vision downsample ${label} failed, sending raw bytes: ${(err as Error).message?.slice(0, 200)}`);
+            return undefined;
+          }
+        };
         if (!extractedFromOcr) {
           // 2026-06: For PDFs above PDF_VISION_CHUNK_THRESHOLD pages
           // (default 40), split into page-range chunks before vision.
@@ -1530,8 +1559,10 @@ router.post(
           // the per-chunk transaction arrays into one ExtractedStatement.
           // Non-PDF uploads (image/jpeg, etc.) skip chunking and use
           // the original single-call path.
-          let pdfPageCount: number | null = null;
-          if (mimeType === 'application/pdf') {
+          // pdfPageCount was computed above (before the OCR attempt) for
+          // PDFs; recompute only if it's still unknown (shouldn't happen
+          // for PDFs, but keeps the guard total).
+          if (pdfPageCount === null && mimeType === 'application/pdf') {
             pdfPageCount = await getPdfPageCount(req.file.buffer);
           }
           const shouldChunk = pdfPageCount !== null && pdfPageCount > PDF_VISION_CHUNK_THRESHOLD;
@@ -1546,12 +1577,14 @@ router.post(
             let modelUsedLast = '';
             for (let i = 0; i < chunks.length; i++) {
               const c = chunks[i]!;
+              const chunkParts = await downsampleToParts(c.buffer, mimeType, `chunk ${i + 1}/${chunks.length}`);
               const chunkResult = await extractVisionWithFallback<ExtractedStatement>(
                 c.buffer,
                 mimeType,
                 fullPrompt,
                 {
                   maxTokens: 65_536,
+                  imageParts: chunkParts,
                   looksValid: (data) => {
                     const txns = (data as { transactions?: unknown })?.transactions;
                     return Array.isArray(txns) && txns.length > 0;
@@ -1577,6 +1610,10 @@ router.post(
               modelUsed: modelUsedLast,
             }];
           } else {
+          // Single-pass vision: downsample the whole PDF (or the single
+          // image upload — raw phone photos are the worst offenders) to
+          // capped-resolution page JPEGs before sending.
+          const singleParts = await downsampleToParts(req.file.buffer, mimeType, 'single-pass');
           const visionResult = await extractVisionWithFallback<ExtractedStatement>(
             req.file.buffer,
             mimeType,
@@ -1598,6 +1635,7 @@ router.post(
             // long PDFs more reliably.
             {
               maxTokens: 65_536,
+              imageParts: singleParts,
               looksValid: (data) => {
                 const txns = (data as { transactions?: unknown })?.transactions;
                 return Array.isArray(txns) && txns.length > 0;

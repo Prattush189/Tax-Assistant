@@ -141,9 +141,24 @@ const PYTHON_BIN = process.env.PADDLE_PYTHON ?? 'python3';
 // which cwd the Node process was launched from (the systemd unit on
 // the VPS sets WorkingDirectory to /www/wwwroot/ai.smartbizin.com).
 const SCRIPT_PATH = path.resolve(process.cwd(), 'server/python/ocr_worker.py');
-// 5 minutes — generous enough for a 50-page scan on a busy VPS,
-// short enough that a hung worker doesn't pin a request slot forever.
-const TIMEOUT_MS = 5 * 60 * 1000;
+// PaddleOCR runs ~3-5s/page (CPU, no GPU) plus ~1-2s model warmup. A
+// flat budget silently killed large statements: a 95-page PDF needs
+// ~5-8 min but the old flat 5-min cap SIGKILLed it at page ~60, and
+// the route then fell through to the far more expensive Gemini Vision
+// path (each PDF page tiles into ~3-4K input tokens). Scale the budget
+// with page count so big statements finish on the cheap OCR path.
+const OCR_PER_PAGE_MS = 6_000;   // headroom over the observed 3-5s/page
+const OCR_STARTUP_MS = 30_000;   // Python import + model warmup
+const OCR_TIMEOUT_MIN_MS = 5 * 60 * 1000;   // floor (unchanged from old flat cap)
+const OCR_TIMEOUT_MAX_MS = 20 * 60 * 1000;  // ceiling — a hung worker can't pin a slot forever
+
+/** Compute the subprocess timeout from the PDF's page count. Falls back
+ *  to the floor when the count is unknown (caller couldn't read it). */
+function computeOcrTimeoutMs(pageCount?: number): number {
+  if (!pageCount || pageCount <= 0) return OCR_TIMEOUT_MIN_MS;
+  const budget = pageCount * OCR_PER_PAGE_MS + OCR_STARTUP_MS;
+  return Math.min(OCR_TIMEOUT_MAX_MS, Math.max(OCR_TIMEOUT_MIN_MS, budget));
+}
 
 /**
  * One-shot OCR: writes the PDF buffer to a tempfile, spawns the
@@ -160,6 +175,7 @@ const TIMEOUT_MS = 5 * 60 * 1000;
  */
 export async function extractPdfTextWithPaddleOcr(
   pdfBuffer: Buffer,
+  opts: { pageCount?: number } = {},
 ): Promise<PaddleOcrResult> {
   if (!existsSync(SCRIPT_PATH)) {
     throw new Error(`PaddleOCR worker script missing at ${SCRIPT_PATH}`);
@@ -171,9 +187,10 @@ export async function extractPdfTextWithPaddleOcr(
   const outPath = path.join(tmpDir, `${stem}.json`);
   writeFileSync(pdfPath, pdfBuffer);
 
+  const timeoutMs = computeOcrTimeoutMs(opts.pageCount);
   const started = Date.now();
   try {
-    return await runPython(pdfPath, outPath, started);
+    return await runPython(pdfPath, outPath, started, timeoutMs);
   } finally {
     // Best-effort cleanup of both the input PDF and the JSON output.
     try { unlinkSync(pdfPath); } catch { /* ignore */ }
@@ -181,7 +198,7 @@ export async function extractPdfTextWithPaddleOcr(
   }
 }
 
-function runPython(pdfPath: string, outPath: string, started: number): Promise<PaddleOcrResult> {
+function runPython(pdfPath: string, outPath: string, started: number, timeoutMs: number): Promise<PaddleOcrResult> {
   return new Promise((resolve, reject) => {
     const py = spawn(PYTHON_BIN, [SCRIPT_PATH, pdfPath, outPath], {
       // PaddleOCR / paddlepaddle / opencv chatter to stdout is
@@ -195,8 +212,8 @@ function runPython(pdfPath: string, outPath: string, started: number): Promise<P
 
     const killTimer = setTimeout(() => {
       py.kill('SIGKILL');
-      reject(new Error(`PaddleOCR timed out after ${TIMEOUT_MS}ms`));
-    }, TIMEOUT_MS);
+      reject(new Error(`PaddleOCR timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
 
     py.on('close', (code) => {
       clearTimeout(killTimer);

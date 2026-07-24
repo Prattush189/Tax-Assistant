@@ -72,6 +72,20 @@ def main() -> None:
     os.environ.setdefault("FLAGS_enable_pir_api", "0")
     os.environ.setdefault("FLAGS_enable_pir_in_executor", "0")
 
+    # CPU-thread budget for the single in-process model. PaddleOCR CPU
+    # inference otherwise under-uses cores; letting the one model span
+    # all vCPUs speeds each page ~1.5-2.5x with ZERO extra memory (vs
+    # forking N model copies, which would OOM this RAM-tight box). Must
+    # be set BEFORE `import paddle` (transitively via paddleocr) to take
+    # effect. Configurable via PADDLE_CPU_THREADS; default 4 (vCPU count).
+    cpu_threads = 4
+    try:
+        cpu_threads = max(1, int(os.environ.get("PADDLE_CPU_THREADS", "4")))
+    except ValueError:
+        cpu_threads = 4
+    os.environ.setdefault("OMP_NUM_THREADS", str(cpu_threads))
+    os.environ.setdefault("FLAGS_paddle_num_threads", str(cpu_threads))
+
     try:
         from paddleocr import PaddleOCR
     except ImportError as e:
@@ -86,10 +100,19 @@ def main() -> None:
     # and dropped show_log. 2.x has neither rename and accepts show_log.
     # Try the 3.x form first; on TypeError (unknown kwarg) fall back to
     # the 2.x form.
+    # `cpu_threads` tells Paddle's inference predictor how many threads to
+    # use per page — the in-process counterpart to the OMP env vars above.
+    # Some builds reject the kwarg; degrade gracefully to the env-only path.
     try:
-        ocr = PaddleOCR(use_textline_orientation=True, lang="en")
+        try:
+            ocr = PaddleOCR(use_textline_orientation=True, lang="en", cpu_threads=cpu_threads)
+        except TypeError:
+            ocr = PaddleOCR(use_textline_orientation=True, lang="en")
     except TypeError:
-        ocr = PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
+        try:
+            ocr = PaddleOCR(use_angle_cls=True, lang="en", show_log=False, cpu_threads=cpu_threads)
+        except TypeError:
+            ocr = PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
 
     # PaddleOCR 2.7.3's `ocr.ocr(pdf_path)` returns a list of ONE page
     # result on multi-page PDFs — page 1 only — silently dropping

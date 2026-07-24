@@ -27,6 +27,9 @@ import type { GeminiJsonResult, GeminiJsonOptions } from './geminiJson.js';
 export interface VisionFallbackOptions {
   maxTokens?: number;
   recordAttempt?: GeminiJsonOptions['recordAttempt'];
+  /** Pre-downsampled page images to send instead of the raw `buffer`.
+   *  See GeminiVisionOptions.imageParts — caps per-page vision tokens. */
+  imageParts?: Array<{ mimeType: string; data: Buffer }>;
   /** Preserved for source compat with old call-sites. Never fires now
    *  that there's no tier-1 → tier-2 fallback (only one tier). */
   onFallback?: (input: { from: string; to: string }) => void;
@@ -46,6 +49,7 @@ export async function extractVisionWithFallback<T = unknown>(
     maxTokens: opts.maxTokens,
     recordAttempt: opts.recordAttempt,
     model: GEMINI_CHAT_MODEL_T1,
+    imageParts: opts.imageParts,
   });
   if (opts.looksValid && !opts.looksValid(result.data)) {
     throw new Error('Vision parse passed schema but looksValid returned false');

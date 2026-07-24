@@ -85,7 +85,11 @@ echo "Installing paddlepaddle 2.6.2 + paddleocr 2.7.3 + pdf2image (~500 MB, may 
 # PaddleOCR processes one at a time. Without it the worker can only
 # OCR page 1 of multi-page PDFs (PaddleOCR's own PDF iterator stops
 # after page 1 in 2.7.3).
-pip3 install $PIP_FLAGS "numpy<2" "paddlepaddle==2.6.2" "paddleocr==2.7.3" pdf2image
+# pillow: pdf2image already depends on it, but the vision-fallback
+# downsampler (server/python/rasterize_worker.py) imports PIL directly
+# to shrink pages before Gemini Vision — pin it explicitly so a future
+# pdf2image release can't drop it out from under that path.
+pip3 install $PIP_FLAGS "numpy<2" "paddlepaddle==2.6.2" "paddleocr==2.7.3" pdf2image pillow
 
 # 4. Warm-up: trigger first-run model download
 echo "Warming up — downloading OCR model weights (~250 MB)..."

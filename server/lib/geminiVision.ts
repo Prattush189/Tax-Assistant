@@ -23,6 +23,12 @@ export interface GeminiVisionOptions {
   model?: string;
   /** Pass-through usage logging callback. */
   recordAttempt?: GeminiJsonOptions['recordAttempt'];
+  /** Send these image parts INSTEAD of the single `buffer`/`mimeType`
+   *  positional arg. Used by the downsampled vision path: each part is
+   *  one pre-shrunk page JPEG, so Gemini tiles far fewer 768px tiles
+   *  (258 tokens each) than the full-resolution source would. When
+   *  present and non-empty, `buffer` is not sent. */
+  imageParts?: Array<{ mimeType: string; data: Buffer }>;
 }
 
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
@@ -40,10 +46,14 @@ export async function extractGeminiVision<T = unknown>(
   const apiKey = GEMINI_API_KEYS[0] ?? '';
   if (!apiKey) throw new Error('GEMINI_API_KEY is not set');
 
-  const inlineData = {
-    mime_type: mimeType,
-    data: buffer.toString('base64'),
-  };
+  // Build the image part(s) sent to Gemini. Default: one inline_data
+  // from the positional buffer. Downsampled path: one inline_data per
+  // pre-shrunk page JPEG (opts.imageParts) — the positional buffer is
+  // then NOT encoded/sent, so we don't pay to base64 the raw upload.
+  const imageDataParts =
+    opts.imageParts && opts.imageParts.length > 0
+      ? opts.imageParts.map((p) => ({ mime_type: p.mimeType, data: p.data.toString('base64') }))
+      : [{ mime_type: mimeType, data: buffer.toString('base64') }];
 
   // Try to get a cached content handle for the static prompt. When this
   // returns a name, the request omits the prompt text and references the
@@ -63,18 +73,19 @@ export async function extractGeminiVision<T = unknown>(
     thinkingConfig: { thinkingBudget: 0 },
   };
 
+  const imageParts = imageDataParts.map((inline_data) => ({ inline_data }));
   const buildBody = (useCache: boolean) =>
     useCache && cachedName
       ? {
           cachedContent: cachedName,
-          contents: [{ role: 'user', parts: [{ inline_data: inlineData }] }],
+          contents: [{ role: 'user', parts: [...imageParts] }],
           generationConfig: baseGenerationConfig,
         }
       : {
           contents: [{
             role: 'user',
             parts: [
-              { inline_data: inlineData },
+              ...imageParts,
               { text: prompt },
             ],
           }],
