@@ -135,6 +135,22 @@ function mergeHeaderDataColumnPairs(grid: PdfGrid): PdfGrid {
     }
     return nonEmpty / rowsToScan;
   };
+  // Whole-document count of amount-shaped cells in a column. The
+  // sampled rates above look only at the first 200 rows, which is
+  // blind to a column that is genuinely sparse but real — see the
+  // numericCountL guard below.
+  // Money shape: a decimal amount ("10000.00", "1,14,734.93") or a
+  // comma-grouped integer ("1,234"). Deliberately excludes bare
+  // integers so cheque / reference numbers in a header column don't
+  // count as real amounts and block a legitimate merge.
+  const AMOUNT_CELL = /^-?(?:\d[\d,]*\.\d{2}|\d{1,3}(?:,\d{2,3})+)(?:\s*[CD]r\.?)?$/;
+  const amountCount = (col: number): number => {
+    let n = 0;
+    for (let r = 0; r < grid.rows.length; r++) {
+      if (AMOUNT_CELL.test((grid.rows[r][col] ?? '').trim())) n += 1;
+    }
+    return n;
+  };
   const dropCols = new Set<number>();
   for (let cL = 0; cL < grid.columnCount - 1; cL++) {
     if (dropCols.has(cL)) continue;
@@ -147,7 +163,25 @@ function mergeHeaderDataColumnPairs(grid: PdfGrid): PdfGrid {
     const dataRateR = fillRate(cR, s => NUMERIC_RE.test(s));
     // cL is header-only: has header text, almost no data underneath.
     // cR is data-only: empty header, ≥30% of cells are numeric.
-    if (headerL && !headerR && dataRateL <= 0.15 && dataRateR >= 0.3) {
+    //
+    // GUARD — cL must not carry real amounts of its own. The sampled
+    // dataRateL above scans only the first 200 rows, so a column that
+    // is genuinely sparse (the minority direction on a lopsided
+    // account) reads as "header-only" and gets deleted. IDBI is the
+    // canonical case: its 8 anchors are
+    //   4 "Withdrawals"(1023 items) | 5 "Deposits"(239) |
+    //   6 headerless balance data(1246) | 7 "Balance"(35)
+    // and without this guard cols 5+6 merge — destroying all 229
+    // real credits and re-labelling the running balance as
+    // "Deposits", so every credit row maps to the balance figure.
+    // A true header-text/data split column (Busy ledgers, Canara
+    // epassbook) holds ZERO amounts, so requiring cL's amount count
+    // to be a negligible fraction of cR's keeps those merging while
+    // refusing to swallow a real column.
+    const numericCountL = headerL && !headerR ? amountCount(cL) : 0;
+    const numericCountR = headerL && !headerR ? amountCount(cR) : 0;
+    const cLisOwnColumn = numericCountL > 0 && numericCountL >= numericCountR * 0.02;
+    if (headerL && !headerR && dataRateL <= 0.15 && dataRateR >= 0.3 && !cLisOwnColumn) {
       // Merge: pull header from cL onto cR, drop cL.
       const newHeaders = [...(grid.columnHeaders ?? [])];
       newHeaders[cR] = headerL;

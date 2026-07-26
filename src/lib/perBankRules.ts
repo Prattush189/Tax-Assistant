@@ -769,7 +769,130 @@ const BANK_OF_MAHARASHTRA: BankRule = {
   required: ['date', 'narration', 'debit', 'credit', 'balance'],
 };
 
-const RULES: BankRule[] = [HDFC, ICICI, CANARA, PNB, YES_BANK, KOTAK, SBI, BANK_OF_MAHARASHTRA, JK_BANK_DCR, JK_BANK_SAVINGS, JK_BANK];
+// ─── IDBI Bank ────────────────────────────────────────────────────
+//
+// IDBI's net-banking "STATEMENT OF ACCOUNT" prints each transaction
+// across TWO physical lines: the transaction line carries S.No + Txn
+// Date + Value Date + Description + the Dr/Cr amount, and the line
+// immediately BELOW carries only the running balance (the balance is
+// baseline-shifted ~3pt down in the PDF, so it lands in its own row
+// bucket). Long narrations add further continuation lines ("okaxis",
+// "TRADERS") under the description.
+//
+// extractPdfGrid resolves the real 8-column layout correctly:
+//   0 S.No + Txn Date ("1 31/03/2026 20:59:33")
+//   1 Value Date
+//   2 Description
+//   3 Cheque No
+//   4 Withdrawals (Dr)
+//   5 Deposits (Cr)
+//   6 running balance — HEADERLESS (the "Balance" header text sits in
+//     its own anchor at col 7 because the balance figures are right-
+//     aligned well left of the header)
+//   7 "Balance" header column — 6 stray cells, no data
+//
+// NOTE: col 5 (Deposits) used to be destroyed by pdfGrid's
+// header/data column merge, which treated the sparse-but-real credit
+// column as a header-only stub and pasted its header onto col 6 — so
+// every credit read as the running balance. Fixed by the amountCount
+// guard in mergeHeaderDataColumnPairs; this rule depends on it.
+//
+// The preprocess rebuilds one row per transaction: it lifts the
+// balance up from the following line and joins the continuation
+// narration lines, exactly as preprocessBom does for Bank of
+// Maharashtra. Printed Dr/Cr amounts are used as-is (they are clean
+// and unambiguous here) — no balance-delta derivation needed.
+const IDBI_ROW_RE = /^\s*\d+\s+(\d{2}\/\d{2}\/\d{4})/;
+// IDBI prints amounts WITHOUT thousands separators ("114734.93"), but
+// accept comma-grouped forms too so a future variant doesn't silently
+// drop every balance.
+const IDBI_AMOUNT_RE = /^-?\d[\d,]*\.\d{2}$/;
+function preprocessIdbi(grid: PdfGrid): PdfGrid {
+  if (grid.columnCount !== 8) return grid;
+  // Index the transaction lines.
+  const mainIdx: number[] = [];
+  for (let i = 0; i < grid.rows.length; i++) {
+    if (IDBI_ROW_RE.test((grid.rows[i][0] ?? '').trim())) mainIdx.push(i);
+  }
+  if (mainIdx.length < 5) return grid;
+
+  const out: string[][] = [];
+  for (let k = 0; k < mainIdx.length; k++) {
+    const i = mainIdx[k];
+    const r = grid.rows[i];
+    const end = k + 1 < mainIdx.length ? mainIdx[k + 1] : grid.rows.length;
+    const date = (IDBI_ROW_RE.exec((r[0] ?? '').trim()) ?? [])[1] ?? '';
+
+    // Narration = this line's description plus every continuation
+    // line's description up to the next transaction line.
+    const narr: string[] = [];
+    const head = (r[2] ?? '').trim();
+    if (head) narr.push(head);
+    // Balance normally sits on the very next line; scan the whole
+    // continuation block so a stray blank line can't lose it.
+    let balance = '';
+    for (let s = i + 1; s < end; s++) {
+      const cont = grid.rows[s];
+      const desc = (cont[2] ?? '').trim();
+      if (desc) narr.push(desc);
+      const bal = (cont[6] ?? '').trim();
+      if (!balance && IDBI_AMOUNT_RE.test(bal)) balance = bal;
+    }
+    // A transaction line can also carry its own balance if the PDF
+    // didn't baseline-shift it (defensive — not seen in fixtures).
+    const ownBal = (r[6] ?? '').trim();
+    if (!balance && IDBI_AMOUNT_RE.test(ownBal)) balance = ownBal;
+
+    out.push([
+      date,
+      (r[1] ?? '').trim(),
+      narr.join(' ').replace(/\s+/g, ' ').trim(),
+      (r[3] ?? '').trim(),
+      (r[4] ?? '').trim(),
+      (r[5] ?? '').trim(),
+      balance,
+    ]);
+  }
+
+  return {
+    ...grid,
+    rows: out,
+    columnCount: 7,
+    columnXs: [36, 147.57, 200.49, 315.74, 387.11, 450.71, 530.9],
+    columnHeaders: ['Date', 'Value Date', 'Description', 'Cheque No', 'Withdrawals', 'Deposits', 'Balance'],
+    pageBreaks: [],
+  };
+}
+
+const IDBI: BankRule = {
+  name: 'IDBI Bank',
+  fingerprints: [
+    'idbi bank',
+    'idbi.co.in',
+    // IDBI's IFSC prefix is IBKL0 (the bank was "Industrial
+    // Development Bank Ltd"). Anchored loosely because the branch
+    // banner prints it both as "Branch IFSC Code : IBKL0000357" and
+    // inside the branch email "IBKL0000357@idbi.co.in".
+    /\bibkl0\d{4,}/i,
+  ],
+  preprocess: preprocessIdbi,
+  positional: {
+    columnCount: 7, // post-preprocess
+    roles: ['date', 'valueDate', 'narration', 'reference', 'debit', 'credit', 'balance'],
+    verify: (grid) => {
+      const datePat = /^\d{2}\/\d{2}\/\d{4}$/;
+      let dates = 0, bals = 0, amts = 0;
+      for (const r of grid.rows) {
+        if (datePat.test((r[0] ?? '').trim())) dates++;
+        if (IDBI_AMOUNT_RE.test((r[6] ?? '').trim())) bals++;
+        if (IDBI_AMOUNT_RE.test((r[4] ?? '').trim()) || IDBI_AMOUNT_RE.test((r[5] ?? '').trim())) amts++;
+      }
+      return dates >= 5 && bals >= 5 && amts >= 5;
+    },
+  },
+};
+
+const RULES: BankRule[] = [HDFC, ICICI, CANARA, PNB, YES_BANK, KOTAK, SBI, IDBI, BANK_OF_MAHARASHTRA, JK_BANK_DCR, JK_BANK_SAVINGS, JK_BANK];
 
 export interface DetectedBankMapping {
   bank: string;
