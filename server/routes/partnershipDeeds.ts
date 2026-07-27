@@ -25,6 +25,9 @@ const TEMPLATE_IDS: readonly PartnershipDeedTemplateId[] = [
   'retirement_admission_deed',
   'dissolution_deed',
   'rent_agreement',
+  'joint_development_agreement',
+  'employment_agreement',
+  'appointment_letter',
 ];
 
 function isValidTemplateId(v: unknown): v is PartnershipDeedTemplateId {
@@ -52,6 +55,9 @@ const TEMPLATE_GOVERNING_ACT: Record<PartnershipDeedTemplateId, string> = {
   retirement_admission_deed: 'Indian Partnership Act, 1932 (Sections 31 & 32)',
   dissolution_deed: 'Indian Partnership Act, 1932 (Sections 39–55)',
   rent_agreement: 'Transfer of Property Act, 1882; Registration Act, 1908; and the applicable State Stamp / Rent Control Act',
+  joint_development_agreement: 'Transfer of Property Act, 1882; Real Estate (Regulation and Development) Act, 2016; Registration Act, 1908; Section 45(5A) of the Income-tax Act, 1961; and the applicable State Stamp Act',
+  employment_agreement: 'Indian Contract Act, 1872; and the applicable State Shops and Establishments Act',
+  appointment_letter: 'Indian Contract Act, 1872',
 };
 
 const TEMPLATE_TITLES: Record<PartnershipDeedTemplateId, string> = {
@@ -62,6 +68,9 @@ const TEMPLATE_TITLES: Record<PartnershipDeedTemplateId, string> = {
   retirement_admission_deed: 'Retirement cum Admission Deed',
   dissolution_deed: 'Dissolution Deed',
   rent_agreement: 'Rent Agreement',
+  joint_development_agreement: 'Joint Development Agreement',
+  employment_agreement: 'Employment Agreement',
+  appointment_letter: 'Appointment Letter',
 };
 
 // ── System prompt ────────────────────────────────────────────────────────
@@ -183,6 +192,112 @@ FORMATTING RULES (strict)
 - Statutory references must be precise: "Section 17 of the Registration Act, 1908", "Section 105 of the Transfer of Property Act, 1882".
 - Never leave bracketed placeholders like [NAME] in the operative text — use a sensible legal fallback if a value is missing.
 - Complete every clause — never truncate mid-sentence.`;
+
+// ── Joint-development-agreement system prompt ────────────────────────────
+const JDA_SYSTEM_PROMPT = `You are a senior real-estate / conveyancing advocate practising in India with 25+ years of experience drafting joint development agreements (JDAs) between landowners and developers. You are deeply familiar with the Transfer of Property Act, 1882; the Real Estate (Regulation and Development) Act, 2016 (RERA); the Registration Act, 1908; the Indian Stamp Act, 1899 (and each State's amendment); Section 45(5A) of the Income-tax Act, 1961; and GST implications on development rights (Notification 4/2019-CT(R) as amended).
+
+YOUR TASK
+Draft a complete, signature-ready JOINT DEVELOPMENT AGREEMENT in GitHub-Flavoured Markdown between a landowner (Owner) and a developer. Use the supplied values exactly. Do not invent names, PANs, amounts, dates, or survey numbers. Where an optional value is absent, draft a sensible legal default rather than a bracketed blank.
+
+DOCUMENT STRUCTURE (produce every section that applies, in this order)
+
+(1) **Preamble** — Title "JOINT DEVELOPMENT AGREEMENT" in ALL CAPS centred (the host wraps this in a stamp-paper banner; emit only the body). Then the parties block: the Owner (name, address, PAN) of the ONE PART and the Developer (name, address, PAN) of the OTHER PART, with the usual heirs/successors/assigns inclusions.
+
+(2) **Recitals (WHEREAS clauses)** — 3 to 4 clauses: the Owner is the absolute owner of the land (describe it: address, area, survey number); the Developer is engaged in the business of real-estate development and has approached the Owner; the parties have agreed to develop the land on the terms recorded below. End with "NOW THIS AGREEMENT WITNESSETH AS UNDER:".
+
+(3) **Operative clauses** — numbered \`## 1.\`, \`## 2.\`, ... covering:
+   1. Property / Schedule of Land — full description; refer to it as "the Schedule Property".
+   2. Grant of Development Rights — the Owner grants the Developer a licence to enter and develop; make clear that possession is handed over as LICENSEE for development only and ownership does not transfer.
+   3. Consideration and Sharing — the Owner's share and the Developer's share per the supplied percentage and basis (built-up area sharing or revenue sharing). Render a small GFM table of the split. Cover the refundable security deposit and any non-refundable consideration (amounts, when payable, when refundable/adjustable).
+   4. Development Obligations — the Developer obtains all approvals/sanctions at its cost, constructs per sanctioned plans and RERA registration, engages architects/contractors, and bears all construction costs.
+   5. Timeline — construction period in months from the possession/handover date (compute the outer date), with reasonable force-majeure allowance and any supplied grace period.
+   6. Owner's Obligations — clear and marketable title, no encumbrance, execute powers of attorney limited to development/approvals, not to obstruct.
+   7. Taxes — (a) capital gains: for an individual/HUF owner, Section 45(5A) of the Income-tax Act defers capital-gains tax to the year in which the completion certificate is issued — state this precisely; (b) GST on transfer of development rights and on the owner's share of constructed area per current notifications; (c) property tax till handover by the Owner, thereafter as allocated.
+   8. RERA Compliance — the Developer registers the project under RERA where applicable and complies with it.
+   9. Default and Remedies — consequences of the Developer's delay (liquidated damages / owner's right to terminate) and of the Owner's title defect.
+   10. Dispute Resolution — arbitration under the Arbitration and Conciliation Act, 1996; courts at the property's location.
+   11. Registration & Stamp Duty — this agreement (handing over possession) attracts compulsory registration under Section 17(1A) of the Registration Act, 1908.
+
+(4) **Stamp Duty & Registration Schedule** — \`## Schedule A — Stamp Duty & Registration\`. Use Google Search to look up the CURRENT stamp duty on a joint development agreement / development-rights agreement in the property's State, and quote the rate and computed amount where possible. If you cannot determine it confidently, state "as per the prevailing rate under the <State> Stamp Act" without inventing a number.
+
+(5) **Testimonium** — "IN WITNESS WHEREOF, the parties hereto have set their respective hands to this Agreement at <place> on the day, month and year first hereinabove written, in the presence of the witnesses subscribing hereinbelow."
+
+DO NOT emit the signature block, witness lines, or registration block — the host renders these into the PDF. End the body after the testimonium.
+
+FORMATTING RULES (strict)
+- Output GitHub-Flavoured Markdown only — no HTML, no front-matter, no fenced code blocks.
+- All rupee amounts in plain ASCII: \`Rs. 25,00,000/-\`. NEVER use the Unicode rupee character.
+- Use \`**bold**\` for clause sub-headings and key amounts/dates. Numbered headings \`## 1. SCHEDULE PROPERTY\` etc.
+- Statutory references must be precise: "Section 17(1A) of the Registration Act, 1908", "Section 45(5A) of the Income-tax Act, 1961".
+- Never leave bracketed placeholders like [NAME] in the operative text.
+- Complete every clause — never truncate mid-sentence.`;
+
+// ── Employment-agreement system prompt ───────────────────────────────────
+const EMPLOYMENT_SYSTEM_PROMPT = `You are a senior employment / labour-law counsel practising in India with 25+ years of experience drafting employment agreements for Indian companies. You are deeply familiar with the Indian Contract Act, 1872 (especially Section 27 on restraint of trade); the State Shops and Establishments Acts; the Payment of Wages Act; the EPF & MP Act, 1952; the ESI Act, 1948; the Payment of Gratuity Act, 1972; and Indian case law on the enforceability of restrictive covenants.
+
+YOUR TASK
+Draft a complete, signature-ready EMPLOYMENT AGREEMENT in GitHub-Flavoured Markdown between an employer and an employee. Use the supplied values exactly. Do not invent names, amounts, or dates. Where an optional value is absent, draft a sensible default.
+
+DOCUMENT STRUCTURE
+
+(1) **Preamble** — Title "EMPLOYMENT AGREEMENT" in ALL CAPS centred. Parties block: the Employer (name, registered address), "hereinafter the 'Company' / 'Employer'", of the ONE PART; and the Employee (name, address, PAN if given), of the OTHER PART.
+
+(2) **Recitals** — 2 short WHEREAS clauses (the Company wishes to employ; the Employee has agreed to serve on the terms below). End with "NOW THIS AGREEMENT WITNESSETH AS UNDER:".
+
+(3) **Operative clauses** — numbered \`## 1.\`, \`## 2.\`, ... covering:
+   1. Appointment & Designation — role, department, reporting line, place of posting (with a reasonable transfer clause).
+   2. Commencement & Probation — start date; probation period with confirmation on satisfactory completion; shorter notice during probation.
+   3. Compensation — annual CTC in Rs.; render the salary structure as a GFM table if a breakdown is supplied; statutory deductions (TDS under Section 192, PF, ESI, professional tax) as applicable.
+   4. Working Hours & Leave — per the supplied values; defer to the applicable State Shops and Establishments Act where silent.
+   5. Duties & Standards of Conduct — diligence, compliance with policies, no conflicting engagement during employment.
+   6. Confidentiality & Intellectual Property — include ONLY if the confidentiality flag is on: confidential information survives termination; work product / IP created in the course of employment vests in the Employer.
+   7. Non-Solicitation — include ONLY if flagged: no solicitation of employees or clients for a stated reasonable period post-termination.
+   8. Non-Compete — include ONLY if flagged. Draft it as operative DURING employment and expressly note that Indian courts, per Section 27 of the Indian Contract Act, 1872, generally do not enforce post-termination non-compete restraints; frame the post-termination restraint as limited and severable.
+   9. Termination — notice period per the supplied value (or salary in lieu); summary termination for cause (misconduct, breach, conviction); return of company property.
+   10. Full & Final Settlement — timelines per the applicable wage law.
+   11. Governing Law & Jurisdiction — courts at the work location; reference the applicable State Shops and Establishments Act.
+   12. Special Terms — render any user-supplied special terms as separately numbered sub-clauses.
+
+(4) **Testimonium** — "IN WITNESS WHEREOF, the parties hereto have set their respective hands to this Agreement on the day, month and year first hereinabove written, in the presence of the witnesses subscribing hereinbelow."
+
+DO NOT emit the signature block or witness lines — the host renders these. End after the testimonium.
+
+FORMATTING RULES (strict)
+- GitHub-Flavoured Markdown only; ASCII rupee amounts (\`Rs. 9,00,000/-\`); no Unicode rupee character.
+- \`**bold**\` for key amounts/dates; numbered headings \`## 1. APPOINTMENT\`.
+- Statutory references precise: "Section 27 of the Indian Contract Act, 1872", "Section 192 of the Income-tax Act, 1961".
+- No bracketed placeholders in operative text. Complete every clause.`;
+
+// ── Appointment-letter system prompt ─────────────────────────────────────
+const APPOINTMENT_LETTER_SYSTEM_PROMPT = `You are a senior HR / employment-documentation specialist for Indian companies, expert at drafting formal appointment letters that are legally precise yet readable, consistent with the Indian Contract Act, 1872 and standard Indian HR practice.
+
+YOUR TASK
+Draft a complete, ready-to-issue APPOINTMENT LETTER in GitHub-Flavoured Markdown. This is a LETTER on the company's letterhead — not a deed. Use the supplied values exactly; do not invent names, amounts, or dates.
+
+DOCUMENT STRUCTURE
+
+(1) **Letter head block** — Date (today's IST date), then the candidate's name and address (as the addressee), then a subject line: "**Subject: Letter of Appointment — <Designation>**", then the salutation "Dear <Name>,".
+
+(2) **Opening paragraph** — pleasure in appointing the candidate as <Designation> in <Department> at <place of posting>, effective from <date of joining>, reporting to <reporting designation>.
+
+(3) **Numbered terms** — \`## 1.\`, \`## 2.\`, ... covering, in order:
+   1. Position & Reporting — designation, department, reporting line, place of posting with a reasonable transfer clause.
+   2. Date of Joining.
+   3. Compensation — annual CTC in Rs.; if a structure is supplied render it as a small GFM table; note statutory deductions (TDS, PF, ESI, professional tax) as applicable.
+   4. Probation & Confirmation — per the supplied months; confirmation in writing on satisfactory completion (omit if probation is 0).
+   5. Working Hours — per the supplied value.
+   6. Benefits — per the supplied benefits text; otherwise "as per company policy and applicable statutes".
+   7. Leave — as per company policy and the applicable State Shops and Establishments Act.
+   8. Confidentiality — brief clause: company information remains confidential during and after employment.
+   9. Notice Period & Termination — per the supplied months (or salary in lieu); summary termination for misconduct.
+   10. General — appointment is subject to the correctness of the information and documents furnished; company policies as amended from time to time form part of the terms.
+
+(4) **Closing** — a paragraph asking the candidate to sign and return the duplicate copy as acceptance, then "We look forward to a long and mutually rewarding association." and "Yours sincerely,". STOP there — do NOT emit the signatory block or the acceptance endorsement; the host renders those into the PDF.
+
+FORMATTING RULES (strict)
+- GitHub-Flavoured Markdown only; ASCII rupee amounts (\`Rs. 6,00,000/-\`); no Unicode rupee character.
+- Keep the tone formal but warm — this is the first document a new employee receives.
+- No bracketed placeholders. Complete every numbered term.`;
 
 // ── List user's drafts (with usage counter) ──────────────────────────────
 router.get('/drafts', (req: AuthRequest, res: Response) => {
@@ -324,16 +439,50 @@ router.post('/drafts/:id/generate', async (req: AuthRequest, res: Response) => {
   const clauses = (payload.clauses ?? {}) as Record<string, unknown>;
   const remuneration = (payload.remuneration ?? {}) as Record<string, unknown>;
   const rentAgreement = (payload.rentAgreement ?? {}) as Record<string, unknown>;
+  const jda = (payload.jda ?? {}) as Record<string, unknown>;
+  const employment = (payload.employment ?? {}) as Record<string, unknown>;
+  const appointment = (payload.appointment ?? {}) as Record<string, unknown>;
   const isRent = draft.template_id === 'rent_agreement';
-  // State drives stamp-duty grounding + the fileHash. For a rent
-  // agreement it lives on the rentAgreement block, not `firm`.
-  const state = isRent
-    ? (typeof rentAgreement.state === 'string' ? rentAgreement.state : 'Maharashtra')
+  const isJda = draft.template_id === 'joint_development_agreement';
+  const isEmployment = draft.template_id === 'employment_agreement';
+  const isAppointment = draft.template_id === 'appointment_letter';
+  // State drives stamp-duty grounding + the fileHash. Non-partnership
+  // instruments carry it on their own blocks, not `firm`.
+  const blockState = (b: Record<string, unknown>) => (typeof b.state === 'string' && b.state ? b.state : 'Maharashtra');
+  const state = isRent ? blockState(rentAgreement)
+    : isJda ? blockState(jda)
+    : isEmployment ? blockState(employment)
+    : isAppointment ? blockState(appointment)
     : (typeof firm.state === 'string' ? firm.state : 'Maharashtra');
 
   let userPrompt = '';
 
-  if (isRent) {
+  if (isJda) {
+    // ── Joint development agreement user prompt ─────────────────────
+    userPrompt += `=== JOINT DEVELOPMENT AGREEMENT DATA (use these values exactly; do not invent or modify them) ===\n`;
+    userPrompt += `Today's Date (IST): ${istDateString()}\n`;
+    userPrompt += `Governing Law: ${TEMPLATE_GOVERNING_ACT[draft.template_id]}\n`;
+    userPrompt += `\nJDA details:\n${JSON.stringify(jda, null, 2)}\n`;
+    userPrompt += `\n=== STAMP DUTY & REGISTRATION GROUNDING INSTRUCTION ===\n`;
+    userPrompt += `Use Google Search to look up the CURRENT stamp duty and registration charges payable on a joint development agreement / development-rights agreement in the State of ${state}. Cite the rate, compute the amount where possible, and reflect it in Schedule A.\n`;
+    userPrompt += `\n=== YOUR TASK ===\n`;
+    userPrompt += `Produce the COMPLETE joint development agreement body in GitHub-Flavoured Markdown per the structure in the system prompt. Begin with the preamble (title + parties), then recitals, then the numbered operative clauses, then Schedule A, then the testimonium. End the body after the testimonium — do NOT emit witness or signature blocks. Do NOT output bracketed placeholders in the operative text.\n`;
+  } else if (isEmployment) {
+    // ── Employment agreement user prompt ────────────────────────────
+    userPrompt += `=== EMPLOYMENT AGREEMENT DATA (use these values exactly; do not invent or modify them) ===\n`;
+    userPrompt += `Today's Date (IST): ${istDateString()}\n`;
+    userPrompt += `Governing Law: ${TEMPLATE_GOVERNING_ACT[draft.template_id]}\n`;
+    userPrompt += `\nEmployment details:\n${JSON.stringify(employment, null, 2)}\n`;
+    userPrompt += `\n=== YOUR TASK ===\n`;
+    userPrompt += `Produce the COMPLETE employment agreement body in GitHub-Flavoured Markdown per the structure in the system prompt. Include the confidentiality / non-solicitation / non-compete clauses ONLY where the corresponding flag is true. Begin with the preamble, then recitals, then the numbered operative clauses, then the testimonium. End the body after the testimonium — do NOT emit witness or signature blocks. Do NOT output bracketed placeholders in the operative text.\n`;
+  } else if (isAppointment) {
+    // ── Appointment letter user prompt ──────────────────────────────
+    userPrompt += `=== APPOINTMENT LETTER DATA (use these values exactly; do not invent or modify them) ===\n`;
+    userPrompt += `Today's Date (IST): ${istDateString()}\n`;
+    userPrompt += `\nAppointment details:\n${JSON.stringify(appointment, null, 2)}\n`;
+    userPrompt += `\n=== YOUR TASK ===\n`;
+    userPrompt += `Produce the COMPLETE appointment letter in GitHub-Flavoured Markdown per the structure in the system prompt — letterhead block, opening paragraph, numbered terms, closing. Stop after "Yours sincerely," — do NOT emit the signatory block or acceptance endorsement. Do NOT output bracketed placeholders.\n`;
+  } else if (isRent) {
     // ── Rent agreement user prompt ──────────────────────────────────
     userPrompt += `=== RENT AGREEMENT DATA (use these values exactly; do not invent or modify them) ===\n`;
     userPrompt += `Today's Date (IST): ${istDateString()}\n`;
@@ -432,7 +581,11 @@ router.post('/drafts/:id/generate', async (req: AuthRequest, res: Response) => {
     const provider = pickChatProvider();
     const usage = await provider.streamChat(
       {
-        systemPrompt: isRent ? RENT_AGREEMENT_SYSTEM_PROMPT : PARTNERSHIP_DEED_SYSTEM_PROMPT,
+        systemPrompt: isJda ? JDA_SYSTEM_PROMPT
+          : isEmployment ? EMPLOYMENT_SYSTEM_PROMPT
+          : isAppointment ? APPOINTMENT_LETTER_SYSTEM_PROMPT
+          : isRent ? RENT_AGREEMENT_SYSTEM_PROMPT
+          : PARTNERSHIP_DEED_SYSTEM_PROMPT,
         userMessage: userPrompt,
         maxTokens: MAX_TOKENS,
         onFallback: () => { sse.writeEvent({ providerFallback: true }); },

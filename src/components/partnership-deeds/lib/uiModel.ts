@@ -15,7 +15,10 @@ export type PartnershipDeedTemplateId =
   | 'retirement_deed'              // partner exit
   | 'retirement_admission_deed'    // simultaneous exit + admission in one instrument
   | 'dissolution_deed'             // dissolution
-  | 'rent_agreement';              // landlord–tenant rent / lease agreement
+  | 'rent_agreement'               // landlord–tenant rent / lease agreement
+  | 'joint_development_agreement'  // landowner–developer JDA (real estate)
+  | 'employment_agreement'         // employer–employee employment contract
+  | 'appointment_letter';          // employer→employee appointment letter
 
 export interface PartnerBlock {
   name?: string;
@@ -128,6 +131,80 @@ export interface RentAgreementBlock {
   furnishing?: string;             // free text: furnished/semi/unfurnished + notes
 }
 
+// Joint Development Agreement — landowner hands land to a developer for
+// construction against an area / revenue share. NOT a partnership
+// instrument; reuses the wizard shell like rent_agreement does. The
+// income-tax angle (Section 45(5A) capital-gains deferral for
+// individual/HUF owners) is drafted by the AI from these inputs.
+export interface JdaBlock {
+  landownerName?: string;
+  landownerAddress?: string;
+  landownerPan?: string;
+  developerName?: string;          // firm / company name
+  developerAddress?: string;
+  developerPan?: string;
+  landAddress?: string;            // full property description
+  landArea?: string;               // free text: "500 sq. yd." / "2 acres"
+  surveyNumber?: string;           // survey / khasra / CTS number
+  state?: string;                  // drives stamp duty + jurisdiction
+  ownerSharePct?: number;          // landowner's share, 0-100
+  shareBasis?: 'builtup_area' | 'revenue';
+  refundableDeposit?: number;      // INR, refundable security to owner
+  nonRefundableConsideration?: number; // INR, upfront non-refundable
+  constructionMonths?: number;     // completion timeline
+  possessionDate?: string;         // YYYY-MM-DD — land handover for development
+  specialTerms?: string;           // free-form, appended by AI
+}
+
+// Employment agreement between an employer entity and an employee.
+export interface EmploymentBlock {
+  employerName?: string;
+  employerAddress?: string;
+  employeeName?: string;
+  employeeAddress?: string;
+  employeePan?: string;
+  designation?: string;
+  department?: string;
+  reportingTo?: string;            // designation of reporting manager
+  workLocation?: string;
+  startDate?: string;              // YYYY-MM-DD
+  probationMonths?: number;
+  noticePeriodMonths?: number;
+  annualCtc?: number;              // INR
+  salaryStructure?: string;        // free text: basic/HRA/allowances breakdown
+  workingHours?: string;           // free text: "9:30–18:30, Mon–Sat"
+  leavePolicy?: string;            // free text
+  confidentiality?: boolean;       // confidentiality / IP assignment clause
+  nonSolicit?: boolean;            // non-solicitation clause
+  nonCompete?: boolean;            // reasonable non-compete (enforceability caveat)
+  state?: string;                  // jurisdiction
+  specialTerms?: string;
+}
+
+// Appointment letter — a letterhead LETTER, not a stamped deed. The PDF
+// export skips the stamp banner and renders an employer-signatory +
+// candidate-acceptance footer instead of witness/notary blocks.
+export interface AppointmentBlock {
+  employerName?: string;
+  employerAddress?: string;
+  employeeName?: string;
+  employeeAddress?: string;
+  designation?: string;
+  department?: string;
+  reportingTo?: string;
+  workLocation?: string;
+  startDate?: string;              // YYYY-MM-DD — date of joining
+  annualCtc?: number;              // INR
+  salaryStructure?: string;        // free text
+  probationMonths?: number;
+  noticePeriodMonths?: number;
+  workingHours?: string;
+  benefits?: string;               // free text: PF, ESI, insurance, bonus
+  signatoryName?: string;          // who signs for the employer
+  signatoryDesignation?: string;
+  state?: string;                  // jurisdiction (optional)
+}
+
 export interface PartnershipDeedDraft {
   templateId: PartnershipDeedTemplateId;
   firm?: FirmCore;
@@ -140,6 +217,9 @@ export interface PartnershipDeedDraft {
   dissolution?: DissolutionBlock;
   remuneration?: RemunerationBlock;   // formation deeds + LLP agreement
   rentAgreement?: RentAgreementBlock;  // rent_agreement only
+  jda?: JdaBlock;                      // joint_development_agreement only
+  employment?: EmploymentBlock;        // employment_agreement only
+  appointment?: AppointmentBlock;      // appointment_letter only
 }
 
 export type StepId =
@@ -153,6 +233,9 @@ export type StepId =
   | 'retirement'
   | 'dissolution'
   | 'rentAgreement'
+  | 'jda'
+  | 'employment'
+  | 'appointment'
   | 'review';
 
 export const STEP_LABELS: Record<StepId, string> = {
@@ -166,6 +249,9 @@ export const STEP_LABELS: Record<StepId, string> = {
   retirement: 'Retiring Partner',
   dissolution: 'Dissolution',
   rentAgreement: 'Rent Agreement',
+  jda: 'Development Terms',
+  employment: 'Employment Terms',
+  appointment: 'Appointment Details',
   review: 'Review & Generate',
 };
 
@@ -180,6 +266,9 @@ export const STEP_DESCRIPTIONS: Record<StepId, string> = {
   retirement: 'Retiring partner, effective date, settlement.',
   dissolution: 'Dissolution date, asset and liability plan.',
   rentAgreement: 'Landlord, tenant, property, rent, deposit and term.',
+  jda: 'Landowner, developer, land details, sharing ratio and timeline.',
+  employment: 'Employer, employee, role, compensation and restrictive covenants.',
+  appointment: 'Employer, candidate, role, compensation and joining terms.',
   review: 'Generate the document (AI) and download as PDF.',
 };
 
@@ -191,6 +280,9 @@ export const TEMPLATE_TITLES: Record<PartnershipDeedTemplateId, string> = {
   retirement_admission_deed: 'Retirement cum Admission Deed',
   dissolution_deed: 'Dissolution Deed',
   rent_agreement: 'Rent Agreement',
+  joint_development_agreement: 'Joint Development Agreement',
+  employment_agreement: 'Employment Agreement',
+  appointment_letter: 'Appointment Letter',
 };
 
 export function emptyDraft(templateId: PartnershipDeedTemplateId): PartnershipDeedDraft {
@@ -213,6 +305,17 @@ export function emptyDraft(templateId: PartnershipDeedTemplateId): PartnershipDe
 export function getStepOrder(templateId: PartnershipDeedTemplateId): StepId[] {
   if (templateId === 'rent_agreement') {
     return ['templatePicker', 'rentAgreement', 'review'];
+  }
+  // The other non-partnership instruments follow the same shape as the
+  // rent agreement: one dedicated data step, then review.
+  if (templateId === 'joint_development_agreement') {
+    return ['templatePicker', 'jda', 'review'];
+  }
+  if (templateId === 'employment_agreement') {
+    return ['templatePicker', 'employment', 'review'];
+  }
+  if (templateId === 'appointment_letter') {
+    return ['templatePicker', 'appointment', 'review'];
   }
   const order: StepId[] = ['templatePicker', 'firm', 'partners', 'banking'];
   if (templateId === 'partnership_deed' || templateId === 'llp_agreement') {

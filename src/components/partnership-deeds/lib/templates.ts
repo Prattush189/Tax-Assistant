@@ -50,6 +50,24 @@ export const TEMPLATE_LIST: DeedTemplateMeta[] = [
     subtitle: 'Landlord–tenant rent / leave-and-license agreement',
     governingAct: 'Registration Act, 1908 & the applicable State Stamp Act',
   },
+  {
+    id: 'joint_development_agreement',
+    title: 'Joint Development Agreement',
+    subtitle: 'Landowner–developer JDA with area / revenue sharing',
+    governingAct: 'Transfer of Property Act, 1882; RERA, 2016; Registration Act, 1908',
+  },
+  {
+    id: 'employment_agreement',
+    title: 'Employment Agreement',
+    subtitle: 'Employer–employee contract with restrictive covenants',
+    governingAct: 'Indian Contract Act, 1872 & the applicable Shops and Establishments Act',
+  },
+  {
+    id: 'appointment_letter',
+    title: 'Appointment Letter',
+    subtitle: 'Formal appointment letter with role, CTC and joining terms',
+    governingAct: 'Indian Contract Act, 1872',
+  },
 ];
 
 export function templateById(id: PartnershipDeedTemplateId): DeedTemplateMeta {

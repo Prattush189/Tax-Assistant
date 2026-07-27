@@ -199,11 +199,177 @@ function paintRentFooter(doc: jsPDF, draft: PartnershipDeedDraft, startY: number
   return y;
 }
 
+/** Generic two-party agreement footer: both parties' signature lines +
+ *  witnesses, with an optional registration note. Used by the JDA
+ *  (owner/developer) and the employment agreement (employer/employee) —
+ *  instruments whose signatories aren't partners and which don't carry
+ *  the notary / §58 partnership scaffolding. */
+function paintTwoPartyFooter(
+  doc: jsPDF,
+  startY: number,
+  place: string | undefined,
+  parties: Array<{ role: string; name?: string }>,
+  registrationNote?: { heading: string; body: string },
+): number {
+  let y = startY;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(30, 58, 138);
+  doc.text('IN WITNESS WHEREOF', MARGIN, y);
+  y += 5;
+  doc.setFont('times', 'normal');
+  doc.setFontSize(10);
+  doc.setTextColor(40, 40, 40);
+  doc.text(`executed on this ${formatIstDate()} at ${place ?? '_______________'}`, MARGIN, y);
+  y += 8;
+
+  for (const p of parties) {
+    y = ensureSpace(doc, y, 16);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.setTextColor(30, 58, 138);
+    doc.text(p.role, MARGIN, y);
+    y += 5;
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(40, 40, 40);
+    doc.text(p.name?.trim() || '____________________', MARGIN, y);
+    y += LINE;
+    doc.setDrawColor(120, 120, 120);
+    doc.setLineWidth(0.3);
+    doc.line(MARGIN + 3, y, MARGIN + 70, y);
+    doc.setFontSize(8);
+    doc.setTextColor(120, 120, 120);
+    doc.text('Signature', MARGIN + 3, y + 3);
+    doc.text('Date: ____________', MARGIN + 80, y + 3);
+    y += 10;
+  }
+
+  // Witness block (2 witnesses)
+  y += 2;
+  y = ensureSpace(doc, y, 26);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.setTextColor(30, 58, 138);
+  doc.text('WITNESSES', MARGIN, y);
+  y += 5;
+  for (let i = 1; i <= 2; i++) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    doc.setTextColor(40, 40, 40);
+    doc.text(`${i}.`, MARGIN, y);
+    doc.setDrawColor(120, 120, 120);
+    doc.setLineWidth(0.3);
+    doc.line(MARGIN + 6, y, MARGIN + 80, y);
+    doc.line(MARGIN + 90, y, PAGE_W - MARGIN, y);
+    doc.setFontSize(8);
+    doc.setTextColor(120, 120, 120);
+    doc.text('Name & Signature', MARGIN + 6, y + 3);
+    doc.text('Address', MARGIN + 90, y + 3);
+    y += 8;
+  }
+
+  if (registrationNote) {
+    y += 4;
+    y = ensureSpace(doc, y, 16);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.setTextColor(30, 58, 138);
+    doc.text(registrationNote.heading, MARGIN, y);
+    y += 4.5;
+    doc.setFont('times', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(80, 80, 80);
+    doc.text(registrationNote.body, MARGIN, y);
+    y += 4.5;
+    doc.text('Document No.: ______________   Sub-Registrar: ______________   Date: __________', MARGIN, y);
+    y += 4.5;
+  }
+  return y;
+}
+
+/** Appointment-letter footer: employer's authorised signatory plus the
+ *  candidate's acceptance endorsement. A letter has no witnesses,
+ *  notary, or registration. */
+function paintAppointmentFooter(doc: jsPDF, draft: PartnershipDeedDraft, startY: number): number {
+  let y = startY;
+  const a = draft.appointment ?? {};
+
+  y = ensureSpace(doc, y, 30);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.setTextColor(30, 58, 138);
+  doc.text(`For ${a.employerName?.trim() || 'the Employer'}`, MARGIN, y);
+  y += 12;
+  doc.setDrawColor(120, 120, 120);
+  doc.setLineWidth(0.3);
+  doc.line(MARGIN, y, MARGIN + 70, y);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(40, 40, 40);
+  doc.text(a.signatoryName?.trim() || '____________________', MARGIN, y + 4);
+  doc.setFontSize(8);
+  doc.setTextColor(120, 120, 120);
+  doc.text(a.signatoryDesignation?.trim() || 'Authorised Signatory', MARGIN, y + 8);
+  y += 16;
+
+  y = ensureSpace(doc, y, 32);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.setTextColor(30, 58, 138);
+  doc.text('ACCEPTANCE', MARGIN, y);
+  y += 5;
+  doc.setFont('times', 'normal');
+  doc.setFontSize(9.5);
+  doc.setTextColor(40, 40, 40);
+  doc.text(
+    'I have read and understood the terms of this appointment and accept the same unconditionally.',
+    MARGIN, y,
+  );
+  y += 12;
+  doc.setDrawColor(120, 120, 120);
+  doc.line(MARGIN, y, MARGIN + 70, y);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.text(a.employeeName?.trim() || '____________________', MARGIN, y + 4);
+  doc.setFontSize(8);
+  doc.setTextColor(120, 120, 120);
+  doc.text('Candidate signature', MARGIN, y + 8);
+  doc.text('Date: ____________', MARGIN + 80, y + 8);
+  return y + 12;
+}
+
 /** Bottom block: witnesses, partner signature lines, notary, §58 registration placeholder. */
 function paintFooter(doc: jsPDF, draft: PartnershipDeedDraft, startY: number): number {
   // Rent agreements use a lessor/lessee signature footer, not partners.
   if (draft.templateId === 'rent_agreement') {
     return paintRentFooter(doc, draft, startY);
+  }
+  if (draft.templateId === 'joint_development_agreement') {
+    const j = draft.jda ?? {};
+    return paintTwoPartyFooter(
+      doc, startY, j.state,
+      [
+        { role: 'LANDOWNER / OWNER', name: j.landownerName },
+        { role: 'DEVELOPER', name: j.developerName },
+      ],
+      {
+        heading: 'REGISTRATION (Registration Act, 1908)',
+        body: 'A joint development agreement transferring possession requires compulsory registration at the office of the Sub-Registrar.',
+      },
+    );
+  }
+  if (draft.templateId === 'employment_agreement') {
+    const e = draft.employment ?? {};
+    return paintTwoPartyFooter(
+      doc, startY, e.workLocation || e.state,
+      [
+        { role: 'EMPLOYER (Authorised Signatory)', name: e.employerName },
+        { role: 'EMPLOYEE', name: e.employeeName },
+      ],
+    );
+  }
+  if (draft.templateId === 'appointment_letter') {
+    return paintAppointmentFooter(doc, draft, startY);
   }
   let y = startY;
 
@@ -347,12 +513,31 @@ export async function renderPartnershipDeedPdf(
 ): Promise<void> {
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
 
-  // Stamp banner + title. A rent agreement has no `firm` — its state
-  // (which drives the stamp-duty banner) lives on the rentAgreement block.
-  const bannerState = draft.templateId === 'rent_agreement'
-    ? draft.rentAgreement?.state
+  // Stamp banner + title. Non-partnership instruments carry their state
+  // (which drives the stamp-duty banner) on their own blocks, not `firm`.
+  const bannerState =
+    draft.templateId === 'rent_agreement' ? draft.rentAgreement?.state
+    : draft.templateId === 'joint_development_agreement' ? draft.jda?.state
+    : draft.templateId === 'employment_agreement' ? draft.employment?.state
+    : draft.templateId === 'appointment_letter' ? draft.appointment?.state
     : draft.firm?.state;
-  let y = paintStampBanner(doc, bannerState, TEMPLATE_TITLES[draft.templateId]);
+  // An appointment letter is a letterhead LETTER, not a stamped deed —
+  // render a simple title header instead of the stamp-paper banner.
+  let y: number;
+  if (draft.templateId === 'appointment_letter') {
+    y = MARGIN + 4;
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(16);
+    doc.setTextColor(30, 58, 138);
+    doc.text(TEMPLATE_TITLES[draft.templateId].toUpperCase(), PAGE_W / 2, y, { align: 'center' });
+    y += 8;
+    doc.setDrawColor(30, 58, 138);
+    doc.setLineWidth(0.5);
+    doc.line(MARGIN, y, PAGE_W - MARGIN, y);
+    y += 10;
+  } else {
+    y = paintStampBanner(doc, bannerState, TEMPLATE_TITLES[draft.templateId]);
+  }
 
   // Markdown body via the shared renderer
   await renderMarkdownToPdf(doc, markdownBody, {

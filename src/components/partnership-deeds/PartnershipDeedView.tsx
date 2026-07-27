@@ -23,6 +23,9 @@ import { ReconstitutionStep } from './steps/ReconstitutionStep';
 import { RetirementStep } from './steps/RetirementStep';
 import { DissolutionStep } from './steps/DissolutionStep';
 import { RentAgreementStep } from './steps/RentAgreementStep';
+import { JointDevelopmentStep } from './steps/JointDevelopmentStep';
+import { EmploymentAgreementStep } from './steps/EmploymentAgreementStep';
+import { AppointmentLetterStep } from './steps/AppointmentLetterStep';
 import { ReviewStep } from './steps/ReviewStep';
 
 interface Props {
@@ -249,6 +252,12 @@ function StepBody(props: StepBodyProps) {
       return <DissolutionStep draft={draft} onChange={onChange} />;
     case 'rentAgreement':
       return <RentAgreementStep draft={draft} onChange={onChange} />;
+    case 'jda':
+      return <JointDevelopmentStep draft={draft} onChange={onChange} />;
+    case 'employment':
+      return <EmploymentAgreementStep draft={draft} onChange={onChange} />;
+    case 'appointment':
+      return <AppointmentLetterStep draft={draft} onChange={onChange} />;
     case 'review':
       return (
         <ReviewStep
@@ -299,7 +308,8 @@ function NoDraftSelected({ manager }: { manager: PartnershipDeedsManager }) {
           </div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-1">Deeds &amp; Agreements</h1>
           <p className="text-sm text-gray-500 dark:text-gray-500 max-w-md mx-auto">
-            Generate Partnership Act 1932 / LLP Act 2008 deeds and amendments, plus rent agreements.
+            Generate Partnership Act 1932 / LLP Act 2008 deeds and amendments, plus rent agreements,
+            joint development agreements, employment agreements and appointment letters.
             Stamp duty is looked up live for your selected state.
           </p>
         </div>

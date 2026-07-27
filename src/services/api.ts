@@ -1104,7 +1104,10 @@ export type PartnershipDeedTemplateId =
   | 'retirement_deed'
   | 'retirement_admission_deed'
   | 'dissolution_deed'
-  | 'rent_agreement';
+  | 'rent_agreement'
+  | 'joint_development_agreement'
+  | 'employment_agreement'
+  | 'appointment_letter';
 
 export type PartnershipDeedStatus = 'draft' | 'generating' | 'generated' | 'error';
 

@@ -34,7 +34,10 @@ export function usePartnershipDeedsManager(enabled: boolean) {
     try {
       const data = await fetchPartnershipDeedDrafts();
       setDrafts(data.drafts);
-      setUsage(data.usage);
+      // Server dropped `usage.limit` when per-feature caps were removed
+      // (the token budget is the only gate now); keep the state shape
+      // with limit=0 = "no per-feature limit" for the ReviewStep display.
+      setUsage({ used: data.usage.used, limit: 0 });
     } catch {
       // non-fatal — user might not be logged in yet
     }

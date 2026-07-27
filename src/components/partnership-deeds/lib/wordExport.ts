@@ -85,12 +85,51 @@ const WITNESS_HTML = `<p class="sec">WITNESSES</p>
 <p>2.&nbsp; ______________________________&nbsp;&nbsp;&nbsp; Address: ______________________</p>`;
 
 function footerHtml(draft: PartnershipDeedDraft): string {
+  // Appointment letter: employer signatory + candidate acceptance — no
+  // witnesses, notary, or registration scaffolding.
+  if (draft.templateId === 'appointment_letter') {
+    const a = draft.appointment ?? {};
+    return [
+      '<hr/>',
+      `<p class="sec">For ${escapeHtml(a.employerName?.trim() || 'the Employer')}</p>`,
+      '<div class="sig-line"></div>',
+      `<p>${escapeHtml(a.signatoryName?.trim() || '____________________')}</p>`,
+      `<p class="muted">${escapeHtml(a.signatoryDesignation?.trim() || 'Authorised Signatory')}</p>`,
+      '<p class="sec">ACCEPTANCE</p>',
+      '<p>I have read and understood the terms of this appointment and accept the same unconditionally.</p>',
+      '<div class="sig-line"></div>',
+      `<p>${escapeHtml(a.employeeName?.trim() || '____________________')}</p>`,
+      '<p class="muted">Candidate signature &nbsp;&nbsp;&nbsp; Date: ____________</p>',
+    ].join('\n');
+  }
+
   const isRent = draft.templateId === 'rent_agreement';
-  const place = isRent ? (draft.rentAgreement?.state ?? '_______________') : (draft.firm?.principalPlace ?? '_______________');
+  const isJda = draft.templateId === 'joint_development_agreement';
+  const isEmployment = draft.templateId === 'employment_agreement';
+  const place = isRent ? (draft.rentAgreement?.state ?? '_______________')
+    : isJda ? (draft.jda?.state ?? '_______________')
+    : isEmployment ? (draft.employment?.workLocation || draft.employment?.state || '_______________')
+    : (draft.firm?.principalPlace ?? '_______________');
   const parts: string[] = [];
   parts.push('<hr/>');
   parts.push('<p class="sec">IN WITNESS WHEREOF</p>');
   parts.push(`<p>executed on this ${escapeHtml(istDate())} at ${escapeHtml(place)}.</p>`);
+
+  if (isJda) {
+    parts.push(sigBlock('LANDOWNER / OWNER', draft.jda?.landownerName));
+    parts.push(sigBlock('DEVELOPER', draft.jda?.developerName));
+    parts.push(WITNESS_HTML);
+    parts.push('<p class="sec">REGISTRATION (Registration Act, 1908)</p>');
+    parts.push('<p class="muted">A joint development agreement transferring possession requires compulsory registration at the office of the Sub-Registrar.</p>');
+    parts.push('<p class="muted">Document No.: ______________ &nbsp; Sub-Registrar: ______________ &nbsp; Date: __________</p>');
+    return parts.join('\n');
+  }
+  if (isEmployment) {
+    parts.push(sigBlock('EMPLOYER (Authorised Signatory)', draft.employment?.employerName));
+    parts.push(sigBlock('EMPLOYEE', draft.employment?.employeeName));
+    parts.push(WITNESS_HTML);
+    return parts.join('\n');
+  }
 
   if (isRent) {
     parts.push(sigBlock('LANDLORD / LESSOR', draft.rentAgreement?.landlordName));
@@ -120,8 +159,16 @@ function footerHtml(draft: PartnershipDeedDraft): string {
 
 function buildDocHtml(draft: PartnershipDeedDraft, markdownBody: string): string {
   const title = TEMPLATE_TITLES[draft.templateId];
-  const state = draft.templateId === 'rent_agreement' ? draft.rentAgreement?.state : draft.firm?.state;
-  const stampNote = `To be executed on appropriate stamp paper as per the prevailing State Stamp Act${state ? ` (${escapeHtml(state)})` : ''}.`;
+  const state =
+    draft.templateId === 'rent_agreement' ? draft.rentAgreement?.state
+    : draft.templateId === 'joint_development_agreement' ? draft.jda?.state
+    : draft.templateId === 'employment_agreement' ? draft.employment?.state
+    : draft.templateId === 'appointment_letter' ? draft.appointment?.state
+    : draft.firm?.state;
+  // An appointment letter goes on the company letterhead, not stamp paper.
+  const stampNote = draft.templateId === 'appointment_letter'
+    ? 'To be issued on the company letterhead.'
+    : `To be executed on appropriate stamp paper as per the prevailing State Stamp Act${state ? ` (${escapeHtml(state)})` : ''}.`;
   return `<!DOCTYPE html>
 <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
 <head>
