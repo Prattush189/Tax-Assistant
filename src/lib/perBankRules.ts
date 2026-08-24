@@ -143,6 +143,112 @@ const ICICI: BankRule = {
   required: ['date', 'narration', 'debit', 'credit', 'balance'],
 };
 
+// ICICI's "Account statement" web-export (VAID SONS PHARMACEUTICAL
+// sample) prints a narrow S.No/Transaction-ID/Transaction-date column
+// that's too tight for "23-Apr-2025" to fit on one line — the year
+// wraps onto its OWN physical row directly below:
+//
+//   row A: ["1 S6938527 23-Apr-", "NEFT-",     "",        "50000.00", "50000.00"]
+//   row B: ["2025",               "HDFCN520",  "",        "",         ""        ]
+//
+// The header row suffers the same fate: "Transaction" / "date" split
+// across two physical header lines land on DIFFERENT grid columns
+// (a font/kerning quirk of this export), so the extractor's combined
+// columnHeaders come out as ["Cheque No", "Description", "Withdrawal",
+// "Deposit", null] — no column reads as a "date" header at all, and
+// the standard ICICI headerRules-based rule above bails with "required
+// role date missing". The column LAYOUT itself is fixed and correct
+// (date, narration, debit, credit, balance) — only the header TEXT is
+// unreliable — so this variant uses positional roles instead, the
+// same pattern as JK_BANK_SAVINGS / SBI above.
+//
+// The preprocess reconstructs each split date, stitching the
+// following row's narration fragment back into the transaction it
+// belongs to (a "2025"-only row with no other data would otherwise be
+// dropped, and the "HDFCN520" narration fragment lost with it — a
+// silent single-row narration loss on every transaction). Every OTHER
+// wrapped narration line (SONS / PHARMACE / UTIC / …) stays untouched;
+// applyMapping's existing date-less-row continuation merge (kind=
+// 'bank') already appends those to the transaction correctly once the
+// date on the FIRST row parses.
+function iciciAccountStatementSplitYear(grid: PdfGrid): PdfGrid {
+  if (grid.columnCount !== 5) return grid;
+  // Serial no. + alphanumeric transaction ID + day-month, with the
+  // year either attached (fits on one line) or missing (wraps below).
+  const splitDate = /^\d{1,6}\s+\S+\s+(\d{1,2})-([A-Za-z]{3})-(\d{4})?$/;
+  const bareYear = /^\d{4}$/;
+
+  // Structural gate: demand a healthy sample of this exact split
+  // pattern before reshaping — protects against false-positive
+  // fingerprint hits from an unrelated 5-column ICICI export.
+  const sample = grid.rows.slice(0, 200);
+  const hits = sample.filter(r => splitDate.test((r[0] ?? '').trim())).length;
+  if (hits < 5) return grid;
+
+  const newRows: string[][] = [];
+  for (let i = 0; i < grid.rows.length; i++) {
+    const row = grid.rows[i];
+    const cell0 = (row[0] ?? '').trim();
+    const m = splitDate.exec(cell0);
+    if (!m) { newRows.push(row); continue; }
+    const [, day, mon, yearAttached] = m;
+    if (yearAttached) {
+      // Fits on one line (short transaction ID) — just clean col 0.
+      newRows.push([`${day}-${mon}-${yearAttached}`, row[1] ?? '', row[2] ?? '', row[3] ?? '', row[4] ?? '']);
+      continue;
+    }
+    // Year wrapped onto the next physical row. Consume it: pull the
+    // year, and merge its narration fragment into THIS row's col 1
+    // rather than dropping it.
+    const next = grid.rows[i + 1];
+    const nextCell0 = (next?.[0] ?? '').trim();
+    if (next && bareYear.test(nextCell0)) {
+      const mergedNarration = [row[1], next[1]].map(v => (v ?? '').trim()).filter(Boolean).join(' ');
+      newRows.push([`${day}-${mon}-${nextCell0}`, mergedNarration, row[2] ?? '', row[3] ?? '', row[4] ?? '']);
+      i += 1; // consumed
+      continue;
+    }
+    // Defensive fallback (year row missing/malformed) — leave as-is.
+    // parseDate() will reject the incomplete date and applyMapping's
+    // continuation logic folds it into the previous transaction
+    // instead of crashing; not ideal, but safe.
+    newRows.push(row);
+  }
+
+  return { ...grid, rows: newRows };
+}
+
+const ICICI_ACCOUNT_STATEMENT: BankRule = {
+  name: 'ICICI Bank (Account Statement)',
+  fingerprints: [
+    // Same IFSC anchor as the header-based ICICI rule above — this
+    // rule only fires as a SECOND candidate when that one's headerRules
+    // fail to satisfy `required`, so sharing the fingerprint is safe
+    // (RULES order + detectAndMapBank's try-next-candidate loop
+    // guarantee the header-based rule always gets first refusal).
+    /\bifsc\b.{0,30}\bicic0\d{4,}/i,
+  ],
+  preprocess: iciciAccountStatementSplitYear,
+  positional: {
+    columnCount: 5,
+    roles: ['date', 'narration', 'debit', 'credit', 'balance'],
+    verify: (grid) => {
+      // Col 0: at least 5 fully-reconstructed dd-Mon-yyyy entries —
+      // only present when the preprocess actually fired.
+      const datePat = /^\d{1,2}-[A-Za-z]{3}-\d{4}$/;
+      const dateCount = grid.rows.reduce((acc, r) => acc + (datePat.test((r[0] ?? '').trim()) ? 1 : 0), 0);
+      if (dateCount < 5) return false;
+      // Col 1: narration should carry recognisable ICICI wire/UPI
+      // tokens in a healthy share of rows — confirms this is really
+      // the transaction table and not a mis-shaped metadata block.
+      const tokenPat = /\b(upi|neft|rtgs|imps|inf\/inft|clg\/cheque|by cash|mmt\/imps)\b/i;
+      const tokenCount = grid.rows.reduce((acc, r) => acc + (tokenPat.test((r[1] ?? '').trim()) ? 1 : 0), 0);
+      if (tokenCount < 5) return false;
+      return true;
+    },
+  },
+};
+
 const CANARA: BankRule = {
   name: 'Canara Bank',
   fingerprints: [
@@ -892,7 +998,7 @@ const IDBI: BankRule = {
   },
 };
 
-const RULES: BankRule[] = [HDFC, ICICI, CANARA, PNB, YES_BANK, KOTAK, SBI, IDBI, BANK_OF_MAHARASHTRA, JK_BANK_DCR, JK_BANK_SAVINGS, JK_BANK];
+const RULES: BankRule[] = [HDFC, ICICI, ICICI_ACCOUNT_STATEMENT, CANARA, PNB, YES_BANK, KOTAK, SBI, IDBI, BANK_OF_MAHARASHTRA, JK_BANK_DCR, JK_BANK_SAVINGS, JK_BANK];
 
 export interface DetectedBankMapping {
   bank: string;
