@@ -38,13 +38,20 @@ export interface ModelWeight {
 const MODEL_WEIGHTS: Record<string, ModelWeight> = {
   // Active (2026-07): anchored on T2 input ($0.10/M = 1×). Flex variants
   // weigh 50% (a "-flex" model string is logged when the call ran Flex).
-  'gemini-3.6-flash':              { wIn: 15.0, wOut: 75.0 },  // $1.50 / $7.50 — chat primary
-  'gemini-3.6-flash-flex':         { wIn: 7.5,  wOut: 37.5 },  // ~50% on the Flex tier
-  'gemini-3.5-flash-lite':         { wIn: 3.0,  wOut: 25.0 },  // $0.30 / $2.50 — T1 fallback
-  'gemini-3.5-flash-lite-flex':    { wIn: 1.5,  wOut: 12.5 },  // ~50% on the Flex tier
+  // 3.8 and 3.7 are priced identically ($0.75 / $3.75 promo), so they
+  // share weights. !! Both DOUBLE on 2027-01-01 — when that lands these
+  // become wIn 15.0 / wOut 75.0, in lockstep with lib/gemini.ts.
+  'gemini-3.8-flash':              { wIn: 7.5,  wOut: 37.5 },  // $0.75 / $3.75 — chat primary
+  'gemini-3.8-flash-flex':         { wIn: 3.75, wOut: 18.75 }, // ~50% on the Flex tier
+  'gemini-3.7-flash':              { wIn: 7.5,  wOut: 37.5 },  // $0.75 / $3.75 — T1 fallback
+  'gemini-3.7-flash-flex':         { wIn: 3.75, wOut: 18.75 }, // ~50% on the Flex tier
   'gemini-2.5-flash-lite':         { wIn: 1.0,  wOut: 4.0 },   // $0.10 / $0.40 — anchor / last resort
 
   // Retired. Kept for historic rows.
+  'gemini-3.6-flash':              { wIn: 15.0, wOut: 75.0 },  // $1.50 / $7.50 — chat primary to 2026-09
+  'gemini-3.6-flash-flex':         { wIn: 7.5,  wOut: 37.5 },  // ~50% on the Flex tier
+  'gemini-3.5-flash-lite':         { wIn: 3.0,  wOut: 25.0 },  // $0.30 / $2.50 — T1 to 2026-09
+  'gemini-3.5-flash-lite-flex':    { wIn: 1.5,  wOut: 12.5 },  // ~50% on the Flex tier
   'gemini-3-flash-preview':        { wIn: 5.0, wOut: 30.0 },   // $0.50 / $3.00 — old chat primary
   'gemini-3-flash-preview-flex':   { wIn: 2.5, wOut: 15.0 },   // ~50% on the Flex tier
   'gemini-3.1-flash-lite-preview': { wIn: 2.5, wOut: 15.0 },   // $0.25 / $1.50 — old T1

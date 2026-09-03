@@ -29,12 +29,16 @@ function fmtTokens(n: number): string {
 // label instead of the raw string. Add new active models above the
 // retired block so they get a distinct colour.
 const MODEL_COLORS: Record<string, string> = {
-  'gemini-3.6-flash':              'bg-amber-500',    // Primary — active
-  'gemini-3.6-flash-flex':         'bg-amber-400',    // Primary on Flex
-  'gemini-3.5-flash-lite':         'bg-violet-400',   // T1 — active fallback
-  'gemini-3.5-flash-lite-flex':    'bg-violet-300',   // T1 on Flex
+  'gemini-3.8-flash':              'bg-amber-500',    // Primary — active
+  'gemini-3.8-flash-flex':         'bg-amber-400',    // Primary on Flex
+  'gemini-3.7-flash':              'bg-violet-400',   // T1 — active fallback
+  'gemini-3.7-flash-flex':         'bg-violet-300',   // T1 on Flex
   'gemini-2.5-flash-lite':         'bg-blue-500',     // T2 — last-resort anchor
   // Retired — kept only so historic rows are still recognisable.
+  'gemini-3.6-flash':              'bg-gray-400',
+  'gemini-3.6-flash-flex':         'bg-gray-400',
+  'gemini-3.5-flash-lite':         'bg-gray-400',
+  'gemini-3.5-flash-lite-flex':    'bg-gray-400',
   'gemini-3-flash-preview':        'bg-gray-400',
   'gemini-3-flash-preview-flex':   'bg-gray-400',
   'gemini-3.1-flash-lite-preview': 'bg-gray-400',
@@ -44,12 +48,16 @@ const MODEL_COLORS: Record<string, string> = {
 };
 
 const MODEL_LABELS: Record<string, string> = {
-  'gemini-3.6-flash':              'Gemini 3.6 Flash (primary, all features)',
-  'gemini-3.6-flash-flex':         'Gemini 3.6 Flash (primary, Flex)',
-  'gemini-3.5-flash-lite':         'Gemini 3.5 Flash-Lite (fallback, all features)',
-  'gemini-3.5-flash-lite-flex':    'Gemini 3.5 Flash-Lite (fallback, Flex)',
+  'gemini-3.8-flash':              'Gemini 3.8 Flash (primary, all features)',
+  'gemini-3.8-flash-flex':         'Gemini 3.8 Flash (primary, Flex)',
+  'gemini-3.7-flash':              'Gemini 3.7 Flash (fallback, all features)',
+  'gemini-3.7-flash-flex':         'Gemini 3.7 Flash (fallback, Flex)',
   'gemini-2.5-flash-lite':         'Gemini 2.5 Flash-Lite (last-resort)',
   // Retired models still appear in historic rows.
+  'gemini-3.6-flash':              'Gemini 3.6 Flash (retired)',
+  'gemini-3.6-flash-flex':         'Gemini 3.6 Flash · Flex (retired)',
+  'gemini-3.5-flash-lite':         'Gemini 3.5 Flash-Lite (retired)',
+  'gemini-3.5-flash-lite-flex':    'Gemini 3.5 Flash-Lite · Flex (retired)',
   'gemini-3-flash-preview':        'Gemini 3 Flash Preview (retired)',
   'gemini-3-flash-preview-flex':   'Gemini 3 Flash Preview · Flex (retired)',
   'gemini-3.1-flash-lite-preview': 'Gemini 3.1 Flash-Lite (retired)',
@@ -196,20 +204,20 @@ export function ModelUsageDashboard() {
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <span className="text-[10px] font-bold text-amber-600 bg-amber-100 dark:bg-amber-900/30 px-1.5 py-0.5 rounded">DEEP</span>
-              <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Gemini 3.6 Flash (Flex)</span>
-              <span className="text-[10px] text-gray-500 dark:text-gray-400">$0.75 in / $3.75 out per 1M · ½ of Standard $1.50/$7.50</span>
+              <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Gemini 3.8 Flash (Flex)</span>
+              <span className="text-[10px] text-gray-500 dark:text-gray-400">$0.375 in / $1.875 out per 1M · ½ of Standard $0.75/$3.75</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-[10px] font-bold text-violet-500 bg-violet-100 dark:bg-violet-900/30 px-1.5 py-0.5 rounded">FAST / T1</span>
-              <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Gemini 3.5 Flash-Lite (Flex)</span>
-              <span className="text-[10px] text-gray-500 dark:text-gray-400">$0.15 in / $1.25 out per 1M · ½ of Standard $0.30/$2.50</span>
+              <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Gemini 3.7 Flash (Flex)</span>
+              <span className="text-[10px] text-gray-500 dark:text-gray-400">$0.375 in / $1.875 out per 1M · ½ of Standard $0.75/$3.75</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-[10px] font-bold text-blue-500 bg-blue-100 dark:bg-blue-900/30 px-1.5 py-0.5 rounded">LAST RESORT (T2)</span>
               <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Gemini 2.5 Flash-Lite</span>
               <span className="text-[10px] text-gray-500 dark:text-gray-400">$0.10 in / $0.40 out per 1M</span>
             </div>
-            <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">Chat: <span className="font-medium">Deep</span> starts at 3.6 Flash, <span className="font-medium">Fast</span> at 3.5 Flash-Lite; both fall back 3.5 (Flex→Standard) → 2.5. Search grounding: 2.5 family 1,500/day, 3.x family 5,000/month — limits below.</p>
+            <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">Chat: <span className="font-medium">Deep</span> starts at 3.8 Flash, <span className="font-medium">Fast</span> at 3.7 Flash; both fall back 3.7 (Flex→Standard) → 2.5. 3.8 and 3.7 are priced identically, so T1 is an availability fallback, not a cheaper one. Search grounding: 2.5 family 1,500/day, 3.x family 5,000/month — limits below. <span className="font-medium">3.x promo pricing doubles on 1 Jan 2027.</span></p>
           </div>
         </div>
       </div>
@@ -409,7 +417,7 @@ export function ModelUsageDashboard() {
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <QuotaCard
-                label={key.tier1?.model ?? 'Gemini 3.5 Flash-Lite'}
+                label={key.tier1?.model ?? 'Gemini 3.7 Flash'}
                 tier="3.x Pool (T1 fallback)"
                 used={key.tier1?.used ?? 0}
                 limit={key.tier1?.limit ?? 5000}

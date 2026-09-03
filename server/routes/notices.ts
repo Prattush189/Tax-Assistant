@@ -277,11 +277,13 @@ router.post(
   let extractionMeta: { mergedNoticeNumber?: string; mergedNoticeDate?: string; mergedSection?: string; mergedAssessmentYear?: string; mergedDin?: string } = {};
   if (req.file) {
     try {
-      // Gemini vision — handles both PDF and image notices natively.
-      // Tier-1 Gemini 3.1 Flash-Lite Preview, tier-2 fallback to
-      // Gemini 2.5 Flash-Lite when tier 1 returns syntactically-valid
-      // JSON with no usable summary (the same `looksValid` pattern
-      // bank-statement extraction uses to defeat empty responses).
+      // Vision extraction — handles both PDF and image notices
+      // natively. Tier-1 is the current vision model; tier 2 (2.5
+      // Flash-Lite) rescues it when tier 1 fails outright OR returns
+      // syntactically-valid JSON with no usable summary — the same
+      // `looksValid` pattern bank-statement extraction uses. That
+      // second tier was missing between 2026-06 and 2026-09, which
+      // turned this guard into a hard failure; see lib/visionFallback.
       const extractStartMs = Date.now();
       const extraction = await extractVisionWithFallback<{
         summary: string;
@@ -327,7 +329,22 @@ router.post(
         console.error('[notices] Failed to log extraction cost:', logErr);
       }
     } catch (extractErr) {
-      console.error('[notices] Notice file extraction failed:', extractErr);
+      // Log enough to identify the file AND the real cause. The old
+      // handler logged only the error object and returned one fixed
+      // string for every failure mode, so a truncation, a quota
+      // rejection and an empty model response were indistinguishable
+      // in support — and the actionable ones were thrown away.
+      const e = extractErr as { message?: string; truncated?: boolean; status?: number };
+      console.error(
+        `[notices] extraction failed for "${req.file.originalname}" (${req.file.mimetype}, ${req.file.size}B, status=${e?.status ?? '-'}): ${e?.message ?? extractErr}`,
+      );
+      // MAX_TOKENS truncation: the message is already written to be
+      // user-safe (names no provider or model) and tells the user what
+      // to do about it, so surface it rather than erasing it.
+      if (e?.truncated && e.message) {
+        res.status(422).json({ error: e.message });
+        return;
+      }
       res.status(502).json({ error: 'Could not read the uploaded notice. Try again, or paste the key points manually.' });
       return;
     }

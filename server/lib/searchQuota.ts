@@ -4,7 +4,7 @@
  *
  *   Tier 'gemini-2.5' — gemini-2.5-flash-lite        (primary)
  *                       1,500 free searches/day per key
- *   Tier 'gemini-3'   — gemini-3.5-flash-lite            (fallback)
+ *   Tier 'gemini-3'   — gemini-3.8-flash / gemini-3.7-flash  (primary/fallback)
  *                       5,000 free searches/month per key
  *
  * Tier names ('gemini-3' / 'gemini-2.5') refer to the model FAMILY
