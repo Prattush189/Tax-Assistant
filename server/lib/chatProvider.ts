@@ -2,8 +2,12 @@
  * ChatProvider abstraction for streaming-text LLM calls.
  *
  * Used today by the notice route. Gemini-only, Deep-reasoning, on the same
- * model ladder as chat — Gemini 3 Flash (Flex → Standard) → 3.1 Flash-Lite
+ * model ladder as chat — 3.8 Flash (Flex) → 3.7 Flash (Flex → Standard)
  * → 2.5 Flash-Lite — with Google Search grounding enabled.
+ *
+ * The rungs are referenced through the GEMINI_CHAT_MODEL_* constants, so
+ * this ladder follows a chat-model swap automatically; the names above are
+ * documentation only. Keep them in step with lib/gemini.ts.
  *
  * We keep the interface and the single-implementation `pickChatProvider()`
  * shim so the notice route's call-site stays unchanged and future providers
@@ -66,12 +70,17 @@ export const geminiChatProvider: ChatProvider = {
     // to 2.5 Flash-Lite, which uses a different thinking config.)
     const THINKING: 'low' | 'high' = 'high';
 
-    // Notice drafting is always "Deep" → Gemini 3.6 Flash on top. Ladder:
-    //   3.6 Flash (Flex) → 3.5 Flash-Lite (Flex) → 3.5 Flash-Lite (Std) → 2.5 Flash-Lite
-    // Flex on by default (GEMINI_FLEX, ~50% price). There is no 3.6 Standard
-    // rung — a 3.6 Flex miss drops straight to 3.5 Flash-Lite; a 3.5 Flex miss
-    // retries 3.5 on Standard before the last-resort 2.5. With Flex off, the
-    // top rung is simply 3.6 Standard.
+    // Notice drafting is always "Deep" → the chat PRIMARY on top. There is
+    // no Fast path here; drafting never starts below the primary. Ladder:
+    //   3.8 Flash (Flex) → 3.7 Flash (Flex) → 3.7 Flash (Std) → 2.5 Flash-Lite
+    // Flex on by default (GEMINI_FLEX, ~50% price). There is no 3.8 Standard
+    // rung — a 3.8 Flex miss drops straight to 3.7; a 3.7 Flex miss retries
+    // 3.7 on Standard before the last-resort 2.5. With Flex off, the top rung
+    // is simply 3.8 Standard.
+    //
+    // NOTE: since 2026-09, 3.8 and 3.7 are priced identically, so the T1
+    // rungs buy availability rather than savings. Only the final 2.5
+    // Flash-Lite rung is materially cheaper.
     const flexTier = GEMINI_FLEX ? GEMINI_FLEX_SERVICE_TIER : null;
     const ladder: Array<{ model: string; tier: string | null; thinking: 'low' | 'high' | null }> = [
       { model: GEMINI_CHAT_MODEL_PRIMARY, tier: flexTier, thinking: THINKING },
