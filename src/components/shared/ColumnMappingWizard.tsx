@@ -370,7 +370,7 @@ export function ColumnMappingWizard({ kind, grid, filename, onConfirm, onCancel,
                     )
                     : window.confirm(
                       'Switch to AI Vision?\n\n' +
-                      'Vision reads the PDF directly with Gemini 3.1 Flash-Lite and handles unusual layouts the deterministic parser misses. ' +
+                      'Vision reads the PDF directly with AI and handles unusual layouts the deterministic parser misses. ' +
                       'Trade-off: roughly 1.5×–2× more tokens than the column-mapping path. ' +
                       'Use this if the columns above don\'t match your file or the wizard rejects the mapping.',
                     );

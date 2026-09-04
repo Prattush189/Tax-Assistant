@@ -215,8 +215,9 @@ export function ChatInput({
               )}
             </div>
 
-            {/* Reasoning toggle — Fast (low) ↔ Deep (high). Deep makes
-                Gemini 3 think harder on multi-step problems (a bit slower). */}
+            {/* Reasoning toggle — Fast (low) ↔ Deep (high). Deep raises the
+                thinking budget for multi-step problems (a bit slower).
+                Internal comment: never surface the model in the UI. */}
             <button
               type="button"
               onClick={toggleReasoning}

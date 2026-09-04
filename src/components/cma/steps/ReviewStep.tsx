@@ -350,7 +350,7 @@ export function ReviewStep({ draft, draftId, onChange }: Props) {
                     onClick={onGenerateNarrative}
                     disabled={generatingNarrative || !draftId}
                     className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400 hover:text-emerald-800 dark:hover:text-emerald-300 disabled:opacity-50 disabled:cursor-not-allowed"
-                    title="Calls Gemini to draft a project-report narrative based on the firm info. Empty fields get filled; existing edits are preserved."
+                    title="Uses AI to draft a project-report narrative based on the firm info. Empty fields get filled; existing edits are preserved."
                   >
                     {generatingNarrative ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
                     {generatingNarrative ? 'Generating…' : 'Generate with AI'}

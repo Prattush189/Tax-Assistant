@@ -198,7 +198,7 @@ export function TbMappingStep({ draft, draftId, onChange }: Props) {
               onClick={() => void runAiSuggest()}
               disabled={aiLoading}
               className="inline-flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-md bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              title="Uses AI to classify unmapped rows. One Gemini call per use; counts against your token budget."
+              title="Uses AI to classify unmapped rows. One AI call per use; counts against your token budget."
             >
               {aiLoading
                 ? <Loader2 className="w-3 h-3 animate-spin" />
