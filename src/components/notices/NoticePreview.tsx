@@ -1,7 +1,7 @@
 import { useRef, useCallback, useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Download, Copy, Check, Trash2, Edit3, AlertTriangle } from 'lucide-react';
+import { Download, Copy, Check, Trash2, Edit3, AlertTriangle, Sparkles, X, CornerDownLeft } from 'lucide-react';
 import { LetterheadConfig } from '../../hooks/useNoticeDrafter';
 import { LoadingAnimation } from '../ui/LoadingAnimation';
 import { renderMarkdownToPdf } from '../../lib/markdownPdf';
@@ -13,6 +13,11 @@ interface NoticePreviewProps {
   isGenerating: boolean;
   onClear: () => void;
   letterhead: LetterheadConfig;
+  /** Refine the saved draft from a plain-language instruction.
+   *  Omitted (with canEnhance false) until a draft has been saved. */
+  onEnhance?: (instruction: string) => void | Promise<unknown>;
+  isEnhancing?: boolean;
+  canEnhance?: boolean;
 }
 
 /** Load an image data URL and return dimensions + format for jsPDF */
@@ -28,10 +33,28 @@ function loadImage(dataUrl: string): Promise<{ img: HTMLImageElement; format: 'P
   });
 }
 
-export function NoticePreview({ content, onContentChange, isGenerating, onClear, letterhead }: NoticePreviewProps) {
+export function NoticePreview({ content, onContentChange, isGenerating, onClear, letterhead, onEnhance, isEnhancing = false, canEnhance = false }: NoticePreviewProps) {
   const previewRef = useRef<HTMLDivElement>(null);
   const [copied, setCopied] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [enhanceOpen, setEnhanceOpen] = useState(false);
+  const [enhanceText, setEnhanceText] = useState('');
+
+  // Any AI run in flight — generation or enhancement. Both must lock the
+  // toolbar, otherwise the user can edit or re-enhance text that is
+  // still being streamed over.
+  const busy = isGenerating || isEnhancing;
+
+  const submitEnhance = useCallback(async () => {
+    const instruction = enhanceText.trim();
+    if (!instruction || !onEnhance) return;
+    // Leave edit mode first — the textarea would otherwise sit on stale
+    // text while the stream replaces the draft underneath it.
+    setIsEditing(false);
+    await onEnhance(instruction);
+    setEnhanceText('');
+    setEnhanceOpen(false);
+  }, [enhanceText, onEnhance]);
 
   const handleCopy = useCallback(async () => {
     await navigator.clipboard.writeText(content);
@@ -193,20 +216,45 @@ export function NoticePreview({ content, onContentChange, isGenerating, onClear,
       {/* Toolbar */}
       <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-200 dark:border-gray-700/50 shrink-0">
         <button
-          onClick={() => setIsEditing(!isEditing)}
-          disabled={isGenerating}
+          // preventDefault stops the button stealing focus, which would
+          // blur the textarea and run its onBlur -> setIsEditing(false)
+          // BEFORE this click handler read the state. The handler then
+          // saw isEditing === false and toggled straight back to true,
+          // so clicking "Editing" never exited edit mode.
+          onMouseDown={(e) => { if (isEditing) e.preventDefault(); }}
+          onClick={() => setIsEditing(v => !v)}
+          disabled={busy}
+          title={isEditing ? 'Finish editing' : 'Edit the draft text directly'}
           className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors disabled:opacity-50 ${
             isEditing
               ? 'bg-[#059669]/10 text-[#047857] dark:text-[#059669]'
               : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'
           }`}
         >
-          <Edit3 className="w-3.5 h-3.5" />
-          {isEditing ? 'Editing' : 'Edit'}
+          {isEditing ? <Check className="w-3.5 h-3.5" /> : <Edit3 className="w-3.5 h-3.5" />}
+          {isEditing ? 'Done' : 'Edit'}
         </button>
+        {onEnhance && (
+          <button
+            onMouseDown={(e) => { if (isEditing) e.preventDefault(); }}
+            onClick={() => { setIsEditing(false); setEnhanceOpen(o => !o); }}
+            disabled={busy || !canEnhance || !content}
+            title={canEnhance
+              ? 'Ask AI to change or add something to this draft'
+              : 'Generate a draft first, then you can refine it'}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors disabled:opacity-50 ${
+              enhanceOpen
+                ? 'bg-[#059669]/10 text-[#047857] dark:text-[#059669]'
+                : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            Enhance
+          </button>
+        )}
         <button
           onClick={handleCopy}
-          disabled={!content || isGenerating}
+          disabled={!content || busy}
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors disabled:opacity-50"
         >
           {copied ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
@@ -214,7 +262,7 @@ export function NoticePreview({ content, onContentChange, isGenerating, onClear,
         </button>
         <button
           onClick={handleDownloadPdf}
-          disabled={!content || isGenerating}
+          disabled={!content || busy}
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors disabled:opacity-50"
         >
           <Download className="w-3.5 h-3.5" />
@@ -222,17 +270,17 @@ export function NoticePreview({ content, onContentChange, isGenerating, onClear,
         </button>
         <button
           onClick={() => downloadAsWord(content)}
-          disabled={!content || isGenerating}
+          disabled={!content || busy}
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors disabled:opacity-50"
           title="Download as editable Word document (.doc)"
         >
           <Download className="w-3.5 h-3.5" />
           Word
         </button>
-        {isGenerating && (
+        {(isGenerating || isEnhancing) && (
           <div className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-[#059669] bg-[#059669]/10 rounded-lg">
             <LoadingAnimation size="xs" />
-            <span>Generating draft…</span>
+            <span>{isEnhancing ? 'Enhancing draft…' : 'Generating draft…'}</span>
           </div>
         )}
         <div className="flex-1" />
@@ -245,6 +293,50 @@ export function NoticePreview({ content, onContentChange, isGenerating, onClear,
           Clear
         </button>
       </div>
+
+      {/* Enhance bar — plain-language instruction, applied to the saved draft */}
+      {enhanceOpen && onEnhance && (
+        <div className="px-4 py-2.5 border-b border-gray-200 dark:border-gray-700/50 bg-[#059669]/[0.04] shrink-0">
+          <div className="flex items-start gap-2">
+            <Sparkles className="w-3.5 h-3.5 text-[#059669] mt-2 shrink-0" />
+            <textarea
+              value={enhanceText}
+              onChange={(e) => setEnhanceText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') { setEnhanceOpen(false); return; }
+                // Enter submits; Shift+Enter makes a new line.
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void submitEnhance(); }
+              }}
+              disabled={isEnhancing}
+              autoFocus
+              rows={2}
+              placeholder="What should change? e.g. “add that the tax was paid on 12 May 2025 vide challan 00123” or “make paragraph 3 firmer and cite s.144B(6)”"
+              className="flex-1 resize-none px-2.5 py-1.5 text-xs bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#059669]/30 text-gray-900 dark:text-gray-100 disabled:opacity-60"
+            />
+            <div className="flex flex-col gap-1 shrink-0">
+              <button
+                onClick={() => void submitEnhance()}
+                disabled={isEnhancing || !enhanceText.trim()}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-[#059669] text-white hover:bg-[#047857] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {isEnhancing ? <LoadingAnimation size="xs" /> : <CornerDownLeft className="w-3.5 h-3.5" />}
+                {isEnhancing ? 'Working…' : 'Apply'}
+              </button>
+              <button
+                onClick={() => { setEnhanceOpen(false); setEnhanceText(''); }}
+                disabled={isEnhancing}
+                className="flex items-center justify-center gap-1 px-3 py-1 text-[11px] font-medium text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors disabled:opacity-40"
+              >
+                <X className="w-3 h-3" />
+                Cancel
+              </button>
+            </div>
+          </div>
+          <p className="text-[10px] text-gray-400 mt-1.5 ml-6">
+            Rewrites the whole letter with your change applied — everything else is preserved. Enter to apply, Shift+Enter for a new line.
+          </p>
+        </div>
+      )}
 
       {/* PDF-style preview */}
       <div className="flex-1 overflow-y-auto p-4 lg:p-8 bg-gray-100 dark:bg-gray-900/50">
@@ -305,7 +397,10 @@ export function NoticePreview({ content, onContentChange, isGenerating, onClear,
               <textarea
                 value={content}
                 onChange={(e) => onContentChange(e.target.value)}
-                onBlur={() => setIsEditing(false)}
+                // No onBlur exit: it raced the Edit button (see above) and
+                // also dropped the user out of edit mode whenever they
+                // clicked Copy/PDF. "Done" and Esc are the explicit exits.
+                onKeyDown={(e) => { if (e.key === 'Escape') setIsEditing(false); }}
                 autoFocus
                 className="w-full min-h-[200mm] font-serif text-[12px] leading-[1.8] text-gray-800 dark:text-gray-200 bg-transparent outline-none resize-none ring-2 ring-[#059669]/30 ring-inset rounded-sm p-2"
                 style={{ fontFamily: "'Times New Roman', 'Georgia', serif" }}

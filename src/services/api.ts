@@ -763,6 +763,72 @@ export async function generateNotice(
   }
 }
 
+/**
+ * Refine an already-generated notice. Streams the COMPLETE revised
+ * letter (the server re-emits rather than patching, so the summary
+ * table / Subject line / body can't drift apart) — callers should
+ * REPLACE the draft with the accumulated text, not append to it.
+ *
+ * Shares the SSE frame format with generateNotice.
+ */
+export async function enhanceNotice(
+  id: string,
+  instruction: string,
+  onChunk: (text: string) => void,
+  onError: (msg: string) => void,
+  onDone?: (noticeId: string | null, meta?: NoticeGenerateDoneMeta) => void,
+): Promise<void> {
+  const doFetch = () => fetch(`/api/notices/${id}/enhance`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    body: JSON.stringify({ instruction }),
+  });
+
+  let response = await doFetch();
+  if (response.status === 401) {
+    const refreshed = await tryRefreshToken();
+    if (refreshed) response = await doFetch();
+  }
+
+  if (!response.ok || !response.body) {
+    let errorMessage = 'Failed to enhance the draft.';
+    try {
+      const errData = await response.json();
+      if (errData.error) errorMessage = errData.error;
+    } catch { /* ignore */ }
+    onError(errorMessage);
+    return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      try {
+        const parsed = JSON.parse(line.slice(6).trim());
+        if (parsed.done) {
+          onDone?.(parsed.noticeId ?? null, {
+            citationsSanitized: parsed.citationsSanitized === true,
+            citationsDropped: typeof parsed.citationsDropped === 'number' ? parsed.citationsDropped : undefined,
+          });
+          return;
+        }
+        if (parsed.error) { onError(parsed.message ?? 'Enhancement failed.'); return; }
+        if (parsed.text) onChunk(parsed.text);
+      } catch { /* skip */ }
+    }
+  }
+}
+
 export async function fetchNotices(): Promise<{ notices: NoticeItem[]; usage: { used: number } }> {
   return authFetch('/api/notices');
 }

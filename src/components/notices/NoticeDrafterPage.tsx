@@ -48,6 +48,9 @@ export function NoticeDrafterPage({ drafter }: NoticeDrafterPageProps) {
             isGenerating={drafter.isGenerating}
             onClear={drafter.clearDraft}
             letterhead={drafter.letterhead}
+            onEnhance={drafter.enhance}
+            isEnhancing={drafter.isEnhancing}
+            canEnhance={!!drafter.currentNoticeId}
           />
         </div>
       </div>
@@ -62,6 +65,9 @@ export function NoticeDrafterPage({ drafter }: NoticeDrafterPageProps) {
               isGenerating={drafter.isGenerating}
               onClear={drafter.clearDraft}
               letterhead={drafter.letterhead}
+              onEnhance={drafter.enhance}
+              isEnhancing={drafter.isEnhancing}
+              canEnhance={!!drafter.currentNoticeId}
             />
           </div>
         )}

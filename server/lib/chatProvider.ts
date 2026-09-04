@@ -41,6 +41,13 @@ export interface ChatRequest {
    *  notice. Mid-stream failures don't fire this — they're surfaced as
    *  a truncation instead. */
   onFallback?: (input: { from: string; to: string }) => void;
+  /** Economy ladder: start at 2.5 Flash-Lite with thinking OFF instead
+   *  of the 3.x primary with Deep thinking. 3.x bills thinking tokens
+   *  as OUTPUT, and Deep reasoning on a long legal letter burns far
+   *  more of them than the letter itself — which is what made notice
+   *  drafting expensive. Opt-in per call so ledger scrutiny and deed
+   *  drafting keep the full-quality ladder. */
+  economy?: boolean;
 }
 
 export interface ChatUsage {
@@ -82,12 +89,26 @@ export const geminiChatProvider: ChatProvider = {
     // rungs buy availability rather than savings. Only the final 2.5
     // Flash-Lite rung is materially cheaper.
     const flexTier = GEMINI_FLEX ? GEMINI_FLEX_SERVICE_TIER : null;
-    const ladder: Array<{ model: string; tier: string | null; thinking: 'low' | 'high' | null }> = [
-      { model: GEMINI_CHAT_MODEL_PRIMARY, tier: flexTier, thinking: THINKING },
-      ...(flexTier ? [{ model: GEMINI_CHAT_MODEL_T1, tier: flexTier, thinking: THINKING }] : []),
-      { model: GEMINI_CHAT_MODEL_T1, tier: null, thinking: THINKING },
-      { model: GEMINI_CHAT_MODEL_T2, tier: null, thinking: null },
-    ];
+    // Economy: 2.5 Flash-Lite first, thinking off. 3.x stays underneath
+    // purely as a rescue if 2.5 fails outright, so a bad day still
+    // produces a letter — it just is not the normal path any more.
+    const ladder: Array<{ model: string; tier: string | null; thinking: 'low' | 'high' | null }> = req.economy
+      ? [
+          { model: GEMINI_CHAT_MODEL_T2, tier: null, thinking: null },
+          ...(flexTier ? [{ model: GEMINI_CHAT_MODEL_T1, tier: flexTier, thinking: THINKING }] : []),
+          { model: GEMINI_CHAT_MODEL_T1, tier: null, thinking: THINKING },
+        ]
+      : [
+          { model: GEMINI_CHAT_MODEL_PRIMARY, tier: flexTier, thinking: THINKING },
+          ...(flexTier ? [{ model: GEMINI_CHAT_MODEL_T1, tier: flexTier, thinking: THINKING }] : []),
+          { model: GEMINI_CHAT_MODEL_T1, tier: null, thinking: THINKING },
+          { model: GEMINI_CHAT_MODEL_T2, tier: null, thinking: null },
+        ];
+    // The "we dropped to a weaker model" signal must compare against
+    // THIS ladder's own top rung. Comparing against the global primary
+    // fired onFallback on the very first economy attempt, so the user
+    // saw "Server busy, retrying..." on every single notice.
+    const topRung = ladder[0].model;
 
     let emittedAnyText = false;
 
@@ -132,11 +153,11 @@ export const geminiChatProvider: ChatProvider = {
 
     for (let i = 0; i < ladder.length; i++) {
       const rung = ladder[i];
-      // Tell the caller once, the first time we leave the 3-Flash primary
-      // for a weaker model (Flex→Standard stays on 3 Flash, so no notice).
-      if (rung.model !== GEMINI_CHAT_MODEL_PRIMARY && !firstFallbackFired) {
+      // Tell the caller once, the first time we leave this ladder's top
+      // rung (a Flex→Standard retry of the SAME model is not a drop).
+      if (rung.model !== topRung && !firstFallbackFired) {
         firstFallbackFired = true;
-        try { req.onFallback?.({ from: GEMINI_CHAT_MODEL_PRIMARY, to: rung.model }); }
+        try { req.onFallback?.({ from: topRung, to: rung.model }); }
         catch (e) { console.warn('[chatProvider] onFallback hook threw:', (e as Error).message); }
       }
       try {

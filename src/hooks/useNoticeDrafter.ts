@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import {
   generateNotice,
+  enhanceNotice,
   fetchNotices,
   fetchNotice,
   deleteNotice,
@@ -58,6 +59,7 @@ export function useNoticeDrafter() {
   const [generatedContent, setGeneratedContent] = useState('');
   const [currentNoticeId, setCurrentNoticeId] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isEnhancing, setIsEnhancing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [letterhead, setLetterheadState] = useState<LetterheadConfig>(() => loadLetterhead());
 
@@ -160,6 +162,60 @@ export function useNoticeDrafter() {
     }
   }, [loadNotices]);
 
+  /** Refine the current draft from a plain-language instruction.
+   *  The server re-emits the WHOLE letter, so we clear the draft and
+   *  rebuild it from the stream rather than appending. On failure the
+   *  server leaves the stored draft untouched; we restore the previous
+   *  text locally so a failed enhance never loses the user's letter. */
+  const enhance = useCallback(async (instruction: string) => {
+    if (!currentNoticeId) {
+      setError('Save or generate a draft before enhancing it.');
+      return;
+    }
+    const previous = generatedContent;
+    setIsEnhancing(true);
+    setError(null);
+    let streamed = '';
+    let failed = false;
+
+    try {
+      await enhanceNotice(
+        currentNoticeId,
+        instruction,
+        (text) => {
+          streamed += text;
+          // First chunk replaces the old letter; later chunks extend it.
+          setGeneratedContent(streamed);
+        },
+        (msg) => { failed = true; setError(msg); setGeneratedContent(previous); },
+        async (_noticeId, meta) => {
+          if (meta?.citationsSanitized && currentNoticeId) {
+            try {
+              const fresh = await fetchNotice(currentNoticeId);
+              if (fresh.generated_content) setGeneratedContent(fresh.generated_content);
+              const n = meta.citationsDropped ?? 0;
+              const msg = n > 0
+                ? `Removed ${n} case-law citation${n === 1 ? '' : 's'} we couldn't verify against an authoritative source. Always double-check before filing.`
+                : `Cleaned up case-law citations to keep only verified ones. Always double-check before filing.`;
+              const { default: toast } = await import('react-hot-toast');
+              toast(msg, { icon: '⚠️', duration: 6000 });
+            } catch (e) {
+              console.warn('[useNoticeDrafter] re-fetch after enhance sanitisation failed:', e);
+            }
+          }
+          loadNotices();
+        },
+      );
+    } catch {
+      failed = true;
+      setError('An unexpected error occurred while enhancing the draft.');
+      setGeneratedContent(previous);
+    } finally {
+      setIsEnhancing(false);
+    }
+    return !failed;
+  }, [currentNoticeId, generatedContent, loadNotices]);
+
   const loadNotice = useCallback(async (id: string) => {
     try {
       const notice = await fetchNotice(id);
@@ -198,6 +254,8 @@ export function useNoticeDrafter() {
     setGeneratedContent,
     currentNoticeId,
     isGenerating,
+    isEnhancing,
+    enhance,
     hasInProgressJob,
     error,
     letterhead,

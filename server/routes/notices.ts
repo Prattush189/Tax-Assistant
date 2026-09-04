@@ -461,6 +461,10 @@ router.post(
         systemPrompt: NOTICE_SYSTEM_PROMPT,
         userMessage: userPrompt,
         maxTokens: MAX_TOKENS,
+        // Notices run the economy ladder (2.5 Flash-Lite, no thinking).
+        // See ChatRequest.economy — 3.x Deep thinking was billing far more
+        // output tokens than the letter itself.
+        economy: true,
         onFallback: () => { sse.writeEvent({ providerFallback: true }); },
       },
       (text) => { fullResponse += text; sse.writeText(text); },
@@ -593,6 +597,129 @@ router.patch('/:id', async (req: AuthRequest, res: Response) => {
   const { content, title } = req.body;
   noticeRepo.updateDraft(req.params.id, content ?? notice.generated_content, title ?? notice.title);
   res.json({ success: true });
+});
+
+// ── Enhance an existing draft ──
+// Refine a notice that has already been generated: the user supplies a
+// plain-language instruction ("soften para 3", "add that the payment
+// was made on 12 May", "cite the Bombay HC ruling") and we re-emit the
+// COMPLETE letter with that change applied.
+//
+// Deliberately a full re-emit rather than a patch/diff: the letter is a
+// single legal document whose sections cross-reference each other, and
+// a targeted splice routinely leaves the summary table, the Subject
+// line and the body disagreeing. Re-emitting keeps it internally
+// consistent, and the client just replaces the draft.
+//
+// Billing: logged to api_usage as feature 'notice_enhance' so the admin
+// dashboard can separate refinement spend from first-draft spend (the
+// same split 'notice_extract' gives the vision pass). It does NOT bump
+// featureUsageRepo 'notice' — an enhancement is not a new notice, and
+// counting it would inflate the user's notice count for a redraft of
+// something they already paid for. The cross-feature token budget still
+// gates it, so heavy re-rolling is not free.
+router.post('/:id/enhance', async (req: AuthRequest, res: Response) => {
+  if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+
+  const notice = noticeRepo.findById(req.params.id);
+  if (!notice || notice.user_id !== req.user.id) {
+    res.status(404).json({ error: 'Notice not found' });
+    return;
+  }
+  const current = (notice.generated_content ?? '').trim();
+  if (!current) {
+    res.status(400).json({ error: 'This notice has no draft to enhance yet.' });
+    return;
+  }
+  const instruction = typeof req.body?.instruction === 'string' ? req.body.instruction.trim() : '';
+  if (!instruction) {
+    res.status(400).json({ error: 'Tell us what to change — e.g. "add that the tax was paid on 12 May".' });
+    return;
+  }
+  if (instruction.length > 2000) {
+    res.status(400).json({ error: 'Instruction is too long — keep it under 2000 characters.' });
+    return;
+  }
+
+  const actor = userRepo.findById(req.user.id);
+  const billingUser = actor ? getBillingUser(actor) : undefined;
+  const billingUserId = billingUser?.id ?? req.user.id;
+  const tokenQuota = enforceTokenQuota(req, res);
+  if (!tokenQuota.ok) return;
+
+  const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
+
+  let userPrompt = `You previously drafted the reply letter below. The user wants it revised.\n\n`;
+  userPrompt += `=== CURRENT DRAFT ===
+${current}
+=== END OF CURRENT DRAFT ===\n\n`;
+  userPrompt += `=== REQUESTED CHANGE ===
+${instruction}
+=== END OF REQUESTED CHANGE ===\n\n`;
+  userPrompt += `=== YOUR TASK ===\n`;
+  userPrompt += `Apply the requested change and output the COMPLETE revised reply letter in GitHub-Flavoured Markdown, keeping the same structure as the current draft.\n`;
+  userPrompt += `Change ONLY what the request asks for. Preserve every other section, fact, figure, date, name, statutory reference and citation EXACTLY as it stands — do not silently reword, reorder, drop or "improve" untouched parts.\n`;
+  userPrompt += `Keep the 2-column summary header table, the \`**Subject:**\` line, the salutation, the numbered body sections and the closing block. If the change alters a fact that also appears in the summary table or the Subject line, update those too so the letter stays internally consistent.\n`;
+  userPrompt += `End after the closing block — no filing instructions, no appendix, no bracketed placeholders like [NAME] or [TBD].\n`;
+  userPrompt += `If the request is ambiguous, take the most reasonable professional reading and keep the letter consistent.\n`;
+  userPrompt += `Output ONLY the letter itself — no preamble, no notes, no summary of what you changed.\n`;
+
+  const sse = new SseWriter(res);
+  let fullResponse = '';
+  const startMs = Date.now();
+
+  try {
+    const provider = pickChatProvider();
+    const usage = await provider.streamChat(
+      {
+        systemPrompt: NOTICE_SYSTEM_PROMPT,
+        userMessage: userPrompt,
+        maxTokens: MAX_TOKENS,
+        // Notices run the economy ladder (2.5 Flash-Lite, no thinking).
+        // See ChatRequest.economy — 3.x Deep thinking was billing far more
+        // output tokens than the letter itself.
+        economy: true,
+        onFallback: () => { sse.writeEvent({ providerFallback: true }); },
+      },
+      (text) => { fullResponse += text; sse.writeText(text); },
+    );
+
+    if (!fullResponse.trim()) {
+      // Leave the existing draft untouched — a failed enhancement must
+      // never destroy work the user already has.
+      sse.writeError('Enhancement returned an empty response. Your existing draft is unchanged — please try again.');
+      sse.end();
+      return;
+    }
+
+    const sanitized = sanitizeNoticeCitations(fullResponse);
+    fullResponse = sanitized.text;
+    if (sanitized.report.changed) {
+      console.log(`[notices] sanitised enhanced notice ${notice.id}: dropped ${sanitized.report.droppedEntries}/${sanitized.report.totalEntries} unverifiable citation(s)`);
+    }
+    noticeRepo.updateContent(notice.id, fullResponse);
+
+    const totalInput = usage.inputTokens + usage.cacheReadTokens + usage.cacheCreationTokens;
+    usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, totalInput, usage.outputTokens, usage.costUsd, false, usage.modelUsed, usage.withSearch, 'notice_enhance', 0, 'success', 0, Date.now() - startMs);
+
+    sse.writeDone({
+      noticeId: notice.id,
+      citationsSanitized: sanitized.report.changed,
+      citationsDropped: sanitized.report.droppedEntries,
+    });
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.error(`[notices] Enhance error for ${notice.id}: ${errMsg.slice(0, 200)}`);
+    // The stored draft is deliberately NOT touched on failure.
+    try {
+      usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, 0, 0, 0, false, undefined, false, 'notice_enhance', 0, 'failed');
+    } catch (e) {
+      console.error('[notices] failed-attempt log failed:', e);
+    }
+    sse.writeError('Could not enhance the draft. Your existing draft is unchanged — please try again.');
+  }
+
+  sse.end();
 });
 
 // ── Delete notice ──
