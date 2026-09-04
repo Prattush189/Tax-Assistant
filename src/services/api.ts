@@ -687,6 +687,8 @@ export interface NoticeGenerateInput {
 export interface NoticeGenerateDoneMeta {
   citationsSanitized?: boolean;
   citationsDropped?: number;
+  /** Fabricated source URLs stripped from the saved letter. */
+  urlsDropped?: number;
 }
 
 export async function generateNotice(
@@ -753,6 +755,7 @@ export async function generateNotice(
           onDone?.(parsed.noticeId ?? null, {
             citationsSanitized: parsed.citationsSanitized === true,
             citationsDropped: typeof parsed.citationsDropped === 'number' ? parsed.citationsDropped : undefined,
+            urlsDropped: typeof parsed.urlsDropped === 'number' ? parsed.urlsDropped : undefined,
           });
           return;
         }
@@ -819,6 +822,7 @@ export async function enhanceNotice(
           onDone?.(parsed.noticeId ?? null, {
             citationsSanitized: parsed.citationsSanitized === true,
             citationsDropped: typeof parsed.citationsDropped === 'number' ? parsed.citationsDropped : undefined,
+            urlsDropped: typeof parsed.urlsDropped === 'number' ? parsed.urlsDropped : undefined,
           });
           return;
         }

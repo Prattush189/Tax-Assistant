@@ -99,6 +99,7 @@ You may NOT invent or paraphrase statutory text inside a \`> "..."\` blockquote.
 - If you can pull the actual text of a section from your web search results (incometaxindia.gov.in / cbic.gov.in / indiankanoon.org of the bare Act), include it in a blockquote AND append the source URL on its own line directly underneath the blockquote in the form \`Source: <full URL>\`.
 - If you cannot verify the exact text, DO NOT use a blockquote. Instead, write the principle in your own prose with the section reference — e.g. "Section 115BAB(2) prescribes the conditions of eligibility, which the assessee satisfies." Prose paraphrases without a URL are acceptable; blockquoted "quotations" without a URL are forbidden.
 - Any blockquote that begins with a section number (\`Section X(Y): "..."\`) MUST be followed by a \`Source:\` URL line. If you cannot supply one, do not emit the blockquote — rewrite the point in prose with the section reference instead.
+- NEVER CONSTRUCT A URL. A source URL must be COPIED VERBATIM from a search result or from the authoritative-reference list — never assembled from a domain plus a guessed path. Building a plausible-looking address (e.g. taking gst.gov.in and appending /acts/central-goods-and-services-tax-act-2017) produces a dead link that the officer WILL click, and a 404 in a filed reply discredits every other citation in the letter. If you do not hold the exact URL, cite the provision by name and number only — \`Section 61 of the CGST Act, 2017\` is complete and correct without any link. Unrecognised URLs are stripped automatically before the letter is saved.
 
 ARITHMETIC RECONSTRUCTION (when challenging a computational demand)
 If the reply disputes the quantum of a demand raised by CPC / AO, include a small GFM table inside the relevant sub-part showing the department's computation alongside the assessee's correct computation, line by line (e.g. "Total Income", "Tax @ rate", "Surcharge", "Cess", "Interest u/s 234A/B/C/F", "Demand"). Without this side-by-side, the reply asserts an error without showing it.
@@ -470,7 +471,7 @@ router.post(
       (text) => { fullResponse += text; sse.writeText(text); },
     );
 
-    let sanitizationReport = { changed: false, droppedEntries: 0, totalEntries: 0, keptEntries: 0 };
+    let sanitizationReport = { changed: false, droppedEntries: 0, totalEntries: 0, keptEntries: 0, droppedUrls: 0 };
     if (fullResponse) {
       // Strip any case-law citations the model produced without a
       // verifiable source URL, and strip the entire section when the
@@ -530,6 +531,7 @@ router.post(
       noticeId,
       citationsSanitized: sanitizationReport.changed,
       citationsDropped: sanitizationReport.droppedEntries,
+      urlsDropped: sanitizationReport.droppedUrls,
     });
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
@@ -706,6 +708,7 @@ ${instruction}
       noticeId: notice.id,
       citationsSanitized: sanitized.report.changed,
       citationsDropped: sanitized.report.droppedEntries,
+      urlsDropped: sanitized.report.droppedUrls,
     });
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);

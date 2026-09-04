@@ -82,10 +82,15 @@ const PLACEHOLDER_BODY_PATTERN =
 
 /** A single sanitised entry plus diagnostic info about why it was
  *  kept or dropped. */
+import { OFFICIAL_REFERENCE_URLS } from './officialReferenceUrls.js';
+
 export interface SanitizerReport {
   totalEntries: number;
   keptEntries: number;
   droppedEntries: number;
+  /** Fabricated / unverifiable source URLs stripped from OUTSIDE the
+   *  case-law section (statutory "Source:" links and the like). */
+  droppedUrls: number;
   /** True when the post-flight pass meaningfully changed the draft. */
   changed: boolean;
 }
@@ -124,16 +129,116 @@ function spliceSection(draft: string, start: number, end: number): string {
   return `${before}\n\n${after}`.replace(/\n{3,}/g, '\n\n');
 }
 
+/**
+ * Strip source URLs the model invented.
+ *
+ * The case-law sanitizer below only guards the SUPPORTING CASE LAWS
+ * section, and only checks the HOST. That is not enough for statutory
+ * "Source:" links, which the model emits anywhere in the letter and
+ * builds by pattern-matching rather than retrieval. Real failure
+ * (2026-09 GST scrutiny reply): it cited
+ *   Section 61, CGST Act, 2017 (https://www.gst.gov.in/acts/central-goods-and-services-tax-act-2017)
+ * — a 404. The host IS gst.gov.in, so a host-level check waves it
+ * through; only the PATH is fabricated. Prompt wording alone does not
+ * stop this (the reference block already says "never fabricate URLs"),
+ * and it got likelier once notice drafting moved to the economy model.
+ *
+ * A dead link in a document filed with the department is worse than
+ * no link: it invites the officer to doubt everything around it. So
+ * outside the case-law section we keep a URL ONLY when it exactly
+ * matches one of our known-live official references. Anything else
+ * loses the URL but KEEPS its human-readable citation text — "Section
+ * 61, Central Goods and Services Tax Act, 2017" is perfectly citable
+ * on its own, and any reader can look it up.
+ *
+ * Case-law URLs are deliberately NOT touched here: they come from
+ * search grounding, can't live on a static allowlist, and already
+ * have their own per-entry rule.
+ */
+const KNOWN_LIVE_URLS: ReadonlySet<string> = new Set(
+  OFFICIAL_REFERENCE_URLS.map(r => normalizeUrl(r.url)),
+);
+
+function normalizeUrl(url: string): string {
+  return url.trim().toLowerCase().replace(/[).,;\]]+$/, '').replace(/\/+$/, '');
+}
+
+function isKnownLiveUrl(url: string): boolean {
+  return KNOWN_LIVE_URLS.has(normalizeUrl(url));
+}
+
+/** Remove unverifiable URLs from `text`, preserving surrounding prose.
+ *  Handles markdown links, parenthesised URLs, and bare URLs. */
+export function stripUnverifiableUrls(text: string): { text: string; dropped: number } {
+  let dropped = 0;
+
+  // [label](url) -> label
+  let out = text.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (full, label: string, url: string) => {
+    if (isKnownLiveUrl(url)) return full;
+    dropped++;
+    return label;
+  });
+
+  // "... (https://...)" -> "..."   (the shape the model actually emits)
+  out = out.replace(/\s*\((https?:\/\/[^)\s]+)\)/g, (full, url: string) => {
+    if (isKnownLiveUrl(url)) return full;
+    dropped++;
+    return '';
+  });
+
+  // Any remaining bare URL.
+  out = out.replace(/https?:\/\/[^\s)\]]+/g, (url: string) => {
+    if (isKnownLiveUrl(url)) return url;
+    dropped++;
+    return '';
+  });
+
+  if (dropped > 0) {
+    // Tidy what the removals leave behind: empty parens, doubled
+    // spaces, and a dangling "Source:" line with nothing after it.
+    out = out
+      .replace(/\(\s*\)/g, '')
+      .replace(/[ \t]{2,}/g, ' ')
+      .replace(/^[ \t]*Source:[ \t]*$/gim, '')
+      .replace(/[ \t]+$/gm, '');
+  }
+  return { text: out, dropped };
+}
+
 export function sanitizeNoticeCitations(draft: string): SanitizerResult {
   // Always run a section-heading renumber at the end. Even if the
   // case-law section is left untouched here, the model sometimes
   // omits section 4 entirely and emits 1, 2, 3, 5, 6 — renumbering
   // fixes that for free.
-  const finalize = (text: string, report: SanitizerReport): SanitizerResult => {
+  // Single choke point for every return path below. Besides renumbering,
+  // this strips unverifiable source URLs from everywhere EXCEPT the
+  // case-law section — that section has its own per-entry host rule and
+  // legitimately carries search-grounded links which cannot live on a
+  // static allowlist. See stripUnverifiableUrls for why prompt wording
+  // alone does not stop fabricated statutory links.
+  const finalize = (text: string, report: Omit<SanitizerReport, 'droppedUrls'>): SanitizerResult => {
     const renumbered = renumberSectionHeadings(text);
+    const h = SECTION_HEADING_PATTERN.exec(renumbered);
+    let urlSafe: string;
+    let droppedUrls: number;
+    if (!h) {
+      const r = stripUnverifiableUrls(renumbered);
+      urlSafe = r.text;
+      droppedUrls = r.dropped;
+    } else {
+      const start = h.index;
+      const afterH = start + h[0].length;
+      const rest = renumbered.slice(afterH);
+      const nh = /\n##\s/.exec(rest);
+      const end = nh ? afterH + nh.index : renumbered.length;
+      const before = stripUnverifiableUrls(renumbered.slice(0, start));
+      const after = stripUnverifiableUrls(renumbered.slice(end));
+      urlSafe = before.text + renumbered.slice(start, end) + after.text;
+      droppedUrls = before.dropped + after.dropped;
+    }
     return {
-      text: renumbered,
-      report: { ...report, changed: report.changed || renumbered !== text },
+      text: urlSafe,
+      report: { ...report, droppedUrls, changed: report.changed || urlSafe !== text },
     };
   };
 
