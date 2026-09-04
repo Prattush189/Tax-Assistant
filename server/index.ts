@@ -8,6 +8,7 @@ import uploadRouter from './routes/upload.js';
 import chatsRouter from './routes/chats.js';
 import authRouter from './routes/auth.js';
 import adminRouter from './routes/admin.js';
+import formatRequestsRouter from './routes/formatRequests.js';
 import externalRouter from './routes/external.js';
 import noticesRouter from './routes/notices.js';
 import notificationsRouter from './routes/notifications.js';
@@ -186,6 +187,9 @@ app.use('/api/ledger-scrutiny', ledgerScrutinyLimiter, ledgerScrutinyRouter);
 app.use('/api/invitations', invitationsRouter);
 app.use('/api/payments', paymentsRouter);
 app.use('/api/billing-details', billingDetailsRouter);
+
+// Format-support requests (ledger / bank) — any signed-in user.
+app.use('/api/format-requests', authMiddleware, formatRequestsRouter);
 
 // Admin — requires auth + admin role
 app.use('/api/admin', authMiddleware, adminMiddleware, adminRouter);

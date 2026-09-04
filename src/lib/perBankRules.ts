@@ -1000,6 +1000,25 @@ const IDBI: BankRule = {
 
 const RULES: BankRule[] = [HDFC, ICICI, ICICI_ACCOUNT_STATEMENT, CANARA, PNB, YES_BANK, KOTAK, SBI, IDBI, BANK_OF_MAHARASHTRA, JK_BANK_DCR, JK_BANK_SAVINGS, JK_BANK];
 
+/**
+ * Bank names we have a deterministic column rule for, for display in
+ * the uploader's "supported formats" hint.
+ *
+ * Derived from RULES so it can never drift from what actually works,
+ * then de-duplicated: several banks have more than one rule because
+ * they ship more than one statement layout (J&K has savings / cash
+ * credit / detailed variants), and the user only cares about the bank.
+ * The parenthesised variant suffix is stripped for the same reason.
+ *
+ * NOTE: a bank missing from this list is not necessarily unusable —
+ * the column-mapping wizard still handles unknown layouts. It only
+ * means we have no zero-touch rule, which is exactly what the
+ * "request support" flow collects samples for.
+ */
+export const SUPPORTED_BANKS: ReadonlyArray<string> = Array.from(
+  new Set(RULES.map(r => r.name.replace(/\s*\([^)]*\)\s*$/, '').trim())),
+).sort((a, b) => a.localeCompare(b));
+
 export interface DetectedBankMapping {
   bank: string;
   mapping: ColumnMapping;

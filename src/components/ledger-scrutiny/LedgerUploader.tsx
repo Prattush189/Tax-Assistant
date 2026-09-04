@@ -2,6 +2,8 @@ import { useRef, useState } from 'react';
 import { Upload, FileText, Loader2 } from 'lucide-react';
 import Papa from 'papaparse';
 import toast from 'react-hot-toast';
+import { FormatSupportNotice } from '../shared/FormatSupportNotice';
+import { SUPPORTED_LEDGER_SOFTWARE } from '../../lib/perLedgerErpRules';
 import type { LedgerScrutinyManager } from '../../hooks/useLedgerScrutinyManager';
 import type { LedgerScrutinyProgress } from '../../services/api';
 import { cn } from '../../lib/utils';
@@ -424,11 +426,16 @@ export function LedgerUploader({ manager }: Props) {
         ) : (
           <>
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-              Tally / Busy / Marg PDF, CSV, or Excel export · max 50 MB
+              PDF, CSV, or Excel ledger export · max 50 MB
             </p>
             <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
               Extract + audit run as one step — no buttons to click after upload.
             </p>
+            {/* Supported-software list is derived from the ERP rules
+                themselves, so it can't drift from what actually works. */}
+            <div className="mt-3 text-left" onClick={(e) => e.stopPropagation()}>
+              <FormatSupportNotice kind="ledger" supported={SUPPORTED_LEDGER_SOFTWARE} />
+            </div>
           </>
         )}
       </div>

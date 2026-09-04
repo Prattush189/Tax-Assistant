@@ -926,9 +926,20 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_external_api_keys_hash ON external_api_k
     db.exec("ALTER TABLE license_keys ADD COLUMN issued_by_dealer TEXT");
     // JSON: { id, name, email, location? } — null for direct admin issuance / Razorpay / signup.
   }
-  const pCols = (db.prepare("PRAGMA table_info(payments)").all() as { name: string }[]).map(c => c.name);
-  if (!pCols.includes('issued_by_dealer')) {
-    db.exec("ALTER TABLE payments ADD COLUMN issued_by_dealer TEXT");
+  // `payments` is created ~20 lines BELOW this block, so on a brand-new
+  // database it does not exist yet and PRAGMA/ALTER threw
+  // "no such table: payments", killing first boot. Existing installs
+  // never hit it because the table was already there. Guard on
+  // existence; the matching migration for fresh databases runs
+  // immediately after the CREATE below.
+  const hasPayments = db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='payments'")
+    .get();
+  if (hasPayments) {
+    const pCols = (db.prepare("PRAGMA table_info(payments)").all() as { name: string }[]).map(c => c.name);
+    if (!pCols.includes('issued_by_dealer')) {
+      db.exec("ALTER TABLE payments ADD COLUMN issued_by_dealer TEXT");
+    }
   }
 }
 
@@ -961,6 +972,16 @@ db.exec(`CREATE TABLE IF NOT EXISTS payments (
   paid_at TEXT,
   expires_at TEXT
 )`);
+
+// Fresh-database counterpart to the guarded ALTER above: on a new box
+// `payments` did not exist when that block ran, so add the column here
+// once the table is guaranteed to be present. Idempotent.
+{
+  const pCols = (db.prepare("PRAGMA table_info(payments)").all() as { name: string }[]).map(c => c.name);
+  if (!pCols.includes('issued_by_dealer')) {
+    db.exec("ALTER TABLE payments ADD COLUMN issued_by_dealer TEXT");
+  }
+}
 db.exec("CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments(user_id)");
 db.exec("CREATE INDEX IF NOT EXISTS idx_payments_order_id ON payments(razorpay_order_id)");
 
@@ -1101,6 +1122,36 @@ try {
 // is null until a user clicks the card the first time — the detail
 // route then generates with grounding once and caches the result so
 // every subsequent click is a free-on-our-side DB read.
+// format_requests — user-submitted "please support my software/bank"
+// requests from the ledger and bank-statement uploaders.
+//
+// The sample file is stored INLINE as a BLOB rather than on disk.
+// Samples are small (a ledger or statement export, capped at 15 MB by
+// the route), there are few of them, and keeping them in SQLite means
+// they ride the existing DB backup instead of needing a parallel file
+// story that can silently diverge from the rows pointing at it.
+//
+// The sample is real customer financial data, so: it is only ever
+// served to an admin through an explicit download endpoint, never
+// listed inline, and deleting the row deletes the file with it.
+db.exec(`CREATE TABLE IF NOT EXISTS format_requests (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  billing_user_id TEXT,
+  kind TEXT NOT NULL,
+  software_name TEXT NOT NULL,
+  notes TEXT,
+  file_name TEXT,
+  file_mime TEXT,
+  file_size INTEGER,
+  file_blob BLOB,
+  status TEXT NOT NULL DEFAULT 'new',
+  admin_note TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_format_requests_kind_status ON format_requests(kind, status)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_format_requests_user ON format_requests(user_id)`);
+
 db.exec(`CREATE TABLE IF NOT EXISTS tax_notifications (
   id TEXT PRIMARY KEY,
   category TEXT NOT NULL CHECK (category IN ('GST', 'TDS', 'INCOME_TAX', 'OTHER')),

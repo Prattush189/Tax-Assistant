@@ -852,6 +852,103 @@ export async function deleteNotice(id: string) {
   return authFetch(`/api/notices/${id}`, { method: 'DELETE' });
 }
 
+// ── Format support requests (ledger / bank) ─────────────────────────────
+
+export type FormatRequestKind = 'ledger' | 'bank';
+export type FormatRequestStatus = 'new' | 'in_progress' | 'done' | 'rejected';
+
+export interface FormatRequestItem {
+  id: string;
+  user_id: string;
+  kind: FormatRequestKind;
+  software_name: string;
+  notes: string | null;
+  file_name: string | null;
+  file_mime: string | null;
+  file_size: number | null;
+  status: FormatRequestStatus;
+  admin_note: string | null;
+  created_at: string;
+  user_email?: string;
+  user_name?: string;
+}
+
+/** File a "please support this format" request, optionally with a
+ *  sample export. Multipart because of the sample. */
+export async function submitFormatRequest(input: {
+  kind: FormatRequestKind;
+  softwareName: string;
+  notes?: string;
+  sample?: File | null;
+}): Promise<{ success: boolean; id: string; message: string }> {
+  const form = new FormData();
+  form.append('kind', input.kind);
+  form.append('softwareName', input.softwareName);
+  if (input.notes) form.append('notes', input.notes);
+  if (input.sample) form.append('sample', input.sample);
+
+  const doFetch = () => fetch('/api/format-requests', {
+    method: 'POST',
+    headers: { ...getAuthHeaders() },
+    body: form,
+  });
+  let response = await doFetch();
+  if (response.status === 401) {
+    const refreshed = await tryRefreshToken();
+    if (refreshed) response = await doFetch();
+  }
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error ?? 'Could not send your request.');
+  return data;
+}
+
+export async function fetchMyFormatRequests(): Promise<{ requests: FormatRequestItem[] }> {
+  return authFetch('/api/format-requests/mine');
+}
+
+// ── Admin: format requests ──
+export async function adminFetchFormatRequests(
+  filter?: { kind?: FormatRequestKind; status?: FormatRequestStatus },
+): Promise<{ requests: FormatRequestItem[] }> {
+  const qs = new URLSearchParams();
+  if (filter?.kind) qs.set('kind', filter.kind);
+  if (filter?.status) qs.set('status', filter.status);
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
+  return authFetch(`/api/admin/format-requests${suffix}`);
+}
+
+export async function adminUpdateFormatRequest(
+  id: string,
+  patch: { status?: FormatRequestStatus; adminNote?: string },
+): Promise<{ success: boolean }> {
+  return authFetch(`/api/admin/format-requests/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+}
+
+export async function adminDeleteFormatRequest(id: string): Promise<{ success: boolean }> {
+  return authFetch(`/api/admin/format-requests/${id}`, { method: 'DELETE' });
+}
+
+/** Download a submitted sample. Auth header is required, so this goes
+ *  through fetch + blob rather than a plain link. */
+export async function adminDownloadFormatSample(id: string, fileName: string): Promise<void> {
+  const res = await fetch(`/api/admin/format-requests/${id}/sample`, {
+    headers: { ...getAuthHeaders() },
+  });
+  if (!res.ok) throw new Error('Could not download the sample.');
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName || 'sample';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 // ── Tax Notifications (welcome-screen daily list) ───────────────────────
 
 export interface TaxNotificationListItem {

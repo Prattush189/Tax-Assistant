@@ -766,6 +766,20 @@ const DYNAMICS_AX: ErpRule = {
 // exports use "ledger account" and fall through to TALLY proper.
 const RULES: ErpRule[] = [MARG, BUSY, FINSYS, DYNAMICS_AX, TALLY_COMPACT, TALLY];
 
+/**
+ * Accounting / ERP packages we have a deterministic ledger rule for.
+ * Derived from RULES so it cannot drift, de-duplicated because some
+ * packages ship two export layouts (Tally and "Tally Compact" are the
+ * same software to the user).
+ *
+ * A package missing here still imports via the column-mapping wizard;
+ * it just is not zero-touch. That is what the sample-upload request
+ * flow is for.
+ */
+export const SUPPORTED_LEDGER_SOFTWARE: ReadonlyArray<string> = Array.from(
+  new Set(RULES.map(r => r.name.replace(/\s+Compact$/i, '').trim())),
+).sort((a, b) => a.localeCompare(b));
+
 export interface DetectedErpMapping {
   erp: string;
   mapping: ColumnMapping;

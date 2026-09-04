@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Users, Activity, DollarSign, Shield, RefreshCw, ShieldOff, BarChart3, Cpu, Clock, RotateCcw, Search, Filter, Key, Wallet, Plug, Database } from 'lucide-react';
 import { LicensesDashboard } from './LicensesDashboard';
 import { BankTrainingDashboard } from './BankTrainingDashboard';
+import { FormatRequestsDashboard } from './FormatRequestsDashboard';
 import { ChatAuditDashboard } from './ChatAuditDashboard';
 import { PaymentsDashboard } from './PaymentsDashboard';
 import { ExternalKeysDashboard } from './ExternalKeysDashboard';
@@ -289,9 +290,13 @@ export function AdminDashboard() {
         {/* Model Usage tab */}
         {adminTab === 'model-usage' && <ModelUsageDashboard />}
 
-        {/* Training & QA tab — bank payee labeling + chat QA audit exports */}
+        {/* Training & QA tab — format-support requests + bank payee
+            labeling + chat QA audit exports */}
         {adminTab === 'training' && (
           <div className="space-y-5">
+            {/* Format requests sit first: they carry user-submitted
+                sample exports that are waiting on a rule being written. */}
+            <FormatRequestsDashboard />
             <BankTrainingDashboard />
             <ChatAuditDashboard />
           </div>

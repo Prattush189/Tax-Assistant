@@ -2,6 +2,8 @@ import { useRef, useState } from 'react';
 import { Upload, FileText, Loader2, Sparkles } from 'lucide-react';
 import Papa from 'papaparse';
 import toast from 'react-hot-toast';
+import { FormatSupportNotice } from '../shared/FormatSupportNotice';
+import { SUPPORTED_BANKS } from '../../lib/perBankRules';
 import { BankStatementManager } from '../../hooks/useBankStatementManager';
 import type { BankStatementAnalyzeProgress } from '../../services/api';
 import { cn } from '../../lib/utils';
@@ -573,6 +575,11 @@ export function BankStatementUploader({ manager }: Props) {
             <p className="mt-1.5 text-xs text-gray-400 dark:text-gray-500">
               Only the few AI-assisted rows count toward your token budget; scanned PDFs (OCR) use more.
             </p>
+            {/* Supported-bank list is derived from the per-bank rules
+                themselves, so it can't drift from what actually works. */}
+            <div className="mt-3 text-left" onClick={(e) => e.stopPropagation()}>
+              <FormatSupportNotice kind="bank" supported={SUPPORTED_BANKS} />
+            </div>
           </>
         )}
       </div>

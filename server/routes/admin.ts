@@ -9,6 +9,7 @@ import { getEffectivePlan, getUsagePeriodStart, PLAN_DEFAULTS } from '../lib/pla
 import { licenseKeyRepo } from '../db/repositories/licenseKeyRepo.js';
 import { paymentRepo } from '../db/repositories/paymentRepo.js';
 import { issueExternalApiKey, listExternalApiKeys, revokeExternalApiKey, setExternalWebhookUrl } from '../lib/externalApiKey.js';
+import { formatRequestRepo, type FormatRequestKind, type FormatRequestStatus } from '../db/repositories/formatRequestRepo.js';
 
 const router = Router();
 
@@ -970,6 +971,58 @@ router.delete('/payments/:id', (req: AuthRequest, res: Response) => {
   const ok = paymentRepo.deleteById(req.params.id);
   if (!ok) { res.status(500).json({ error: 'Delete failed' }); return; }
   console.log(`[admin] Deleted payment ${req.params.id} (invoice ${pay.invoice_number ?? 'n/a'}) by admin ${req.user?.id}`);
+  res.json({ success: true });
+});
+
+// ── Format support requests (ledger / bank sample uploads) ──
+// Users file these from the uploaders when their accounting package or
+// bank has no zero-touch rule. The attached sample is what lets us
+// write the rule, so the download endpoint below is the whole point of
+// the feature.
+router.get('/format-requests', (req: AuthRequest, res: Response) => {
+  const kind = req.query.kind as FormatRequestKind | undefined;
+  const status = req.query.status as FormatRequestStatus | undefined;
+  res.json({
+    requests: formatRequestRepo.listAll({
+      kind: kind === 'ledger' || kind === 'bank' ? kind : undefined,
+      status: status && ['new', 'in_progress', 'done', 'rejected'].includes(status) ? status : undefined,
+    }),
+  });
+});
+
+// Sample download. Served as an attachment with a generic octet-stream
+// content type and a quoted filename — these are user-supplied files,
+// so we never let the browser decide to render one inline.
+router.get('/format-requests/:id/sample', (req: AuthRequest, res: Response) => {
+  const row = formatRequestRepo.findFile(req.params.id);
+  if (!row || !row.file_blob) {
+    res.status(404).json({ error: 'No sample attached to this request.' });
+    return;
+  }
+  const safeName = (row.file_name ?? 'sample').replace(/[^\w.\- ]+/g, '_').slice(0, 120);
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+  res.send(row.file_blob);
+});
+
+router.patch('/format-requests/:id', (req: AuthRequest, res: Response) => {
+  const { status, adminNote } = req.body ?? {};
+  if (status !== undefined && !['new', 'in_progress', 'done', 'rejected'].includes(status)) {
+    res.status(400).json({ error: 'Invalid status.' });
+    return;
+  }
+  const ok = formatRequestRepo.update(req.params.id, { status, adminNote });
+  if (!ok) { res.status(404).json({ error: 'Request not found' }); return; }
+  res.json({ success: true });
+});
+
+// Deleting the row deletes the stored sample with it — that is the
+// intended way to get customer financial data off the box once a rule
+// has been written.
+router.delete('/format-requests/:id', (req: AuthRequest, res: Response) => {
+  const ok = formatRequestRepo.deleteById(req.params.id);
+  if (!ok) { res.status(404).json({ error: 'Request not found' }); return; }
+  console.log(`[admin] Deleted format request ${req.params.id} (and its sample) by admin ${req.user?.id}`);
   res.json({ success: true });
 });
 
