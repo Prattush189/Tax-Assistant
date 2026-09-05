@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { gridLog } from '../../lib/gridDebug';
 import { Upload, FileText, Loader2 } from 'lucide-react';
 import Papa from 'papaparse';
 import toast from 'react-hot-toast';
@@ -231,7 +232,7 @@ export function LedgerUploader({ manager }: Props) {
       // amount" toast instead of a fixable mapping screen.
       const detected = detectAndMapLedgerErp(grid);
       if (detected && grid) {
-        console.log(`[LedgerUploader] auto-detected ${detected.erp} — pre-filling wizard for review`);
+        gridLog(`[LedgerUploader] auto-detected ${detected.erp} — pre-filling wizard for review`);
         setIsReadingPdf(false);
         // Use detected.grid (post-preprocess) — when the Tally rule
         // splits a merged "Vch No. Debit" column the mapping indices
@@ -262,7 +263,7 @@ export function LedgerUploader({ manager }: Props) {
         return;
       }
       if (grid && (grid.columnCount ?? 0) < 5) {
-        console.log(`[LedgerUploader] only ${grid.columnCount} columns detected — routing to vision`);
+        gridLog(`[LedgerUploader] only ${grid.columnCount} columns detected — routing to vision`);
       }
       const pageCount = await countPdfPagesClient(file) ?? 0;
       setIsReadingPdf(false);

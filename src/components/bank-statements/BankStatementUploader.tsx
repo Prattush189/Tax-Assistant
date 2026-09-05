@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { gridLog } from '../../lib/gridDebug';
 import { Upload, FileText, Loader2, Sparkles } from 'lucide-react';
 import Papa from 'papaparse';
 import toast from 'react-hot-toast';
@@ -245,7 +246,7 @@ export function BankStatementUploader({ manager }: Props) {
           : '';
         const ledgerHit = ledgerFingerprints.find(l => earlyText.includes(l.fp));
         if (ledgerHit) {
-          console.log(`[BankStatementUploader] looks like ${ledgerHit.erp} — wrong page`);
+          gridLog(`[BankStatementUploader] looks like ${ledgerHit.erp} — wrong page`);
           setIsReadingPdf(false);
           toast.error(`This looks like ${ledgerHit.erp === 'a ledger' ? 'a ledger export' : `a ${ledgerHit.erp} ledger`}, not a bank statement. Open the Ledger Scrutiny page from the sidebar and upload it there — the ledger flow handles ERP-specific layouts (and routes Finsys exports to AI vision automatically).`, { duration: 9000 });
           return;
@@ -293,10 +294,10 @@ export function BankStatementUploader({ manager }: Props) {
             relSummary: fpWindow.includes('relationship summary'),
             myBranchInfo: /\bmy information\b.*\bbranch information\b/i.test(fpWindow),
           };
-          console.log(`[BankStatementUploader] no per-bank rule matched — cols=${grid.columnCount}, rows=${grid.rows.length}, headers=${JSON.stringify(grid.columnHeaders)}, sbi-markers=${JSON.stringify(sbiMarkers)}`);
+          gridLog(`[BankStatementUploader] no per-bank rule matched — cols=${grid.columnCount}, rows=${grid.rows.length}, headers=${JSON.stringify(grid.columnHeaders)}, sbi-markers=${JSON.stringify(sbiMarkers)}`);
         }
         if (detected && grid) {
-          console.log(`[BankStatementUploader] auto-detected ${detected.bank} — pre-filling wizard for review`);
+          gridLog(`[BankStatementUploader] auto-detected ${detected.bank} — pre-filling wizard for review`);
           setIsReadingPdf(false);
           setPendingGrid({
             // Use the rule's preprocessed grid, NOT the raw grid from
@@ -318,7 +319,7 @@ export function BankStatementUploader({ manager }: Props) {
         try {
           const rptDetected = await detectJkbankRptFormat(file);
           if (rptDetected) {
-            console.log('[BankStatementUploader] detected J&K Bank RPT/RPTNFS format — invoking dedicated parser');
+            gridLog('[BankStatementUploader] detected J&K Bank RPT/RPTNFS format — invoking dedicated parser');
             const rows = await extractJkbankRpt(file);
             if (rows && rows.length > 0) {
               // Convert the parsed MappedRow[] back into a wizard-shaped
@@ -403,7 +404,7 @@ export function BankStatementUploader({ manager }: Props) {
         const datedRows = grid ? grid.rows.filter(r => r.some(c => dateLike.test(c ?? ''))).length : 0;
         const looksLikeRealTable = !!grid && (grid.columnCount ?? 0) >= 3 && datedRows >= 5;
         if (matchedBank && !looksLikeRealTable) {
-          console.log(`[BankStatementUploader] detected ${matchedBank} — routing to vision (no clean table to map)`);
+          gridLog(`[BankStatementUploader] detected ${matchedBank} — routing to vision (no clean table to map)`);
           setIsReadingPdf(false);
           void analyzeRawFile(file);
           return;
@@ -425,7 +426,7 @@ export function BankStatementUploader({ manager }: Props) {
           return;
         }
         if (grid && (grid.columnCount ?? 0) < 3) {
-          console.log(`[BankStatementUploader] only ${grid.columnCount} columns detected — routing to vision (genuinely sparse)`);
+          gridLog(`[BankStatementUploader] only ${grid.columnCount} columns detected — routing to vision (genuinely sparse)`);
         }
         // No usable grid (no text layer / glyph-rendered / too sparse) —
         // route to the OCR pipeline. No page cap any more: OCR is free
@@ -662,7 +663,7 @@ export function BankStatementUploader({ manager }: Props) {
                 // encrypted path skipped detection entirely.
                 const detected = detectAndMapBank(grid);
                 if (detected) {
-                  console.log(`[BankStatementUploader] auto-detected ${detected.bank} (encrypted PDF) — pre-filling wizard for review`);
+                  gridLog(`[BankStatementUploader] auto-detected ${detected.bank} (encrypted PDF) — pre-filling wizard for review`);
                   setPendingGrid({
                     grid: detected.grid,
                     filename: file.name,

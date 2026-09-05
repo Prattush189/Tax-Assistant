@@ -17,6 +17,7 @@
  */
 
 import { pdfjs } from 'react-pdf';
+import { gridLog } from './gridDebug';
 
 // Static import (not dynamic): Vite must statically see the
 // `new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url)`
@@ -230,7 +231,7 @@ function mergeHeaderDataColumnPairs(grid: PdfGrid): PdfGrid {
   const newRows = grid.rows.map(row => survive.map(c => row[c] ?? ''));
   const newHeaders = survive.map(c => grid.columnHeaders?.[c] ?? null);
   const newXs = survive.map(c => grid.columnXs[c]);
-  console.log(`[pdfGrid] dropped ${dropCols.size} phantom column(s) (header-only + data-only merges, void columns) — ${grid.columnCount} → ${survive.length} columns`);
+  gridLog(`[pdfGrid] dropped ${dropCols.size} phantom column(s) (header-only + data-only merges, void columns) — ${grid.columnCount} → ${survive.length} columns`);
   return {
     ...grid,
     rows: newRows,
@@ -868,7 +869,7 @@ export function buildGridFromItems(
           const xs = provisional[i];
           const minX = xs.length > 0 ? Math.min(...xs) : null;
           const maxX = xs.length > 0 ? Math.max(...xs) : null;
-          console.log(`col ${i}: ${a.align}, leftX=${a.leftX.toFixed(1)}, x=${a.x.toFixed(1)}, header="${a.headerText ?? '(none)'}", items=${xs.length}, x-range=[${minX?.toFixed(1) ?? '-'}, ${maxX?.toFixed(1) ?? '-'}]`);
+          gridLog(`col ${i}: ${a.align}, leftX=${a.leftX.toFixed(1)}, x=${a.x.toFixed(1)}, header="${a.headerText ?? '(none)'}", items=${xs.length}, x-range=[${minX?.toFixed(1) ?? '-'}, ${maxX?.toFixed(1) ?? '-'}]`);
         });
         console.groupEnd();
       }
@@ -956,15 +957,15 @@ export function buildGridFromItems(
             : upperStart > (prev.leftX + cur.leftX) / 2;
           if (upperCount >= 3 && lowerCount >= 3 && upperStart > prev.leftX + 6 && upperStart < cur.leftX - 4 && ratioOk) {
             if (debug) {
-              console.log(`[pdfGrid] Pass B split: col ${donorIdx} (header="${prev.headerText}") had bimodal x-distribution; gap=${bestGap.toFixed(1)} at upperStart=${upperStart.toFixed(1)} (lowerCount=${lowerCount}, upperCount=${upperCount}). Snapping col ${c} (header="${cur.headerText}") leftX from ${cur.leftX.toFixed(1)} to ${upperStart.toFixed(1)}.`);
+              gridLog(`[pdfGrid] Pass B split: col ${donorIdx} (header="${prev.headerText}") had bimodal x-distribution; gap=${bestGap.toFixed(1)} at upperStart=${upperStart.toFixed(1)} (lowerCount=${lowerCount}, upperCount=${upperCount}). Snapping col ${c} (header="${cur.headerText}") leftX from ${cur.leftX.toFixed(1)} to ${upperStart.toFixed(1)}.`);
             }
             cur.leftX = upperStart;
             cur.x = upperStart;
           } else if (debug) {
-            console.log(`[pdfGrid] Pass B did not commit split for col ${c}: upperCount=${upperCount}, lowerCount=${lowerCount}, upperStart=${upperStart.toFixed(1)}, prev.leftX+6=${(prev.leftX + 6).toFixed(1)}`);
+            gridLog(`[pdfGrid] Pass B did not commit split for col ${c}: upperCount=${upperCount}, lowerCount=${lowerCount}, upperStart=${upperStart.toFixed(1)}, prev.leftX+6=${(prev.leftX + 6).toFixed(1)}`);
           }
         } else if (debug) {
-          console.log(`[pdfGrid] Pass B no-op for col ${c}: bestGap=${bestGap.toFixed(1)} (need >= 12), bestSplitAt=${bestSplitAt}`);
+          gridLog(`[pdfGrid] Pass B no-op for col ${c}: bestGap=${bestGap.toFixed(1)} (need >= 12), bestSplitAt=${bestSplitAt}`);
         }
       }
 
@@ -973,7 +974,7 @@ export function buildGridFromItems(
       if (debug) {
         console.group('[pdfGrid] anchors AFTER re-anchor passes');
         columnAnchors.forEach((a, i) => {
-          console.log(`col ${i}: ${a.align}, leftX=${a.leftX.toFixed(1)}, x=${a.x.toFixed(1)}, header="${a.headerText ?? '(none)'}"`);
+          gridLog(`col ${i}: ${a.align}, leftX=${a.leftX.toFixed(1)}, x=${a.x.toFixed(1)}, header="${a.headerText ?? '(none)'}"`);
         });
         console.groupEnd();
       }
@@ -1829,7 +1830,7 @@ export function applyMapping(
     if (process.env.PDFGRID_DEBUG_RANGE) {
       const [lo, hi] = process.env.PDFGRID_DEBUG_RANGE.split('-').map(Number);
       if (__rowIdx >= lo && __rowIdx <= hi) {
-        console.log(`[dbgR ${__rowIdx}] pending=${pending ? pending.date + (pendingAwaitingCrossPage ? '/awaitX' : '') : 'null'} row=${JSON.stringify(row)}`);
+        gridLog(`[dbgR ${__rowIdx}] pending=${pending ? pending.date + (pendingAwaitingCrossPage ? '/awaitX' : '') : 'null'} row=${JSON.stringify(row)}`);
       }
     }
     const cell = (role: ColumnRole) => {

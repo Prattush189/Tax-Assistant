@@ -6,6 +6,7 @@
  *   - Send to CMA (hand off the computed data to a new CMA draft)
  */
 import { useMemo, useState } from 'react';
+import { gridLog } from '../../../lib/gridDebug';
 import { Download, AlertTriangle, Send } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Card } from '../../itr/shared/Inputs';
@@ -141,7 +142,7 @@ export function TbBsReviewStep({ draft, draftId, onChange }: Props) {
     try {
       const { cmaDraftId } = await sendToCma(draft, report);
       toast.success('Sent to CMA. Open the new CMA draft from the CMA Report tab.');
-      console.log('[tb-bs] CMA draft created:', cmaDraftId);
+      gridLog('[tb-bs] CMA draft created:', cmaDraftId);
     } catch (err) {
       console.error('[tb-bs] send to CMA failed', err);
       toast.error(err instanceof Error ? err.message : 'Send to CMA failed');

@@ -42,6 +42,7 @@
  */
 
 import { inferFiscalYearStart, parseDate, type ColumnMapping, type ColumnRole, type PdfGrid } from './pdfGrid';
+import { gridLog } from './gridDebug';
 
 interface ErpRule {
   /** Display name surfaced in the success toast and console logs. */
@@ -219,7 +220,7 @@ function tallySplitMergedVchNoDebit(grid: PdfGrid): PdfGrid {
   }
   if (splitCol < 0) return grid;
 
-  console.log(`[perLedgerErpRules] Tally splitting merged Vch No./Debit column at index ${splitCol}`);
+  gridLog(`[perLedgerErpRules] Tally splitting merged Vch No./Debit column at index ${splitCol}`);
 
   const newColumnCount = grid.columnCount + 1;
   const newRows: string[][] = grid.rows.map(r => {
@@ -322,7 +323,7 @@ function tallyMergeParticularsNarration(grid: PdfGrid): PdfGrid {
   const VCH_TYPE_PURE = /^\s*(?:Payment|Journal|Purchase|Receipt|Contra|Sales|Debit\s*Note|Credit\s*Note|Sale|Rcpt|Pymt)\s*$/i;
   const VCH_TYPE_SUFFIX = /\s(Payment|Journal|Purchase|Receipt|Contra|Sales|Debit\s*Note|Credit\s*Note|Sale|Rcpt|Pymt)\s*$/i;
 
-  console.log(`[perLedgerErpRules] Tally consolidating narration: Particulars (col ${partIdx}) ← Narration (col ${narrIdx})${typeIdx >= 0 ? ` ← Type (col ${typeIdx}, overflow prefix only)` : ''}`);
+  gridLog(`[perLedgerErpRules] Tally consolidating narration: Particulars (col ${partIdx}) ← Narration (col ${narrIdx})${typeIdx >= 0 ? ` ← Type (col ${typeIdx}, overflow prefix only)` : ''}`);
 
   const newRows = grid.rows.map(r => {
     const out = [...r];
@@ -530,7 +531,7 @@ function finsysSplitDateNarrationColumn(grid: PdfGrid): PdfGrid {
   const col1Populated = sample.filter(r => (r[1] ?? '').trim().length > 0).length;
   if (col1Populated > 5) return grid;
 
-  console.log(`[perLedgerErpRules] Finsys ERP splitting merged Date+Narration column 0 (${dateMatches}/${sample.length} rows have date prefix, col 1 empty in ${sample.length - col1Populated}/${sample.length})`);
+  gridLog(`[perLedgerErpRules] Finsys ERP splitting merged Date+Narration column 0 (${dateMatches}/${sample.length} rows have date prefix, col 1 empty in ${sample.length - col1Populated}/${sample.length})`);
 
   // "Balance B/f" is the per-page opening-balance carry-forward
   // Finsys prints at the top of every page. The first occurrence
@@ -695,7 +696,7 @@ function dynamicsAxNormalizeDates(grid: PdfGrid): PdfGrid {
   }
   if (mdyEvidence < 2) return grid;  // No strong M/D evidence — leave alone.
 
-  console.log(`[perLedgerErpRules] Dynamics AX normalising MM/DD/YYYY → DD/MM/YYYY in date column (${mdyEvidence} unambiguous MDY cells in first ${sample.length} rows)`);
+  gridLog(`[perLedgerErpRules] Dynamics AX normalising MM/DD/YYYY → DD/MM/YYYY in date column (${mdyEvidence} unambiguous MDY cells in first ${sample.length} rows)`);
 
   const newRows = grid.rows.map(r => {
     const out = [...r];
@@ -927,7 +928,7 @@ export function detectAndMapLedgerErp(gridIn: PdfGrid | null): DetectedErpMappin
           curCurrency < datedRows.length / 4 &&
           nextCurrency >= Math.ceil(datedRows.length / 2);
         if (emptyAndFull || integerThenCurrency) {
-          console.log(`[perLedgerErpRules] ${rule.name} shifting ${numericRole} from col ${col} → col ${col + 1} (${cur}/${datedRows.length} numeric, ${curCurrency} currency-shape vs ${next}/${datedRows.length} numeric, ${nextCurrency} currency-shape in next column)`);
+          gridLog(`[perLedgerErpRules] ${rule.name} shifting ${numericRole} from col ${col} → col ${col + 1} (${cur}/${datedRows.length} numeric, ${curCurrency} currency-shape vs ${next}/${datedRows.length} numeric, ${nextCurrency} currency-shape in next column)`);
           roles[col] = 'skip';
           roles[col + 1] = numericRole;
           anyNumericShift = true;
@@ -949,7 +950,7 @@ export function detectAndMapLedgerErp(gridIn: PdfGrid | null): DetectedErpMappin
           if (numAt(col) > 0) continue;
           const nextHeader = (headers[col + 1] ?? '').trim();
           if (nextHeader !== '') continue;
-          console.log(`[perLedgerErpRules] ${rule.name} companion-shifting ${numericRole} from col ${col} → col ${col + 1} (sibling shift confirmed split-header layout; no data evidence in sampled rows but next col is unmapped + headerless)`);
+          gridLog(`[perLedgerErpRules] ${rule.name} companion-shifting ${numericRole} from col ${col} → col ${col + 1} (sibling shift confirmed split-header layout; no data evidence in sampled rows but next col is unmapped + headerless)`);
           roles[col] = 'skip';
           roles[col + 1] = numericRole;
         }
@@ -972,7 +973,7 @@ export function detectAndMapLedgerErp(gridIn: PdfGrid | null): DetectedErpMappin
         const cur = nonEmptyAt(col);
         const next = nonEmptyAt(col + 1);
         if (cur < datedRows.length / 4 && next >= Math.ceil(datedRows.length / 2)) {
-          console.log(`[perLedgerErpRules] ${rule.name} shifting ${nonNumericRole} from col ${col} → col ${col + 1} (${cur}/${datedRows.length} populated vs ${next}/${datedRows.length} in next column)`);
+          gridLog(`[perLedgerErpRules] ${rule.name} shifting ${nonNumericRole} from col ${col} → col ${col + 1} (${cur}/${datedRows.length} populated vs ${next}/${datedRows.length} in next column)`);
           roles[col] = 'skip';
           roles[col + 1] = nonNumericRole;
         }
@@ -1074,7 +1075,7 @@ export function detectAndMapLedgerErp(gridIn: PdfGrid | null): DetectedErpMappin
       if (cells.length < 3) continue;
       const refLike = cells.filter(v => VCH_NO_SHAPE.test(v)).length;
       if (refLike / cells.length >= 0.4) {
-        console.log(`[perLedgerErpRules] ${rule.name} post-shift content fallback: column ${c} → reference (${refLike}/${cells.length} cells match voucher shape)`);
+        gridLog(`[perLedgerErpRules] ${rule.name} post-shift content fallback: column ${c} → reference (${refLike}/${cells.length} cells match voucher shape)`);
         roles[c] = 'reference';
         break;
       }

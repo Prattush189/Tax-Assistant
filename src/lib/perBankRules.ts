@@ -17,6 +17,7 @@
  */
 
 import { parseDate, type ColumnMapping, type ColumnRole, type PdfGrid } from './pdfGrid';
+import { gridLog } from './gridDebug';
 
 interface BankRule {
   /** Display name surfaced in console + future UI hints. */
@@ -1208,7 +1209,7 @@ function tryRule(rule: BankRule, gridIn: PdfGrid): DetectedBankMapping | null {
         const cur = numAt(col);
         const next = numAt(col + 1);
         if (cur < datedRows.length / 4 && next >= Math.ceil(datedRows.length / 2)) {
-          console.log(`[perBankRules] ${rule.name} shifting ${numericRole} from col ${col} → col ${col + 1} (${cur}/${datedRows.length} numeric vs ${next}/${datedRows.length} in next column)`);
+          gridLog(`[perBankRules] ${rule.name} shifting ${numericRole} from col ${col} → col ${col + 1} (${cur}/${datedRows.length} numeric vs ${next}/${datedRows.length} in next column)`);
           roles[col] = 'skip';
           roles[col + 1] = numericRole;
           anyShift = true;
@@ -1230,7 +1231,7 @@ function tryRule(rule: BankRule, gridIn: PdfGrid): DetectedBankMapping | null {
         const cur = numAt(col);
         const next = numAt(col + 1);
         if (cur === 0 && next >= 3) {
-          console.log(`[perBankRules] ${rule.name} skewed-shift ${numericRole} from col ${col} → col ${col + 1} (0 numeric in header column, ${next} in next headerless column)`);
+          gridLog(`[perBankRules] ${rule.name} skewed-shift ${numericRole} from col ${col} → col ${col + 1} (0 numeric in header column, ${next} in next headerless column)`);
           roles[col] = 'skip';
           roles[col + 1] = numericRole;
           anyShift = true;
@@ -1247,7 +1248,7 @@ function tryRule(rule: BankRule, gridIn: PdfGrid): DetectedBankMapping | null {
           if (numAt(col) > 0) continue; // role's current column has some data — don't blindly shift
           const nextHeader = (headers[col + 1] ?? '').trim();
           if (nextHeader !== '') continue; // next column has its own header — not part of the split layout
-          console.log(`[perBankRules] ${rule.name} companion-shifting ${numericRole} from col ${col} → col ${col + 1} (sibling shift confirmed split-header layout; no data evidence in sampled rows but next col is unmapped + headerless)`);
+          gridLog(`[perBankRules] ${rule.name} companion-shifting ${numericRole} from col ${col} → col ${col + 1} (sibling shift confirmed split-header layout; no data evidence in sampled rows but next col is unmapped + headerless)`);
           roles[col] = 'skip';
           roles[col + 1] = numericRole;
         }

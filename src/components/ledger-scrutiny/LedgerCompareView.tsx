@@ -6,6 +6,7 @@
  * /api/ledger-scrutiny/compare which returns a reconciliation report.
  */
 import { useEffect, useRef, useState } from 'react';
+import { gridLog } from '../../lib/gridDebug';
 import { Loader2, Scale, Upload, FileCheck2, X, Download } from 'lucide-react';
 import Papa from 'papaparse';
 import toast from 'react-hot-toast';
@@ -683,7 +684,7 @@ export function LedgerCompareView() {
         // grid would render an off-by-one preview.
         const detected = detectAndMapLedgerErp(grid);
         if (detected) {
-          console.log(`[LedgerCompareView] side ${side} auto-detected ${detected.erp} — pre-filling wizard for review`);
+          gridLog(`[LedgerCompareView] side ${side} auto-detected ${detected.erp} — pre-filling wizard for review`);
           setPendingGrid({
             side,
             grid: detected.grid,
