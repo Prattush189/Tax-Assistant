@@ -119,12 +119,14 @@ export const geminiChatProvider: ChatProvider = {
       model: string,
       tier: string | null,
       thinking: 'low' | 'high' | null,
-    ): Promise<{ inputTokens: number; outputTokens: number; cachedInputTokens: number }> => {
+    ): Promise<{ inputTokens: number; outputTokens: number; cachedInputTokens: number; ttftMs: number; totalMs: number }> => {
       const selection = selectTier(true);
       const apiKey = GEMINI_API_KEYS[selection.keyIndex] ?? '';
       let inputTokens = 0;
       let outputTokens = 0;
       let cachedInputTokens = 0;
+      const t0 = Date.now();
+      let ttftMs = 0;
 
       const stream = streamGeminiChat(
         model,
@@ -144,7 +146,7 @@ export const geminiChatProvider: ChatProvider = {
       );
 
       for await (const chunk of stream) {
-        if (chunk.text) { emittedAnyText = true; onText(chunk.text); }
+        if (chunk.text) { if (!ttftMs) ttftMs = Date.now() - t0; emittedAnyText = true; onText(chunk.text); }
         if (chunk.done) {
           inputTokens = chunk.inputTokens ?? 0;
           outputTokens = chunk.outputTokens ?? 0;
@@ -153,11 +155,11 @@ export const geminiChatProvider: ChatProvider = {
           confirmUsed(tag, selection.keyIndex, true);
         }
       }
-      return { inputTokens, outputTokens, cachedInputTokens };
+      return { inputTokens, outputTokens, cachedInputTokens, ttftMs, totalMs: Date.now() - t0 };
     };
 
     let used: { model: string; tier: string | null } | null = null;
-    let result = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 };
+    let result = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, ttftMs: 0, totalMs: 0 };
     let firstFallbackFired = false;
 
     for (let i = 0; i < ladder.length; i++) {
@@ -169,16 +171,18 @@ export const geminiChatProvider: ChatProvider = {
         try { req.onFallback?.({ from: topRung, to: rung.model }); }
         catch (e) { console.warn('[chatProvider] onFallback hook threw:', (e as Error).message); }
       }
+      const rungStartMs = Date.now();
       try {
         result = await tryModel(rung.model, rung.tier, rung.thinking);
         used = { model: rung.model, tier: rung.tier };
+        console.log(`[chatProvider-timing] ${rung.model}${rung.tier ? ` (${rung.tier})` : ''}${req.economy ? ' economy' : ''} ttft=${result.ttftMs}ms total=${result.totalMs}ms in=${result.inputTokens} out=${result.outputTokens}`);
         break;
       } catch (err) {
         // Mid-stream failure — partial draft already streamed; don't retry
         // (would duplicate). Surface as a truncation to the caller.
         if (emittedAnyText) throw err;
         const lastRung = i === ladder.length - 1;
-        console.warn(`[chatProvider] ${rung.model}${rung.tier ? ` (${rung.tier})` : ''} failed${lastRung ? '' : ', trying next'}:`, (err as Error).message?.slice(0, 120));
+        console.warn(`[chatProvider] ${rung.model}${rung.tier ? ` (${rung.tier})` : ''} failed after ${Date.now() - rungStartMs}ms${lastRung ? '' : ', trying next'}:`, (err as Error).message?.slice(0, 120));
       }
     }
 

@@ -375,6 +375,11 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
         for (let i = 0; i < ladder.length && fastApiKey && !fullResponse && !primaryFailedMidStream; i++) {
           const rung = ladder[i];
           usedModel = rung.model;
+          // Per-rung timing: separates 'waited on a rung that never answered'
+          // from 'generation was slow' — one duration_ms over the whole
+          // ladder could not tell them apart.
+          const rungStartMs = Date.now();
+          let firstTokenMs = 0;
           try {
             // Hallucinated "[cite: …]" tokens are stripped BEFORE they reach
             // the client; a marker can straddle two chunks, so this is a
@@ -382,6 +387,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
             const citeFilter = new CiteMarkerStreamFilter();
             for await (const chunk of streamGeminiChat(rung.model, SYSTEM_INSTRUCTION, historyPlain, userContent, fastApiKey, MAX_TOKENS, searchEnabled, true, thinkingFor(rung.model), rung.tier, STREAM_IDLE_MS, firstByteFor(rung.model))) {
               if (chunk.text) {
+                if (!firstTokenMs) firstTokenMs = Date.now() - rungStartMs;
                 rawResponse += chunk.text;
                 const out = citeFilter.push(chunk.text);
                 if (out) { fullResponse += out; sse.writeText(out); }
@@ -396,17 +402,18 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
             }
             const tail = citeFilter.flush();
             if (tail) { fullResponse += tail; sse.writeText(tail); }
+            console.log(`[chat-timing] ${rung.model}${rung.tier ? ` (${rung.tier})` : ''} ${deep ? 'deep' : 'fast'} ttft=${firstTokenMs}ms total=${Date.now() - rungStartMs}ms in=${inputTok} out=${outputTok}`);
             ranFlexWinner = !!rung.tier; // attribute Flex only if it actually ran
             confirmUsed(rung.model === GEMINI_CHAT_MODEL_T2 ? 'gemini-2.5' : 'gemini-3', activeIdx, searchEnabled);
           } catch (err) {
             if (fullResponse) {
               primaryFailedMidStream = true;
               stopReason = 'network_error';
-              console.warn(`[chat] ${rung.model} failed after partial output; keeping partial:`, (err as Error).message?.slice(0, 120));
+              console.warn(`[chat] ${rung.model} failed after partial output at ${Date.now() - rungStartMs}ms (ttft=${firstTokenMs}ms); keeping partial:`, (err as Error).message?.slice(0, 120));
             } else {
               usedModel = '';
               const next = ladder[i + 1];
-              console.warn(`[chat] ${rung.model} (${rung.tier ?? 'standard'}) failed${next ? `, trying ${next.model} (${next.tier ?? 'standard'})` : ''}:`, (err as Error).message?.slice(0, 120));
+              console.warn(`[chat] ${rung.model} (${rung.tier ?? 'standard'}) failed after ${Date.now() - rungStartMs}ms${next ? `, trying ${next.model} (${next.tier ?? 'standard'})` : ''}:`, (err as Error).message?.slice(0, 120));
               // Notify the client once, the first time we drop to a WEAKER
               // model (a same-model Flex→Standard step isn't a downgrade).
               if (next && next.model !== rung.model && !providerFallbackFired) {
