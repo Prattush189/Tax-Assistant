@@ -19,6 +19,7 @@
  *     a row, click "Remember" in the toast).
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { confirmDialog } from '../../lib/confirm';
 import { Brain, Search, ChevronDown, ChevronRight, Trash2, ToggleLeft, ToggleRight } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
@@ -97,7 +98,7 @@ export function LearnedClassificationsPanel() {
   };
 
   const handleDelete = async (rule: LearnedClassification) => {
-    if (!confirm(`Delete the learned rule for "${rule.sampleNarration ?? rule.fingerprint}"? This cannot be undone.`)) {
+    if (!(await confirmDialog({ title: 'Delete learned rule?', description: `Delete the learned rule for "${rule.sampleNarration ?? rule.fingerprint}"? This cannot be undone.`, confirmLabel: 'Delete', destructive: true }))) {
       return;
     }
     try {

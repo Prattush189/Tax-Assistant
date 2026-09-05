@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import toast from 'react-hot-toast';
 import { ItrWizardDraft } from '../lib/uiModel';
 import { toCbdtJson, computeDerivedTotals } from '../lib/toCbdtJson';
 import { Card, Field, RupeeInput, Toggle } from '../shared/Inputs';
@@ -65,7 +66,7 @@ export function ReviewStep({ draft, onChange, manager }: Props) {
       });
       if (!r.valid || !r.payload) {
         setResult(r);
-        alert('Validation failed — see the errors list before exporting.');
+        toast.error('Validation failed — see the errors list before exporting.');
         return;
       }
       const blob = new Blob([JSON.stringify(r.payload, null, 2)], { type: 'application/json' });
@@ -77,7 +78,7 @@ export function ReviewStep({ draft, onChange, manager }: Props) {
       URL.revokeObjectURL(url);
       setShowHandoff(true);
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Export failed');
+      toast.error(e instanceof Error ? e.message : 'Export failed');
     } finally {
       setExporting(false);
     }
@@ -87,7 +88,7 @@ export function ReviewStep({ draft, onChange, manager }: Props) {
     try {
       await renderItrPdf(materialized);
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'PDF generation failed');
+      toast.error(e instanceof Error ? e.message : 'PDF generation failed');
     }
   };
 

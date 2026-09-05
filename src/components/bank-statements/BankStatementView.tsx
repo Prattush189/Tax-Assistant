@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { confirmDialog } from '../../lib/confirm';
 import { Landmark, Loader2, RefreshCw, UserCheck } from 'lucide-react';
 import { motion } from 'motion/react';
 import toast from 'react-hot-toast';
@@ -38,7 +39,7 @@ export function BankStatementView({ manager }: Props) {
 
   const handleDelete = async () => {
     if (!manager.current) return;
-    if (!confirm('Delete this statement? This cannot be undone.')) return;
+    if (!(await confirmDialog({ title: 'Delete statement?', description: 'This cannot be undone.', confirmLabel: 'Delete', destructive: true }))) return;
     try {
       await manager.remove(manager.current.statement.id);
       toast.success('Statement deleted');

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import toast from 'react-hot-toast';
 import { BoardResolutionDraft } from '../lib/uiModel';
 import { Card } from '../../itr/shared/Inputs';
 import { TEMPLATES } from '../lib/resolutionTemplates';
@@ -20,7 +21,7 @@ export function ReviewStep({ draft }: Props) {
     try {
       await renderBoardResolutionPdf(draft);
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'PDF generation failed');
+      toast.error(e instanceof Error ? e.message : 'PDF generation failed');
     } finally {
       setExporting(false);
     }

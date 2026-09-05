@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
+import { confirmDialog } from '../../lib/confirm';
 import { CheckCircle2, X, AlertTriangle } from 'lucide-react';
 import type { ColumnMapping, ColumnRole, PdfGrid } from '../../lib/pdfGrid';
 import { findTableStart, suggestMapping } from '../../lib/pdfGrid';
@@ -353,7 +354,7 @@ export function ColumnMappingWizard({ kind, grid, filename, onConfirm, onCancel,
             {onUseVision && (
               <button
                 type="button"
-                onClick={() => {
+                onClick={async () => {
                   // Confirm copy adapts to grid health. When the grid
                   // is healthy the warning leans hard against switching
                   // (vision on long digital PDFs has been observed to
@@ -361,19 +362,17 @@ export function ColumnMappingWizard({ kind, grid, filename, onConfirm, onCancel,
                   // When the grid is sparse / unusable, vision is the
                   // intended path and the copy stays neutral.
                   const ok = gridLooksHealthy
-                    ? window.confirm(
-                      'Switch to AI Vision?\n\n' +
+                    ? await confirmDialog({ title: 'Switch to AI Vision?', confirmLabel: 'Use AI Vision', description:
                       'This PDF has selectable text and the columns look clean — column mapping is almost certainly the right path here.\n\n' +
                       'AI Vision burns 1.5×–2× more tokens, can take 30–60s on long PDFs, and on big multi-page statements has been observed to return zero transactions (see the ICICI 21-page case). ' +
                       'Only switch if you have already tried the column mapping and it produced wrong totals.\n\n' +
                       'Continue with AI Vision anyway?',
-                    )
-                    : window.confirm(
-                      'Switch to AI Vision?\n\n' +
+                    })
+                    : await confirmDialog({ title: 'Switch to AI Vision?', confirmLabel: 'Use AI Vision', description:
                       'Vision reads the PDF directly with AI and handles unusual layouts the deterministic parser misses. ' +
                       'Trade-off: roughly 1.5×–2× more tokens than the column-mapping path. ' +
                       'Use this if the columns above don\'t match your file or the wizard rejects the mapping.',
-                    );
+                    });
                   if (ok) onUseVision();
                 }}
                 // Healthy grid: small muted secondary link, easy to

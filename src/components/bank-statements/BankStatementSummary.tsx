@@ -33,7 +33,7 @@ export function BankStatementSummary({ detail, onDelete, onRefresh }: Props) {
     try {
       await downloadBankStatementCsv(statement.id, statement.name ?? statement.bankName ?? 'statement');
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'CSV download failed');
+      toast.error(err instanceof Error ? err.message : 'CSV download failed');
     } finally {
       setDownloading(false);
     }

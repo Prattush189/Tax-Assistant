@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { confirmDialog } from '../../lib/confirm';
 import { Inbox, Download, Trash2, RefreshCw, Landmark, BookOpen, Paperclip } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
@@ -73,7 +74,7 @@ export function FormatRequestsDashboard() {
   };
 
   const remove = async (r: FormatRequestItem) => {
-    if (!confirm(`Delete the "${r.software_name}" request${r.file_name ? ' and its sample file' : ''}? This cannot be undone.`)) return;
+    if (!(await confirmDialog({ title: 'Delete request?', description: `Delete the "${r.software_name}" request${r.file_name ? ' and its sample file' : ''}? This cannot be undone.`, confirmLabel: 'Delete', destructive: true }))) return;
     try {
       await adminDeleteFormatRequest(r.id);
       setRequests(rs => rs.filter(x => x.id !== r.id));

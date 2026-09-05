@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import toast from 'react-hot-toast';
 import { Upload, FileText, Send, Image as ImageIcon, X } from 'lucide-react';
 import { NoticeGenerateInput } from '../../services/api';
 import { LoadingAnimation } from '../ui/LoadingAnimation';
@@ -125,7 +126,7 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
     const file = e.target.files?.[0];
     if (!file) return;
     if (file.size > MAX_IMAGE_SIZE_BYTES) {
-      alert('Image too large. Please use an image under 500KB.');
+      toast.error('Image too large. Please use an image under 500KB.');
       e.target.value = '';
       return;
     }
@@ -138,7 +139,7 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
     const file = e.target.files?.[0];
     if (!file) return;
     if (file.size > MAX_IMAGE_SIZE_BYTES) {
-      alert('Image too large. Please use an image under 500KB.');
+      toast.error('Image too large. Please use an image under 500KB.');
       e.target.value = '';
       return;
     }

@@ -1,4 +1,5 @@
 import { ItrWizardDraft, emptyDraft } from '../lib/uiModel';
+import { confirmDialog } from '../../../lib/confirm';
 import { Card } from '../shared/Inputs';
 import { cn } from '../../../lib/utils';
 
@@ -13,9 +14,9 @@ interface Props {
  * it resets the wizard to defaults for the new form.
  */
 export function FormPickerStep({ draft, onChange }: Props) {
-  const setForm = (formType: 'ITR1' | 'ITR4') => {
+  const setForm = async (formType: 'ITR1' | 'ITR4') => {
     if (formType === draft.formType) return;
-    if (!window.confirm('Switching form type will reset wizard defaults. Your filled-in fields will be preserved where shared. Continue?')) return;
+    if (!(await confirmDialog({ title: 'Switch form type?', description: 'Switching form type will reset wizard defaults. Your filled-in fields will be preserved where shared.', confirmLabel: 'Switch' }))) return;
     onChange({ ...emptyDraft(formType), ...draft, formType });
   };
 

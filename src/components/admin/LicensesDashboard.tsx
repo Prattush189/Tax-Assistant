@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { confirmDialog } from '../../lib/confirm';
 import { Key, RefreshCw, Ban, Search, Plus, Wrench, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { cn } from '../../lib/utils';
@@ -50,7 +51,7 @@ export function LicensesDashboard() {
 
   const handleReconcile = async () => {
     if (reconciling) return;
-    if (!confirm('Re-issue licenses for every user whose plan column doesn\'t match their active license?\n\nUseful when plans were changed directly (DB edit or before the licensing system) and the license needs to catch up. Each affected user gets a new key starting today, running for 1 year. Their old key is marked superseded.')) return;
+    if (!(await confirmDialog({ title: 'Re-issue licenses?', description: 'Re-issue licenses for every user whose plan column doesn\'t match their active license?\n\nUseful when plans were changed directly (DB edit or before the licensing system) and the license needs to catch up. Each affected user gets a new key starting today, running for 1 year. Their old key is marked superseded.', confirmLabel: 'Re-issue' }))) return;
     setReconciling(true);
     try {
       const r = await adminReconcileLicenses();
@@ -105,7 +106,7 @@ export function LicensesDashboard() {
   };
 
   const handleDelete = async (lic: AdminLicenseRow) => {
-    if (!confirm(`Delete superseded license ${lic.key}?\n\nThis permanently removes the row — the replacement license already carries the user's current plan, so nothing changes for them.`)) return;
+    if (!(await confirmDialog({ title: 'Delete superseded license?', description: `Delete superseded license ${lic.key}?\n\nThis permanently removes the row — the replacement license already carries the user's current plan, so nothing changes for them.`, confirmLabel: 'Delete', destructive: true }))) return;
     try {
       await adminDeleteLicense(lic.id);
       toast.success('License deleted');
@@ -116,7 +117,7 @@ export function LicensesDashboard() {
   };
 
   const handleDeleteAllSuperseded = async () => {
-    if (!confirm('Delete ALL superseded licenses?\n\nSuperseded rows are old keys that were replaced by a renewal or upgrade — the replacement carries each user\'s current plan, so no active grant is touched. This only clears the historic clutter.')) return;
+    if (!(await confirmDialog({ title: 'Delete all superseded licenses?', description: 'Superseded rows are old keys that were replaced by a renewal or upgrade — the replacement carries each user\'s current plan, so no active grant is touched. This only clears the historic clutter.', confirmLabel: 'Delete all', destructive: true }))) return;
     try {
       const r = await adminDeleteSupersededLicenses();
       toast.success(`Deleted ${r.deleted} superseded license(s)`);

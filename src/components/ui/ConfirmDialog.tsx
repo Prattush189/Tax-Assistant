@@ -66,7 +66,7 @@ export function ConfirmDialog({
               </div>
               <div className="flex-1 min-w-0">
                 <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">{title}</h3>
-                <p className="text-sm text-gray-600 dark:text-gray-300 break-words">{description}</p>
+                <p className="text-sm text-gray-600 dark:text-gray-300 break-words whitespace-pre-line">{description}</p>
               </div>
             </div>
             <div className="flex gap-2 justify-end">

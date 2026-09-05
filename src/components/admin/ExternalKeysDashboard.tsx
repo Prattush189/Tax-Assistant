@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { confirmDialog } from '../../lib/confirm';
 import { Plug, Plus, Ban, Copy, Edit3, Check, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { cn } from '../../lib/utils';
@@ -36,7 +37,7 @@ export function ExternalKeysDashboard() {
   useEffect(() => { load(); }, [load]);
 
   const handleRevoke = async (k: AdminExternalKey) => {
-    if (!confirm(`Revoke ${k.label}? Subsequent calls using this key will be rejected. Cannot be undone.`)) return;
+    if (!(await confirmDialog({ title: 'Revoke this key?', description: `Revoke ${k.label}? Subsequent calls using this key will be rejected. Cannot be undone.`, confirmLabel: 'Revoke', destructive: true }))) return;
     try {
       await adminRevokeExternalKey(k.id);
       toast.success('Key revoked');

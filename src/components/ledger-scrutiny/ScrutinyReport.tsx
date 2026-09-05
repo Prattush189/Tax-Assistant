@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { confirmDialog } from '../../lib/confirm';
 import {
   AlertTriangle, AlertCircle, Info, ChevronDown, ChevronRight,
   CheckCircle2, Trash2, Download, FileSearch, Loader2,
@@ -136,7 +137,7 @@ export function ScrutinyReport({ manager }: Props) {
   };
 
   const handleDelete = async () => {
-    if (!confirm('Delete this scrutiny job? This cannot be undone.')) return;
+    if (!(await confirmDialog({ title: 'Delete scrutiny job?', description: 'This cannot be undone.', confirmLabel: 'Delete', destructive: true }))) return;
     try {
       await manager.remove(job.id);
       toast.success('Scrutiny deleted');

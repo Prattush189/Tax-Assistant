@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { confirmDialog } from '../../lib/confirm';
 import { Users, UserPlus, Trash2, Copy, Check, AlertCircle } from 'lucide-react';
 import {
   fetchInvitations,
@@ -84,7 +85,7 @@ export function TeamSection() {
       kind === 'accepted'
         ? 'Detach this team member? Their future usage will count against themselves, not the shared pool.'
         : 'Revoke this pending invitation?';
-    if (!window.confirm(confirmMsg)) return;
+    if (!(await confirmDialog({ title: 'Please confirm', description: confirmMsg, confirmLabel: 'Confirm', destructive: true }))) return;
     try {
       await revokeInvitation(id);
       toast.success(kind === 'accepted' ? 'Member detached' : 'Invitation revoked');

@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { confirmDialog } from '../../lib/confirm';
 import { useTaxCalculator } from '../../contexts/TaxCalculatorContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { Save, Plus, Trash2, ChevronDown, User } from 'lucide-react';
@@ -97,7 +98,7 @@ export function ProfileSelector() {
 
   const handleDelete = async () => {
     if (!currentProfileId) return;
-    if (!window.confirm('Delete this profile? This cannot be undone.')) return;
+    if (!(await confirmDialog({ title: 'Delete profile?', description: 'This cannot be undone.', confirmLabel: 'Delete', destructive: true }))) return;
     await deleteCurrentProfile();
   };
 

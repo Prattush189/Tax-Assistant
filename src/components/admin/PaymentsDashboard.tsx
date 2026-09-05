@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { confirmDialog } from '../../lib/confirm';
 import { Wallet, Search, Download, FileText, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { cn } from '../../lib/utils';
@@ -63,12 +64,12 @@ export function PaymentsDashboard() {
       : row.invoice_number != null
         ? `invoice AI-${String(row.invoice_number).padStart(3, '0')}`
         : `payment ${row.id.slice(0, 8)}`;
-    const ok = window.confirm(
+    const ok = await confirmDialog({ title: 'Delete payment?', confirmLabel: 'Delete', destructive: true, description:
       `Delete ${label} for ${row.user_email}?\n\n` +
       `Amount: ${fmtINR(row.amount)} · Status: ${row.status}\n\n` +
       `The license issued from this payment (if any) will lose its payment reference but stay valid. ` +
       `This cannot be undone.`,
-    );
+    });
     if (!ok) return;
     setDeletingId(row.id);
     try {

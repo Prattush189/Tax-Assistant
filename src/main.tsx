@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import { AuthProvider } from './contexts/AuthContext';
 import { Toaster } from 'react-hot-toast';
+import { ConfirmHost } from './components/ui/ConfirmHost';
 import App from './App.tsx';
 import './index.css';
 
@@ -13,6 +14,7 @@ createRoot(document.getElementById('root')!).render(
     <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
     <AuthProvider>
       <App />
+      <ConfirmHost />
       <Toaster
         position="top-right"
         toastOptions={{
