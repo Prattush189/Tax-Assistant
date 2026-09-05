@@ -12,6 +12,16 @@
  * the same Gemini weights — the Anthropic / Sonnet provider was
  * removed from the project entirely.
  *
+ * COUPLING WARNING (2026-09). Every estimator here is anchored to the
+ * T2 weights (2.5 Flash-Lite: wIn=1, wOut=4). That is correct ONLY
+ * because the routes that gate on an estimate — bank statements and
+ * ledger scrutiny — actually run on 2.5 Flash-Lite today. The 3.x
+ * Flash rungs weigh 7.5x / 37.5x (Flex 3.75x / 18.75x), so if either
+ * route is ever moved to a 3.x model these estimates under-shoot by up
+ * to ~9x and the pre-flight gate stops protecting the user's budget.
+ * If you change a gated route's model, re-anchor the estimator to that
+ * model's weights (lib/modelWeights.ts) in the same commit.
+ *
  * Heuristics, not measurements. Goals:
  *   - Cheap (no model round-trip).
  *   - Conservative-leaning: overestimating is fine; underestimating
