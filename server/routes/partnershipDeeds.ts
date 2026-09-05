@@ -604,7 +604,9 @@ router.post('/drafts/:id/generate', async (req: AuthRequest, res: Response) => {
     }
 
     // Log TOTAL input tokens consumed (fresh + cache reads + cache writes).
-    const totalInput = usage.inputTokens + usage.cacheReadTokens + usage.cacheCreationTokens;
+    // usage.inputTokens already includes the cached portion; the cached
+    // count is passed separately so it bills at the cache rate.
+    const totalInput = usage.inputTokens;
     usageRepo.logWithBilling(
       clientIp,
       req.user!.id,
@@ -620,6 +622,7 @@ router.post('/drafts/:id/generate', async (req: AuthRequest, res: Response) => {
       'success',
       0,
       Date.now() - callStartMs,
+      usage.cacheReadTokens,
     );
 
     // Bill the monthly quota only on success.

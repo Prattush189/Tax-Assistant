@@ -17,11 +17,43 @@ import { buildGeminiUserError } from './geminiUserError.js';
 
 const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
 
+/** Raw usageMetadata shape Gemini returns on the final chunk. */
+export interface GeminiUsageMetadata {
+  promptTokenCount?: number;
+  candidatesTokenCount?: number;
+  /** Reasoning tokens. Reported SEPARATELY from candidates but billed
+   *  as output ("Output price (including thinking tokens)"). */
+  thoughtsTokenCount?: number;
+  /** Subset of promptTokenCount served from context cache — billed at
+   *  the caching rate, not the input rate. */
+  cachedContentTokenCount?: number;
+}
+
+/** Turn Gemini's usageMetadata into what we actually get billed for.
+ *
+ *  output = candidates + thoughts. Reading candidatesTokenCount alone
+ *  silently dropped every thinking token, which on Deep legal drafting
+ *  is often MORE than the visible answer — dashboards and the quota
+ *  gate showed roughly half the real spend while the invoice did not.
+ *  Pure so it can be unit-tested; used by both the chat stream and the
+ *  vision extractor. */
+export function billableGeminiUsage(u: GeminiUsageMetadata | undefined | null): {
+  inputTokens: number; outputTokens: number; cachedInputTokens: number;
+} {
+  const input = u?.promptTokenCount ?? 0;
+  const output = (u?.candidatesTokenCount ?? 0) + (u?.thoughtsTokenCount ?? 0);
+  const cached = Math.max(0, Math.min(u?.cachedContentTokenCount ?? 0, input));
+  return { inputTokens: input, outputTokens: output, cachedInputTokens: cached };
+}
+
 export interface GeminiChatChunk {
   text?: string;
   done?: boolean;
   inputTokens?: number;
+  /** Billable output: answer + thinking tokens. */
   outputTokens?: number;
+  /** Portion of inputTokens served from context cache. */
+  cachedInputTokens?: number;
   sources?: Array<{ title: string; url: string }>;
   /** STOP | MAX_TOKENS | SAFETY | RECITATION | OTHER. Only set on done chunks. */
   finishReason?: string;
@@ -192,6 +224,7 @@ export async function* streamGeminiChat(
   let buffer = '';
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
+  let totalCachedTokens = 0;
   let sources: Array<{ title: string; url: string }> = [];
   let finishReason: string | undefined;
 
@@ -244,8 +277,10 @@ export async function* streamGeminiChat(
 
       // Extract usage metadata (usually in the last chunk)
       if (event.usageMetadata) {
-        totalInputTokens = event.usageMetadata.promptTokenCount ?? totalInputTokens;
-        totalOutputTokens = event.usageMetadata.candidatesTokenCount ?? totalOutputTokens;
+        const b = billableGeminiUsage(event.usageMetadata as GeminiUsageMetadata);
+        totalInputTokens = b.inputTokens;
+        totalOutputTokens = b.outputTokens;
+        totalCachedTokens = b.cachedInputTokens;
       }
     }
   }
@@ -259,6 +294,7 @@ export async function* streamGeminiChat(
     done: true,
     inputTokens: totalInputTokens,
     outputTokens: totalOutputTokens,
+    cachedInputTokens: totalCachedTokens,
     sources: uniqueSources.length > 0 ? uniqueSources : undefined,
     finishReason,
   };

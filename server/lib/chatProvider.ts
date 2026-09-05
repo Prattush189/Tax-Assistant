@@ -19,14 +19,9 @@ import {
   GEMINI_CHAT_MODEL_PRIMARY,
   GEMINI_CHAT_MODEL_T1,
   GEMINI_CHAT_MODEL_T2,
-  GEMINI_PRIMARY_INPUT_COST,
-  GEMINI_PRIMARY_OUTPUT_COST,
-  GEMINI_T1_INPUT_COST,
-  GEMINI_T1_OUTPUT_COST,
-  GEMINI_T2_INPUT_COST,
-  GEMINI_T2_OUTPUT_COST,
   GEMINI_FLEX,
   GEMINI_FLEX_SERVICE_TIER,
+  costForModel,
 } from './gemini.js';
 import { streamGeminiChat } from './geminiChat.js';
 import { selectTier, confirmUsed } from './searchQuota.js';
@@ -53,7 +48,12 @@ export interface ChatRequest {
 export interface ChatUsage {
   inputTokens: number;
   outputTokens: number;
+  /** Portion of inputTokens that was served from context cache. It is
+   *  a SUBSET of inputTokens (Gemini's promptTokenCount already includes
+   *  it) — never add it on top; pass it as the cached-input argument to
+   *  logWithBilling / costForModel so it bills at the cache rate. */
   cacheReadTokens: number;
+  /** Always 0 on Gemini — kept for source compatibility. */
   cacheCreationTokens: number;
   /** USD cost for this call, factoring in caching. */
   costUsd: number;
@@ -77,13 +77,13 @@ export const geminiChatProvider: ChatProvider = {
     // to 2.5 Flash-Lite, which uses a different thinking config.)
     const THINKING: 'low' | 'high' = 'high';
 
-    // Notice drafting is always "Deep" → the chat PRIMARY on top. There is
-    // no Fast path here; drafting never starts below the primary. Ladder:
-    //   3.8 Flash (Flex) → 3.7 Flash (Flex) → 3.7 Flash (Std) → 2.5 Flash-Lite
-    // Flex on by default (GEMINI_FLEX, ~50% price). There is no 3.8 Standard
-    // rung — a 3.8 Flex miss drops straight to 3.7; a 3.7 Flex miss retries
-    // 3.7 on Standard before the last-resort 2.5. With Flex off, the top rung
-    // is simply 3.8 Standard.
+    // Default ladder is "Deep" → the chat PRIMARY on top; there is no Fast
+    // path here. Flex rungs (~50% price) are exhausted first, then the
+    // Standard rungs. 3.8 Standard sits ABOVE 3.7 Standard because the two
+    // are priced identically — no reason to step down to the weaker model
+    // before we have to:
+    //   3.8 (Flex) → 3.7 (Flex) → 3.8 (Std) → 3.7 (Std) → 2.5 Flash-Lite
+    // With Flex off the ladder is simply 3.8 (Std) → 3.7 (Std) → 2.5.
     //
     // NOTE: since 2026-09, 3.8 and 3.7 are priced identically, so the T1
     // rungs buy availability rather than savings. Only the final 2.5
@@ -101,6 +101,9 @@ export const geminiChatProvider: ChatProvider = {
       : [
           { model: GEMINI_CHAT_MODEL_PRIMARY, tier: flexTier, thinking: THINKING },
           ...(flexTier ? [{ model: GEMINI_CHAT_MODEL_T1, tier: flexTier, thinking: THINKING }] : []),
+          // Same price as 3.7 Standard, better model — only when the top
+          // rung was Flex (otherwise it IS the top rung already).
+          ...(flexTier ? [{ model: GEMINI_CHAT_MODEL_PRIMARY, tier: null, thinking: THINKING }] : []),
           { model: GEMINI_CHAT_MODEL_T1, tier: null, thinking: THINKING },
           { model: GEMINI_CHAT_MODEL_T2, tier: null, thinking: null },
         ];
@@ -116,11 +119,12 @@ export const geminiChatProvider: ChatProvider = {
       model: string,
       tier: string | null,
       thinking: 'low' | 'high' | null,
-    ): Promise<{ inputTokens: number; outputTokens: number }> => {
+    ): Promise<{ inputTokens: number; outputTokens: number; cachedInputTokens: number }> => {
       const selection = selectTier(true);
       const apiKey = GEMINI_API_KEYS[selection.keyIndex] ?? '';
       let inputTokens = 0;
       let outputTokens = 0;
+      let cachedInputTokens = 0;
 
       const stream = streamGeminiChat(
         model,
@@ -140,15 +144,16 @@ export const geminiChatProvider: ChatProvider = {
         if (chunk.done) {
           inputTokens = chunk.inputTokens ?? 0;
           outputTokens = chunk.outputTokens ?? 0;
+          cachedInputTokens = chunk.cachedInputTokens ?? 0;
           const tag = model === GEMINI_CHAT_MODEL_T2 ? 'gemini-2.5' : 'gemini-3';
           confirmUsed(tag, selection.keyIndex, true);
         }
       }
-      return { inputTokens, outputTokens };
+      return { inputTokens, outputTokens, cachedInputTokens };
     };
 
     let used: { model: string; tier: string | null } | null = null;
-    let result = { inputTokens: 0, outputTokens: 0 };
+    let result = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 };
     let firstFallbackFired = false;
 
     for (let i = 0; i < ladder.length; i++) {
@@ -175,28 +180,22 @@ export const geminiChatProvider: ChatProvider = {
 
     if (!used) throw new Error('All notice models failed to produce output');
 
-    // Cost + logged model string, with the Flex half-rate + "(Flex)" label.
-    // Flex applies to primary and T1 (T2 never runs Flex).
+    // Logged model string carries a "-flex" suffix when the winning rung
+    // ran on the Flex tier (primary + T1 only; T2 never runs Flex), so the
+    // admin dashboard and quota weighting see the discount. Cost goes
+    // through costForModel so this stays in lockstep with lib/gemini.ts,
+    // including the context-cache rate for cached prompt tokens.
+    // result.outputTokens already includes thinking tokens.
     const ranFlex = !!used.tier
       && (used.model === GEMINI_CHAT_MODEL_PRIMARY || used.model === GEMINI_CHAT_MODEL_T1);
-    const mul = ranFlex ? 0.5 : 1;
-    let inCost: number, outCost: number, baseModel: string;
-    if (used.model === GEMINI_CHAT_MODEL_PRIMARY) {
-      inCost = GEMINI_PRIMARY_INPUT_COST; outCost = GEMINI_PRIMARY_OUTPUT_COST; baseModel = GEMINI_CHAT_MODEL_PRIMARY;
-    } else if (used.model === GEMINI_CHAT_MODEL_T1) {
-      inCost = GEMINI_T1_INPUT_COST; outCost = GEMINI_T1_OUTPUT_COST; baseModel = GEMINI_CHAT_MODEL_T1;
-    } else {
-      inCost = GEMINI_T2_INPUT_COST; outCost = GEMINI_T2_OUTPUT_COST; baseModel = GEMINI_CHAT_MODEL_T2;
-    }
-    inCost *= mul; outCost *= mul;
-    const modelUsed = ranFlex ? `${baseModel}-flex` : baseModel;
+    const modelUsed = ranFlex ? `${used.model}-flex` : used.model;
 
     return {
       inputTokens: result.inputTokens,
       outputTokens: result.outputTokens,
-      cacheReadTokens: 0,
+      cacheReadTokens: result.cachedInputTokens,
       cacheCreationTokens: 0,
-      costUsd: result.inputTokens * inCost + result.outputTokens * outCost,
+      costUsd: costForModel(modelUsed, result.inputTokens, result.outputTokens, result.cachedInputTokens),
       modelUsed,
       withSearch: true,
     };

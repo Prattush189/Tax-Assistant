@@ -1,6 +1,6 @@
 // server/routes/chat.ts
 import { Router, Response } from 'express';
-import { GEMINI_T1_INPUT_COST, GEMINI_T1_OUTPUT_COST, GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST, GEMINI_PRIMARY_INPUT_COST, GEMINI_PRIMARY_OUTPUT_COST, GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, GEMINI_CHAT_MODEL_PRIMARY, GEMINI_FLEX, GEMINI_FLEX_SERVICE_TIER, GEMINI_API_KEYS } from '../lib/gemini.js';
+import { GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, GEMINI_CHAT_MODEL_PRIMARY, GEMINI_FLEX, GEMINI_FLEX_SERVICE_TIER, GEMINI_API_KEYS, costForModel } from '../lib/gemini.js';
 import { confirmUsed, getActiveKeyIndex } from '../lib/searchQuota.js';
 import { streamGeminiChat } from '../lib/geminiChat.js';
 import { referenceUrlsBlock } from '../lib/officialReferenceUrls.js';
@@ -288,6 +288,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
         let stopReason: string | null = null;
         let inputTok = 0;
         let outputTok = 0;
+        let cachedTok = 0;
 
         // ── Fast-mode cascade ─────────────────────────────────────────────
         // Primary  : the 3.x T1 rung (3.x monthly search pool) — markedly more
@@ -320,11 +321,12 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
         // Fast/Deep picks the TOP model (not a thinking budget):
         //   Deep → 3.8 Flash (frontier reasoning + grounding)
         //   Fast → 3.7 Flash (skips the top rung)
-        // Both then degrade through 3.7 Flash → 2.5 Flash-Lite. Flex rungs
-        // (~50% price) run first; a Flex failure retries the SAME model on
-        // Standard before the next model down. There is no 3.8 Standard
-        // rung — a 3.8 Flex miss drops straight to 3.7 Flash.
-        //   Deep+Flex: 3.8(flex) → 3.7(flex) → 3.7(std) → 2.5-lite
+        // Flex rungs (~50% price) are exhausted first, then Standard. On
+        // Deep, 3.8 Standard sits ABOVE 3.7 Standard — the two are priced
+        // identically, so there is no reason to step down to the weaker
+        // model before we have to. Fast never touches 3.8 (that is what
+        // makes it Fast).
+        //   Deep+Flex: 3.8(flex) → 3.7(flex) → 3.8(std) → 3.7(std) → 2.5-lite
         //   Fast+Flex:            3.7(flex) → 3.7(std) → 2.5-lite
         //
         // Since 2026-09, 3.8 and 3.7 are priced identically, so Fast now
@@ -334,6 +336,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
         const ladder: Rung[] = [
           ...(deep ? [{ model: GEMINI_CHAT_MODEL_PRIMARY, tier: flexTier }] : []),
           ...(flexTier ? [{ model: GEMINI_CHAT_MODEL_T1, tier: flexTier }] : []),
+          ...(deep && flexTier ? [{ model: GEMINI_CHAT_MODEL_PRIMARY, tier: null }] : []),
           { model: GEMINI_CHAT_MODEL_T1, tier: null },
           { model: GEMINI_CHAT_MODEL_T2, tier: null },
         ];
@@ -364,6 +367,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
               if (chunk.done) {
                 inputTok = chunk.inputTokens ?? 0;
                 outputTok = chunk.outputTokens ?? 0;
+                cachedTok = chunk.cachedInputTokens ?? 0;
                 stopReason = chunk.finishReason === 'MAX_TOKENS' ? 'max_tokens' : 'end_turn';
               }
             }
@@ -407,20 +411,16 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
 
         // Log usage — cost depends on which model was actually used.
         if ((inputTok > 0 || outputTok > 0) && fullResponse.length > 0) {
-          const costMap: Record<string, [number, number]> = {
-            [GEMINI_CHAT_MODEL_PRIMARY]: [GEMINI_PRIMARY_INPUT_COST, GEMINI_PRIMARY_OUTPUT_COST],
-            [GEMINI_CHAT_MODEL_T1]: [GEMINI_T1_INPUT_COST, GEMINI_T1_OUTPUT_COST],
-            [GEMINI_CHAT_MODEL_T2]: [GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST],
-          };
-          const [inputCost, outputCost] = costMap[usedModel] ?? [GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST];
-          // When the winning rung ran on the Flex tier, bill ~50% and log a
-          // distinct "-flex" model string so the admin dashboard shows
-          // "(Flex)" and the quota weighting reflects the discount. Only the
-          // primary + T1 rungs carry a Flex tier; T2 never does.
-          const ranFlex = ranFlexWinner;
-          const cost = (inputTok * inputCost + outputTok * outputCost) * (ranFlex ? 0.5 : 1);
-          const loggedModel = ranFlex ? `${usedModel}-flex` : usedModel;
-          usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, inputTok, outputTok, cost, false, loggedModel || undefined, searchEnabled, 'chat', 0, 'success', 0, Date.now() - callStartMs);
+          // When the winning rung ran on the Flex tier, log a distinct
+          // "-flex" model string so the admin dashboard shows "(Flex)" and
+          // the quota weighting reflects the discount. Only the primary +
+          // T1 rungs carry a Flex tier; T2 never does. Cost goes through
+          // costForModel (handles the -flex 50% and the context-cache rate
+          // for the cached system prompt) so it cannot drift from
+          // lib/gemini.ts. outputTok already includes thinking tokens.
+          const loggedModel = ranFlexWinner ? `${usedModel}-flex` : usedModel;
+          const cost = costForModel(loggedModel, inputTok, outputTok, cachedTok);
+          usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, inputTok, outputTok, cost, false, loggedModel || undefined, searchEnabled, 'chat', 0, 'success', 0, Date.now() - callStartMs, cachedTok);
         } else {
           console.warn('[chat] skipping usage log — no tokens reported (likely partial/truncated stream)');
         }

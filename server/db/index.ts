@@ -806,7 +806,7 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_obs_account_id ON ledger_observat
   // weighted_tokens: per-row token count multiplied by the model's
   // weight (lib/modelWeights.ts). The cross-feature quota gate sums
   // this column instead of raw input+output so a more expensive model
-  // (Gemini 3.1 Preview at 2.5× / 15×) counts proportionally more
+  // (a 3.x Flash rung at 7.5× / 37.5×) counts proportionally more
   // against the user's budget than the cheap flash-lite anchor. Plan
   // budgets stay at the same headline numbers (250K / 20M / 60M) but
   // represent T2-input-equivalent units.
@@ -816,6 +816,14 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_obs_account_id ON ledger_observat
     // usageRepo.backfillWeightedTokens() — needs lib/modelWeights to
     // be loadable, which can't be done from this synchronous module
     // init block. The schema add is here; the data-fill is deferred.
+  }
+  // cached_input_tokens: the portion of input_tokens Gemini served from
+  // context cache (usageMetadata.cachedContentTokenCount). Stored so
+  // weighted_tokens and cost can be recomputed later at the cache rate
+  // rather than full input — without it a recompute would have to
+  // assume zero cached tokens and over-charge every cached chat call.
+  if (!usageCols.includes('cached_input_tokens')) {
+    db.exec("ALTER TABLE api_usage ADD COLUMN cached_input_tokens INTEGER NOT NULL DEFAULT 0");
   }
   // duration_ms: wall-clock milliseconds the AI call took, captured at
   // logWithBilling time. Lets the admin dashboard render a 'Duration'

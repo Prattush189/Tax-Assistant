@@ -91,6 +91,8 @@ export function safeParseJson<T = unknown>(raw: string): T | null {
 /** Result of a Gemini JSON call — the parsed value plus the usage metadata the
  *  caller needs for cost logging. */
 export interface GeminiJsonResult<T = unknown> {
+  /** Portion of inputTokens served from context cache (billed at the cache rate). */
+  cachedInputTokens?: number;
   data: T;
   inputTokens: number;
   outputTokens: number;

@@ -12,6 +12,7 @@
 import { GEMINI_API_KEYS, GEMINI_CHAT_MODEL_T2 } from './gemini.js';
 import { safeParseJson, type GeminiJsonOptions, type GeminiJsonResult } from './geminiJson.js';
 import { withBreaker } from './circuitBreaker.js';
+import { billableGeminiUsage, type GeminiUsageMetadata } from './geminiChat.js';
 import { getOrCreateCachedContent, invalidateCache } from './geminiCache.js';
 
 const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
@@ -99,6 +100,7 @@ export async function extractGeminiVision<T = unknown>(
       let succeeded = false;
       let inputTokens = 0;
       let outputTokens = 0;
+      let cachedInputTokens = 0;
       try {
         const url = `${BASE_URL}/models/${model}:generateContent?key=${apiKey}`;
         const res = await fetch(url, {
@@ -132,10 +134,14 @@ export async function extractGeminiVision<T = unknown>(
             content?: { parts?: Array<{ text?: string }> };
             finishReason?: string;
           }>;
-          usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
+          usageMetadata?: GeminiUsageMetadata;
         };
-        inputTokens = json.usageMetadata?.promptTokenCount ?? 0;
-        outputTokens = json.usageMetadata?.candidatesTokenCount ?? 0;
+        // Billable output includes thinking tokens; cached prompt
+        // tokens are split out so they weight/cost at the cache rate.
+        const billable = billableGeminiUsage(json.usageMetadata);
+        inputTokens = billable.inputTokens;
+        outputTokens = billable.outputTokens;
+        cachedInputTokens = billable.cachedInputTokens;
         const finishReason = json.candidates?.[0]?.finishReason;
 
         const raw = (json.candidates?.[0]?.content?.parts ?? [])
@@ -159,7 +165,7 @@ export async function extractGeminiVision<T = unknown>(
         const parsed = safeParseJson<T>(raw);
         if (parsed === null) throw new Error('Failed to parse AI response');
         succeeded = true;
-        return { data: parsed, inputTokens, outputTokens, modelUsed: model };
+        return { data: parsed, inputTokens, outputTokens, cachedInputTokens, modelUsed: model };
       } catch (err) {
         lastErr = err;
         recordAttempt?.({ failed: !succeeded, inputTokens, outputTokens, model });

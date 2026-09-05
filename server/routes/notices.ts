@@ -18,7 +18,7 @@ import { getUsagePeriodStart } from '../lib/planLimits.js';
 // Flash-Lite Preview → Gemini 2.5 Flash-Lite). The Anthropic provider
 // was removed from the project; Gemini handles all vision now.
 import { extractVisionWithFallback } from '../lib/visionFallback.js';
-import { GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST } from '../lib/gemini.js';
+import { costForModel } from '../lib/gemini.js';
 import { AuthRequest } from '../types.js';
 
 // ── Notice attachment uploader (mirrors bank-statements pattern) ──
@@ -324,8 +324,13 @@ router.post(
       // draft = text input + search grounding) and merging them into
       // one label hides which is the bigger spend.
       try {
-        const cost = extraction.inputTokens * GEMINI_T2_INPUT_COST + extraction.outputTokens * GEMINI_T2_OUTPUT_COST;
-        usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, extraction.inputTokens, extraction.outputTokens, cost, false, extraction.modelUsed, false, 'notice_extract', 0, 'success', 0, Date.now() - extractStartMs);
+        // Priced at the model that ACTUALLY ran (vision T1 is a 3.x Flash,
+        // not T2) — the old hardcoded T2 constants under-reported every
+        // extraction's cost ~7x. Weighted tokens were already right because
+        // they key off the model string.
+        const cachedIn = extraction.cachedInputTokens ?? 0;
+        const cost = costForModel(extraction.modelUsed, extraction.inputTokens, extraction.outputTokens, cachedIn);
+        usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, extraction.inputTokens, extraction.outputTokens, cost, false, extraction.modelUsed, false, 'notice_extract', 0, 'success', 0, Date.now() - extractStartMs, cachedIn);
       } catch (logErr) {
         console.error('[notices] Failed to log extraction cost:', logErr);
       }
@@ -511,8 +516,11 @@ router.post(
     // Log TOTAL input tokens consumed (fresh + cache reads + cache writes) so
     // the admin dashboard reflects true model context size, not just the
     // billed-fresh subset Anthropic returns in `input_tokens`.
-    const totalInput = usage.inputTokens + usage.cacheReadTokens + usage.cacheCreationTokens;
-    usageRepo.logWithBilling(clientIp, req.user!.id, billingUserId, totalInput, usage.outputTokens, usage.costUsd, false, usage.modelUsed, usage.withSearch, 'notice', 0, 'success', 0, Date.now() - draftStartMs);
+    // usage.inputTokens already INCLUDES the cached portion (Gemini's
+    // promptTokenCount); cacheReadTokens is passed separately below so it
+    // bills at the cache rate. Adding it on top double-counted it.
+    const totalInput = usage.inputTokens;
+    usageRepo.logWithBilling(clientIp, req.user!.id, billingUserId, totalInput, usage.outputTokens, usage.costUsd, false, usage.modelUsed, usage.withSearch, 'notice', 0, 'success', 0, Date.now() - draftStartMs, usage.cacheReadTokens);
 
     // Log to the immutable feature_usage table so the monthly quota is
     // unaffected by notice deletions (same pattern as board resolutions,
@@ -701,8 +709,11 @@ ${instruction}
     }
     noticeRepo.updateContent(notice.id, fullResponse);
 
-    const totalInput = usage.inputTokens + usage.cacheReadTokens + usage.cacheCreationTokens;
-    usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, totalInput, usage.outputTokens, usage.costUsd, false, usage.modelUsed, usage.withSearch, 'notice_enhance', 0, 'success', 0, Date.now() - startMs);
+    // usage.inputTokens already INCLUDES the cached portion (Gemini's
+    // promptTokenCount); cacheReadTokens is passed separately below so it
+    // bills at the cache rate. Adding it on top double-counted it.
+    const totalInput = usage.inputTokens;
+    usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, totalInput, usage.outputTokens, usage.costUsd, false, usage.modelUsed, usage.withSearch, 'notice_enhance', 0, 'success', 0, Date.now() - startMs, usage.cacheReadTokens);
 
     sse.writeDone({
       noticeId: notice.id,

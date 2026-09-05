@@ -5,7 +5,7 @@ import multer, { MulterError } from 'multer';
 // Flash-Lite Preview → Gemini 2.5 Flash-Lite). The Anthropic provider
 // was removed from the project; Gemini handles all vision now.
 import { extractVisionWithFallback } from '../lib/visionFallback.js';
-import { GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST } from '../lib/gemini.js';
+import { costForModel } from '../lib/gemini.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { getBillingUser } from '../lib/billing.js';
@@ -104,8 +104,10 @@ router.post(
         const billingUser = actor ? getBillingUser(actor) : undefined;
         const billingUserId = billingUser?.id ?? req.user.id;
         const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
-        const cost = result.inputTokens * GEMINI_T2_INPUT_COST + result.outputTokens * GEMINI_T2_OUTPUT_COST;
-        usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, result.inputTokens, result.outputTokens, cost, false, result.modelUsed, false, 'form16', 0, 'success', 0, Date.now() - callStartMs);
+        // Priced at the model that actually ran, not hardcoded T2 rates.
+        const cachedIn = result.cachedInputTokens ?? 0;
+        const cost = costForModel(result.modelUsed, result.inputTokens, result.outputTokens, cachedIn);
+        usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, result.inputTokens, result.outputTokens, cost, false, result.modelUsed, false, 'form16', 0, 'success', 0, Date.now() - callStartMs, cachedIn);
       } catch (logErr) {
         console.error('[form16] Failed to log AI cost:', logErr);
       }

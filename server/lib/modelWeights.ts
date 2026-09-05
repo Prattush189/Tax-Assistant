@@ -28,6 +28,12 @@ export interface ModelWeight {
   wIn: number;
   /** Per-output-token weight. */
   wOut: number;
+  /** Weight for the CACHED portion of the prompt. Gemini's
+   *  promptTokenCount INCLUDES tokens served from context cache, which
+   *  bill at the caching rate (~10% of input on 3.x, 25% on 2.5), not
+   *  the full input rate. Without this every chat call charged the
+   *  entire cached system prompt at full weight. */
+  wCached: number;
 }
 
 /**
@@ -41,21 +47,21 @@ const MODEL_WEIGHTS: Record<string, ModelWeight> = {
   // 3.8 and 3.7 are priced identically ($0.75 / $3.75 promo), so they
   // share weights. !! Both DOUBLE on 2027-01-01 — when that lands these
   // become wIn 15.0 / wOut 75.0, in lockstep with lib/gemini.ts.
-  'gemini-3.8-flash':              { wIn: 7.5,  wOut: 37.5 },  // $0.75 / $3.75 — chat primary
-  'gemini-3.8-flash-flex':         { wIn: 3.75, wOut: 18.75 }, // ~50% on the Flex tier
-  'gemini-3.7-flash':              { wIn: 7.5,  wOut: 37.5 },  // $0.75 / $3.75 — T1 fallback
-  'gemini-3.7-flash-flex':         { wIn: 3.75, wOut: 18.75 }, // ~50% on the Flex tier
-  'gemini-2.5-flash-lite':         { wIn: 1.0,  wOut: 4.0 },   // $0.10 / $0.40 — anchor / last resort
+  'gemini-3.8-flash':              { wIn: 7.5,  wOut: 37.5,  wCached: 0.75 },  // $0.75 / $3.75 — chat primary
+  'gemini-3.8-flash-flex':         { wIn: 3.75, wOut: 18.75, wCached: 0.375 }, // ~50% on the Flex tier
+  'gemini-3.7-flash':              { wIn: 7.5,  wOut: 37.5,  wCached: 0.75 },  // $0.75 / $3.75 — T1 fallback
+  'gemini-3.7-flash-flex':         { wIn: 3.75, wOut: 18.75, wCached: 0.375 }, // ~50% on the Flex tier
+  'gemini-2.5-flash-lite':         { wIn: 1.0,  wOut: 4.0,   wCached: 0.25 },   // $0.10 / $0.40 — anchor / last resort
 
   // Retired. Kept for historic rows.
-  'gemini-3.6-flash':              { wIn: 15.0, wOut: 75.0 },  // $1.50 / $7.50 — chat primary to 2026-09
-  'gemini-3.6-flash-flex':         { wIn: 7.5,  wOut: 37.5 },  // ~50% on the Flex tier
-  'gemini-3.5-flash-lite':         { wIn: 3.0,  wOut: 25.0 },  // $0.30 / $2.50 — T1 to 2026-09
-  'gemini-3.5-flash-lite-flex':    { wIn: 1.5,  wOut: 12.5 },  // ~50% on the Flex tier
-  'gemini-3-flash-preview':        { wIn: 5.0, wOut: 30.0 },   // $0.50 / $3.00 — old chat primary
-  'gemini-3-flash-preview-flex':   { wIn: 2.5, wOut: 15.0 },   // ~50% on the Flex tier
-  'gemini-3.1-flash-lite-preview': { wIn: 2.5, wOut: 15.0 },   // $0.25 / $1.50 — old T1
-  'gemini-2.5-flash':              { wIn: 3.0, wOut: 25.0 },   // $0.30 / $2.50
+  'gemini-3.6-flash':              { wIn: 15.0, wOut: 75.0,  wCached: 1.5 },  // $1.50 / $7.50 — chat primary to 2026-09
+  'gemini-3.6-flash-flex':         { wIn: 7.5,  wOut: 37.5,  wCached: 0.75 },  // ~50% on the Flex tier
+  'gemini-3.5-flash-lite':         { wIn: 3.0,  wOut: 25.0,  wCached: 0.3 },  // $0.30 / $2.50 — T1 to 2026-09
+  'gemini-3.5-flash-lite-flex':    { wIn: 1.5,  wOut: 12.5,  wCached: 0.15 },  // ~50% on the Flex tier
+  'gemini-3-flash-preview':        { wIn: 5.0, wOut: 30.0,   wCached: 1.25 },   // $0.50 / $3.00 — old chat primary
+  'gemini-3-flash-preview-flex':   { wIn: 2.5, wOut: 15.0,   wCached: 0.625 },   // ~50% on the Flex tier
+  'gemini-3.1-flash-lite-preview': { wIn: 2.5, wOut: 15.0,   wCached: 0.625 },   // $0.25 / $1.50 — old T1
+  'gemini-2.5-flash':              { wIn: 3.0, wOut: 25.0,   wCached: 0.75 },   // $0.30 / $2.50
 
   // Retired (2026-05 Anthropic-removal). The vision pipeline used
   // Sonnet 4.5 briefly between the original Gemini-only path and the
@@ -63,12 +69,12 @@ const MODEL_WEIGHTS: Record<string, ModelWeight> = {
   // logged against these model strings during that window still sums
   // correctly into the cross-feature quota. No code path currently
   // emits these model strings.
-  'claude-sonnet-4-5':             { wIn: 30.0, wOut: 150.0 },
-  'claude-sonnet-4-5-20250929':    { wIn: 30.0, wOut: 150.0 },
-  'claude-haiku-4-5':              { wIn: 8.0, wOut: 40.0 },   // approximate
+  'claude-sonnet-4-5':             { wIn: 30.0, wOut: 150.0, wCached: 3.0 },
+  'claude-sonnet-4-5-20250929':    { wIn: 30.0, wOut: 150.0, wCached: 3.0 },
+  'claude-haiku-4-5':              { wIn: 8.0, wOut: 40.0,   wCached: 0.8 },   // approximate
 };
 
-const FALLBACK_WEIGHT: ModelWeight = { wIn: 1.0, wOut: 4.0 };
+const FALLBACK_WEIGHT: ModelWeight = { wIn: 1.0, wOut: 4.0, wCached: 0.25 };
 
 /** Look up the weight pair for a model. Falls back to T2 weights on
  *  unknown models — under-attributing slightly is better than failing
@@ -78,11 +84,28 @@ export function getWeightFor(model: string | null | undefined): ModelWeight {
   return MODEL_WEIGHTS[model] ?? FALLBACK_WEIGHT;
 }
 
-/** Convenience: compute weighted_tokens for a single api_usage row. */
-export function computeWeightedTokens(model: string | null | undefined, inputTokens: number, outputTokens: number): number {
+/** Compute weighted_tokens for a single api_usage row.
+ *
+ *  `outputTokens` must be the BILLABLE output — visible answer PLUS
+ *  thinking tokens (Gemini reports those separately as
+ *  thoughtsTokenCount and bills them as output). Callers get that from
+ *  billableGeminiUsage(); passing candidatesTokenCount alone was the
+ *  bug that made Deep calls look ~half their real size.
+ *
+ *  `cachedInputTokens` is the portion of `inputTokens` served from
+ *  context cache; it is weighted at the cache rate instead of full
+ *  input. Clamped to inputTokens so a bad counter can never go
+ *  negative. */
+export function computeWeightedTokens(
+  model: string | null | undefined,
+  inputTokens: number,
+  outputTokens: number,
+  cachedInputTokens = 0,
+): number {
   const w = getWeightFor(model);
-  // Round to integer — column is INTEGER. Token weights below 1×
-  // could in theory produce fractional weighted counts; round-up
-  // to be slightly conservative against quota.
-  return Math.ceil(inputTokens * w.wIn + outputTokens * w.wOut);
+  const cached = Math.max(0, Math.min(cachedInputTokens, inputTokens));
+  const fresh = inputTokens - cached;
+  // Round up — the column is INTEGER and rounding up is the
+  // conservative direction for a quota.
+  return Math.ceil(fresh * w.wIn + cached * w.wCached + outputTokens * w.wOut);
 }

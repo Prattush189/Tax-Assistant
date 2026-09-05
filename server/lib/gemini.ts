@@ -59,6 +59,13 @@ export const GEMINI_FLEX_SERVICE_TIER = 'flex';
 //   Primary   $0.75 — w_in  = 7.5×    Primary out $3.75 — w_out = 37.5×
 // Flex tier bills 50% of these (handled in costForModel via the -flex
 // model suffix); keep these lockstep with modelWeights.ts.
+// Context-caching rates (Standard tier, per 1M cached input tokens).
+// Cached prompt tokens are part of promptTokenCount but bill at these
+// rates, not the input rate. 3.x = $0.075 (doubles 2027-01-01 with the
+// rest of the promo); 2.5 Flash-Lite = $0.025.
+export const GEMINI_PRIMARY_CACHE_COST = 0.075 / 1_000_000;
+export const GEMINI_T1_CACHE_COST      = 0.075 / 1_000_000;
+export const GEMINI_T2_CACHE_COST      = 0.025 / 1_000_000;
 export const GEMINI_T2_INPUT_COST  = 0.10 / 1_000_000;
 export const GEMINI_T2_OUTPUT_COST = 0.40 / 1_000_000;
 export const GEMINI_T1_INPUT_COST  = 0.75 / 1_000_000;   // promo → 1.50 on 2027-01-01
@@ -120,25 +127,37 @@ export const GEMINI_FALLBACK_MODEL = GEMINI_CHAT_MODEL_T1;
  * historic api_usage rows still carry those strings, and we want
  * cost reports to span the migration cleanly.
  */
-export function costForModel(model: string, inputTokens: number, outputTokens: number): number {
-  const cost = (inCost: number, outCost: number) => inputTokens * inCost + outputTokens * outCost;
+export function costForModel(
+  model: string,
+  inputTokens: number,
+  outputTokens: number,
+  /** Portion of inputTokens served from context cache — billed at the
+   *  caching rate. Omit for models/paths that don't cache. */
+  cachedInputTokens = 0,
+): number {
+  const cached = Math.max(0, Math.min(cachedInputTokens, inputTokens));
+  const fresh = inputTokens - cached;
+  // cacheCost defaults to 25% of input for models without a published
+  // caching rate (legacy rows) — close enough for historic reporting.
+  const cost = (inCost: number, outCost: number, cacheCost = inCost * 0.25) =>
+    fresh * inCost + cached * cacheCost + outputTokens * outCost;
 
   // ── Active models ── (a "-flex" suffix on the model string means the
   //  call ran on the Flex service tier → bill 50% of Standard.)
   if (model === GEMINI_CHAT_MODEL_T2 || model === 'gemini-2.5-flash-lite') {
-    return cost(GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST);
+    return cost(GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST, GEMINI_T2_CACHE_COST);
   }
   if (model === `${GEMINI_CHAT_MODEL_T1}-flex`) {
-    return cost(GEMINI_T1_INPUT_COST, GEMINI_T1_OUTPUT_COST) * 0.5;
+    return cost(GEMINI_T1_INPUT_COST, GEMINI_T1_OUTPUT_COST, GEMINI_T1_CACHE_COST) * 0.5;
   }
   if (model === GEMINI_CHAT_MODEL_T1) {
-    return cost(GEMINI_T1_INPUT_COST, GEMINI_T1_OUTPUT_COST);
+    return cost(GEMINI_T1_INPUT_COST, GEMINI_T1_OUTPUT_COST, GEMINI_T1_CACHE_COST);
   }
   if (model === `${GEMINI_CHAT_MODEL_PRIMARY}-flex`) {
-    return cost(GEMINI_PRIMARY_INPUT_COST, GEMINI_PRIMARY_OUTPUT_COST) * 0.5;
+    return cost(GEMINI_PRIMARY_INPUT_COST, GEMINI_PRIMARY_OUTPUT_COST, GEMINI_PRIMARY_CACHE_COST) * 0.5;
   }
   if (model === GEMINI_CHAT_MODEL_PRIMARY) {
-    return cost(GEMINI_PRIMARY_INPUT_COST, GEMINI_PRIMARY_OUTPUT_COST);
+    return cost(GEMINI_PRIMARY_INPUT_COST, GEMINI_PRIMARY_OUTPUT_COST, GEMINI_PRIMARY_CACHE_COST);
   }
 
   // ── Retired / legacy models — historic api_usage rows only ──
@@ -169,5 +188,5 @@ export function costForModel(model: string, inputTokens: number, outputTokens: n
 
   // Default: Flash-Lite pricing for unknown models — under-attribute
   // slightly rather than fabricate higher pricing.
-  return cost(GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST);
+  return cost(GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST, GEMINI_T2_CACHE_COST);
 }

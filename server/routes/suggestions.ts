@@ -1,5 +1,5 @@
 import { Router, Response } from 'express';
-import { GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST } from '../lib/gemini.js';
+import { costForModel } from '../lib/gemini.js';
 import { callGeminiJson } from '../lib/geminiJson.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
@@ -86,8 +86,9 @@ Suggest 5 personalized tax-saving strategies.`;
     featureUsageRepo.logWithBilling(req.user.id, billingUserId, 'ai_suggestions');
 
     // Log to api_usage for admin dashboard visibility
-    const cost = result.inputTokens * GEMINI_T2_INPUT_COST + result.outputTokens * GEMINI_T2_OUTPUT_COST;
-    usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, result.inputTokens, result.outputTokens, cost, false, result.modelUsed, false, 'suggestion', 0, 'success', 0, Date.now() - callStartMs);
+    const cachedIn = result.cachedInputTokens ?? 0;
+    const cost = costForModel(result.modelUsed, result.inputTokens, result.outputTokens, cachedIn);
+    usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, result.inputTokens, result.outputTokens, cost, false, result.modelUsed, false, 'suggestion', 0, 'success', 0, Date.now() - callStartMs, cachedIn);
 
     res.json({
       suggestions,

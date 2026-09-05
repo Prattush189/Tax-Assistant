@@ -217,7 +217,7 @@ export function ModelUsageDashboard() {
               <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Gemini 2.5 Flash-Lite</span>
               <span className="text-[10px] text-gray-500 dark:text-gray-400">$0.10 in / $0.40 out per 1M</span>
             </div>
-            <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">Chat: <span className="font-medium">Deep</span> starts at 3.8 Flash, <span className="font-medium">Fast</span> at 3.7 Flash; both fall back 3.7 (Flex→Standard) → 2.5. 3.8 and 3.7 are priced identically, so T1 is an availability fallback, not a cheaper one. Search grounding: 2.5 family 1,500/day, 3.x family 5,000/month — limits below. <span className="font-medium">3.x promo pricing doubles on 1 Jan 2027.</span></p>
+            <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">Chat: <span className="font-medium">Deep</span> starts at 3.8 Flash, <span className="font-medium">Fast</span> at 3.7 Flash; Deep runs 3.8 (Flex) → 3.7 (Flex) → 3.8 (Std) → 3.7 (Std) → 2.5; Fast runs 3.7 (Flex→Std) → 2.5. 3.8 and 3.7 are priced identically, so T1 is an availability fallback, not a cheaper one. Weighted tokens count thinking tokens as output and bill cached prompt tokens at the cache rate. Search grounding: 2.5 family 1,500/day, 3.x family 5,000/month — limits below. <span className="font-medium">3.x promo pricing doubles on 1 Jan 2027.</span></p>
           </div>
         </div>
       </div>

@@ -2391,7 +2391,9 @@ router.post('/:id/scrutinize', async (req: AuthRequest, res: Response) => {
 
     // Log scrutiny-pass token cost.
     try {
-      const totalInput = usage.inputTokens + usage.cacheReadTokens + usage.cacheCreationTokens;
+      // usage.inputTokens already includes the cached portion; the cached
+      // count is passed separately so it bills at the cache rate.
+      const totalInput = usage.inputTokens;
       // Tx count for cost-per-row analytics — recovered from the
       // persisted accounts (the upload route's ledgerUnit/ledgerRowsTotal
       // closure isn't visible here).
@@ -2411,6 +2413,7 @@ router.post('/:id/scrutinize', async (req: AuthRequest, res: Response) => {
         'success',
         tokenQuota.estimatedTokens,
         Date.now() - scrutinyStartMs,
+        usage.cacheReadTokens,
       );
     } catch (err) {
       console.error('[ledger-scrutiny] cost log failed', err);

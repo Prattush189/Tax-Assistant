@@ -38,7 +38,7 @@ const stmts = {
     'INSERT INTO api_usage (ip, user_id, input_tokens, output_tokens, cost, is_plugin) VALUES (?, ?, ?, ?, ?, ?)'
   ),
   logWithBilling: db.prepare(
-    'INSERT INTO api_usage (ip, user_id, billing_user_id, input_tokens, output_tokens, cost, is_plugin, model, search_used, category, input_units, status, estimated_tokens, weighted_tokens, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO api_usage (ip, user_id, billing_user_id, input_tokens, output_tokens, cost, is_plugin, model, search_used, category, input_units, status, estimated_tokens, weighted_tokens, duration_ms, cached_input_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ),
   // Token quota query: sum input + output tokens for the current month
   // for THIS billing user, EXCLUDING failed calls. Cancelled calls
@@ -272,9 +272,16 @@ export const usageRepo = {
     /** Wall-clock duration of the AI call in milliseconds. Captured
      *  by the route handler from a Date.now() before/after pair. */
     durationMs?: number,
+    /** Portion of inputTokens served from context cache
+     *  (Gemini usageMetadata.cachedContentTokenCount). It is a SUBSET
+     *  of inputTokens — do not add it on top. Weighted and cost both
+     *  charge it at the cache rate. `outputTokens` must already
+     *  include thinking tokens (see billableGeminiUsage). */
+    cachedInputTokens = 0,
   ): void {
-    const weighted = computeWeightedTokens(model, inputTokens, outputTokens);
-    stmts.logWithBilling.run(ip, userId, billingUserId, inputTokens, outputTokens, cost, isPlugin ? 1 : 0, model ?? null, searchUsed ? 1 : 0, category ?? null, inputUnits ?? 0, status ?? 'success', estimatedTokens ?? 0, weighted, durationMs ?? 0);
+    const cached = Math.max(0, Math.min(cachedInputTokens, inputTokens));
+    const weighted = computeWeightedTokens(model, inputTokens, outputTokens, cached);
+    stmts.logWithBilling.run(ip, userId, billingUserId, inputTokens, outputTokens, cost, isPlugin ? 1 : 0, model ?? null, searchUsed ? 1 : 0, category ?? null, inputUnits ?? 0, status ?? 'success', estimatedTokens ?? 0, weighted, durationMs ?? 0, cached);
   },
 
   /** Sum tokens (input+output) used since `since` by this billing user,
@@ -376,20 +383,71 @@ export const usageRepo = {
    */
   backfillWeightedTokens(): { updated: number } {
     const rows = db.prepare(`
-      SELECT id, model, input_tokens, output_tokens
+      SELECT id, model, input_tokens, output_tokens, cached_input_tokens
       FROM api_usage
       WHERE weighted_tokens = 0
         AND (input_tokens > 0 OR output_tokens > 0)
-    `).all() as Array<{ id: number; model: string | null; input_tokens: number; output_tokens: number }>;
+    `).all() as Array<{ id: number; model: string | null; input_tokens: number; output_tokens: number; cached_input_tokens: number | null }>;
     if (rows.length === 0) return { updated: 0 };
     const upd = db.prepare('UPDATE api_usage SET weighted_tokens = ? WHERE id = ?');
     const tx = db.transaction(() => {
       for (const r of rows) {
-        upd.run(computeWeightedTokens(r.model, r.input_tokens, r.output_tokens), r.id);
+        upd.run(computeWeightedTokens(r.model, r.input_tokens, r.output_tokens, r.cached_input_tokens ?? 0), r.id);
       }
     });
     tx();
     console.log(`[usage-backfill] weighted_tokens populated for ${rows.length} row(s)`);
     return { updated: rows.length };
+  },
+
+  /**
+   * Recompute weighted_tokens for EVERY row (optionally only rows from
+   * `since`) using the CURRENT weight table and the stored cached
+   * count. Unlike backfillWeightedTokens this rewrites non-zero rows —
+   * it exists for when the weights themselves were wrong or the
+   * formula changed (2026-09: cached prompt tokens now weigh at the
+   * cache rate).
+   *
+   * What it can and cannot fix: rows keep whatever output_tokens was
+   * stored at the time. Rows logged before thinking tokens were
+   * counted (pre 2026-09) are still missing those tokens and this
+   * cannot invent them — it only re-weights what is on disk. Run via
+   * scripts/recompute-weighted-tokens.mts, never on boot.
+   */
+  recomputeAllWeightedTokens(opts: { dryRun?: boolean; since?: string } = {}): {
+    scanned: number;
+    changed: number;
+    weightedBefore: number;
+    weightedAfter: number;
+    byModel: Record<string, { rows: number; changed: number; before: number; after: number }>;
+  } {
+    const where = opts.since ? 'WHERE created_at >= ?' : '';
+    const args: unknown[] = opts.since ? [opts.since] : [];
+    const rows = db.prepare(`
+      SELECT id, model, input_tokens, output_tokens, cached_input_tokens, weighted_tokens
+      FROM api_usage ${where}
+    `).all(...args) as Array<{
+      id: number; model: string | null; input_tokens: number; output_tokens: number;
+      cached_input_tokens: number | null; weighted_tokens: number;
+    }>;
+    const byModel: Record<string, { rows: number; changed: number; before: number; after: number }> = {};
+    let changed = 0, before = 0, after = 0;
+    const upd = db.prepare('UPDATE api_usage SET weighted_tokens = ? WHERE id = ?');
+    const apply = () => {
+      for (const r of rows) {
+        const w = computeWeightedTokens(r.model, r.input_tokens, r.output_tokens, r.cached_input_tokens ?? 0);
+        const key = r.model ?? 'unknown';
+        let m = byModel[key];
+        if (!m) { m = { rows: 0, changed: 0, before: 0, after: 0 }; byModel[key] = m; }
+        m.rows++; m.before += r.weighted_tokens; m.after += w;
+        before += r.weighted_tokens; after += w;
+        if (w !== r.weighted_tokens) {
+          changed++; m.changed++;
+          if (!opts.dryRun) upd.run(w, r.id);
+        }
+      }
+    };
+    if (opts.dryRun) apply(); else db.transaction(apply)();
+    return { scanned: rows.length, changed, weightedBefore: before, weightedAfter: after, byModel };
   },
 };
