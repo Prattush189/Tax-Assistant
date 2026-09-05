@@ -346,17 +346,22 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
           { model: GEMINI_CHAT_MODEL_T1, tier: null },
           { model: GEMINI_CHAT_MODEL_T2, tier: null },
         ];
-        // WAIT for 3.6 Flash rather than cut it off — it goes SILENT while
-        // grounding + thinking (no bytes until the first answer token), and
-        // aborting wastes the grounding/thinking tokens already paid for.
-        // The Flash-Lite rungs respond fast, so they keep a tight cap. The
-        // idle watchdog resets on every token, so a streaming answer is
-        // never cut mid-flight.
-        const idleFor = (model: string): number => {
-          if (model === GEMINI_CHAT_MODEL_PRIMARY) return deep ? 130_000 : 100_000;
-          if (model === GEMINI_CHAT_MODEL_T1) return 45_000;
-          return 30_000;
+        // Two budgets per rung. FIRST-BYTE is how long a rung may stay
+        // silent (grounding + thinking emit nothing until the first answer
+        // token); STREAMING IDLE is the max gap between chunks once it has
+        // started. Production chat p-max was 55-71 s and almost all of it
+        // was waiting on a rung that never answered before the old
+        // 100-130 s cap let us fall back — the fallback rungs answer in
+        // seconds. The Deep primary keeps a longer first-byte budget
+        // because aborting it wastes thinking tokens already paid for;
+        // everything else is tight. Streaming idle resets on every token,
+        // so a slow-but-progressing answer is never cut.
+        const firstByteFor = (model: string): number => {
+          if (model === GEMINI_CHAT_MODEL_PRIMARY) return deep ? 40_000 : 25_000;
+          if (model === GEMINI_CHAT_MODEL_T1) return 20_000;
+          return 15_000;
         };
+        const STREAM_IDLE_MS = 20_000;
         // Only 3.6 Flash still uses a thinking budget; the Lite rungs run
         // thinking-off (their speed is the point of the Fast path).
         const thinkingFor = (model: string): 'low' | 'high' =>
@@ -372,7 +377,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
             // the client; a marker can straddle two chunks, so this is a
             // stateful filter with a small holdback, flushed after the loop.
             const citeFilter = new CiteMarkerStreamFilter();
-            for await (const chunk of streamGeminiChat(rung.model, SYSTEM_INSTRUCTION, historyPlain, userContent, fastApiKey, MAX_TOKENS, searchEnabled, true, thinkingFor(rung.model), rung.tier, idleFor(rung.model))) {
+            for await (const chunk of streamGeminiChat(rung.model, SYSTEM_INSTRUCTION, historyPlain, userContent, fastApiKey, MAX_TOKENS, searchEnabled, true, thinkingFor(rung.model), rung.tier, STREAM_IDLE_MS, firstByteFor(rung.model))) {
               if (chunk.text) {
                 rawResponse += chunk.text;
                 const out = citeFilter.push(chunk.text);

@@ -92,6 +92,13 @@ export async function* streamGeminiChat(
    *  request blocks for minutes until the OS socket gives up. The caller's
    *  catch then falls to the next model. */
   idleTimeoutMs: number = 30_000,
+  /** How long to wait for the FIRST byte. Grounding + thinking are
+   *  silent (no bytes until the first answer token), so this is really
+   *  "how long may this rung think before we give up on it". Defaults to
+   *  idleTimeoutMs; callers pass a larger value for Deep rungs where
+   *  aborting wastes thinking tokens already paid for, and a tight one
+   *  for rungs that should answer in seconds. */
+  firstByteTimeoutMs: number = idleTimeoutMs,
 ): AsyncGenerator<GeminiChatChunk> {
   // Build Gemini contents array
   const contents: GeminiContent[] = [];
@@ -159,15 +166,19 @@ export async function* streamGeminiChat(
 
   const url = `${BASE_URL}/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
 
-  // Idle-timeout guard: abort if no bytes arrive for idleTimeoutMs. Armed
-  // before the first request and reset on every chunk, so a stalled connect
-  // OR a mid-stream stall fails fast instead of hanging for minutes, while a
-  // slow-but-progressing answer is never cut.
+  // Two-budget watchdog. Until the first byte arrives the timer runs on
+  // firstByteTimeoutMs (a stalled connect, or a rung that thinks forever);
+  // once bytes flow it switches to idleTimeoutMs, reset on every chunk, so
+  // a slow-but-progressing answer is never cut mid-flight. Production
+  // showed the old single 100-130 s budget was almost entirely spent
+  // waiting on a primary rung that never answered, while the fallback
+  // rungs answer in seconds — the wait WAS the latency.
   const controller = new AbortController();
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  let gotFirstByte = false;
   const armIdle = () => {
     if (idleTimer) clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => controller.abort(), idleTimeoutMs);
+    idleTimer = setTimeout(() => controller.abort(), gotFirstByte ? idleTimeoutMs : firstByteTimeoutMs);
   };
   const clearIdle = () => { if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; } };
 
@@ -231,7 +242,8 @@ export async function* streamGeminiChat(
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    armIdle(); // bytes arrived — reset the idle watchdog
+    gotFirstByte = true;
+    armIdle(); // bytes arrived — now on the streaming-idle budget
 
     buffer += decoder.decode(value, { stream: true });
 

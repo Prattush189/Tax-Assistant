@@ -137,6 +137,10 @@ export const geminiChatProvider: ChatProvider = {
         false, // no context cache — notice prompts vary per-call
         thinking,
         tier,
+        // streaming idle / first byte. 2.5 answers in seconds; the 3.x
+        // rungs get 30 s to think before we move on.
+        20_000,
+        model === GEMINI_CHAT_MODEL_T2 ? 15_000 : 30_000,
       );
 
       for await (const chunk of stream) {
