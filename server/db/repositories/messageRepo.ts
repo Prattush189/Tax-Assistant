@@ -7,6 +7,8 @@ export interface MessageRow {
   content: string;
   attachment_filename: string | null;
   attachment_mime_type: string | null;
+  /** Grounding sources behind a model reply (parsed from the JSON column). */
+  sources: Array<{ title: string; url: string }> | null;
   created_at: string;
 }
 
@@ -23,12 +25,24 @@ export interface QAPair {
   asked_at: string;
 }
 
+/** Tolerant JSON parse for the sources column — a bad row must never
+ *  take the whole chat history down with it. */
+function parseSources(raw: string | null): Array<{ title: string; url: string }> | null {
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw);
+    return Array.isArray(v) && v.length ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 const stmts = {
   findByChatId: db.prepare(
     'SELECT * FROM messages WHERE chat_id = ? ORDER BY created_at ASC, id ASC'
   ),
   create: db.prepare(
-    'INSERT INTO messages (chat_id, role, content, attachment_filename, attachment_mime_type) VALUES (?, ?, ?, ?, ?)'
+    'INSERT INTO messages (chat_id, role, content, attachment_filename, attachment_mime_type, sources) VALUES (?, ?, ?, ?, ?, ?)'
   ),
   // Recent (question, answer) pairs for the chat-QA audit export. Each
   // model reply is matched with the nearest preceding user message in the
@@ -61,7 +75,8 @@ const stmts = {
 
 export const messageRepo = {
   findByChatId(chatId: string): MessageRow[] {
-    return stmts.findByChatId.all(chatId) as MessageRow[];
+    const rows = stmts.findByChatId.all(chatId) as Array<Omit<MessageRow, 'sources'> & { sources: string | null }>;
+    return rows.map(r => ({ ...r, sources: parseSources(r.sources) }));
   },
 
   /** Recent (question, answer) pairs for the chat-QA audit export. */
@@ -74,14 +89,16 @@ export const messageRepo = {
     role: 'user' | 'model',
     content: string,
     attachmentFilename?: string,
-    attachmentMimeType?: string
+    attachmentMimeType?: string,
+    sources?: Array<{ title: string; url: string }>,
   ): MessageRow {
     const info = stmts.create.run(
       chatId,
       role,
       content,
       attachmentFilename ?? null,
-      attachmentMimeType ?? null
+      attachmentMimeType ?? null,
+      sources && sources.length ? JSON.stringify(sources) : null,
     );
     return {
       id: Number(info.lastInsertRowid),
@@ -90,6 +107,7 @@ export const messageRepo = {
       content,
       attachment_filename: attachmentFilename ?? null,
       attachment_mime_type: attachmentMimeType ?? null,
+      sources: sources && sources.length ? sources : null,
       created_at: new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString().replace('Z', ''),
     };
   },

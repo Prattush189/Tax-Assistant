@@ -87,6 +87,7 @@ export function useChatManager() {
         attachment: m.attachment_filename
           ? { filename: m.attachment_filename, mimeType: m.attachment_mime_type! }
           : undefined,
+        sources: m.sources ?? undefined,
       }));
       // If this chat has an active stream the user switched away from, restore
       // the in-progress model message and keep the loading indicator alive.
@@ -235,6 +236,16 @@ export function useChatManager() {
         },
         referencedProfile ? { name: referencedProfile.name, data: referencedProfile.data } : undefined,
         getReasoningLevel(),
+        // Sources arrive on the done frame; attach them to the streamed
+        // model message so they render beneath it without a reload.
+        (srcs) => {
+          if (isStale()) return;
+          setMessages(prev => {
+            const updated = [...prev];
+            updated[updated.length - 1] = { ...updated[updated.length - 1], sources: srcs };
+            return updated;
+          });
+        },
       );
 
       setReferencedProfile(null);

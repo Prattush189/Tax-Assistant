@@ -1160,6 +1160,17 @@ db.exec(`CREATE TABLE IF NOT EXISTS format_requests (
 db.exec(`CREATE INDEX IF NOT EXISTS idx_format_requests_kind_status ON format_requests(kind, status)`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_format_requests_user ON format_requests(user_id)`);
 
+// messages.sources — JSON array of {title,url} grounding sources behind a
+// model reply. Before this, Gemini's search sources were extracted and
+// then thrown away; the user saw hallucinated "[cite: …]" tokens and no
+// actual links. Idempotent guard so existing and fresh databases match.
+{
+  const msgCols = (db.prepare("PRAGMA table_info(messages)").all() as { name: string }[]).map(c => c.name);
+  if (!msgCols.includes('sources')) {
+    db.exec("ALTER TABLE messages ADD COLUMN sources TEXT");
+  }
+}
+
 db.exec(`CREATE TABLE IF NOT EXISTS tax_notifications (
   id TEXT PRIMARY KEY,
   category TEXT NOT NULL CHECK (category IN ('GST', 'TDS', 'INCOME_TAX', 'OTHER')),

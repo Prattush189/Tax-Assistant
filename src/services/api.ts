@@ -36,6 +36,8 @@ export async function sendChatMessage(
   onDone?: (stopReason: string | null) => void,
   profileContext?: { name: string; data: Record<string, unknown> },
   reasoningLevel?: 'low' | 'high',
+  /** Grounding sources, delivered once on the done frame. */
+  onSources?: (sources: Array<{ title: string; url: string }>) => void,
 ): Promise<void> {
   const body: Record<string, unknown> = {
     message,
@@ -148,6 +150,7 @@ export async function sendChatMessage(
           // first few hundred ms felt slower than usual.
           if (parsed.providerFallback) { notifyProviderFallback(); continue; }
           if (parsed.done) {
+            if (Array.isArray(parsed.sources) && parsed.sources.length > 0) onSources?.(parsed.sources);
             onDone?.(parsed.stop_reason ?? null);
             terminated = true;
             return;
@@ -215,6 +218,8 @@ export interface ChatMessage {
   content: string;
   attachment_filename: string | null;
   attachment_mime_type: string | null;
+  /** Grounding sources behind a model reply, if any. */
+  sources?: Array<{ title: string; url: string }> | null;
   created_at: string;
 }
 

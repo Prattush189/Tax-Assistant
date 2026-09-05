@@ -51,6 +51,19 @@ function ExternalLink({ href, children }: { href?: string; children?: React.Reac
   );
 }
 
+/** Hostname for a source line. Gemini grounding links are often
+ *  vertexaisearch redirect URLs whose host tells the user nothing, so
+ *  those return '' and only the title is shown. */
+function hostOf(url: string): string {
+  try {
+    const h = new URL(url).hostname.replace(/^www\./, '');
+    if (h.includes('vertexaisearch') || h.endsWith('google.com')) return '';
+    return h;
+  } catch {
+    return '';
+  }
+}
+
 const markdownComponents = {
   a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
     <ExternalLink href={href}>{children}</ExternalLink>
@@ -179,7 +192,7 @@ interface MessageBubbleProps {
 }
 
 export function MessageBubble({ message, onContinue, isLastModel, isLoading }: MessageBubbleProps) {
-  const { role, content, timestamp, attachment, attachments, truncated } = message;
+  const { role, content, timestamp, attachment, attachments, truncated, sources } = message;
   const [copied, setCopied] = useState(false);
   // Only the last model message while loading is considered "streaming"
   const isStreaming = !!(role === 'model' && isLastModel && isLoading && content.length > 0);
@@ -243,6 +256,26 @@ export function MessageBubble({ message, onContinue, isLastModel, isLoading }: M
           <StreamingWrapper isStreaming={isStreaming}>
             {renderContent(content, role)}
           </StreamingWrapper>
+          {/* Grounding sources — the real citations behind the answer. */}
+          {role === 'model' && sources && sources.length > 0 && (
+            <div className="mt-2 pt-2 border-t border-gray-200/70 dark:border-gray-700/60">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Sources</p>
+              <ol className="space-y-0.5">
+                {sources.slice(0, 8).map((src, i) => {
+                  const host = hostOf(src.url);
+                  return (
+                    <li key={src.url + i} className="text-[11px] leading-snug text-gray-600 dark:text-gray-300 flex gap-1.5 min-w-0">
+                      <span className="text-gray-400 shrink-0">{i + 1}.</span>
+                      <span className="min-w-0 truncate">
+                        <ExternalLink href={src.url}>{src.title || host || src.url}</ExternalLink>
+                        {host && src.title && <span className="text-gray-400"> · {host}</span>}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ol>
+            </div>
+          )}
           <div className={cn(
             "text-[10px] mt-2 opacity-0 hover:opacity-40 transition-opacity select-none",
             role === 'user' ? 'text-right text-white/60' : 'text-gray-400'

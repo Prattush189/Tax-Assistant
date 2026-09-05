@@ -11,6 +11,8 @@ export interface Message {
     mimeType: string;
   }[];
   truncated?: boolean;
+  /** Web sources the answer was grounded on (model messages only). */
+  sources?: { title: string; url: string }[];
   profileRef?: string;  // profile name referenced in this message
 }
 

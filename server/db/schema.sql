@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS messages (
   content TEXT NOT NULL,
   attachment_filename TEXT,
   attachment_mime_type TEXT,
+  sources TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
 );
 CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id);

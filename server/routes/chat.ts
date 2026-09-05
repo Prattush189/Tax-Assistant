@@ -3,6 +3,7 @@ import { Router, Response } from 'express';
 import { GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, GEMINI_CHAT_MODEL_PRIMARY, GEMINI_FLEX, GEMINI_FLEX_SERVICE_TIER, GEMINI_API_KEYS, costForModel } from '../lib/gemini.js';
 import { confirmUsed, getActiveKeyIndex } from '../lib/searchQuota.js';
 import { streamGeminiChat } from '../lib/geminiChat.js';
+import { CiteMarkerStreamFilter, stripCiteMarkers } from '../lib/citeMarkerFilter.js';
 import { referenceUrlsBlock } from '../lib/officialReferenceUrls.js';
 import { chatRepo } from '../db/repositories/chatRepo.js';
 import { messageRepo } from '../db/repositories/messageRepo.js';
@@ -95,6 +96,7 @@ TRUSTED CITATION SOURCES (prefer these, never cite anything else as primary auth
 DO NOT cite blog posts, YouTube, Quora, generic Q&A sites, ChatGPT/AI summaries, or unofficial aggregators. If web search returns only such sources for a point, drop the citation and fall back to "as per the relevant CBDT/CBIC notification" wording without inventing a number.
 
 Inline citation form: when a search result is the basis for a specific number or section, append a short bracketed reference at the end of that sentence — e.g. \`(per CBDT Circular No. 12/2024 dated 15.05.2024)\` or \`(per incometax.gov.in)\`. One reference per fact, not a wall of links.
+NEVER emit machine-style citation tokens such as \`[cite: 1.2.2]\`, \`[cite: Document]\` or \`[cite: <filename>]\` — they are not rendered and reach the user as raw text. The web sources behind your answer are shown automatically beneath it; refer to them in prose using the \`(per …)\` form above, nothing else.
 
 HANDLING ATTACHED DOCUMENTS:
 - If the user attaches a document and asks a vague question, your response MUST focus on the attached document's content.
@@ -289,6 +291,10 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
         let inputTok = 0;
         let outputTok = 0;
         let cachedTok = 0;
+        // Unfiltered text for persistence (full-pass strip) and the grounding
+        // sources Gemini returned on the final chunk.
+        let rawResponse = '';
+        let sources: Array<{ title: string; url: string }> = [];
 
         // ── Fast-mode cascade ─────────────────────────────────────────────
         // Primary  : the 3.x T1 rung (3.x monthly search pool) — markedly more
@@ -362,15 +368,26 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
           const rung = ladder[i];
           usedModel = rung.model;
           try {
+            // Hallucinated "[cite: …]" tokens are stripped BEFORE they reach
+            // the client; a marker can straddle two chunks, so this is a
+            // stateful filter with a small holdback, flushed after the loop.
+            const citeFilter = new CiteMarkerStreamFilter();
             for await (const chunk of streamGeminiChat(rung.model, SYSTEM_INSTRUCTION, historyPlain, userContent, fastApiKey, MAX_TOKENS, searchEnabled, true, thinkingFor(rung.model), rung.tier, idleFor(rung.model))) {
-              if (chunk.text) { fullResponse += chunk.text; sse.writeText(chunk.text); }
+              if (chunk.text) {
+                rawResponse += chunk.text;
+                const out = citeFilter.push(chunk.text);
+                if (out) { fullResponse += out; sse.writeText(out); }
+              }
               if (chunk.done) {
                 inputTok = chunk.inputTokens ?? 0;
                 outputTok = chunk.outputTokens ?? 0;
                 cachedTok = chunk.cachedInputTokens ?? 0;
+                if (chunk.sources?.length) sources = chunk.sources;
                 stopReason = chunk.finishReason === 'MAX_TOKENS' ? 'max_tokens' : 'end_turn';
               }
             }
+            const tail = citeFilter.flush();
+            if (tail) { fullResponse += tail; sse.writeText(tail); }
             ranFlexWinner = !!rung.tier; // attribute Flex only if it actually ran
             confirmUsed(rung.model === GEMINI_CHAT_MODEL_T2 ? 'gemini-2.5' : 'gemini-3', activeIdx, searchEnabled);
           } catch (err) {
@@ -399,8 +416,10 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
           throw new Error('No response produced by any model');
         }
 
-        // Persist model response
-        messageRepo.create(chatId, 'model', fullResponse);
+        // Persist the model response with markers stripped in one full pass
+        // (the stream filter's whitespace tidy is chunk-local) plus the
+        // grounding sources, so reloading the chat shows them too.
+        messageRepo.create(chatId, 'model', stripCiteMarkers(rawResponse || fullResponse), undefined, undefined, sources);
 
         // Auto-title
         if (chat.title === 'New Chat' && message.trim().length > 0) {
@@ -425,7 +444,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
           console.warn('[chat] skipping usage log — no tokens reported (likely partial/truncated stream)');
         }
 
-        sse.writeDone({ stop_reason: stopReason });
+        sse.writeDone({ stop_reason: stopReason, sources });
         return;
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
