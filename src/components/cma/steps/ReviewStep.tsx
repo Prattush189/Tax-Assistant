@@ -370,7 +370,7 @@ export function ReviewStep({ draft, draftId, onChange }: Props) {
                 <div className="grid grid-cols-2 gap-3">
                   {([
                     ['pl_cogs', 'Cost of Goods Sold'],
-                    ['pl_operating_expense', 'Selling, Gen &amp; Admin'],
+                    ['pl_operating_expense', 'Selling, Gen & Admin'],
                     ['pl_depreciation', 'Depreciation'],
                     ['pl_finance_cost', 'Interest / Finance Cost'],
                   ] as const).map(([key, label]) => {
@@ -378,7 +378,7 @@ export function ReviewStep({ draft, draftId, onChange }: Props) {
                     const defaultVal = bepDefaults.variableFractionByKey?.[key] ?? 0;
                     return (
                       <label key={key} className="flex items-center gap-2 text-xs">
-                        <span className="w-44 text-gray-500 dark:text-gray-400" dangerouslySetInnerHTML={{ __html: label }} />
+                        <span className="w-44 text-gray-500 dark:text-gray-400">{label}</span>
                         <input
                           type="number"
                           min={0}
