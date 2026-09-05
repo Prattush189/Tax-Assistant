@@ -1,6 +1,6 @@
 // server/routes/chat.ts
 import { Router, Response } from 'express';
-import { GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, GEMINI_CHAT_MODEL_PRIMARY, GEMINI_FLEX, GEMINI_FLEX_SERVICE_TIER, GEMINI_API_KEYS, costForModel } from '../lib/gemini.js';
+import { GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, GEMINI_CHAT_MODEL_PRIMARY, GEMINI_FLEX_CHAT, GEMINI_FLEX_SERVICE_TIER, GEMINI_API_KEYS, costForModel } from '../lib/gemini.js';
 import { confirmUsed, getActiveKeyIndex } from '../lib/searchQuota.js';
 import { streamGeminiChat } from '../lib/geminiChat.js';
 import { CiteMarkerStreamFilter, stripCiteMarkers } from '../lib/citeMarkerFilter.js';
@@ -317,7 +317,10 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
 
         const activeIdx = getActiveKeyIndex();
         const fastApiKey = GEMINI_API_KEYS[activeIdx] ?? '';
-        const flexTier = GEMINI_FLEX ? GEMINI_FLEX_SERVICE_TIER : null;
+        // Chat runs on the Standard tier unless GEMINI_FLEX_CHAT=1 — see the
+        // constant for the latency numbers. With no Flex rung the Deep
+        // ladder is simply 3.8 (Std) → 3.7 (Std) → 2.5.
+        const flexTier = GEMINI_FLEX_CHAT ? GEMINI_FLEX_SERVICE_TIER : null;
 
         // ── Model ladder ──────────────────────────────────────────────
         // Rungs resolve through the GEMINI_CHAT_MODEL_* constants, so this

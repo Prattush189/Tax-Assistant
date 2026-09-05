@@ -52,6 +52,18 @@ export const GEMINI_PRIMARY_OUTPUT_COST = 3.75 / 1_000_000;   // promo → 7.50 
 export const GEMINI_FLEX = process.env.GEMINI_FLEX !== '0';
 export const GEMINI_FLEX_SERVICE_TIER = 'flex';
 
+/** Flex for INTERACTIVE chat specifically. Google defines Flex as
+ *  "relaxed, variable latency" for 50% off — and production bears it
+ *  out: Deep chat averaged 18-29 s on Flex vs 7 s for Fast, with a human
+ *  watching a spinner the whole time. Chat volume is tiny (~90 calls /
+ *  30 days, ~1K output tokens each), so the discount is negligible in
+ *  rupees while the latency is the most visible thing in the product.
+ *  OFF by default → chat runs Standard. Set GEMINI_FLEX_CHAT=1 to restore.
+ *  Notices, deeds, ledger scrutiny and batch jobs keep GEMINI_FLEX —
+ *  notices showed NO measurable Flex penalty (52 s vs 64 s), so the 50%
+ *  is free there. */
+export const GEMINI_FLEX_CHAT = process.env.GEMINI_FLEX_CHAT === '1';
+
 // Pricing (USD per 1M tokens, Standard tier). Anchor for the weighted-
 // token quota (see modelWeights.ts), T2 input ($0.10/M) = 1× anchor:
 //   T2 input  $0.10 — w_in  = 1.0×    T2 output $0.40 — w_out = 4.0×
