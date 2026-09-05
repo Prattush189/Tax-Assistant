@@ -26,6 +26,17 @@ import {
 import { streamGeminiChat } from './geminiChat.js';
 import { selectTier, confirmUsed } from './searchQuota.js';
 
+/** Google-Search grounding for notice / deed / ledger drafting.
+ *  Default ON — unchanged behaviour. Set NOTICE_SEARCH_GROUNDING=0 to
+ *  run the A/B: the letter's authority is statutory, the case law that
+ *  grounding mainly feeds is mostly stripped by the citation sanitizer
+ *  anyway, and grounding blocks context caching (Gemini rejects
+ *  cachedContent + tools in one call). So this one switch trades
+ *  grounding for both lower first-token latency AND a cached system
+ *  prompt. Compare the [chatProvider-timing] lines and the
+ *  grade-audit script before flipping it for good. */
+const SEARCH_GROUNDING = process.env.NOTICE_SEARCH_GROUNDING !== '0';
+
 export interface ChatRequest {
   systemPrompt: string;
   userMessage: string;
@@ -135,8 +146,10 @@ export const geminiChatProvider: ChatProvider = {
         req.userMessage,
         apiKey,
         req.maxTokens,
-        true,
-        false, // no context cache — notice prompts vary per-call
+        SEARCH_GROUNDING,
+        // The system prompt is constant per boot, so it caches well — but
+        // only when grounding is off (Gemini forbids cachedContent + tools).
+        !SEARCH_GROUNDING,
         thinking,
         tier,
         // streaming idle / first byte. 2.5 answers in seconds; the 3.x
@@ -205,7 +218,7 @@ export const geminiChatProvider: ChatProvider = {
       cacheCreationTokens: 0,
       costUsd: costForModel(modelUsed, result.inputTokens, result.outputTokens, result.cachedInputTokens),
       modelUsed,
-      withSearch: true,
+      withSearch: SEARCH_GROUNDING,
     };
   },
 };
