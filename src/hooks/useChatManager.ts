@@ -219,7 +219,9 @@ export function useChatManager() {
             flushBuffer();
           } else {
             if (flushTimer) clearTimeout(flushTimer);
-            flushTimer = setTimeout(flushBuffer, 300);
+            // 100 ms (was 300): text without a newline waited up to 300 ms
+            // to appear, which read as the model 'hesitating' on every line.
+            flushTimer = setTimeout(flushBuffer, 100);
           }
         },
         (errorMsg) => {
@@ -359,7 +361,7 @@ export function useChatManager() {
             cFlush();
           } else {
             if (cFlushTimer) clearTimeout(cFlushTimer);
-            cFlushTimer = setTimeout(cFlush, 300);
+            cFlushTimer = setTimeout(cFlush, 100);
           }
         },
         (errorMsg) => {
