@@ -787,12 +787,16 @@ function isRetryableUpstream(err: unknown): boolean {
  *  pricing for the fallback path. */
 async function consumeStreamWithFallback(prompt: string, apiKey: string, maxOutputTokens: number) {
   try {
-    return await consumeStream(GEMINI_CHAT_MODEL_T1, prompt, apiKey, maxOutputTokens);
+    // 2026-09-07: the Lite rung (3.1 Flash-Lite) runs FIRST. Notification
+    // detail is a summarise-one-page job; production showed 3.7 Flash
+    // averaging 6 s / ~800 output tokens per item at 3x the price of the
+    // Lite rung for no visible quality gain. 3.7 remains the rescue.
+    return await consumeStream(GEMINI_CHAT_MODEL_T2, prompt, apiKey, maxOutputTokens);
   } catch (err) {
     if (!isRetryableUpstream(err)) throw err;
     const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`[notificationFetcher] tier-1 (${GEMINI_CHAT_MODEL_T1}) failed with retryable upstream error, falling back to ${GEMINI_CHAT_MODEL_T2}: ${msg.slice(0, 200)}`);
-    return await consumeStream(GEMINI_CHAT_MODEL_T2, prompt, apiKey, maxOutputTokens);
+    console.warn(`[notificationFetcher] ${GEMINI_CHAT_MODEL_T2} failed with retryable upstream error, falling back to ${GEMINI_CHAT_MODEL_T1}: ${msg.slice(0, 200)}`);
+    return await consumeStream(GEMINI_CHAT_MODEL_T1, prompt, apiKey, maxOutputTokens);
   }
 }
 
@@ -1199,8 +1203,8 @@ export async function generateNotificationDetail(
   const apiKey = pickApiKey();
   if (!apiKey) return { ok: false, detail: null, cached: false, inputTokens: 0, outputTokens: 0, cost: 0, error: 'No GEMINI_API_KEY configured' };
 
-  // Tier-1 Gemini 3.1 Flash-Lite Preview with automatic tier-2
-  // fallback to Gemini 2.5 Flash-Lite on retryable upstream errors.
+  // 3.1 Flash-Lite with automatic fallback to 3.7 Flash on retryable
+  // upstream errors.
   // The pregeneration loop in the daily refresh hits T1 for 10-20
   // items in quick succession; if T1 is in a "high demand" 503
   // window, fallback keeps the batch moving instead of failing every

@@ -46,6 +46,12 @@ const SECRETS: SecretSpec[] = [
 ];
 
 export function validateSecrets(): void {
+  // Non-fatal: without this the Razorpay webhook answers 503, so payments
+  // reconcile only through the client-side verify path and a tab closed
+  // mid-payment is never picked up. Warn loudly every boot until it is set.
+  if (!process.env.RAZORPAY_WEBHOOK_SECRET) {
+    console.warn('[secrets] RAZORPAY_WEBHOOK_SECRET is not set — POST /api/webhooks/razorpay will return 503. Create the secret in Razorpay Dashboard → Settings → Webhooks and add it to .env.');
+  }
   // Only enforce in production. Dev/test keep the convenient fallbacks.
   if (process.env.NODE_ENV !== 'production') return;
 

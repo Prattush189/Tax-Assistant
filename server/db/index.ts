@@ -808,7 +808,7 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_obs_account_id ON ledger_observat
   // this column instead of raw input+output so a more expensive model
   // (a 3.x Flash rung at 7.5× / 37.5×) counts proportionally more
   // against the user's budget than the cheap flash-lite anchor. Plan
-  // budgets stay at the same headline numbers (250K / 20M / 60M) but
+  // budgets stay at the same headline numbers (750K / 20M / 60M) but
   // represent T2-input-equivalent units.
   if (!usageCols.includes('weighted_tokens')) {
     db.exec("ALTER TABLE api_usage ADD COLUMN weighted_tokens INTEGER NOT NULL DEFAULT 0");
