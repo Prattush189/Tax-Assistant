@@ -8,14 +8,14 @@ let fails = 0;
 const ok = (c: boolean, m: string) => { console.log((c ? 'PASS' : 'FAIL') + '  ' + m); if (!c) fails++; };
 
 ok(CREDIT_UNIT === 10_000, '1 credit = 10,000 weighted tokens');
-ok(toCredits(PLAN_DEFAULTS.free.monthlyTokenBudget) === 75, 'Free 750K -> 75 credits');
+ok(toCredits(PLAN_DEFAULTS.free.monthlyTokenBudget) === 25, 'Free 250K -> 25 credits');
 ok(toCredits(PLAN_DEFAULTS.pro.monthlyTokenBudget) === 2000, 'Pro 20M -> 2,000 credits');
 ok(toCredits(PLAN_DEFAULTS.enterprise.monthlyTokenBudget) === 6000, 'Enterprise 60M -> 6,000 credits');
 ok(creditsToWeighted(toCredits(PLAN_DEFAULTS.pro.monthlyTokenBudget)) === PLAN_DEFAULTS.pro.monthlyTokenBudget, 'round-trips exactly for plan budgets');
 ok(toCredits(4_999) === 0 && toCredits(5_000) === 1 && creditsCeil(1) === 1, 'rounding: display rounds, gate ceils');
 
-const s = summarizeCredits({ used: 123_456, budget: 750_000, remaining: 626_544 });
-ok(s.used === 12 && s.budget === 75 && s.remaining === 63, 'summary maps used/budget/remaining (' + s.used + '/' + s.budget + '/' + s.remaining + ')');
+const s = summarizeCredits({ used: 123_456, budget: 250_000, remaining: 126_544 });
+ok(s.used === 12 && s.budget === 25 && s.remaining === 13, 'summary maps used/budget/remaining (' + s.used + '/' + s.budget + '/' + s.remaining + ')');
 ok(Object.keys(s.estimates).length >= 6, 'estimates exposed');
 
 // The promise the UI makes: a Fast chat message ("hi" on 3.1 Flash-Lite Flex)

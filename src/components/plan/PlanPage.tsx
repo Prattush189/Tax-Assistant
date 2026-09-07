@@ -56,7 +56,7 @@ function totalWithGst(basePrice: number): number {
 // rendered as a divider, not a bullet, so users see at a glance that
 // higher tiers stack on top of lower tiers.
 // Feature lists are now capability-only — no per-month counts. The
-// single credit budget (75 / 2,000 / 6,000 AI credits) is what gates total usage,
+// single credit budget (25 / 2,000 / 6,000 AI credits) is what gates total usage,
 // shown in Settings → Your Usage and on each feature's landing page.
 // Plan tiers differ in (a) which features are unlocked and (b) the
 // size of the shared token pool.
@@ -306,7 +306,7 @@ function CreditGuide({ estimates }: { estimates?: Record<string, number> }) {
         ))}
       </div>
       <p className="text-[11px] text-gray-400 mt-2">
-        Free trial: 75 credits · Pro: 2,000 a year · Enterprise: 6,000 a year. Costs are typical, not fixed — a longer document or a deeper answer uses a little more.
+        Free trial: 25 credits · Pro: 2,000 a year · Enterprise: 6,000 a year. Costs are typical, not fixed — a longer document or a deeper answer uses a little more.
       </p>
     </div>
   );

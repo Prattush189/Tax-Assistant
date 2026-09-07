@@ -47,17 +47,15 @@ export interface UserLimits {
  *  2.5-flash-lite input = 1×). The headline-feature models are Gemini 3
  *  Flash (chat/notice/ledger/deeds), which weighs ~2× the old 3.1 Flash-Lite
  *  per call — so a chat costs ~30K weighted on Standard, ~16K on Flex, and a
- *  Deep notice draft ~60K+. Rough Free-tier allowance at 750K:
- *    Free       750 K  ≈ ~20 chats on Standard  /  ~12 economy notice drafts  /  2-3 ledger scrutinies
- *               (raised from 250K on 2026-09-07 when the cheap rung moved from 2.5 to
- *               3.1 Flash-Lite, which weighs 2.5x / 15x -- a single ledger scrutiny
- *               was ~265K weighted, more than the old trial allowed)
+ *  Deep notice draft ~60K+. Rough Free-tier allowance at 250K = 25 credits:
+ *    Free       250 K  ≈ ~25 Fast chats  /  ~6 notice drafts  /  ~8 bank statements
+ *               (a ledger scrutiny is ~27 credits, i.e. Pro territory -- intended)
  *    Pro         20 M  ≈ yearly budget across all features (hundreds of chats)
  *    Enterprise  60 M  ≈ 3× Pro */
 export const PLAN_DEFAULTS: Record<PlanId, UserLimits> = {
   free: {
     profiles: 1,
-    monthlyTokenBudget: 750_000,
+    monthlyTokenBudget: 250_000,
   },
   pro: {
     profiles: 5,
