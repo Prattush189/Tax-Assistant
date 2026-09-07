@@ -1,5 +1,13 @@
 // server/index.ts
 import 'dotenv/config';
+// Runs after every hoisted import has evaluated (db init included) but
+// before anything binds a port. In production it exits the process if
+// JWT_SECRET / JWT_REFRESH_SECRET are missing, too short, or still the
+// dev default that is hard-coded as a fallback in middleware/auth.ts,
+// routes/auth.ts and lib/documentDownloadToken.ts -- otherwise a
+// misconfigured deploy would come up signing forgeable tokens. No-op
+// outside production so local dev keeps the fallback.
+import { validateSecrets } from './lib/validateSecrets.js';
 import './db/index.js';
 import express from 'express';
 
@@ -58,6 +66,8 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+validateSecrets();
 
 const app = express();
 app.set('trust proxy', 1); // Trust first proxy (Apache)

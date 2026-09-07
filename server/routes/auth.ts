@@ -8,6 +8,7 @@ import { userSessionRepo } from '../db/repositories/userSessionRepo.js';
 import { verificationRepo } from '../db/repositories/verificationRepo.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { authLimiter } from '../middleware/rateLimiter.js';
+import { claimNonce } from '../lib/ssoNonceStore.js';
 import { notifyAssistOfLogin } from '../lib/assistNotify.js';
 import { AuthRequest } from '../types.js';
 import { sanitizePluginLimits, getEffectivePlan, getTrialEndsAt } from '../lib/planLimits.js';
@@ -996,6 +997,15 @@ router.post('/plugin-sso', authLimiter, (req: Request, res: Response) => {
 
   if (!signatureValid) {
     res.status(401).json({ error: 'Invalid SSO signature' });
+    return;
+  }
+  // Replay guard. The timestamp check above only proves the request is
+  // recent; a captured, still-valid request could be replayed within the
+  // +/-5 minute window and mint another session. Each nonce is accepted
+  // once. Checked AFTER the signature so an unauthenticated caller cannot
+  // burn nonces they do not hold a valid signature for.
+  if (!claimNonce(nonce)) {
+    res.status(401).json({ error: 'SSO token already used' });
     return;
   }
 
