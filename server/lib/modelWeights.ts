@@ -3,7 +3,7 @@
  *
  * Each token a model consumes is multiplied by its weight before being
  * counted against the user's monthlyTokenBudget. Anchored at the
- * cheapest active model — gemini-2.5-flash-lite input ($0.10/M) — as
+ * a fixed UNIT — $0.10/M, the input price of the now-retired 2.5 Flash-Lite — as
  * 1× so the plan budgets (Free 250K, Pro 20M, Enterprise 60M) represent
  * T2-input-equivalent units.
  *
@@ -51,9 +51,12 @@ const MODEL_WEIGHTS: Record<string, ModelWeight> = {
   'gemini-3.8-flash-flex':         { wIn: 3.75, wOut: 18.75, wCached: 0.375 }, // ~50% on the Flex tier
   'gemini-3.7-flash':              { wIn: 7.5,  wOut: 37.5,  wCached: 0.75 },  // $0.75 / $3.75 — T1 fallback
   'gemini-3.7-flash-flex':         { wIn: 3.75, wOut: 18.75, wCached: 0.375 }, // ~50% on the Flex tier
-  'gemini-2.5-flash-lite':         { wIn: 1.0,  wOut: 4.0,   wCached: 0.25 },   // $0.10 / $0.40 — anchor / last resort
+  // T2 since 2026-09. Cache rate assumed 25% of input (not on the sheet).
+  'gemini-3.1-flash-lite':         { wIn: 2.5,  wOut: 15.0,  wCached: 0.625 },  // $0.25 / $1.50 — last resort
+  'gemini-3.1-flash-lite-flex':    { wIn: 1.25, wOut: 7.5,   wCached: 0.3125 }, // ~50% on the Flex tier
 
   // Retired. Kept for historic rows.
+  'gemini-2.5-flash-lite':         { wIn: 1.0,  wOut: 4.0,   wCached: 0.25 },   // $0.10 / $0.40 — the UNIT; T2 until 2026-09
   'gemini-3.6-flash':              { wIn: 15.0, wOut: 75.0,  wCached: 1.5 },  // $1.50 / $7.50 — chat primary to 2026-09
   'gemini-3.6-flash-flex':         { wIn: 7.5,  wOut: 37.5,  wCached: 0.75 },  // ~50% on the Flex tier
   'gemini-3.5-flash-lite':         { wIn: 3.0,  wOut: 25.0,  wCached: 0.3 },  // $0.30 / $2.50 — T1 to 2026-09

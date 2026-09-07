@@ -12,6 +12,7 @@
  */
 
 import { callGeminiJson } from './geminiJson.js';
+import { GEMINI_CHAT_MODEL_T2 } from './gemini.js';
 
 export interface MapperRowInput {
   index: number;
@@ -90,7 +91,7 @@ export async function aiSuggestMappings(
       // Use the cheap tier — this is a classification task, not a
       // generation task. flash-lite handles it well and costs a
       // fraction of pro.
-      primaryModel: 'gemini-2.5-flash-lite',
+      primaryModel: GEMINI_CHAT_MODEL_T2,
     },
   );
 

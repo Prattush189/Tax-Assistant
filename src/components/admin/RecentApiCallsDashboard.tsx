@@ -47,7 +47,9 @@ const MODEL_COLORS: Record<string, string> = {
   'gemini-3.6-flash-flex':         'bg-gray-400',     // retired
   'gemini-3.5-flash-lite':         'bg-gray-400',     // retired
   'gemini-3.5-flash-lite-flex':    'bg-gray-400',     // retired
-  'gemini-2.5-flash-lite':         'bg-blue-500',     // T2 last-resort
+  'gemini-3.1-flash-lite':         'bg-blue-500',     // T2 last-resort
+  'gemini-3.1-flash-lite-flex':    'bg-blue-400',     // T2 on Flex
+  'gemini-2.5-flash-lite':         'bg-gray-400',     // retired 2026-09
   'gemini-3-flash-preview':        'bg-gray-400',     // retired
   'gemini-3-flash-preview-flex':   'bg-gray-400',     // retired
   'gemini-3.1-flash-lite-preview': 'bg-gray-400',     // retired
@@ -66,7 +68,9 @@ const MODEL_LABELS: Record<string, string> = {
   'gemini-3.6-flash-flex':         'Gemini 3.6 Flash · Flex (retired)',
   'gemini-3.5-flash-lite':         'Gemini 3.5 Flash-Lite (retired)',
   'gemini-3.5-flash-lite-flex':    'Gemini 3.5 Flash-Lite · Flex (retired)',
-  'gemini-2.5-flash-lite':         'Gemini 2.5 Flash-Lite',
+  'gemini-3.1-flash-lite':         'Gemini 3.1 Flash-Lite',
+  'gemini-3.1-flash-lite-flex':    'Gemini 3.1 Flash-Lite (Flex)',
+  'gemini-2.5-flash-lite':         'Gemini 2.5 Flash-Lite (retired)',
   'gemini-3-flash-preview':        'Gemini 3 Flash (retired)',
   'gemini-3-flash-preview-flex':   'Gemini 3 Flash · Flex (retired)',
   'gemini-3.1-flash-lite-preview': 'Gemini 3.1 Flash-Lite (retired)',
@@ -179,7 +183,7 @@ export function RecentApiCallsDashboard() {
             <span className="text-gray-300 dark:text-gray-700">·</span>
             <span><span className="font-semibold text-gray-700 dark:text-gray-300">Gemini 3.7 Flash (Flex):</span> $0.375 in / $1.875 out per 1M (weight 3.75× / 18.75×)</span>
             <span className="text-gray-300 dark:text-gray-700">·</span>
-            <span><span className="font-semibold text-gray-700 dark:text-gray-300">Gemini 2.5 Flash-Lite:</span> $0.10 in / $0.40 out per 1M (weight 1× / 4×)</span>
+            <span><span className="font-semibold text-gray-700 dark:text-gray-300">Gemini 3.1 Flash-Lite:</span> $0.25 in / $1.50 out per 1M (weight 2.5× / 15×; unit = $0.10/M)</span>
             <span className="text-gray-300 dark:text-gray-700">·</span>
             <span className="italic">Primary + T1 run Flex by default (½ of Standard $0.75/$3.75). 3.x promo pricing doubles on 1 Jan 2027.</span>
           </div>

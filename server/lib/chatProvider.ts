@@ -3,7 +3,7 @@
  *
  * Used today by the notice route. Gemini-only, Deep-reasoning, on the same
  * model ladder as chat — 3.8 Flash (Flex) → 3.7 Flash (Flex → Standard)
- * → 2.5 Flash-Lite — with Google Search grounding enabled.
+ * → 3.1 Flash-Lite — with Google Search grounding enabled.
  *
  * The rungs are referenced through the GEMINI_CHAT_MODEL_* constants, so
  * this ladder follows a chat-model swap automatically; the names above are
@@ -47,7 +47,7 @@ export interface ChatRequest {
    *  notice. Mid-stream failures don't fire this — they're surfaced as
    *  a truncation instead. */
   onFallback?: (input: { from: string; to: string }) => void;
-  /** Economy ladder: start at 2.5 Flash-Lite with thinking OFF instead
+  /** Economy ladder: start at 3.1 Flash-Lite with thinking OFF instead
    *  of the 3.x primary with Deep thinking. 3.x bills thinking tokens
    *  as OUTPUT, and Deep reasoning on a long legal letter burns far
    *  more of them than the letter itself — which is what made notice
@@ -79,13 +79,13 @@ export interface ChatProvider {
   streamChat(req: ChatRequest, onText: (text: string) => void): Promise<ChatUsage>;
 }
 
-// ── Gemini 2.5 Flash-Lite (with Google Search grounding) implementation ──
+// ── Gemini (with Google Search grounding) implementation ──
 
 export const geminiChatProvider: ChatProvider = {
   name: 'gemini',
   async streamChat(req, onText) {
     // Notice drafting is complex legal work → Deep reasoning. (Not passed
-    // to 2.5 Flash-Lite, which uses a different thinking config.)
+    // to the Lite rung, which runs with thinking off.)
     const THINKING: 'low' | 'high' = 'high';
 
     // Default ladder is "Deep" → the chat PRIMARY on top; there is no Fast
@@ -93,14 +93,14 @@ export const geminiChatProvider: ChatProvider = {
     // Standard rungs. 3.8 Standard sits ABOVE 3.7 Standard because the two
     // are priced identically — no reason to step down to the weaker model
     // before we have to:
-    //   3.8 (Flex) → 3.7 (Flex) → 3.8 (Std) → 3.7 (Std) → 2.5 Flash-Lite
+    //   3.8 (Flex) → 3.7 (Flex) → 3.8 (Std) → 3.7 (Std) → 3.1 Flash-Lite
     // With Flex off the ladder is simply 3.8 (Std) → 3.7 (Std) → 2.5.
     //
     // NOTE: since 2026-09, 3.8 and 3.7 are priced identically, so the T1
     // rungs buy availability rather than savings. Only the final 2.5
     // Flash-Lite rung is materially cheaper.
     const flexTier = GEMINI_FLEX ? GEMINI_FLEX_SERVICE_TIER : null;
-    // Economy: 2.5 Flash-Lite first, thinking off. 3.x stays underneath
+    // Economy: 3.1 Flash-Lite first, thinking off. 3.7/3.8 stay underneath
     // purely as a rescue if 2.5 fails outright, so a bad day still
     // produces a letter — it just is not the normal path any more.
     const ladder: Array<{ model: string; tier: string | null; thinking: 'low' | 'high' | null }> = req.economy
@@ -152,8 +152,8 @@ export const geminiChatProvider: ChatProvider = {
         !SEARCH_GROUNDING,
         thinking,
         tier,
-        // streaming idle / first byte. 2.5 answers in seconds; the 3.x
-        // rungs get 30 s to think before we move on.
+        // streaming idle / first byte. The Lite rung answers in seconds; the
+        // thinking rungs get 30 s before we move on.
         20_000,
         model === GEMINI_CHAT_MODEL_T2 ? 15_000 : 30_000,
       );
@@ -164,7 +164,7 @@ export const geminiChatProvider: ChatProvider = {
           inputTokens = chunk.inputTokens ?? 0;
           outputTokens = chunk.outputTokens ?? 0;
           cachedInputTokens = chunk.cachedInputTokens ?? 0;
-          const tag = model === GEMINI_CHAT_MODEL_T2 ? 'gemini-2.5' : 'gemini-3';
+          const tag = model.startsWith('gemini-2.5') ? 'gemini-2.5' : 'gemini-3';
           confirmUsed(tag, selection.keyIndex, true);
         }
       }

@@ -37,7 +37,9 @@ ok(w38f.wIn === 3.75 && w38f.wOut === 18.75 && w38f.wCached === 0.375, '3.8 Flex
 const w37 = getWeightFor('gemini-3.7-flash');
 ok(w37.wIn === w38.wIn && w37.wOut === w38.wOut, '3.7 == 3.8 (identically priced)');
 const w25 = getWeightFor('gemini-2.5-flash-lite');
-ok(w25.wIn === 1 && w25.wOut === 4 && w25.wCached === 0.25, '2.5 Flash-Lite anchor 1 / 4 / cached 0.25');
+ok(w25.wIn === 1 && w25.wOut === 4 && w25.wCached === 0.25, 'retired 2.5 Flash-Lite keeps 1 / 4 / cached 0.25 (the unit)');
+const w31 = getWeightFor('gemini-3.1-flash-lite');
+ok(w31.wIn === 2.5 && w31.wOut === 15 && w31.wCached === 0.625, '3.1 Flash-Lite T2 weights 2.5 / 15 / cached 0.625');
 
 // ── 3. weighted tokens: the Deep-call scenario from (1) on 3.8 Flex ──
 const weighted = computeWeightedTokens('gemini-3.8-flash-flex', 1000, 1700, 800);
@@ -58,12 +60,14 @@ ok(near(costForModel('gemini-3.8-flash-flex', 0, M), 1.875), '3.8 Flex output $1
 ok(near(costForModel('gemini-3.8-flash', M, 0, M), 0.075), '3.8 Std fully-cached input $0.075/M');
 ok(near(costForModel('gemini-3.8-flash-flex', M, 0, M), 0.0375), '3.8 Flex fully-cached input $0.0375/M');
 ok(near(costForModel('gemini-3.7-flash', M, M), costForModel('gemini-3.8-flash', M, M)), '3.7 cost == 3.8 cost');
-ok(near(costForModel('gemini-2.5-flash-lite', M, 0, M), 0.025), '2.5 Flash-Lite cached $0.025/M');
-ok(near(costForModel('gemini-2.5-flash-lite', M, M), 0.5), '2.5 Flash-Lite $0.10 + $0.40');
+ok(near(costForModel('gemini-2.5-flash-lite', M, 0, M), 0.025), 'retired 2.5 Flash-Lite cached $0.025/M');
+ok(near(costForModel('gemini-2.5-flash-lite', M, M), 0.5), 'retired 2.5 Flash-Lite $0.10 + $0.40 (historic rows)');
+ok(near(costForModel('gemini-3.1-flash-lite', M, M), 1.75), '3.1 Flash-Lite $0.25 + $1.50');
+ok(near(costForModel('gemini-3.1-flash-lite-flex', M, M), 0.875), '3.1 Flash-Lite Flex = 50%');
 ok(near(costForModel('gemini-3.6-flash', M, M), 9.0), 'retired 3.6 still prices historic rows ($1.50 + $7.50)');
 // vision on 3.7 was previously billed at T2 rates:
 const visionReal = costForModel('gemini-3.7-flash', 50_000, 2_000);
-const visionOld = costForModel('gemini-2.5-flash-lite', 50_000, 2_000);
+const visionOld = costForModel('gemini-2.5-flash-lite', 50_000, 2_000); // the old hardcoded rate
 ok(visionReal > visionOld * 5, 'vision cost at real model is >5x the old hardcoded T2 figure (' + visionReal.toFixed(4) + ' vs ' + visionOld.toFixed(4) + ')');
 
 console.log(fails === 0 ? '\nALL PASSED' : '\n' + fails + ' FAILED');

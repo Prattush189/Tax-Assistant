@@ -2,7 +2,7 @@
  * Search quota tracker for the two-model Gemini cascade with dual API
  * key rotation. The line-up tracked by this module is:
  *
- *   Tier 'gemini-2.5' — gemini-2.5-flash-lite        (primary)
+ *   Tier 'gemini-2.5' — gemini-2.5 family (idle since 2026-09: no rung uses it)
  *                       1,500 free searches/day per key
  *   Tier 'gemini-3'   — gemini-3.8-flash / gemini-3.7-flash  (primary/fallback)
  *                       5,000 free searches/month per key
@@ -24,7 +24,7 @@
  *   - activeKeyIndex:    which API key is preferred as the primary for chat routing.
  */
 
-import { GEMINI_API_KEYS } from './gemini.js';
+import { GEMINI_API_KEYS, GEMINI_CHAT_MODEL_PRIMARY, GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2 } from './gemini.js';
 import db from '../db/index.js';
 
 export type ModelTier = 'gemini-3' | 'gemini-2.5';
@@ -262,8 +262,8 @@ export function getQuotaStatus() {
       index: i,
       label: k.label,
       active: i === activeKeyIndex,
-      tier1: { model: 'Gemini 3.5 Flash-Lite', used: k.t1Count, limit: t1Limit, remaining: Math.max(0, t1Limit - k.t1Count), period: 'monthly' },
-      tier2: { model: 'Gemini 2.5 Flash-Lite', used: k.t2Count, limit: t2Limit, remaining: Math.max(0, t2Limit - k.t2Count), period: 'daily' },
+      tier1: { model: `${GEMINI_CHAT_MODEL_PRIMARY} / ${GEMINI_CHAT_MODEL_T1} / ${GEMINI_CHAT_MODEL_T2}`, used: k.t1Count, limit: t1Limit, remaining: Math.max(0, t1Limit - k.t1Count), period: 'monthly' },
+      tier2: { model: 'gemini-2.5 family (no active rung)', used: k.t2Count, limit: t2Limit, remaining: Math.max(0, t2Limit - k.t2Count), period: 'daily' },
     })),
     totalFreeSearchCapacity: {
       monthly: t1Limit * keys.length,

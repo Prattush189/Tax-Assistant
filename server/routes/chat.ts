@@ -301,8 +301,8 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
         //            accurate on current-year facts (new-regime slabs, FA-2025
         //            changes like the 48-month ITR-U limit) than 2.5 in the
         //            chat-QA bakeoff; see scripts/model-bakeoff-chat.mts.
-        // Fallback : Gemini 2.5 Flash-Lite (2.5 daily pool) — large independent
-        //            daily search pool; backstops 3.x when it's busy/over-quota.
+        // Fallback : 3.1 Flash-Lite (also the 3.x monthly pool). The old 2.5
+        //            daily search pool is no longer used by any rung.
         // Fallback only runs if the primary emitted zero text — we don't
         // restart the stream after partial output (would produce duplicated
         // responses on the client).
@@ -404,7 +404,9 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
             if (tail) { fullResponse += tail; sse.writeText(tail); }
             console.log(`[chat-timing] ${rung.model}${rung.tier ? ` (${rung.tier})` : ''} ${deep ? 'deep' : 'fast'} ttft=${firstTokenMs}ms total=${Date.now() - rungStartMs}ms in=${inputTok} out=${outputTok}`);
             ranFlexWinner = !!rung.tier; // attribute Flex only if it actually ran
-            confirmUsed(rung.model === GEMINI_CHAT_MODEL_T2 ? 'gemini-2.5' : 'gemini-3', activeIdx, searchEnabled);
+            // Search quota is per model FAMILY at Google's end. With 3.1 Flash-Lite
+            // as T2 every rung is a 3.x model, so the 2.5 daily pool sits idle.
+            confirmUsed(rung.model.startsWith('gemini-2.5') ? 'gemini-2.5' : 'gemini-3', activeIdx, searchEnabled);
           } catch (err) {
             if (fullResponse) {
               primaryFailedMidStream = true;

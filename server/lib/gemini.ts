@@ -4,7 +4,7 @@ import OpenAI from 'openai';
 // Three-model line-up across every route:
 //   Primary:  gemini-3.8-flash        (Flex tier — frontier, fast)
 //   T1:       gemini-3.7-flash        (Flex tier — availability fallback)
-//   T2:       gemini-2.5-flash-lite   (Standard — last-resort anchor)
+//   T2:       gemini-3.1-flash-lite   (Standard — last resort)
 //
 // 2026-09 swap: 3.6-flash → 3.8-flash and 3.5-flash-lite → 3.7-flash.
 // 3.8/3.7 are on promotional pricing ($0.75 in / $3.75 out) which is
@@ -17,8 +17,15 @@ import OpenAI from 'openai';
 //
 // NOTE: 3.8 and 3.7 are priced IDENTICALLY, so the T1 rung no longer
 // saves money — it is now purely an availability/capacity fallback.
-// T2 remains the genuinely cheap anchor.
-export const GEMINI_CHAT_MODEL_T2 = 'gemini-2.5-flash-lite';   // Last-resort fallback (anchor)
+// 2026-09: 2.5 Flash-Lite retired as T2 in favour of 3.1 Flash-Lite
+// ($0.25 in / $1.50 out). It costs 2.5x / 3.75x more per token, but it
+// was the previous T1 and the chat bakeoff found the 3.x Lites markedly
+// more accurate on current-year facts; 2.5 also failed on dense bank
+// statements. NOTE the weighting UNIT stays 1x = $0.10/M (2.5's old
+// input price) so plan budgets keep their meaning — 3.1 Flash-Lite
+// weighs 2.5x / 15x. Bank-statement and ledger runs therefore deplete
+// a budget ~3x faster than before.
+export const GEMINI_CHAT_MODEL_T2 = 'gemini-3.1-flash-lite';   // Last-resort fallback
 export const GEMINI_CHAT_MODEL_T1 = 'gemini-3.7-flash';        // Fallback (Gemini 3.7, Flex tier)
 
 // Chat PRIMARY (2026-07): Gemini 3.6 Flash — frontier reasoning + superior
@@ -38,7 +45,7 @@ export const GEMINI_CHAT_MODEL_T1 = 'gemini-3.7-flash';        // Fallback (Gemi
 // failure modes and different regression suites; changing one must
 // not move the other. Change these only alongside an extraction run.
 export const GEMINI_VISION_MODEL_T1 = 'gemini-3.7-flash';
-export const GEMINI_VISION_MODEL_T2 = 'gemini-2.5-flash-lite';
+export const GEMINI_VISION_MODEL_T2 = 'gemini-3.1-flash-lite';
 
 export const GEMINI_CHAT_MODEL_PRIMARY = 'gemini-3.8-flash';
 export const GEMINI_PRIMARY_INPUT_COST  = 0.75 / 1_000_000;   // promo → 1.50 on 2027-01-01
@@ -65,8 +72,9 @@ export const GEMINI_FLEX_SERVICE_TIER = 'flex';
 export const GEMINI_FLEX_CHAT = process.env.GEMINI_FLEX_CHAT === '1';
 
 // Pricing (USD per 1M tokens, Standard tier). Anchor for the weighted-
-// token quota (see modelWeights.ts), T2 input ($0.10/M) = 1× anchor:
-//   T2 input  $0.10 — w_in  = 1.0×    T2 output $0.40 — w_out = 4.0×
+// token quota (see modelWeights.ts). The UNIT is fixed at $0.10/M = 1×
+// (the retired 2.5 Flash-Lite input price) so budgets stay comparable:
+//   T2 input  $0.25 — w_in  = 2.5×    T2 output $1.50 — w_out = 15.0×
 //   T1 input  $0.75 — w_in  = 7.5×    T1 output $3.75 — w_out = 37.5×
 //   Primary   $0.75 — w_in  = 7.5×    Primary out $3.75 — w_out = 37.5×
 // Flex tier bills 50% of these (handled in costForModel via the -flex
@@ -74,12 +82,12 @@ export const GEMINI_FLEX_CHAT = process.env.GEMINI_FLEX_CHAT === '1';
 // Context-caching rates (Standard tier, per 1M cached input tokens).
 // Cached prompt tokens are part of promptTokenCount but bill at these
 // rates, not the input rate. 3.x = $0.075 (doubles 2027-01-01 with the
-// rest of the promo); 2.5 Flash-Lite = $0.025.
+// rest of the promo); 3.1 Flash-Lite assumed 25% of input = $0.0625.
 export const GEMINI_PRIMARY_CACHE_COST = 0.075 / 1_000_000;
 export const GEMINI_T1_CACHE_COST      = 0.075 / 1_000_000;
-export const GEMINI_T2_CACHE_COST      = 0.025 / 1_000_000;
-export const GEMINI_T2_INPUT_COST  = 0.10 / 1_000_000;
-export const GEMINI_T2_OUTPUT_COST = 0.40 / 1_000_000;
+export const GEMINI_T2_CACHE_COST      = 0.0625 / 1_000_000;
+export const GEMINI_T2_INPUT_COST  = 0.25 / 1_000_000;
+export const GEMINI_T2_OUTPUT_COST = 1.50 / 1_000_000;
 export const GEMINI_T1_INPUT_COST  = 0.75 / 1_000_000;   // promo → 1.50 on 2027-01-01
 export const GEMINI_T1_OUTPUT_COST = 3.75 / 1_000_000;   // promo → 7.50 on 2027-01-01
 
@@ -91,6 +99,11 @@ const GEMINI_LEGACY_THINK_INPUT_COST     = 0.30 / 1_000_000;
 const GEMINI_LEGACY_THINK_OUTPUT_COST    = 2.50 / 1_000_000;
 const GEMINI_LEGACY_THINK_FB_INPUT_COST  = 0.50 / 1_000_000;
 const GEMINI_LEGACY_THINK_FB_OUTPUT_COST = 3.00 / 1_000_000;
+// Retired 2026-09 as T2 — 2.5 Flash-Lite. Historic rows (the bulk of
+// api_usage) still carry this string; it also defines the weighting UNIT.
+const GEMINI_RET_25LITE_INPUT_COST  = 0.10 / 1_000_000;
+const GEMINI_RET_25LITE_OUTPUT_COST = 0.40 / 1_000_000;
+const GEMINI_RET_25LITE_CACHE_COST  = 0.025 / 1_000_000;
 // Retired 2026-09 chat models — 3.6-flash (primary) and
 // 3.5-flash-lite (T1) were swapped out for 3.8/3.7. Historic
 // api_usage rows still carry these strings.
@@ -156,8 +169,14 @@ export function costForModel(
 
   // ── Active models ── (a "-flex" suffix on the model string means the
   //  call ran on the Flex service tier → bill 50% of Standard.)
-  if (model === GEMINI_CHAT_MODEL_T2 || model === 'gemini-2.5-flash-lite') {
+  if (model === `${GEMINI_CHAT_MODEL_T2}-flex`) {
+    return cost(GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST, GEMINI_T2_CACHE_COST) * 0.5;
+  }
+  if (model === GEMINI_CHAT_MODEL_T2) {
     return cost(GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST, GEMINI_T2_CACHE_COST);
+  }
+  if (model === 'gemini-2.5-flash-lite') {
+    return cost(GEMINI_RET_25LITE_INPUT_COST, GEMINI_RET_25LITE_OUTPUT_COST, GEMINI_RET_25LITE_CACHE_COST);
   }
   if (model === `${GEMINI_CHAT_MODEL_T1}-flex`) {
     return cost(GEMINI_T1_INPUT_COST, GEMINI_T1_OUTPUT_COST, GEMINI_T1_CACHE_COST) * 0.5;
@@ -198,7 +217,7 @@ export function costForModel(
     return cost(GEMINI_RET_35LITE_INPUT_COST, GEMINI_RET_35LITE_OUTPUT_COST);
   }
 
-  // Default: Flash-Lite pricing for unknown models — under-attribute
-  // slightly rather than fabricate higher pricing.
-  return cost(GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST, GEMINI_T2_CACHE_COST);
+  // Default: the cheapest rate we have ever billed (2.5 Flash-Lite) for
+  // unknown / NULL-model rows — under-attribute rather than fabricate.
+  return cost(GEMINI_RET_25LITE_INPUT_COST, GEMINI_RET_25LITE_OUTPUT_COST, GEMINI_RET_25LITE_CACHE_COST);
 }

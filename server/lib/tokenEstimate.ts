@@ -13,9 +13,9 @@
  * removed from the project entirely.
  *
  * COUPLING WARNING (2026-09). Every estimator here is anchored to the
- * T2 weights (2.5 Flash-Lite: wIn=1, wOut=4). That is correct ONLY
+ * T2 weights (3.1 Flash-Lite: wIn=2.5, wOut=15). That is correct ONLY
  * because the routes that gate on an estimate — bank statements and
- * ledger scrutiny — actually run on 2.5 Flash-Lite today. The 3.x
+ * ledger scrutiny — actually run on 3.1 Flash-Lite today. The 3.x
  * Flash rungs weigh 7.5x / 37.5x (Flex 3.75x / 18.75x), so if either
  * route is ever moved to a 3.x model these estimates under-shoot by up
  * to ~9x and the pre-flight gate stops protecting the user's budget.
@@ -79,11 +79,12 @@ const CHARS_PER_ROW = 70;
 const ROW_INPUT_FRAC = 0.30;
 const ROW_OUTPUT_FRAC = 0.70;
 
-// T2 (gemini-2.5-flash-lite) weights — the cheapest active model
-// and the anchor of the weighting system. Most estimators below
-// assume the call will run on T2.
-const T2_W_IN = 1.0;
-const T2_W_OUT = 4.0;
+// T2 (gemini-3.1-flash-lite) weights — the model the gated routes
+// (bank statements, ledger scrutiny) actually run on. Re-anchored
+// 2026-09 when 2.5 Flash-Lite (1x / 4x) was retired; see the coupling
+// warning in the header — these MUST track lib/modelWeights.ts.
+const T2_W_IN = 2.5;
+const T2_W_OUT = 15.0;
 
 // Gemini vision weights (T2 anchor) — used by estimateGeminiVision()
 // for the scanned-PDF and image vision paths. Gemini bills image /

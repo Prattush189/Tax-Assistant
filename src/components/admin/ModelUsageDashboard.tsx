@@ -33,7 +33,9 @@ const MODEL_COLORS: Record<string, string> = {
   'gemini-3.8-flash-flex':         'bg-amber-400',    // Primary on Flex
   'gemini-3.7-flash':              'bg-violet-400',   // T1 — active fallback
   'gemini-3.7-flash-flex':         'bg-violet-300',   // T1 on Flex
-  'gemini-2.5-flash-lite':         'bg-blue-500',     // T2 — last-resort anchor
+  'gemini-3.1-flash-lite':         'bg-blue-500',     // T2 — last resort
+  'gemini-3.1-flash-lite-flex':    'bg-blue-400',     // T2 on Flex
+  'gemini-2.5-flash-lite':         'bg-gray-400',     // retired 2026-09
   // Retired — kept only so historic rows are still recognisable.
   'gemini-3.6-flash':              'bg-gray-400',
   'gemini-3.6-flash-flex':         'bg-gray-400',
@@ -52,7 +54,9 @@ const MODEL_LABELS: Record<string, string> = {
   'gemini-3.8-flash-flex':         'Gemini 3.8 Flash (primary, Flex)',
   'gemini-3.7-flash':              'Gemini 3.7 Flash (fallback, all features)',
   'gemini-3.7-flash-flex':         'Gemini 3.7 Flash (fallback, Flex)',
-  'gemini-2.5-flash-lite':         'Gemini 2.5 Flash-Lite (last-resort)',
+  'gemini-3.1-flash-lite':         'Gemini 3.1 Flash-Lite (last-resort)',
+  'gemini-3.1-flash-lite-flex':    'Gemini 3.1 Flash-Lite (last-resort, Flex)',
+  'gemini-2.5-flash-lite':         'Gemini 2.5 Flash-Lite (retired)',
   // Retired models still appear in historic rows.
   'gemini-3.6-flash':              'Gemini 3.6 Flash (retired)',
   'gemini-3.6-flash-flex':         'Gemini 3.6 Flash · Flex (retired)',
@@ -214,10 +218,10 @@ export function ModelUsageDashboard() {
             </div>
             <div className="flex items-center gap-2">
               <span className="text-[10px] font-bold text-blue-500 bg-blue-100 dark:bg-blue-900/30 px-1.5 py-0.5 rounded">LAST RESORT (T2)</span>
-              <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Gemini 2.5 Flash-Lite</span>
-              <span className="text-[10px] text-gray-500 dark:text-gray-400">$0.10 in / $0.40 out per 1M</span>
+              <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Gemini 3.1 Flash-Lite</span>
+              <span className="text-[10px] text-gray-500 dark:text-gray-400">$0.25 in / $1.50 out per 1M · weight 2.5× / 15× (unit = $0.10/M)</span>
             </div>
-            <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">Chat: <span className="font-medium">Deep</span> starts at 3.8 Flash, <span className="font-medium">Fast</span> at 3.7 Flash; Deep runs 3.8 (Flex) → 3.7 (Flex) → 3.8 (Std) → 3.7 (Std) → 2.5; Fast runs 3.7 (Flex→Std) → 2.5. 3.8 and 3.7 are priced identically, so T1 is an availability fallback, not a cheaper one. Weighted tokens count thinking tokens as output and bill cached prompt tokens at the cache rate. Search grounding: 2.5 family 1,500/day, 3.x family 5,000/month — limits below. <span className="font-medium">3.x promo pricing doubles on 1 Jan 2027.</span></p>
+            <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">Chat: <span className="font-medium">Deep</span> starts at 3.8 Flash, <span className="font-medium">Fast</span> at 3.7 Flash; Deep runs 3.8 (Flex) → 3.7 (Flex) → 3.8 (Std) → 3.7 (Std) → 3.1 Flash-Lite; Fast runs 3.7 (Flex→Std) → 3.1 Flash-Lite. 3.8 and 3.7 are priced identically, so T1 is an availability fallback, not a cheaper one. Weighted tokens count thinking tokens as output and bill cached prompt tokens at the cache rate. Search grounding: 2.5 family 1,500/day, 3.x family 5,000/month — limits below. <span className="font-medium">3.x promo pricing doubles on 1 Jan 2027.</span></p>
           </div>
         </div>
       </div>
@@ -425,7 +429,7 @@ export function ModelUsageDashboard() {
                 color="purple"
               />
               <QuotaCard
-                label={key.tier2?.model ?? 'Gemini 2.5 Flash-Lite'}
+                label={key.tier2?.model ?? 'gemini-2.5 family (idle)'}
                 tier="2.5 Pool (T2 primary)"
                 used={key.tier2?.used ?? 0}
                 limit={key.tier2?.limit ?? 1500}
