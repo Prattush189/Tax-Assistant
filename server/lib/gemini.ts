@@ -44,8 +44,15 @@ export const GEMINI_CHAT_MODEL_T1 = 'gemini-3.7-flash';        // Fallback (Gemi
 // model reads an uploaded notice. Extraction and chat have different
 // failure modes and different regression suites; changing one must
 // not move the other. Change these only alongside an extraction run.
-export const GEMINI_VISION_MODEL_T1 = 'gemini-3.7-flash';
-export const GEMINI_VISION_MODEL_T2 = 'gemini-3.1-flash-lite';
+// 2026-09-07: vision back on 3.1 Flash-Lite. It ran document extraction
+// in production from June to September and the visionFallback notes
+// record it "reliably succeeds in one shot" on dense statements (it was
+// 2.5 Flash-Lite that failed). The 2026-09-05 move to 3.7 was a side
+// effect of renaming T1, at 2.5x the input price for no measured gain.
+// 3.7 Flash is now the RESCUE -- a stronger, different model when the
+// Lite rung returns an empty or unparseable extraction.
+export const GEMINI_VISION_MODEL_T1 = 'gemini-3.1-flash-lite';
+export const GEMINI_VISION_MODEL_T2 = 'gemini-3.7-flash';
 
 export const GEMINI_CHAT_MODEL_PRIMARY = 'gemini-3.8-flash';
 export const GEMINI_PRIMARY_INPUT_COST  = 0.75 / 1_000_000;   // promo → 1.50 on 2027-01-01

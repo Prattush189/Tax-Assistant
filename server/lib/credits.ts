@@ -38,7 +38,7 @@ export function creditsToWeighted(credits: number): number {
  *   chat_fast       3.1 Flash-Lite on Flex: ~4.2K in x 1.25 + ~0.4K out x 7.5  ~= 8K   -> 1
  *   chat_deep       3.8 Flash Standard:     ~4.2K in x 7.5  + ~1.2K out x 37.5 ~= 76K  -> 8
  *   notice_draft    3.1 Flash-Lite (economy): ~6.5K x 2.5 + ~1.7K x 15         ~= 42K  -> 4
- *   notice_pdf_read vision on 3.7 Flash:    ~4K x 7.5 + ~0.85K x 37.5          ~= 62K  -> 6
+ *   notice_pdf_read vision on 3.1 Flash-Lite: ~4K x 2.5 + ~0.85K x 15         ~= 23K  -> 2
  *   bank_statement  3.1 Flash-Lite:         ~5.4K x 2.5 + ~1.1K x 15           ~= 30K  -> 3
  *   ledger_scrutiny 3.1 Flash-Lite:         ~91K x 2.5 + ~2.5K x 15            ~= 265K -> 27
  *
@@ -48,7 +48,7 @@ export const CREDIT_ESTIMATES: Readonly<Record<string, number>> = {
   chat_fast: 1,
   chat_deep: 8,
   notice_draft: 4,
-  notice_pdf_read: 6,
+  notice_pdf_read: 2,
   bank_statement: 3,
   ledger_scrutiny: 27,
 };

@@ -278,7 +278,7 @@ function TrialBanner({ daysLeft, onUpgrade }: { daysLeft: number; onUpgrade: () 
 // ── Main PlanPage ─────────────────────────────────────────────────────────────
 
 const CREDIT_GUIDE_FALLBACK: Record<string, number> = {
-  chat_fast: 1, chat_deep: 8, notice_draft: 4, notice_pdf_read: 6, bank_statement: 3, ledger_scrutiny: 27,
+  chat_fast: 1, chat_deep: 8, notice_draft: 4, notice_pdf_read: 2, bank_statement: 3, ledger_scrutiny: 27,
 };
 
 function CreditGuide({ estimates }: { estimates?: Record<string, number> }) {

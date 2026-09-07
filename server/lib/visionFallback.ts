@@ -1,6 +1,6 @@
 /**
- * Two-tier vision extractor: T1 (Gemini 3.5 Flash-Lite) with a T2
- * (Gemini 2.5 Flash-Lite) rescue.
+ * Two-tier vision extractor: T1 (Gemini 3.1 Flash-Lite) with a T2
+ * (Gemini 3.7 Flash) rescue -- see GEMINI_VISION_MODEL_* in lib/gemini.ts.
  *
  * HISTORY — read before changing the tier order.
  *
