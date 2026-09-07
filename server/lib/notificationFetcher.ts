@@ -732,7 +732,15 @@ function isIsoDate(s: string | undefined): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(s.trim());
 }
 
+/** The daily notification job runs on KEY 2 (GEMINI_API_KEY_2) on
+ *  purpose: Google's usage console breaks cost down per API key, so
+ *  isolating this job -- ~47 grounded calls a day, the prime suspect
+ *  for the unexplained part of the bill -- lets us read its spend
+ *  straight off the console instead of inferring it. Falls back to
+ *  key 1 only when key 2 is not configured. */
 function pickApiKey(): string | null {
+  const key2 = GEMINI_API_KEYS[1];
+  if (key2 && key2.length > 0) return key2;
   const key = GEMINI_API_KEYS.find(k => k && k.length > 0);
   return key ?? null;
 }
