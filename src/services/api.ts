@@ -468,6 +468,15 @@ export interface UserUsageResponse {
     budget: number;
     remaining: number;
   };
+  /** Same budget in the user-facing unit (1 credit = 10,000 weighted
+   *  tokens) plus typical per-action costs for hints. */
+  credits: {
+    unit: number;
+    used: number;
+    budget: number;
+    remaining: number;
+    estimates: Record<string, number>;
+  };
   usage: {
     messages: UsageMetric;
     attachments: UsageMetric;

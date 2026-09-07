@@ -108,7 +108,7 @@ function Toggle({ enabled, onChange }: { enabled: boolean; onChange: (v: boolean
 // Single, prominent bar for the cross-feature token budget — the only
 // HARD quota gate now. Per-feature counters live in a collapsed
 // "analytics" section below this so the eye lands here first.
-function TokenBudgetBar({ tokens, plan, trialDaysLeft, planExpiresAt }: { tokens: { used: number; budget: number; remaining: number }; plan: string; trialDaysLeft?: number | null; planExpiresAt?: string | null }) {
+function TokenBudgetBar({ tokens, credits, plan, trialDaysLeft, planExpiresAt }: { tokens: { used: number; budget: number; remaining: number }; credits?: { used: number; budget: number; remaining: number; estimates: Record<string, number> }; plan: string; trialDaysLeft?: number | null; planExpiresAt?: string | null }) {
   const pct = tokens.budget > 0 ? Math.min(100, (tokens.used / tokens.budget) * 100) : 0;
   const barColor =
     pct >= 90 ? 'bg-red-500' :
@@ -116,21 +116,24 @@ function TokenBudgetBar({ tokens, plan, trialDaysLeft, planExpiresAt }: { tokens
     pct >= 50 ? 'bg-yellow-500' :
     'bg-[#0D9668] dark:bg-[#2DD4A0]';
 
-  // Plan-aware conversion hints. Bank statement and ledger analyzers
-  // are Pro+ only — Free users shouldn't see "X bank txns" guidance
-  // for a feature they can't use. Coarse per-call averages: notice
-  // ~12K tokens, bank txn ~150, ledger txn ~100, chat ~500.
+  // Credits are the user-facing unit (1 credit = 10,000 weighted
+  // tokens); fall back to deriving them if an older server omits them.
+  const cr = credits ?? { used: Math.round(tokens.used / 10_000), budget: Math.round(tokens.budget / 10_000), remaining: Math.round(tokens.remaining / 10_000), estimates: {} };
+  const est = (k: string, dflt: number) => Math.max(1, cr.estimates[k] ?? dflt);
+  // Plan-aware conversion hints, from the server's per-action estimates
+  // (lib/credits.ts) so they track the models each feature really runs
+  // on. Bank/ledger are Pro+ only — Free users don't see that hint.
   const isPaid = plan === 'pro' || plan === 'enterprise';
-  const remainingNotices = Math.max(0, Math.floor(tokens.remaining / 12_000));
-  const remainingChats = Math.max(0, Math.floor(tokens.remaining / 500));
-  const remainingBankTxns = Math.max(0, Math.floor(tokens.remaining / 150));
+  const remainingNotices = Math.max(0, Math.floor(cr.remaining / est('notice_draft', 4)));
+  const remainingChats = Math.max(0, Math.floor(cr.remaining / est('chat_fast', 1)));
+  const remainingBankTxns = Math.max(0, Math.floor(cr.remaining / est('bank_statement', 3)));
 
   return (
     <div className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-5 border border-gray-200/60 dark:border-gray-700/60">
       <div className="flex items-center justify-between mb-3">
         <div>
           <p className="text-sm font-semibold text-gray-700 dark:text-gray-200">
-            {isPaid ? 'Yearly token budget' : 'Trial token budget'}
+            {isPaid ? 'Yearly AI credits' : 'Trial AI credits'}
           </p>
           <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
             One pool across every feature — {isPaid ? 'chat, notices, bank statements, ledger audits.' : 'chat, notices, calculators, document tools.'}
@@ -155,13 +158,13 @@ function TokenBudgetBar({ tokens, plan, trialDaysLeft, planExpiresAt }: { tokens
         <div className={cn('h-full rounded-full transition-all duration-500', barColor)} style={{ width: `${pct}%` }} />
       </div>
       <p className="text-sm font-bold text-gray-800 dark:text-white mt-3 tabular-nums">
-        {tokens.used.toLocaleString('en-IN')} / {tokens.budget.toLocaleString('en-IN')} tokens used
+        {cr.used.toLocaleString('en-IN')} / {cr.budget.toLocaleString('en-IN')} credits used
       </p>
       <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
         Remaining roughly covers <span className="font-semibold text-gray-700 dark:text-gray-300">{remainingNotices.toLocaleString('en-IN')} notices</span>
         {isPaid && (
           <>
-            {' '}OR <span className="font-semibold text-gray-700 dark:text-gray-300">{remainingBankTxns.toLocaleString('en-IN')} bank txns</span>
+            {' '}OR <span className="font-semibold text-gray-700 dark:text-gray-300">{remainingBankTxns.toLocaleString('en-IN')} bank statements</span>
           </>
         )}
         {' '}OR <span className="font-semibold text-gray-700 dark:text-gray-300">{remainingChats.toLocaleString('en-IN')} chats</span>.
@@ -658,7 +661,7 @@ function BillingTab({ userName, userEmail }: { userName: string; userEmail: stri
           </div>
           {/* Token budget — the only hard quota gate. Spans full
               width so users see one number to track. */}
-          <TokenBudgetBar tokens={usage.tokens} plan={usage.plan} trialDaysLeft={usage.trialDaysLeft} planExpiresAt={usage.planExpiresAt} />
+          <TokenBudgetBar tokens={usage.tokens} credits={usage.credits} plan={usage.plan} trialDaysLeft={usage.trialDaysLeft} planExpiresAt={usage.planExpiresAt} />
           <LicensePanel plan={usage.plan} planExpiresAt={usage.planExpiresAt} />
           {/* Per-feature counts kept as soft display below — useful
               for "you've drafted 22 notices this month" but no longer

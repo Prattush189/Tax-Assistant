@@ -317,38 +317,38 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
 
         const activeIdx = getActiveKeyIndex();
         const fastApiKey = GEMINI_API_KEYS[activeIdx] ?? '';
-        // Chat runs on the Standard tier unless GEMINI_FLEX_CHAT=1 — see the
-        // constant for the latency numbers. With no Flex rung the Deep
-        // ladder is simply 3.8 (Std) → 3.7 (Std) → 2.5.
-        const flexTier = GEMINI_FLEX_CHAT ? GEMINI_FLEX_SERVICE_TIER : null;
-
         // ── Model ladder ──────────────────────────────────────────────
         // Rungs resolve through the GEMINI_CHAT_MODEL_* constants, so this
         // ladder follows a model swap automatically; names below are docs
         // only — keep them in step with lib/gemini.ts.
         //
-        // Fast/Deep picks the TOP model (not a thinking budget):
-        //   Deep → 3.8 Flash (frontier reasoning + grounding)
-        //   Fast → 3.7 Flash (skips the top rung)
-        // Flex rungs (~50% price) are exhausted first, then Standard. On
-        // Deep, 3.8 Standard sits ABOVE 3.7 Standard — the two are priced
-        // identically, so there is no reason to step down to the weaker
-        // model before we have to. Fast never touches 3.8 (that is what
-        // makes it Fast).
-        //   Deep+Flex: 3.8(flex) → 3.7(flex) → 3.8(std) → 3.7(std) → 2.5-lite
-        //   Fast+Flex:            3.7(flex) → 3.7(std) → 2.5-lite
+        // FAST (default) runs on the Lite rung, Flex first. Reason: the
+        // system prompt is ~3.1K tokens and is re-sent every message (search
+        // grounding blocks caching), so even "hi" is ~4.2K input. On 3.7
+        // Standard that is ~31K weighted before a single output token —
+        // three credits for a greeting. On 3.1 Flash-Lite Flex it is ~8K:
+        // one credit per message, which is the promise the credits UI
+        // makes. Lite on Flex answered in ~7 s in production, fine for Fast.
+        //   Fast: 3.1-lite(flex) → 3.1-lite(std) → 3.7(std)
         //
-        // Since 2026-09, 3.8 and 3.7 are priced identically, so Fast now
-        // saves latency rather than money; only the 2.5 rung is cheaper.
+        // DEEP runs the frontier model on Standard (a human is waiting; Flex
+        // averaged 18-29 s here). GEMINI_FLEX_CHAT=1 puts a Flex rung on top.
+        //   Deep: 3.8(std) → 3.7(std) → 3.1-lite(std)     (~8 credits/reply)
         const deep = thinkingLevel === 'high';
+        const deepFlex = GEMINI_FLEX_CHAT ? GEMINI_FLEX_SERVICE_TIER : null;
         type Rung = { model: string; tier: string | null };
-        const ladder: Rung[] = [
-          ...(deep ? [{ model: GEMINI_CHAT_MODEL_PRIMARY, tier: flexTier }] : []),
-          ...(flexTier ? [{ model: GEMINI_CHAT_MODEL_T1, tier: flexTier }] : []),
-          ...(deep && flexTier ? [{ model: GEMINI_CHAT_MODEL_PRIMARY, tier: null }] : []),
-          { model: GEMINI_CHAT_MODEL_T1, tier: null },
-          { model: GEMINI_CHAT_MODEL_T2, tier: null },
-        ];
+        const ladder: Rung[] = deep
+          ? [
+              { model: GEMINI_CHAT_MODEL_PRIMARY, tier: deepFlex },
+              ...(deepFlex ? [{ model: GEMINI_CHAT_MODEL_PRIMARY, tier: null }] : []),
+              { model: GEMINI_CHAT_MODEL_T1, tier: null },
+              { model: GEMINI_CHAT_MODEL_T2, tier: null },
+            ]
+          : [
+              { model: GEMINI_CHAT_MODEL_T2, tier: GEMINI_FLEX_SERVICE_TIER },
+              { model: GEMINI_CHAT_MODEL_T2, tier: null },
+              { model: GEMINI_CHAT_MODEL_T1, tier: null },
+            ];
         // Two budgets per rung. FIRST-BYTE is how long a rung may stay
         // silent (grounding + thinking emit nothing until the first answer
         // token); STREAMING IDLE is the max gap between chunks once it has
@@ -362,11 +362,11 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
         const firstByteFor = (model: string): number => {
           if (model === GEMINI_CHAT_MODEL_PRIMARY) return deep ? 40_000 : 25_000;
           if (model === GEMINI_CHAT_MODEL_T1) return 20_000;
-          return 15_000;
+          return 12_000; // the Lite rung answers in seconds
         };
         const STREAM_IDLE_MS = 20_000;
-        // Only 3.6 Flash still uses a thinking budget; the Lite rungs run
-        // thinking-off (their speed is the point of the Fast path).
+        // Only the frontier rung thinks hard; 3.7 and the Lite rung run
+        // 'low' (their speed and price are the point of the Fast path).
         const thinkingFor = (model: string): 'low' | 'high' =>
           model === GEMINI_CHAT_MODEL_PRIMARY ? 'high' : 'low';
 

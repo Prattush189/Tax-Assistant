@@ -35,6 +35,7 @@ import { usageRepo } from '../db/repositories/usageRepo.js';
 import { getUserLimits, getEffectivePlan, getUsagePeriodStart } from './planLimits.js';
 import { getBillingUser } from './billing.js';
 import { reservedTokensFor, reserve } from './quotaReservations.js';
+import { toCredits, creditsCeil } from './credits.js';
 import type { AuthRequest } from '../types.js';
 
 export interface TokenQuotaOk {
@@ -110,9 +111,11 @@ export function enforceTokenQuota(
   if (budget > 0 && used >= budget) {
     const pct = Math.round((used / budget) * 100);
     res.status(429).json({
-      error: `You've used ${pct}% of your token budget (${used.toLocaleString('en-IN')} / ${budget.toLocaleString('en-IN')} tokens). ${plan === 'free' ? 'Upgrade to Pro or Enterprise to continue.' : 'Your budget resets on your next yearly renewal — renew now or upgrade your plan if you need more headroom.'}`,
+      error: `You've used all ${toCredits(budget).toLocaleString('en-IN')} of your AI credits (${pct}%). ${plan === 'free' ? 'Upgrade to Pro for 2,000 credits a year.' : 'Your credits reset on your next yearly renewal — renew now or upgrade your plan if you need more.'}`,
       tokensUsed: used,
       tokenBudget: budget,
+      creditsUsed: toCredits(used),
+      creditsBudget: toCredits(budget),
       upgrade: plan !== 'enterprise',
     });
     return { ok: false };
@@ -123,7 +126,9 @@ export function enforceTokenQuota(
   // half-way through a chunked run.
   if (estimatedTokens > 0 && estimatedTokens > remaining) {
     res.status(429).json({
-      error: `This run would use about ${estimatedTokens.toLocaleString('en-IN')} tokens, but you only have ${remaining.toLocaleString('en-IN')} left in your current period (${used.toLocaleString('en-IN')} of ${budget.toLocaleString('en-IN')} already used${reserved > 0 ? `, including ${reserved.toLocaleString('en-IN')} in other runs currently in progress` : ''}). ${plan === 'free' ? 'Try a smaller file or upgrade to Pro for a 20M-token yearly budget.' : 'Try a smaller file, wait for in-flight runs to finish, or renew now to start a fresh quota.'}`,
+      error: `This run needs about ${creditsCeil(estimatedTokens).toLocaleString('en-IN')} AI credits, but you have ${toCredits(remaining).toLocaleString('en-IN')} left (${toCredits(used).toLocaleString('en-IN')} of ${toCredits(budget).toLocaleString('en-IN')} used${reserved > 0 ? `, including ${toCredits(reserved).toLocaleString('en-IN')} reserved by runs in progress` : ''}). ${plan === 'free' ? 'Try a smaller file or upgrade to Pro for 2,000 credits a year.' : 'Try a smaller file, wait for in-flight runs to finish, or renew now to start a fresh quota.'}`,
+      creditsEstimated: creditsCeil(estimatedTokens),
+      creditsRemaining: toCredits(remaining),
       tokensUsed: used,
       tokenBudget: budget,
       tokensEstimated: estimatedTokens,

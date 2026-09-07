@@ -222,8 +222,8 @@ export function ChatInput({
               type="button"
               onClick={toggleReasoning}
               title={reasoning === 'high'
-                ? 'Deep reasoning — thorough, slower. Click for Fast.'
-                : 'Fast — quick answers. Click for Deep reasoning.'}
+                ? 'Deep reasoning — thorough, slower, about 8 credits per reply. Click for Fast.'
+                : 'Fast — quick answers, about 1 credit per reply. Click for Deep reasoning.'}
               className={cn(
                 "inline-flex items-center gap-1 h-9 px-2.5 rounded-lg text-xs font-medium transition-all shrink-0 self-end",
                 reasoning === 'high'

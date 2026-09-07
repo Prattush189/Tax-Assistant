@@ -9,6 +9,7 @@ import { getUserLimits, getEffectivePlan, getTrialEndsAt, isTrialExpired, TRIAL_
 import { getBillingUser, countSeats, SEAT_CAP } from '../lib/billing.js';
 import { CSV_ROWS_PER_CREDIT } from '../lib/creditPolicy.js';
 import { tokensRemainingForUser } from '../lib/tokenQuota.js';
+import { summarizeCredits } from '../lib/credits.js';
 import { licenseKeyRepo } from '../db/repositories/licenseKeyRepo.js';
 
 const router = Router();
@@ -156,6 +157,9 @@ router.get('/', (req: AuthRequest, res: Response) => {
       budget: tokenStats.budget,
       remaining: tokenStats.remaining,
     },
+    // User-facing unit: 1 credit = 10,000 weighted tokens. Same numbers
+    // as `tokens`, just readable. See lib/credits.ts for the estimates.
+    credits: summarizeCredits(tokenStats),
     // Per-feature limits were removed — only the cross-feature token
     // budget gates now. The per-feature USAGE counters below are kept
     // for analytics display ("you've drafted 22 notices this period")

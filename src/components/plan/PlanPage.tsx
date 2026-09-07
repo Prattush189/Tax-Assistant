@@ -56,7 +56,7 @@ function totalWithGst(basePrice: number): number {
 // rendered as a divider, not a bullet, so users see at a glance that
 // higher tiers stack on top of lower tiers.
 // Feature lists are now capability-only — no per-month counts. The
-// single token budget (750K / 20M / 60M) is what gates total usage,
+// single credit budget (75 / 2,000 / 6,000 AI credits) is what gates total usage,
 // shown in Settings → Your Usage and on each feature's landing page.
 // Plan tiers differ in (a) which features are unlocked and (b) the
 // size of the shared token pool.
@@ -90,7 +90,7 @@ const plans = [
     icon: Crown,
     features: [
       'Everything in Free, plus:',
-      '20M yearly token budget (across every feature)',
+      '2,000 AI credits a year (across every feature)',
       'Salary Structure Optimizer',
       'Tax Planning PDF report',
       'Writing style customization',
@@ -108,7 +108,7 @@ const plans = [
     icon: Building2,
     features: [
       'Everything in Pro, plus:',
-      '60M yearly token budget (across every feature)',
+      '6,000 AI credits a year (across every feature)',
       'IT portal profile import',
       'Year-over-year trends dashboard',
       'Priority support & SLA',
