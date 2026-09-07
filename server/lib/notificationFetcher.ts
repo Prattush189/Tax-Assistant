@@ -746,7 +746,12 @@ async function consumeStream(model: string, prompt: string, apiKey: string, maxO
   let outputTokens = 0;
   let sources: Array<{ title: string; url: string }> = [];
   let finishReason: string | undefined;
-  for await (const chunk of streamGeminiChat(model, prompt, [], 'Begin.', apiKey, maxOutputTokens, /*enableSearch=*/ true, /*useCache=*/ false)) {
+  // thinkingLevel 'low' is EXPLICIT. With it omitted, Gemini 3.x applies
+  // its default (dynamic, effectively high) thinking budget -- so every one
+  // of the ~47 daily detail summaries on 3.7 Flash was thinking hard and,
+  // until 2026-09-05, none of those tokens were recorded. Summarising one
+  // notification page does not need it.
+  for await (const chunk of streamGeminiChat(model, prompt, [], 'Begin.', apiKey, maxOutputTokens, /*enableSearch=*/ true, /*useCache=*/ false, /*thinkingLevel=*/ 'low')) {
     if (chunk.text) buffer += chunk.text;
     if (chunk.done) {
       inputTokens = chunk.inputTokens ?? 0;

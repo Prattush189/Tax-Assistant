@@ -28,6 +28,7 @@
  */
 
 import { GEMINI_API_KEYS, GEMINI_MODEL, GEMINI_FALLBACK_MODEL } from './gemini.js';
+import { billableGeminiUsage, type GeminiUsageMetadata } from './geminiChat.js';
 import { safeParseJson, type GeminiJsonOptions, type GeminiJsonResult } from './geminiJson.js';
 import { withBreaker } from './circuitBreaker.js';
 import { getOrCreateCachedContent, invalidateCache } from './geminiCache.js';
@@ -54,7 +55,7 @@ interface NativeResponse {
     content?: { parts?: Array<{ text?: string }> };
     finishReason?: string;
   }>;
-  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
+  usageMetadata?: GeminiUsageMetadata;
 }
 
 /**
@@ -144,6 +145,7 @@ export async function callBankEnrichment<T>(
         let succeeded = false;
         let inputTokens = 0;
         let outputTokens = 0;
+        let cachedInputTokens = 0;
         try {
           const res = await callOnce(model, useCache, cachedName);
           if (!res.ok) {
@@ -165,8 +167,13 @@ export async function callBankEnrichment<T>(
             throw err;
           }
           const json = await res.json() as NativeResponse;
-          inputTokens = json.usageMetadata?.promptTokenCount ?? 0;
-          outputTokens = json.usageMetadata?.candidatesTokenCount ?? 0;
+          // Thinking is disabled here (thinkingBudget 0) but the cached
+          // static prefix IS part of promptTokenCount and bills at the cache
+          // rate -- split it out so weighting/cost don't charge it in full.
+          const billable = billableGeminiUsage(json.usageMetadata);
+          inputTokens = billable.inputTokens;
+          outputTokens = billable.outputTokens;
+          cachedInputTokens = billable.cachedInputTokens;
           const finishReason = json.candidates?.[0]?.finishReason;
           const raw = (json.candidates?.[0]?.content?.parts ?? [])
             .map(p => p.text ?? '')
@@ -183,7 +190,7 @@ export async function callBankEnrichment<T>(
           const parsed = safeParseJson<T>(raw);
           if (parsed === null) throw new Error('Failed to parse AI response');
           succeeded = true;
-          return { data: parsed, inputTokens, outputTokens, modelUsed: model };
+          return { data: parsed, inputTokens, outputTokens, cachedInputTokens, modelUsed: model };
         } catch (err) {
           lastErr = err;
           recordAttempt?.({ failed: !succeeded, inputTokens, outputTokens, model });
