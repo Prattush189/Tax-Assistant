@@ -173,6 +173,9 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
   }
 
   const clientIp = req.ip ?? req.socket.remoteAddress ?? 'unknown';
+  // duration_ms spans the whole request — failed retry attempts and their
+  // backoff sleeps are time the user waited too.
+  const requestStartMs = Date.now();
 
   // Check per-user message limit (resolves plugin_limits > plugin_plan > plan)
   const user = userRepo.findById(req.user.id);
@@ -313,7 +316,6 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
         let usedModel = '';
         const historyPlain = history.map(m => ({ role: m.role as string, content: m.content as string }));
         let primaryFailedMidStream = false;
-        const callStartMs = Date.now();
 
         const activeIdx = getActiveKeyIndex();
         const fastApiKey = GEMINI_API_KEYS[activeIdx] ?? '';
@@ -456,7 +458,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
           // lib/gemini.ts. outputTok already includes thinking tokens.
           const loggedModel = ranFlexWinner ? `${usedModel}-flex` : usedModel;
           const cost = costForModel(loggedModel, inputTok, outputTok, cachedTok);
-          usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, inputTok, outputTok, cost, false, loggedModel || undefined, searchEnabled, 'chat', 0, 'success', 0, Date.now() - callStartMs, cachedTok);
+          usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, inputTok, outputTok, cost, false, loggedModel || undefined, searchEnabled, 'chat', 0, 'success', 0, Date.now() - requestStartMs, cachedTok);
         } else {
           console.warn('[chat] skipping usage log — no tokens reported (likely partial/truncated stream)');
         }

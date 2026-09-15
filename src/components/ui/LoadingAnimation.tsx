@@ -18,12 +18,15 @@ const sizeMap: Record<Size, string> = {
 
 /**
  * Looped animated logo for all loading states.
- * Uses /loading.gif from the public folder.
+ * /loading.webp is 128px wide — 2x DPR for the largest size in use (lg,
+ * 64px). It first loads the moment a chat is sent, sharing the connection
+ * with the answer stream, so keep it small: the old 1.35 MB GIF held a
+ * reply back ~20 s on a mobile link after each deploy re-validated it.
  */
 export function LoadingAnimation({ size = 'md', className }: LoadingAnimationProps) {
   return (
     <img
-      src="/loading.gif"
+      src="/loading.webp"
       alt="Loading"
       className={cn('object-contain pointer-events-none select-none', sizeMap[size], className)}
       draggable={false}
