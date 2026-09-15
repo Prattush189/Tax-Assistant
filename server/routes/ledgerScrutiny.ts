@@ -618,10 +618,24 @@ async function extractLedgerTsvOnce(
     // the model output truncated mid-stream (hit max_tokens) OR the model
     // returned a short prose / refusal response. Log a preview + finish_reason
     // so the next occurrence tells us which case it is.
+    //
+    // Exception: a chunk with genuinely nothing to extract (title page,
+    // covering letter, a stray page break) sometimes gets the small model
+    // to stop right after an empty HEADER line instead of also emitting
+    // `---END:0---` — a format-compliance miss, not a truncation. We only
+    // trust that reading when finish_reason is a clean 'stop' (a real
+    // mid-stream cutoff reports 'length') AND zero accounts/rows were
+    // parsed (some real data preceding a missing trailer is still
+    // ambiguous and should keep failing into the fallback tier).
     if (parsed.declaredCount < 0) {
-      const preview = raw.slice(0, 300).replace(/\n/g, '\\n');
-      console.warn(`[ledger-scrutiny] ${model} truncated (finish_reason=${finishReason}, got ${parsed.actualCount} TX). Raw preview: ${preview}`);
-      throw new Error(`TSV response was truncated: missing ---END:N--- trailer (got ${parsed.actualCount} TX, finish_reason=${finishReason})`);
+      const looksGenuinelyEmpty = finishReason === 'stop' && parsed.actualCount === 0 && parsed.accounts.length === 0;
+      if (!looksGenuinelyEmpty) {
+        const preview = raw.slice(0, 300).replace(/\n/g, '\\n');
+        console.warn(`[ledger-scrutiny] ${model} truncated (finish_reason=${finishReason}, got ${parsed.actualCount} TX). Raw preview: ${preview}`);
+        throw new Error(`TSV response was truncated: missing ---END:N--- trailer (got ${parsed.actualCount} TX, finish_reason=${finishReason})`);
+      }
+      console.warn(`[ledger-scrutiny] ${model} emitted no trailer but chunk looks genuinely empty (finish_reason=stop, 0 accounts, 0 TX) — accepting as zero-result`);
+      parsed.declaredCount = 0;
     }
 
     // Integrity check #2: parsed rows MUST NOT be fewer than the trailer
