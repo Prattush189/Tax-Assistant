@@ -46,6 +46,28 @@ export function billableGeminiUsage(u: GeminiUsageMetadata | undefined | null): 
   return { inputTokens: input, outputTokens: output, cachedInputTokens: cached };
 }
 
+export interface OpenAiCompatUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  prompt_tokens_details?: { cached_tokens?: number } | null;
+}
+
+/** Same as billableGeminiUsage, for calls through the OpenAI-compatible
+ *  endpoint. There, completion_tokens is the visible answer only — the
+ *  thinking tokens Google bills as output appear nowhere except in
+ *  total_tokens (probe 2026-09-18, 3.7 Flash: completion 158, total −
+ *  prompt 468, native thoughtsTokenCount 292). */
+export function billableOpenAiUsage(u: OpenAiCompatUsage | undefined | null): {
+  inputTokens: number; outputTokens: number; cachedInputTokens: number;
+} {
+  const input = u?.prompt_tokens ?? 0;
+  const completion = u?.completion_tokens ?? 0;
+  const output = Math.max(completion, (u?.total_tokens ?? 0) - input);
+  const cached = Math.max(0, Math.min(u?.prompt_tokens_details?.cached_tokens ?? 0, input));
+  return { inputTokens: input, outputTokens: output, cachedInputTokens: cached };
+}
+
 export interface GeminiChatChunk {
   text?: string;
   done?: boolean;

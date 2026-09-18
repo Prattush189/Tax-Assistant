@@ -10,7 +10,7 @@
  *
  *  Run: npx tsx scripts/smoke-token-weights.mts
  */
-const { billableGeminiUsage } = await import('../server/lib/geminiChat.js');
+const { billableGeminiUsage, billableOpenAiUsage } = await import('../server/lib/geminiChat.js');
 const { computeWeightedTokens, getWeightFor } = await import('../server/lib/modelWeights.js');
 const { costForModel } = await import('../server/lib/gemini.js');
 
@@ -28,6 +28,16 @@ const z = billableGeminiUsage(undefined);
 ok(z.inputTokens === 0 && z.outputTokens === 0 && z.cachedInputTokens === 0, 'missing usageMetadata -> zeros');
 ok(billableGeminiUsage({ promptTokenCount: 1000, cachedContentTokenCount: 5000 }).cachedInputTokens === 1000, 'cached clamped to prompt');
 ok(billableGeminiUsage({ promptTokenCount: 10, candidatesTokenCount: 5 }).outputTokens === 5, 'no thoughts field -> output unchanged');
+
+// OpenAI-compatible endpoint: completion_tokens omits thinking; only
+// total_tokens carries it. Numbers from the 2026-09-18 probe on 3.7 Flash.
+const oa = billableOpenAiUsage({ prompt_tokens: 83, completion_tokens: 158, total_tokens: 551 });
+ok(oa.inputTokens === 83 && oa.outputTokens === 468, 'openai-compat 3.7: output = total - prompt = 468 (' + oa.outputTokens + ')');
+ok(billableOpenAiUsage({ prompt_tokens: 83, completion_tokens: 187, total_tokens: 270 }).outputTokens === 187, 'openai-compat 3.1 Lite (no thinking): output = completion');
+ok(billableOpenAiUsage({ prompt_tokens: 50, completion_tokens: 20 }).outputTokens === 20, 'openai-compat without total_tokens -> completion');
+ok(billableOpenAiUsage({ prompt_tokens: 100, completion_tokens: 10, total_tokens: 110, prompt_tokens_details: { cached_tokens: 400 } }).cachedInputTokens === 100, 'openai-compat cached clamped to prompt');
+const zo = billableOpenAiUsage(undefined);
+ok(zo.inputTokens === 0 && zo.outputTokens === 0 && zo.cachedInputTokens === 0, 'openai-compat missing usage -> zeros');
 
 // ── 2. weights match the pricing sheet (anchor: 2.5 Flash-Lite input $0.10 = 1x) ──
 const w38 = getWeightFor('gemini-3.8-flash');

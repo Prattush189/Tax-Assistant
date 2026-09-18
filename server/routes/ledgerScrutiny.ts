@@ -52,6 +52,7 @@ import {
 import { ledgerComparisonRepo } from '../db/repositories/ledgerComparisonRepo.js';
 import { compareLedgersByBill } from '../lib/ledgerBillMatcher.js';
 import { callGeminiJson } from '../lib/geminiJson.js';
+import { billableOpenAiUsage } from '../lib/geminiChat.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
@@ -605,8 +606,7 @@ async function extractLedgerTsvOnce(
   });
   const raw = response.choices[0]?.message?.content ?? '';
   const finishReason = response.choices[0]?.finish_reason ?? 'unknown';
-  const inputTokens = response.usage?.prompt_tokens ?? 0;
-  const outputTokens = response.usage?.completion_tokens ?? 0;
+  const { inputTokens, outputTokens } = billableOpenAiUsage(response.usage);
   // Capture usage immediately. If any of the validation steps below throw,
   // the caller still gets the cost reported via the recordAttempt closure.
   // Mark `failed: true` until we know parsing succeeded.
@@ -1031,8 +1031,7 @@ async function scrutinizeAccountGroupOnce(
   });
   const raw = response.choices[0]?.message?.content ?? '{}';
   const finishReason = response.choices[0]?.finish_reason ?? 'unknown';
-  const inputTokens = response.usage?.prompt_tokens ?? 0;
-  const outputTokens = response.usage?.completion_tokens ?? 0;
+  const { inputTokens, outputTokens } = billableOpenAiUsage(response.usage);
   let succeeded = false;
   try {
     const parsed = safeParseJson<ScrutinyResultRaw>(raw);

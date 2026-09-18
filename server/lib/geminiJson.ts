@@ -7,6 +7,7 @@
 import { gemini, GEMINI_MODEL, GEMINI_FALLBACK_MODEL } from './gemini.js';
 import { withBreaker, BreakerOpenError } from './circuitBreaker.js';
 import { buildGeminiUserError } from './geminiUserError.js';
+import { billableOpenAiUsage } from './geminiChat.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 
 export interface GeminiJsonOptions {
@@ -132,8 +133,7 @@ async function callOnce<T>(
     throw userErr;
   }
   const raw = response.choices[0]?.message?.content ?? '{}';
-  const inputTokens = response.usage?.prompt_tokens ?? 0;
-  const outputTokens = response.usage?.completion_tokens ?? 0;
+  const { inputTokens, outputTokens, cachedInputTokens } = billableOpenAiUsage(response.usage);
   // Capture usage before parse so a `Failed to parse AI response`
   // throw still reports the wasted Gemini spend through recordAttempt.
   let succeeded = false;
@@ -145,6 +145,7 @@ async function callOnce<T>(
       data: parsed,
       inputTokens,
       outputTokens,
+      cachedInputTokens,
       modelUsed: model,
     };
   } finally {
