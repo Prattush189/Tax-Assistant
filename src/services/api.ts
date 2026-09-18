@@ -38,6 +38,8 @@ export async function sendChatMessage(
   reasoningLevel?: 'low' | 'high',
   /** Grounding sources, delivered once on the done frame. */
   onSources?: (sources: Array<{ title: string; url: string }>) => void,
+  /** Id of the saved answer (done frame) — lets it be reported. */
+  onSaved?: (messageId: number) => void,
 ): Promise<void> {
   const body: Record<string, unknown> = {
     message,
@@ -151,6 +153,7 @@ export async function sendChatMessage(
           if (parsed.providerFallback) { notifyProviderFallback(); continue; }
           if (parsed.done) {
             if (Array.isArray(parsed.sources) && parsed.sources.length > 0) onSources?.(parsed.sources);
+            if (typeof parsed.message_id === 'number') onSaved?.(parsed.message_id);
             onDone?.(parsed.stop_reason ?? null);
             terminated = true;
             return;
@@ -2676,6 +2679,8 @@ export interface ChatAuditPair {
   chatId: string;
   askedAt: string;
   hadAttachment: boolean;
+  /** Comma-joined reasons if a user flagged this answer, else null. */
+  userReported: string | null;
   question: string;
   answer: string;
   verdict: null | 'ok' | 'wrong' | 'risky' | 'na';
@@ -2692,6 +2697,35 @@ export async function fetchChatAuditExport(sinceDays: number, limit: number): Pr
   note: string; pairs: ChatAuditPair[];
 }> {
   return authFetch(`/api/admin/chat-audit/export?sinceDays=${encodeURIComponent(sinceDays)}&limit=${encodeURIComponent(limit)}`);
+}
+
+export type ChatReportReason = 'wrong_info' | 'not_answered' | 'confusing' | 'other';
+
+/** Flag a model answer in one of the user's own chats. */
+export async function reportChatMessage(chatId: string, messageId: number, reason: ChatReportReason, note?: string): Promise<void> {
+  await authFetch(`/api/chats/${encodeURIComponent(chatId)}/messages/${messageId}/report`, {
+    method: 'POST',
+    body: JSON.stringify({ reason, note }),
+  });
+}
+
+export interface ReportedAnswer {
+  id: number;
+  message_id: number;
+  chat_id: string;
+  reason: ChatReportReason;
+  note: string | null;
+  created_at: string;
+  user_email: string | null;
+  user_name: string | null;
+  question: string | null;
+  answer: string;
+  answered_at: string;
+}
+
+/** ADMIN: answers users flagged, newest first. */
+export async function fetchChatReports(limit = 100): Promise<{ reports: ReportedAnswer[] }> {
+  return authFetch(`/api/admin/chat-reports?limit=${encodeURIComponent(limit)}`);
 }
 
 // ── Ledger Scrutiny API ───────────────────────────────────────────────────

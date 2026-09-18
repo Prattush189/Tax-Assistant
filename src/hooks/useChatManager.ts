@@ -81,6 +81,7 @@ export function useChatManager() {
     try {
       const msgs = await fetchChatMessages(chatId);
       const converted = msgs.map(m => ({
+        id: m.id,
         role: m.role,
         content: m.content,
         timestamp: new Date(m.created_at + '+05:30'),
@@ -234,7 +235,9 @@ export function useChatManager() {
         },
         activeDocuments.length > 0 ? activeDocuments.map(d => ({ filename: d.filename, mimeType: d.mimeType, extractedData: d.extractedData })) : undefined,
         (stopReason) => {
-          if (stopReason === 'max_tokens') wasTruncated = true;
+          // network_error = the stream stalled mid-answer and the server
+          // kept the partial text; offer Continue exactly like a length cut.
+          if (stopReason === 'max_tokens' || stopReason === 'network_error') wasTruncated = true;
         },
         referencedProfile ? { name: referencedProfile.name, data: referencedProfile.data } : undefined,
         getReasoningLevel(),
@@ -245,6 +248,14 @@ export function useChatManager() {
           setMessages(prev => {
             const updated = [...prev];
             updated[updated.length - 1] = { ...updated[updated.length - 1], sources: srcs };
+            return updated;
+          });
+        },
+        (messageId) => {
+          if (isStale()) return;
+          setMessages(prev => {
+            const updated = [...prev];
+            updated[updated.length - 1] = { ...updated[updated.length - 1], id: messageId };
             return updated;
           });
         },
@@ -373,10 +384,18 @@ export function useChatManager() {
         },
         undefined,
         (stopReason) => {
-          if (stopReason === 'max_tokens') contTruncated = true;
+          if (stopReason === 'max_tokens' || stopReason === 'network_error') contTruncated = true;
         },
         undefined,
         getReasoningLevel(),
+        undefined,
+        (messageId) => {
+          setMessages(prev => {
+            const updated = [...prev];
+            updated[updated.length - 1] = { ...updated[updated.length - 1], id: messageId };
+            return updated;
+          });
+        },
       );
 
       cFlushAll();

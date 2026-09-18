@@ -6,6 +6,14 @@ import { Message } from '../../types';
 import { cn } from '../../lib/utils';
 import { ChartRenderer } from './ChartRenderer';
 import toast from 'react-hot-toast';
+import { reportChatMessage, type ChatReportReason } from '../../services/api';
+
+const REPORT_REASONS: Array<{ value: ChatReportReason; label: string }> = [
+  { value: 'wrong_info', label: 'Wrong or outdated information' },
+  { value: 'not_answered', label: "Didn't answer my question" },
+  { value: 'confusing', label: 'Too long or confusing' },
+  { value: 'other', label: 'Something else' },
+];
 
 // Custom link component — shows confirmation dialog before opening external links
 function ExternalLink({ href, children }: { href?: string; children?: React.ReactNode }) {
@@ -186,14 +194,27 @@ function StreamingWrapper({ children, isStreaming }: { children: React.ReactNode
 
 interface MessageBubbleProps {
   message: Message;
+  chatId?: string | null;
   onContinue?: () => void;
   isLastModel?: boolean;
   isLoading?: boolean;
 }
 
-export function MessageBubble({ message, onContinue, isLastModel, isLoading }: MessageBubbleProps) {
+export function MessageBubble({ message, chatId, onContinue, isLastModel, isLoading }: MessageBubbleProps) {
   const { role, content, timestamp, attachment, attachments, truncated, sources } = message;
   const [copied, setCopied] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reported, setReported] = useState(false);
+  const reportRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!reportOpen) return;
+    const close = (e: MouseEvent) => {
+      if (reportRef.current && !reportRef.current.contains(e.target as Node)) setReportOpen(false);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [reportOpen]);
   // Only the last model message while loading is considered "streaming"
   const isStreaming = !!(role === 'model' && isLastModel && isLoading && content.length > 0);
 
@@ -206,8 +227,19 @@ export function MessageBubble({ message, onContinue, isLastModel, isLoading }: M
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleReport = () => {
-    toast('Response reported. Thank you for the feedback.', { icon: '🚩' });
+  const submitReport = async (reason: ChatReportReason) => {
+    setReportOpen(false);
+    if (!chatId || !message.id) {
+      toast.error("This answer can't be reported yet — reload the chat and try again.");
+      return;
+    }
+    try {
+      await reportChatMessage(chatId, message.id, reason);
+      setReported(true);
+      toast('Thanks — we review reported answers to improve them.', { icon: '🚩' });
+    } catch {
+      toast.error('Could not send the report. Please try again.');
+    }
   };
 
   return (
@@ -294,13 +326,41 @@ export function MessageBubble({ message, onContinue, isLastModel, isLoading }: M
             >
               {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
             </button>
-            <button
-              onClick={handleReport}
-              className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all"
-              title="Report response"
-            >
-              <Flag className="w-3.5 h-3.5" />
-            </button>
+            <div className="relative" ref={reportRef}>
+              <button
+                onClick={() => setReportOpen(o => !o)}
+                disabled={reported}
+                className={cn(
+                  "p-1.5 rounded-lg transition-all",
+                  reported
+                    ? 'text-red-500 cursor-default'
+                    : 'text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20',
+                )}
+                title={reported ? 'Reported' : 'Report response'}
+                aria-haspopup="menu"
+                aria-expanded={reportOpen}
+              >
+                <Flag className="w-3.5 h-3.5" />
+              </button>
+              {reportOpen && (
+                <div
+                  role="menu"
+                  className="absolute left-0 bottom-full mb-1 z-20 w-60 py-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-lg"
+                >
+                  <p className="px-3 pt-1.5 pb-1 text-[11px] font-medium text-gray-500 dark:text-gray-400">What was wrong?</p>
+                  {REPORT_REASONS.map(r => (
+                    <button
+                      key={r.value}
+                      role="menuitem"
+                      onClick={() => void submitReport(r.value)}
+                      className="w-full text-left px-3 py-1.5 text-xs text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
+                    >
+                      {r.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -308,7 +368,7 @@ export function MessageBubble({ message, onContinue, isLastModel, isLoading }: M
         {truncated && (
           <div className="mt-2 ml-1">
             <p className="text-[11px] text-gray-400 dark:text-gray-500 mb-1.5">
-              Response was cut short due to message length limit.
+              This response was cut short before it finished.
             </p>
             <button
               onClick={onContinue}

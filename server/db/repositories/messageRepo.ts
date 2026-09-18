@@ -41,6 +41,7 @@ const stmts = {
   findByChatId: db.prepare(
     'SELECT * FROM messages WHERE chat_id = ? ORDER BY created_at ASC, id ASC'
   ),
+  findById: db.prepare('SELECT id, chat_id, role FROM messages WHERE id = ?'),
   create: db.prepare(
     'INSERT INTO messages (chat_id, role, content, attachment_filename, attachment_mime_type, sources) VALUES (?, ?, ?, ?, ?, ?)'
   ),
@@ -77,6 +78,10 @@ export const messageRepo = {
   findByChatId(chatId: string): MessageRow[] {
     const rows = stmts.findByChatId.all(chatId) as Array<Omit<MessageRow, 'sources'> & { sources: string | null }>;
     return rows.map(r => ({ ...r, sources: parseSources(r.sources) }));
+  },
+
+  findById(id: number): Pick<MessageRow, 'id' | 'chat_id' | 'role'> | undefined {
+    return stmts.findById.get(id) as Pick<MessageRow, 'id' | 'chat_id' | 'role'> | undefined;
   },
 
   /** Recent (question, answer) pairs for the chat-QA audit export. */

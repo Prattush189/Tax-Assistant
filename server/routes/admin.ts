@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { messageRepo } from '../db/repositories/messageRepo.js';
+import { messageReportRepo } from '../db/repositories/messageReportRepo.js';
 import { AuthRequest } from '../types.js';
 import db from '../db/index.js';
 import { getBillingUser } from '../lib/billing.js';
@@ -413,11 +414,15 @@ router.get('/chat-audit/export', (req: AuthRequest, res: Response) => {
   const sinceDays = Math.max(1, Math.min(365, Number.isFinite(sinceDaysRaw) ? sinceDaysRaw : 30));
   const limit = Math.max(1, Math.min(5000, Number.isFinite(limitRaw) ? limitRaw : 500));
 
+  const reported = messageReportRepo.reasonsByMessage();
   const pairs = messageRepo.getRecentQAPairs(sinceDays, limit).map(p => ({
     answerId: p.answer_id,
     chatId: p.chat_id,
     askedAt: p.asked_at,
     hadAttachment: !!p.had_attachment,
+    // Reason(s) the user gave when flagging this answer, else null —
+    // grade these first.
+    userReported: reported.get(p.answer_id) ?? null,
     question: p.question,
     answer: p.answer,
     // ── to be filled by the judge agent ──
@@ -445,6 +450,14 @@ router.get('/chat-audit/export', (req: AuthRequest, res: Response) => {
     return;
   }
   res.json(payload);
+});
+
+// GET /api/admin/chat-reports?limit=100 — answers users flagged, newest
+// first, with the question they were answering.
+router.get('/chat-reports', (req: AuthRequest, res: Response) => {
+  const limitRaw = parseInt(String(req.query.limit ?? '100'), 10);
+  const limit = Math.max(1, Math.min(500, Number.isFinite(limitRaw) ? limitRaw : 100));
+  res.json({ reports: messageReportRepo.recent(limit) });
 });
 
 // GET /api/admin/stats/plans — user count by plan

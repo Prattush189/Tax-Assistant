@@ -1171,6 +1171,21 @@ db.exec(`CREATE INDEX IF NOT EXISTS idx_format_requests_user ON format_requests(
   }
 }
 
+// message_reports — the chat "Report response" flag. Until 2026-09 the
+// button only showed a thank-you toast, so every flagged answer was lost.
+// One row per (answer, reporter); cascades with the message so a deleted
+// chat takes its reports with it.
+db.exec(`CREATE TABLE IF NOT EXISTS message_reports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reason TEXT NOT NULL,
+  note TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
+  UNIQUE(message_id, user_id)
+)`);
+db.exec("CREATE INDEX IF NOT EXISTS idx_message_reports_created ON message_reports(created_at DESC)");
+
 db.exec(`CREATE TABLE IF NOT EXISTS tax_notifications (
   id TEXT PRIMARY KEY,
   category TEXT NOT NULL CHECK (category IN ('GST', 'TDS', 'INCOME_TAX', 'OTHER')),

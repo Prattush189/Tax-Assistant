@@ -1,4 +1,6 @@
 export interface Message {
+  /** Server id once persisted — needed to report an answer. */
+  id?: number;
   role: 'user' | 'model';
   content: string;
   timestamp: Date;

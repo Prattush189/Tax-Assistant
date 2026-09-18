@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { chatRepo } from '../db/repositories/chatRepo.js';
 import { messageRepo } from '../db/repositories/messageRepo.js';
+import { messageReportRepo, REPORT_REASONS, type ReportReason } from '../db/repositories/messageReportRepo.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
@@ -27,6 +28,27 @@ router.get('/:chatId/messages', (req: AuthRequest, res: Response) => {
   }
   const messages = messageRepo.findByChatId(chat.id);
   res.json(messages);
+});
+
+// POST /api/chats/:chatId/messages/:messageId/report — flag an answer.
+// Body: { reason: 'wrong_info'|'not_answered'|'confusing'|'other', note? }
+router.post('/:chatId/messages/:messageId/report', (req: AuthRequest, res: Response) => {
+  const chat = chatRepo.findById(req.params.chatId);
+  const messageId = Number(req.params.messageId);
+  const msg = Number.isInteger(messageId) ? messageRepo.findById(messageId) : undefined;
+  if (!chat || chat.user_id !== req.user!.id || !msg || msg.chat_id !== chat.id || msg.role !== 'model') {
+    res.status(404).json({ error: 'Message not found' });
+    return;
+  }
+  const reason = req.body?.reason as ReportReason;
+  if (!REPORT_REASONS.includes(reason)) {
+    res.status(400).json({ error: 'Invalid reason' });
+    return;
+  }
+  const rawNote = req.body?.note;
+  const note = typeof rawNote === 'string' && rawNote.trim() ? rawNote.trim().slice(0, 1000) : null;
+  messageReportRepo.upsert(msg.id, req.user!.id, reason, note);
+  res.json({ success: true });
 });
 
 // PATCH /api/chats/:chatId — update chat title

@@ -438,7 +438,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
         // Persist the model response with markers stripped in one full pass
         // (the stream filter's whitespace tidy is chunk-local) plus the
         // grounding sources, so reloading the chat shows them too.
-        messageRepo.create(chatId, 'model', stripCiteMarkers(rawResponse || fullResponse), undefined, undefined, sources);
+        const saved = messageRepo.create(chatId, 'model', stripCiteMarkers(rawResponse || fullResponse), undefined, undefined, sources);
 
         // Auto-title
         if (chat.title === 'New Chat' && message.trim().length > 0) {
@@ -463,7 +463,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
           console.warn('[chat] skipping usage log — no tokens reported (likely partial/truncated stream)');
         }
 
-        sse.writeDone({ stop_reason: stopReason, sources });
+        sse.writeDone({ stop_reason: stopReason, sources, message_id: saved.id });
         return;
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
