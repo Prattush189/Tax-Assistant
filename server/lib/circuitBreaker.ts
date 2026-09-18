@@ -50,6 +50,19 @@ const DEFAULTS: Required<BreakerConfig> = {
   cooldownMs: 60_000,
 };
 
+/** Only availability failures may open the breaker. A 4xx (other than
+ *  408/429) or an unparseable model reply means the service answered —
+ *  the fault is in that one request. Counting them let a single bad PDF
+ *  (HTTP 400 "invalid argument", 2026-08-31 / 09-03) open the breaker
+ *  and fail every other user's notice upload for a minute. */
+export function isOutageError(err: unknown): boolean {
+  const status = (err as { status?: number })?.status ?? 0;
+  if (status >= 400 && status < 500 && status !== 408 && status !== 429) return false;
+  const msg = err instanceof Error ? err.message : String(err);
+  if (status === 0 && /parse|not valid JSON|invalid JSON/i.test(msg)) return false;
+  return true;
+}
+
 function getOrCreate(upstream: string, config?: BreakerConfig): BreakerEntry {
   let entry = breakers.get(upstream);
   if (!entry) {
@@ -88,6 +101,14 @@ export async function withBreaker<T>(
   } catch (err) {
     // Don't count BreakerOpenError as a failure (it's our own short-circuit).
     if (err instanceof BreakerOpenError) throw err;
+    // The upstream responded, so it is up: treat like a success for the
+    // breaker's state, and let the caller see the request's own error.
+    if (!isOutageError(err)) {
+      if (entry.state !== 'closed') console.log(`[circuit] ${upstream} → CLOSED (probe reached upstream)`);
+      entry.state = 'closed';
+      entry.failures = 0;
+      throw err;
+    }
 
     entry.failures++;
     // We can only reach this branch from CLOSED or HALF_OPEN (an existing OPEN
