@@ -1533,8 +1533,11 @@ export function unifyAmbiguousCounterparties<T extends {
  *     "Rent Received") cannot be a debit.
  *   - Outflow-only ("Business Expenses", "Loan EMI", "Bank Charges",
  *     "Bank Interest (Dr)", "GST Payments", "TDS", "Taxes Paid",
- *     "Investments", "Insurance", "Mobile Charges", "Electricity
- *     Charges", "Water Charges") cannot be a credit.
+ *     "Mobile Charges", "Electricity Charges", "Water Charges")
+ *     cannot be a credit.
+ *   - "Investments" and "Insurance" run both ways: MF redemptions, FD
+ *     closures, broker withdrawals and policy maturities/claims are
+ *     credits. Locking them to outflow demoted those to "Other".
  *
  * When the AI emits an impossible combination (e.g. "DEBIT row tagged
  * Business Income") we don't try to flip it to a sensible alternative
@@ -1551,8 +1554,7 @@ const INFLOW_ONLY_CATEGORIES = new Set<string>([
 const OUTFLOW_ONLY_CATEGORIES = new Set<string>([
   'Business Expenses', 'Cash Withdrawal', 'Loan EMI', 'Bank Charges',
   'Bank Interest (Dr)', 'GST Payments', 'TDS', 'Taxes Paid',
-  'Investments', 'Insurance', 'Mobile Charges',
-  'Electricity Charges', 'Water Charges',
+  'Mobile Charges', 'Electricity Charges', 'Water Charges',
 ]);
 
 // 2026-06: when the AI returns a category in the wrong direction, the
