@@ -18,7 +18,7 @@ const router = Router();
 router.get('/stats', (req: AuthRequest, res: Response) => {
   const period = (req.query.period as string) ?? 'month';
   const stats = usageRepo.getStats(period);
-  const totalUsers = (db.prepare('SELECT COUNT(*) AS count FROM users').get() as { count: number }).count;
+  const totalUsers = (db.prepare('SELECT COUNT(*) AS count FROM users WHERE deleted_at IS NULL').get() as { count: number }).count;
   const totalChats = (db.prepare('SELECT COUNT(*) AS count FROM chats').get() as { count: number }).count;
   const totalMessages = (db.prepare('SELECT COUNT(*) AS count FROM messages').get() as { count: number }).count;
 
@@ -88,6 +88,7 @@ router.get('/users', (_req: AuthRequest, res: Response) => {
       role: u.role,
       plan: u.plan ?? 'free',
       suspended_until: u.suspended_until,
+      deleted_at: u.deleted_at,
       created_at: u.created_at,
       chat_count: u.chat_count,
       message_count: u.message_count,
@@ -950,7 +951,7 @@ router.get('/payments/:id/:kind(invoice|receipt|proforma).pdf', async (req: Auth
   const { id, kind } = req.params as { id: string; kind: 'invoice' | 'receipt' | 'proforma' };
   const pay = paymentRepo.findById(id);
   if (!pay) { res.status(404).json({ error: 'Payment not found' }); return; }
-  const buyer = userRepo.findById(pay.user_id);
+  const buyer = userRepo.findAnyById(pay.user_id);
   if (!buyer) { res.status(404).json({ error: 'Payment user not found' }); return; }
   const isCash = pay.payment_method === 'cash';
   // Cash payments only get a proforma; non-cash payments only get

@@ -356,7 +356,7 @@ router.get('/payments/:id/:kind(invoice|receipt|proforma).pdf', async (req: Exte
   try {
     const pay = paymentRepo.findById(id);
     if (!pay) { res.status(404).json({ error: 'Payment not found' }); return; }
-    const buyer = userRepo.findById(pay.user_id);
+    const buyer = userRepo.findAnyById(pay.user_id);
     if (!buyer) { res.status(404).json({ error: 'Payment user not found' }); return; }
     const isCash = pay.payment_method === 'cash';
     if (isCash && kind !== 'proforma') { res.status(404).json({ error: 'Cash payments only have a proforma invoice — use /proforma.pdf' }); return; }

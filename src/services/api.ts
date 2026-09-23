@@ -356,6 +356,7 @@ export interface AdminUserDetails {
     id: string; name: string; email: string; plan: string;
     effectivePlan: string; role: string; created_at: string;
     suspended_until: string | null;
+    deleted_at?: string | null;
   };
   totals: {
     requests: number; inputTokens: number; outputTokens: number;

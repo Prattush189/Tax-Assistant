@@ -23,6 +23,7 @@ interface AdminUserSummary {
   role: string;
   plan: string;
   suspended_until: string | null;
+  deleted_at?: string | null;
   created_at: string;
   chat_count: number;
   message_count: number;
@@ -90,6 +91,7 @@ export function UserCard({
 
   const isAdmin = user.role === 'admin';
   const isSuspended = !!user.suspended_until;
+  const isDeleted = !!user.deleted_at;
 
   return (
     <div className="bg-white dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden">
@@ -114,6 +116,14 @@ export function UserCard({
               {isAdmin && (
                 <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300">
                   ADMIN
+                </span>
+              )}
+              {isDeleted && (
+                <span
+                  title={`Closed by the user on ${user.deleted_at} — record and usage kept, chats and data deleted`}
+                  className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200"
+                >
+                  DELETED
                 </span>
               )}
               {isSuspended && (

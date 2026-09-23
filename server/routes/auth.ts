@@ -174,10 +174,15 @@ router.post('/signup', authLimiter, async (req: Request, res: Response) => {
     return;
   }
 
-  // Hash & create
+  // Hash & create. A closed account with this exact email is reopened
+  // (same id → same used credits and trial clock); a new address that
+  // only matches a closed one after normalisation gets the carry-over.
   const hashedPassword = await bcrypt.hash(password, 12);
-  const user = applyDeletedAccountCarryover(userRepo.create(normalizedEmail, hashedPassword, name.trim()));
-  issueSignupLicense(user.id, user.created_at);
+  const closed = userRepo.findDeleted({ email: normalizedEmail });
+  const user = closed
+    ? userRepo.reactivate(closed.id, { password: hashedPassword, name: name.trim(), emailVerified: false })
+    : applyDeletedAccountCarryover(userRepo.create(normalizedEmail, hashedPassword, name.trim()));
+  if (!closed) issueSignupLicense(user.id, user.created_at);
 
   // Generate + store + send the 6-digit OTP
   const code = generateOtpCode();
@@ -188,7 +193,8 @@ router.post('/signup', authLimiter, async (req: Request, res: Response) => {
   if (!sendResult.ok) {
     // Best-effort rollback so the user isn't stuck half-created
     try {
-      userRepo.deleteById(user.id);
+      if (closed) userRepo.softDelete(user.id);
+      else userRepo.deleteById(user.id);
     } catch {
       // ignore
     }
@@ -670,9 +676,14 @@ router.post('/google', authLimiter, async (req: Request, res: Response) => {
     }
 
     if (!user) {
-      // 3. Create new user (no password)
-      user = applyDeletedAccountCarryover(userRepo.createFromGoogle(email, displayName, googleId!));
-      issueSignupLicense(user.id, user.created_at);
+      // 3. Reopen a closed account for this Google id / email, else create
+      const closed = userRepo.findDeleted({ googleId, email });
+      if (closed) {
+        user = userRepo.reactivate(closed.id, { password: '', name: displayName, emailVerified: true, googleId: googleId! });
+      } else {
+        user = applyDeletedAccountCarryover(userRepo.createFromGoogle(email, displayName, googleId!));
+        issueSignupLicense(user.id, user.created_at);
+      }
     }
 
     const tokens = loginAndIssueTokens(user, req);
@@ -759,7 +770,7 @@ router.patch('/email', authMiddleware, async (req: AuthRequest, res: Response) =
     return;
   }
 
-  const existing = userRepo.findByEmail(normalizedEmail);
+  const existing = userRepo.findByEmail(normalizedEmail) ?? userRepo.findDeleted({ email: normalizedEmail });
   if (existing) {
     res.status(409).json({ error: 'An account with this email already exists' });
     return;
@@ -874,11 +885,12 @@ router.delete('/account', authMiddleware, async (req: AuthRequest, res: Response
     }
   }
 
-  // CASCADE delete handles chats, messages, notices, profiles, documents, usage, etc.
-  // The tombstone keeps a re-signup from getting fresh free credits.
+  // Keeps the user master row, usage, payments and licenses; deletes the
+  // user's chats and feature data. The tombstone covers re-signups with
+  // a +tag / dotted variant of the email.
   db.transaction(() => {
     recordDeletedAccount(user);
-    userRepo.deleteById(user.id);
+    userRepo.softDelete(user.id);
   })();
   res.json({ success: true });
 });
@@ -1036,7 +1048,13 @@ router.post('/plugin-sso', authLimiter, (req: Request, res: Response) => {
     }
   }
 
-  // 3. Create new user scoped to the external id
+  // 3. Reopen a closed account for this parent-app user, else create
+  if (!user) {
+    const closed = userRepo.findDeleted({ externalId: userId, email: hasEmail ? (email as string) : null, phone: hasPhone ? (phone as string) : null });
+    if (closed) {
+      user = userRepo.reactivate(closed.id, { password: '', name: name.trim(), emailVerified: true, externalId: userId });
+    }
+  }
   if (!user) {
     if (hasEmail) {
       user = userRepo.createFromExternal((email as string).toLowerCase(), name.trim(), userId);

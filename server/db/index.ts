@@ -1186,6 +1186,15 @@ db.exec(`CREATE TABLE IF NOT EXISTS message_reports (
 )`);
 db.exec("CREATE INDEX IF NOT EXISTS idx_message_reports_created ON message_reports(created_at DESC)");
 
+// users.deleted_at — account closure keeps the user master row (see
+// userRepo.softDelete); lookups treat a non-NULL value as "no such user".
+{
+  const userCols = (db.prepare("PRAGMA table_info(users)").all() as { name: string }[]).map(c => c.name);
+  if (!userCols.includes('deleted_at')) {
+    db.exec("ALTER TABLE users ADD COLUMN deleted_at TEXT");
+  }
+}
+
 // deleted_account_usage — tombstones for self-deleted free accounts so a
 // re-signup with the same (normalised) email inherits the used credits
 // and the original trial start. Email is stored only as a SHA-256 hash.

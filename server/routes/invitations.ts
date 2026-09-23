@@ -98,14 +98,18 @@ publicInvitationRouter.post('/accept', async (req: Request, res: Response) => {
   }
 
   const hashedPassword = await bcrypt.hash(password, 12);
-  const created = userRepo.create(row.email.toLowerCase(), hashedPassword, name.trim());
+  // A closed account with this email is reopened (email is unique).
+  const closed = userRepo.findDeleted({ email: row.email });
+  const created = closed
+    ? userRepo.reactivate(closed.id, { password: hashedPassword, name: name.trim(), emailVerified: true })
+    : userRepo.create(row.email.toLowerCase(), hashedPassword, name.trim());
   // Invited users skip email OTP — the inviter vouches for them
   userRepo.markEmailVerified(created.id);
   // Issue a FREE-trial license. Enterprise-pool sharing is a
   // separate concern handled at plan-resolution time (the invitee's
   // effective plan resolves through their inviter's billing user
   // when the inviter has an active paid license).
-  issueSignupLicense(created.id, created.created_at);
+  if (!closed) issueSignupLicense(created.id, created.created_at);
   userRepo.setInviterId(created.id, inviter.id);
   invitationRepo.markAccepted(row.id, created.id);
 

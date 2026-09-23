@@ -28,6 +28,7 @@ export interface UserRow {
   renewal_reminder_sent_at: string | null;  // last time 48hr reminder email was sent
   billing_details: string | null;           // JSON — BillingDetails
   license_key_id: string | null;            // FK to license_keys.id — current active license
+  deleted_at: string | null;                // set when the user closed the account (row kept)
   created_at: string;
   updated_at: string;
 }
@@ -43,11 +44,32 @@ export interface BillingDetails {
 }
 
 const stmts = {
-  findByEmail: db.prepare('SELECT * FROM users WHERE email = ?'),
-  findById: db.prepare('SELECT * FROM users WHERE id = ?'),
-  findByPhone: db.prepare('SELECT * FROM users WHERE phone = ?'),
-  findByGoogleId: db.prepare('SELECT * FROM users WHERE google_id = ?'),
-  findByExternalId: db.prepare('SELECT * FROM users WHERE external_id = ?'),
+  // Soft-deleted accounts (deleted_at set) are invisible to every lookup
+  // below; only findAnyById / findDeleted see them.
+  findByEmail: db.prepare('SELECT * FROM users WHERE email = ? AND deleted_at IS NULL'),
+  findById: db.prepare('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL'),
+  findAnyById: db.prepare('SELECT * FROM users WHERE id = ?'),
+  findByPhone: db.prepare('SELECT * FROM users WHERE phone = ? AND deleted_at IS NULL'),
+  findByGoogleId: db.prepare('SELECT * FROM users WHERE google_id = ? AND deleted_at IS NULL'),
+  findByExternalId: db.prepare('SELECT * FROM users WHERE external_id = ? AND deleted_at IS NULL'),
+  findDeleted: db.prepare(`
+    SELECT * FROM users WHERE deleted_at IS NOT NULL
+      AND (email = @email OR google_id = @googleId OR external_id = @externalId OR phone = @phone)
+    ORDER BY deleted_at DESC LIMIT 1
+  `),
+  markDeleted: db.prepare(`
+    UPDATE users SET deleted_at = datetime('now', '+5 hours', '+30 minutes'),
+      password = '', session_token = NULL, inviter_id = NULL, require_login_otp = 0,
+      updated_at = datetime('now', '+5 hours', '+30 minutes')
+    WHERE id = ?
+  `),
+  reactivate: db.prepare(`
+    UPDATE users SET deleted_at = NULL, password = @password, name = @name,
+      email_verified = @emailVerified, google_id = COALESCE(@googleId, google_id),
+      external_id = COALESCE(@externalId, external_id),
+      updated_at = datetime('now', '+5 hours', '+30 minutes')
+    WHERE id = @id AND deleted_at IS NOT NULL
+  `),
   findAll: db.prepare(`
     SELECT u.*,
       (SELECT COUNT(*) FROM chats WHERE user_id = u.id) AS chat_count,
@@ -293,6 +315,45 @@ export const userRepo = {
     stmts.deleteById.run(id);
   },
 
+  /** Includes soft-deleted accounts — for invoices/payments that must
+   *  still resolve their buyer after the account is closed. */
+  findAnyById(id: string): UserRow | undefined {
+    return stmts.findAnyById.get(id) as UserRow | undefined;
+  },
+
+  /** Most recently deleted account matching any given identifier. */
+  findDeleted(ids: { email?: string | null; googleId?: string | null; externalId?: string | null; phone?: string | null }): UserRow | undefined {
+    return stmts.findDeleted.get({
+      email: ids.email ? ids.email.toLowerCase() : null,
+      googleId: ids.googleId ?? null,
+      externalId: ids.externalId ?? null,
+      phone: ids.phone ? normalizePhone(ids.phone) : null,
+    }) as UserRow | undefined;
+  },
+
+  /**
+   * Close an account but keep the user master row (name, email, phone,
+   * plan, created_at) plus usage, payments and licenses. Everything the
+   * user created — chats, notices, statements, ledgers, drafts, profiles,
+   * sessions — is deleted, exactly what the old hard delete cascaded
+   * away. Signing up again with the same email reactivates this row, so
+   * used credits and the trial clock carry on.
+   */
+  softDelete(id: string): void {
+    db.transaction(() => {
+      for (const { table, column } of userOwnedDataColumns()) {
+        db.prepare(`DELETE FROM "${table}" WHERE "${column}" = ?`).run(id);
+      }
+      stmts.detachAllInviteesOfInviter.run(id);
+      stmts.markDeleted.run(id);
+    })();
+  },
+
+  reactivate(id: string, f: { password: string; name: string; emailVerified: boolean; googleId?: string; externalId?: string }): UserRow {
+    stmts.reactivate.run({ id, password: f.password, name: f.name, emailVerified: f.emailVerified ? 1 : 0, googleId: f.googleId ?? null, externalId: f.externalId ?? null });
+    return this.findById(id)!;
+  },
+
   /* ---------- Phone login + identifier dispatch ------------------------ */
 
   findByPhone(phone: string): UserRow | undefined {
@@ -420,4 +481,27 @@ export function normalizePhone(raw: string): string {
   const hasPlus = trimmed.startsWith('+');
   const digits = trimmed.replace(/\D/g, '');
   return hasPlus ? `+${digits}` : digits;
+}
+
+/** Kept when an account is closed: the billing and quota ledger. */
+const RETAINED_ON_DELETE = new Set(['api_usage', 'feature_usage', 'payments', 'license_keys', 'external_api_keys', 'deleted_account_usage']);
+
+let ownedColumns: Array<{ table: string; column: string }> | null = null;
+/** Every column declared `REFERENCES users(id) ON DELETE CASCADE` outside
+ *  the retained tables — derived from the schema so a new feature table
+ *  is covered without touching this file. Child rows (messages under
+ *  chats, transactions under statements) go via their own cascades. */
+function userOwnedDataColumns(): Array<{ table: string; column: string }> {
+  if (ownedColumns) return ownedColumns;
+  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all() as Array<{ name: string }>;
+  const out: Array<{ table: string; column: string }> = [];
+  for (const { name } of tables) {
+    if (name === 'users' || RETAINED_ON_DELETE.has(name)) continue;
+    const fks = db.prepare(`PRAGMA foreign_key_list("${name}")`).all() as Array<{ table: string; from: string; to: string; on_delete: string }>;
+    for (const fk of fks) {
+      if (fk.table === 'users' && (fk.to === 'id' || fk.to == null) && fk.on_delete === 'CASCADE') out.push({ table: name, column: fk.from });
+    }
+  }
+  ownedColumns = out;
+  return out;
 }

@@ -38,6 +38,7 @@ interface AdminUser {
   role: string;
   plan: string;
   suspended_until: string | null;
+  deleted_at?: string | null;
   created_at: string;
   chat_count: number;
   message_count: number;
@@ -108,7 +109,7 @@ export function AdminDashboard() {
   // are independent.
   const [userSearch, setUserSearch] = useState('');
   const [planFilter, setPlanFilter] = useState<'all' | 'free' | 'pro' | 'enterprise'>('all');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'suspended'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'suspended' | 'deleted'>('all');
   // Sort by usage column. Direction is implicit: descending for the
   // numeric metrics (admins want high-spend users first), ascending
   // for 'name'. 'recent' = sort by last_api_call desc (server default).
@@ -169,7 +170,8 @@ export function AdminDashboard() {
   const filteredUsers = users
     .filter(u => {
       if (planFilter !== 'all' && u.plan !== planFilter) return false;
-      if (statusFilter === 'active' && u.suspended_until) return false;
+      if (statusFilter === 'active' && (u.suspended_until || u.deleted_at)) return false;
+      if (statusFilter === 'deleted' && !u.deleted_at) return false;
       if (statusFilter === 'suspended' && !u.suspended_until) return false;
       if (userSearch.trim()) {
         const q = userSearch.trim().toLowerCase();
@@ -423,12 +425,13 @@ export function AdminDashboard() {
             {/* Status filter */}
             <select
               value={statusFilter}
-              onChange={e => setStatusFilter(e.target.value as 'all' | 'active' | 'suspended')}
+              onChange={e => setStatusFilter(e.target.value as 'all' | 'active' | 'suspended' | 'deleted')}
               className="px-2 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md text-gray-700 dark:text-gray-200 cursor-pointer"
             >
               <option value="all">All status</option>
               <option value="active">Active only</option>
               <option value="suspended">Suspended only</option>
+              <option value="deleted">Deleted accounts</option>
             </select>
 
             {/* Sort by usage metric — descending for the numeric ones */}
