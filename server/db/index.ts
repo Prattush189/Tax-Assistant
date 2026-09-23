@@ -1186,6 +1186,19 @@ db.exec(`CREATE TABLE IF NOT EXISTS message_reports (
 )`);
 db.exec("CREATE INDEX IF NOT EXISTS idx_message_reports_created ON message_reports(created_at DESC)");
 
+// deleted_account_usage — tombstones for self-deleted free accounts so a
+// re-signup with the same (normalised) email inherits the used credits
+// and the original trial start. Email is stored only as a SHA-256 hash.
+// See lib/deletedAccountGuard.ts.
+db.exec(`CREATE TABLE IF NOT EXISTS deleted_account_usage (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email_hash TEXT NOT NULL,
+  first_created_at TEXT NOT NULL,
+  used_weighted INTEGER NOT NULL DEFAULT 0,
+  deleted_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+)`);
+db.exec("CREATE INDEX IF NOT EXISTS idx_deleted_account_usage_hash ON deleted_account_usage(email_hash)");
+
 db.exec(`CREATE TABLE IF NOT EXISTS tax_notifications (
   id TEXT PRIMARY KEY,
   category TEXT NOT NULL CHECK (category IN ('GST', 'TDS', 'INCOME_TAX', 'OTHER')),

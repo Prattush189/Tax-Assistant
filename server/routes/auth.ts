@@ -13,6 +13,8 @@ import { notifyAssistOfLogin } from '../lib/assistNotify.js';
 import { AuthRequest } from '../types.js';
 import { sanitizePluginLimits, getEffectivePlan, getTrialEndsAt } from '../lib/planLimits.js';
 import { issueSignupLicense } from '../lib/issueLicense.js';
+import { applyDeletedAccountCarryover, recordDeletedAccount } from '../lib/deletedAccountGuard.js';
+import db from '../db/index.js';
 import { mailerConfigured, sendOtpEmail, sendPasswordResetEmail } from '../lib/mailer.js';
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ?? process.env.VITE_GOOGLE_CLIENT_ID ?? '';
@@ -174,7 +176,7 @@ router.post('/signup', authLimiter, async (req: Request, res: Response) => {
 
   // Hash & create
   const hashedPassword = await bcrypt.hash(password, 12);
-  const user = userRepo.create(normalizedEmail, hashedPassword, name.trim());
+  const user = applyDeletedAccountCarryover(userRepo.create(normalizedEmail, hashedPassword, name.trim()));
   issueSignupLicense(user.id, user.created_at);
 
   // Generate + store + send the 6-digit OTP
@@ -669,7 +671,7 @@ router.post('/google', authLimiter, async (req: Request, res: Response) => {
 
     if (!user) {
       // 3. Create new user (no password)
-      user = userRepo.createFromGoogle(email, displayName, googleId!);
+      user = applyDeletedAccountCarryover(userRepo.createFromGoogle(email, displayName, googleId!));
       issueSignupLicense(user.id, user.created_at);
     }
 
@@ -873,7 +875,11 @@ router.delete('/account', authMiddleware, async (req: AuthRequest, res: Response
   }
 
   // CASCADE delete handles chats, messages, notices, profiles, documents, usage, etc.
-  userRepo.deleteById(user.id);
+  // The tombstone keeps a re-signup from getting fresh free credits.
+  db.transaction(() => {
+    recordDeletedAccount(user);
+    userRepo.deleteById(user.id);
+  })();
   res.json({ success: true });
 });
 

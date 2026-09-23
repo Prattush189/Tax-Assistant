@@ -421,7 +421,9 @@ export const usageRepo = {
     weightedAfter: number;
     byModel: Record<string, { rows: number; changed: number; before: number; after: number }>;
   } {
-    const where = opts.since ? 'WHERE created_at >= ?' : '';
+    // carryover rows hold inherited usage with no tokens behind them
+    // (lib/deletedAccountGuard.ts) — re-weighting would zero them.
+    const where = "WHERE category IS NOT 'carryover'" + (opts.since ? ' AND created_at >= ?' : '');
     const args: unknown[] = opts.since ? [opts.since] : [];
     const rows = db.prepare(`
       SELECT id, model, input_tokens, output_tokens, cached_input_tokens, weighted_tokens
