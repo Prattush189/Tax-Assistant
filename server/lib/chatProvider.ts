@@ -63,6 +63,11 @@ export interface ChatRequest {
    *  google_search anyway and the reply ends MALFORMED_FUNCTION_CALL
    *  with no text (every rent agreement, 2026-10-07). */
   searchGrounding?: boolean;
+  /** Thinking level for the 3.8 / 3.7 rungs. Default 'high'. Thinking
+   *  tokens come out of maxTokens, so 'high' on a long document can
+   *  leave too little for the document itself — drafting from a fixed
+   *  structure (deeds) should pass 'low'. */
+  thinking?: 'low' | 'high';
 }
 
 export interface ChatUsage {
@@ -81,6 +86,8 @@ export interface ChatUsage {
   modelUsed: string;
   /** True if this provider counts as a "search-grounded" call (for usage logs). */
   withSearch: boolean;
+  /** The model stopped at maxTokens — the text is incomplete. */
+  truncated: boolean;
 }
 
 export interface ChatProvider {
@@ -95,7 +102,7 @@ export const geminiChatProvider: ChatProvider = {
   async streamChat(req, onText) {
     // Notice drafting is complex legal work → Deep reasoning. (Not passed
     // to the Lite rung, which runs with thinking off.)
-    const THINKING: 'low' | 'high' = 'high';
+    const THINKING: 'low' | 'high' = req.thinking ?? 'high';
 
     // Default ladder is "Deep" → the chat PRIMARY on top; there is no Fast
     // path here. Flex rungs (~50% price) are exhausted first, then the
@@ -140,7 +147,7 @@ export const geminiChatProvider: ChatProvider = {
       model: string,
       tier: string | null,
       thinking: 'low' | 'high' | null,
-    ): Promise<{ inputTokens: number; outputTokens: number; cachedInputTokens: number; ttftMs: number; totalMs: number }> => {
+    ): Promise<{ inputTokens: number; outputTokens: number; cachedInputTokens: number; ttftMs: number; totalMs: number; finishReason: string }> => {
       const selection = selectTier(true);
       const apiKey = GEMINI_API_KEYS[selection.keyIndex] ?? '';
       let inputTokens = 0;
@@ -187,11 +194,11 @@ export const geminiChatProvider: ChatProvider = {
       if (!ttftMs) {
         throw new Error(`model returned no text (finishReason=${finishReason || 'unknown'}, ${outputTokens} output tokens)`);
       }
-      return { inputTokens, outputTokens, cachedInputTokens, ttftMs, totalMs: Date.now() - t0 };
+      return { inputTokens, outputTokens, cachedInputTokens, ttftMs, totalMs: Date.now() - t0, finishReason };
     };
 
     let used: { model: string; tier: string | null } | null = null;
-    let result = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, ttftMs: 0, totalMs: 0 };
+    let result = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, ttftMs: 0, totalMs: 0, finishReason: '' };
     let firstFallbackFired = false;
 
     for (let i = 0; i < ladder.length; i++) {
@@ -207,7 +214,7 @@ export const geminiChatProvider: ChatProvider = {
       try {
         result = await tryModel(rung.model, rung.tier, rung.thinking);
         used = { model: rung.model, tier: rung.tier };
-        console.log(`[chatProvider-timing] ${rung.model}${rung.tier ? ` (${rung.tier})` : ''}${req.economy ? ' economy' : ''} ttft=${result.ttftMs}ms total=${result.totalMs}ms in=${result.inputTokens} out=${result.outputTokens}`);
+        console.log(`[chatProvider-timing] ${rung.model}${rung.tier ? ` (${rung.tier})` : ''}${req.economy ? ' economy' : ''} ttft=${result.ttftMs}ms total=${result.totalMs}ms in=${result.inputTokens} out=${result.outputTokens}${result.finishReason && result.finishReason !== 'STOP' ? ` finish=${result.finishReason}` : ''}`);
         break;
       } catch (err) {
         // Mid-stream failure — partial draft already streamed; don't retry
@@ -238,6 +245,7 @@ export const geminiChatProvider: ChatProvider = {
       costUsd: costForModel(modelUsed, result.inputTokens, result.outputTokens, result.cachedInputTokens),
       modelUsed,
       withSearch: SEARCH_GROUNDING,
+      truncated: result.finishReason === 'MAX_TOKENS',
     };
   },
 };

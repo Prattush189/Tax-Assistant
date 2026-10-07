@@ -15,7 +15,9 @@ import { AuthRequest } from '../types.js';
 
 const router = Router();
 
-const MAX_TOKENS = 8192;
+// Thinking tokens are drawn from this budget too. A full agreement is
+// ~2-4K tokens of text; 8192 with Deep thinking truncated one at clause 9.
+const MAX_TOKENS = 16384;
 
 const TEMPLATE_IDS: readonly PartnershipDeedTemplateId[] = [
   'partnership_deed',
@@ -591,20 +593,29 @@ router.post('/drafts/:id/generate', async (req: AuthRequest, res: Response) => {
         // Every deed prompt tells the model to look up the State's current
         // stamp duty, so the search tool must be there.
         searchGrounding: true,
+        // The structure is fixed by the system prompt; Deep thinking added
+        // ~50 s to first token and ate the output budget.
+        thinking: 'low',
         onFallback: () => { sse.writeEvent({ providerFallback: true }); },
       },
       (text) => { fullResponse += text; sse.writeText(text); },
     );
 
-    if (fullResponse) {
-      // updateGeneratedContent flips status='generating' → 'generated'.
-      partnershipDeedRepo.updateGeneratedContent(draft.id, req.user!.id, fullResponse);
-    } else {
-      partnershipDeedRepo.setError(draft.id, req.user!.id, 'Model returned an empty response');
-      sse.writeError('Could not generate the document — the AI returned an empty reply. Please try again.');
+    if (!fullResponse || usage.truncated) {
+      // Never save half a legal document as "generated". The tokens were
+      // spent, so record them — as 'failed', which the credit budget skips.
+      const why = usage.truncated ? 'Model output was cut off before the document was complete' : 'Model returned an empty response';
+      console.warn(`[partnership-deeds] ${draft.template_id} ${draft.id}: ${why} (${usage.modelUsed}, out=${usage.outputTokens})`);
+      partnershipDeedRepo.setError(draft.id, req.user!.id, why);
+      usageRepo.logWithBilling(clientIp, req.user!.id, billingUserId, usage.inputTokens, usage.outputTokens, usage.costUsd, false, usage.modelUsed, usage.withSearch, 'partnership_deed', 0, 'failed', 0, Date.now() - callStartMs, usage.cacheReadTokens);
+      sse.writeError(usage.truncated
+        ? 'The document came back incomplete, so it was not saved. Please generate it again — you have not been charged.'
+        : 'Could not generate the document — the AI returned an empty reply. Please try again.');
       sse.end();
       return;
     }
+    // updateGeneratedContent flips status='generating' → 'generated'.
+    partnershipDeedRepo.updateGeneratedContent(draft.id, req.user!.id, fullResponse);
 
     // Log TOTAL input tokens consumed (fresh + cache reads + cache writes).
     // usage.inputTokens already includes the cached portion; the cached
@@ -640,7 +651,7 @@ router.post('/drafts/:id/generate', async (req: AuthRequest, res: Response) => {
     } catch (e) {
       console.error('[partnership-deeds] failed to mark draft as error:', e);
     }
-    sse.writeError('Failed to generate partnership deed. Please try again.');
+    sse.writeError('Could not generate the document right now. Please try again in a moment.');
   }
 
   sse.end();
