@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
-import { pickChatProvider } from '../lib/chatProvider.js';
+import { pickChatProvider, DEFAULT_SEARCH_GROUNDING } from '../lib/chatProvider.js';
 import { referenceUrlsBlock } from '../lib/officialReferenceUrls.js';
 import { SseWriter } from '../lib/sseStream.js';
 import { sanitizeNoticeCitations } from '../lib/noticeCitationSanitizer.js';
@@ -75,6 +75,29 @@ function istDateString(): string {
 // Markdown. The client renders this via react-markdown in the preview pane
 // and via a markdown-aware jsPDF renderer for download. The structure mirrors
 // how a practising senior advocate actually files a reply / rectification.
+// Citation rules depend on whether the model actually has the search
+// tool. Telling it to search when it cannot makes 3.x thinking models
+// attempt a google_search call and return no text at all.
+const NOTICE_CITATION_RULES = DEFAULT_SEARCH_GROUNDING
+  ? `WEB-SEARCH-GROUNDED CITATIONS (mandatory)
+You have live Google Search grounding. Use it to verify every section number, sub-section quotation, rule citation, and case-law reference before including it in the letter. When a fact is ambiguous or recent (post-2023 amendment, FA 2025/2026 change, fresh notification), search first.
+
+ONLY treat the following as authoritative sources — prefer these in your search results and cite them inline in section 5 (Legal Submissions) and section 6 (Case Laws / Precedents) where appropriate:
+- incometax.gov.in, incometaxindia.gov.in, eportal.incometax.gov.in (CBDT, Income Tax Department)
+- gst.gov.in, cbic.gov.in, cbic-gst.gov.in (CBIC, GST Council)
+- mca.gov.in (MCA), sebi.gov.in (SEBI), rbi.org.in (RBI) — for cross-statute references
+- indiankanoon.org, itat.gov.in, sci.gov.in, livelaw.in (judgments — court / official reporters)
+- taxmann.com, taxsutra.com, cleartax.in/lawnetwork (commentary cross-checks only — never as the primary citation when an official source exists)
+- Official press releases / circulars / notifications (PIB, CBDT/CBIC notification PDFs)
+
+DO NOT cite blog posts, YouTube, Quora, generic Q&A sites, or unofficial summaries. If web search returns only such sources for a point, drop the citation and fall back to "well-settled rule" language.
+
+Inline citation form: when the supporting authority is an official notification, circular, or judgment URL surfaced by the search, append a short bracketed reference at the end of the relevant sentence using markdown link syntax so the URL is clickable in the rendered PDF — e.g. \`(see [CBDT Circular No. 12/2024](<full URL>) dated 15.05.2024)\` or \`(see [ITAT Mumbai, ITA No. 1234/2023](<full URL>) dated 02.02.2024)\`. The link text should be the precise document number; the URL goes inside the parentheses. If you do not have a verifiable URL for the reference, drop the link and emit just the bracketed reference as plain text.`
+  : `CITATIONS (mandatory)
+You do NOT have web search in this session. Do not attempt to search or call any tool. Rely on the statute and rules as you know them and on the reference links listed below.
+
+Cite a section, rule, circular or notification only when you are confident of its number and substance; otherwise state the principle in "well-settled rule" language without a number. Never invent a URL: link only to the reference links listed below, and give every other authority as plain text.`;
+
 const NOTICE_SYSTEM_PROMPT = `You are a senior Indian tax litigation advocate with 20+ years of experience drafting replies to Income Tax, GST, TDS, and other regulatory notices at the quality expected for representation before ITAT, High Courts, and first-appellate authorities. You have deep knowledge of the Income Tax Act, 1961 (and the parallel Income Tax Act, 2025 recodification), the CGST / IGST Acts, 2017, and all associated rules and procedural law.
 
 YOUR TASK
@@ -166,20 +189,7 @@ Mentally re-read the draft and confirm:
 6. The case-law section (## 4) either contains entries each with a URL, or is omitted entirely.
 A draft that fails any of (1)–(4) is unacceptable. Self-correct before producing your final output.
 
-WEB-SEARCH-GROUNDED CITATIONS (mandatory)
-You have live Google Search grounding. Use it to verify every section number, sub-section quotation, rule citation, and case-law reference before including it in the letter. When a fact is ambiguous or recent (post-2023 amendment, FA 2025/2026 change, fresh notification), search first.
-
-ONLY treat the following as authoritative sources — prefer these in your search results and cite them inline in section 5 (Legal Submissions) and section 6 (Case Laws / Precedents) where appropriate:
-- incometax.gov.in, incometaxindia.gov.in, eportal.incometax.gov.in (CBDT, Income Tax Department)
-- gst.gov.in, cbic.gov.in, cbic-gst.gov.in (CBIC, GST Council)
-- mca.gov.in (MCA), sebi.gov.in (SEBI), rbi.org.in (RBI) — for cross-statute references
-- indiankanoon.org, itat.gov.in, sci.gov.in, livelaw.in (judgments — court / official reporters)
-- taxmann.com, taxsutra.com, cleartax.in/lawnetwork (commentary cross-checks only — never as the primary citation when an official source exists)
-- Official press releases / circulars / notifications (PIB, CBDT/CBIC notification PDFs)
-
-DO NOT cite blog posts, YouTube, Quora, generic Q&A sites, or unofficial summaries. If web search returns only such sources for a point, drop the citation and fall back to "well-settled rule" language.
-
-Inline citation form: when the supporting authority is an official notification, circular, or judgment URL surfaced by the search, append a short bracketed reference at the end of the relevant sentence using markdown link syntax so the URL is clickable in the rendered PDF — e.g. \`(see [CBDT Circular No. 12/2024](<full URL>) dated 15.05.2024)\` or \`(see [ITAT Mumbai, ITA No. 1234/2023](<full URL>) dated 02.02.2024)\`. The link text should be the precise document number; the URL goes inside the parentheses. If you do not have a verifiable URL for the reference, drop the link and emit just the bracketed reference as plain text.
+${NOTICE_CITATION_RULES}
 
 ${referenceUrlsBlock('notice')}`;
 

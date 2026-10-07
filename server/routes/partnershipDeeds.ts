@@ -588,6 +588,9 @@ router.post('/drafts/:id/generate', async (req: AuthRequest, res: Response) => {
           : PARTNERSHIP_DEED_SYSTEM_PROMPT,
         userMessage: userPrompt,
         maxTokens: MAX_TOKENS,
+        // Every deed prompt tells the model to look up the State's current
+        // stamp duty, so the search tool must be there.
+        searchGrounding: true,
         onFallback: () => { sse.writeEvent({ providerFallback: true }); },
       },
       (text) => { fullResponse += text; sse.writeText(text); },
@@ -598,7 +601,7 @@ router.post('/drafts/:id/generate', async (req: AuthRequest, res: Response) => {
       partnershipDeedRepo.updateGeneratedContent(draft.id, req.user!.id, fullResponse);
     } else {
       partnershipDeedRepo.setError(draft.id, req.user!.id, 'Model returned an empty response');
-      sse.writeError('Failed to generate partnership deed — empty model response. Please try again.');
+      sse.writeError('Could not generate the document — the AI returned an empty reply. Please try again.');
       sse.end();
       return;
     }

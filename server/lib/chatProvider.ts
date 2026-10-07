@@ -38,7 +38,7 @@ import { selectTier, confirmUsed } from './searchQuota.js';
 // model with grounding on; the statutory basis is in the prompt and the
 // sanitizer strips unverified case law anyway. Set NOTICE_SEARCH_GROUNDING=1
 // to restore live search for drafting.
-const SEARCH_GROUNDING = process.env.NOTICE_SEARCH_GROUNDING === '1';
+export const DEFAULT_SEARCH_GROUNDING = process.env.NOTICE_SEARCH_GROUNDING === '1';
 
 export interface ChatRequest {
   systemPrompt: string;
@@ -57,6 +57,12 @@ export interface ChatRequest {
    *  drafting expensive. Opt-in per call so ledger scrutiny and deed
    *  drafting keep the full-quality ladder. */
   economy?: boolean;
+  /** Give the model the Google Search tool for this call. Defaults to
+   *  DEFAULT_SEARCH_GROUNDING (off). MUST be true whenever the prompt
+   *  tells the model to search: without the tool, 3.x tries to call
+   *  google_search anyway and the reply ends MALFORMED_FUNCTION_CALL
+   *  with no text (every rent agreement, 2026-10-07). */
+  searchGrounding?: boolean;
 }
 
 export interface ChatUsage {
@@ -102,6 +108,7 @@ export const geminiChatProvider: ChatProvider = {
     // NOTE: since 2026-09, 3.8 and 3.7 are priced identically, so the T1
     // rungs buy availability rather than savings. Only the final 2.5
     // Flash-Lite rung is materially cheaper.
+    const SEARCH_GROUNDING = req.searchGrounding ?? DEFAULT_SEARCH_GROUNDING;
     const flexTier = GEMINI_FLEX ? GEMINI_FLEX_SERVICE_TIER : null;
     // Economy: 3.1 Flash-Lite first, thinking off. 3.7/3.8 stay underneath
     // purely as a rescue if 2.5 fails outright, so a bad day still
@@ -141,6 +148,7 @@ export const geminiChatProvider: ChatProvider = {
       let cachedInputTokens = 0;
       const t0 = Date.now();
       let ttftMs = 0;
+      let finishReason = '';
 
       const stream = streamGeminiChat(
         model,
@@ -156,9 +164,10 @@ export const geminiChatProvider: ChatProvider = {
         thinking,
         tier,
         // streaming idle / first byte. The Lite rung answers in seconds; the
-        // thinking rungs get 30 s before we move on.
+        // thinking rungs get 30 s before we move on. Searching happens
+        // before the first token, so grounded calls get 20 s more.
         20_000,
-        model === GEMINI_CHAT_MODEL_T2 ? 15_000 : 30_000,
+        (model === GEMINI_CHAT_MODEL_T2 ? 15_000 : 30_000) + (SEARCH_GROUNDING ? 20_000 : 0),
       );
 
       for await (const chunk of stream) {
@@ -167,9 +176,16 @@ export const geminiChatProvider: ChatProvider = {
           inputTokens = chunk.inputTokens ?? 0;
           outputTokens = chunk.outputTokens ?? 0;
           cachedInputTokens = chunk.cachedInputTokens ?? 0;
+          finishReason = chunk.finishReason ?? '';
           const tag = model.startsWith('gemini-2.5') ? 'gemini-2.5' : 'gemini-3';
           confirmUsed(tag, selection.keyIndex, true);
         }
+      }
+      // A stream can end "successfully" with no answer at all (thinking
+      // only, then MALFORMED_FUNCTION_CALL / SAFETY / RECITATION). That is
+      // a failed rung, not an empty document — let the ladder move on.
+      if (!ttftMs) {
+        throw new Error(`model returned no text (finishReason=${finishReason || 'unknown'}, ${outputTokens} output tokens)`);
       }
       return { inputTokens, outputTokens, cachedInputTokens, ttftMs, totalMs: Date.now() - t0 };
     };
