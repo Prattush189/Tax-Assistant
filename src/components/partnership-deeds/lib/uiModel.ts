@@ -114,9 +114,11 @@ export interface RentAgreementBlock {
   landlordName?: string;
   landlordAddress?: string;
   landlordPan?: string;
+  landlordAadhaar?: string;        // 12 digits, optional
   tenantName?: string;
   tenantAddress?: string;
   tenantPan?: string;
+  tenantAadhaar?: string;          // 12 digits, optional
   propertyAddress?: string;
   state?: string;                  // drives stamp duty + jurisdiction
   purpose?: 'residential' | 'commercial';

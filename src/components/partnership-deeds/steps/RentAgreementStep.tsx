@@ -9,6 +9,8 @@ interface Props {
   ) => void;
 }
 
+const formatAadhaar = (v: string | undefined) => (v ?? '').replace(/\D/g, '').replace(/(\d{4})(?=\d)/g, '$1 ');
+
 const stateInputCls =
   'w-full px-3 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 transition-colors text-gray-900 dark:text-gray-100';
 
@@ -30,6 +32,14 @@ export function RentAgreementStep({ draft, onChange }: Props) {
         <Field label="Landlord PAN" hint="Recommended where annual rent exceeds Rs. 1,00,000">
           <PanInput value={r.landlordPan} onChange={(v) => patch({ landlordPan: v })} />
         </Field>
+        <Field label="Landlord Aadhaar" hint="Optional. Needed for Aadhaar e-KYC / e-sign when the agreement is e-stamped or registered online">
+          <TextInput
+            value={formatAadhaar(r.landlordAadhaar)}
+            onChange={(v) => patch({ landlordAadhaar: v.replace(/\D/g, '').slice(0, 12) })}
+            placeholder="1234 5678 9012"
+            maxLength={14}
+          />
+        </Field>
       </Card>
 
       <Card title="Tenant (Lessee)">
@@ -41,6 +51,14 @@ export function RentAgreementStep({ draft, onChange }: Props) {
         </Field>
         <Field label="Tenant PAN">
           <PanInput value={r.tenantPan} onChange={(v) => patch({ tenantPan: v })} />
+        </Field>
+        <Field label="Tenant Aadhaar" hint="Optional. Needed for Aadhaar e-KYC / e-sign when the agreement is e-stamped or registered online">
+          <TextInput
+            value={formatAadhaar(r.tenantAadhaar)}
+            onChange={(v) => patch({ tenantAadhaar: v.replace(/\D/g, '').slice(0, 12) })}
+            placeholder="1234 5678 9012"
+            maxLength={14}
+          />
         </Field>
       </Card>
 

@@ -136,7 +136,7 @@ function footerHtml(draft: PartnershipDeedDraft): string {
     parts.push(sigBlock('TENANT / LESSEE', draft.rentAgreement?.tenantName));
     parts.push(WITNESS_HTML);
     parts.push('<p class="sec">REGISTRATION (Registration Act, 1908)</p>');
-    parts.push('<p class="muted">A lease for a term of 12 months or more requires compulsory registration at the office of the Sub-Registrar.</p>');
+    parts.push('<p class="muted">A lease for a term exceeding one year (or from year to year) requires compulsory registration at the office of the Sub-Registrar; some States require it for every term.</p>');
     parts.push('<p class="muted">Document No.: ______________ &nbsp; Sub-Registrar: ______________ &nbsp; Date: __________</p>');
   } else {
     const partners = draft.partners ?? [];

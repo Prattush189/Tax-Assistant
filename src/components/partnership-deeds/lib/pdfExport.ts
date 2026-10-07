@@ -187,7 +187,7 @@ function paintRentFooter(doc: jsPDF, draft: PartnershipDeedDraft, startY: number
   doc.setFontSize(9);
   doc.setTextColor(80, 80, 80);
   doc.text(
-    'A lease for a term of 12 months or more requires compulsory registration at the office of the Sub-Registrar.',
+    'A lease for a term exceeding one year (or from year to year) requires compulsory registration at the office of the Sub-Registrar; some States require it for every term.',
     MARGIN, y,
   );
   y += 4.5;

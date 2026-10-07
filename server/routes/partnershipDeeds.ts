@@ -88,7 +88,7 @@ You will be given: the template type, the firm's particulars, partner details, b
 
 DOCUMENT STRUCTURE (produce every section that applies, in this order)
 
-(1) **Preamble** — Title in ALL CAPS centred (the AI host's PDF wraps this in a stamp-paper banner; you only emit the deed body). Then the parties block:
+(1) **Preamble** — Title in ALL CAPS as a level-1 Markdown heading (\`# TITLE\`) — the host centres it, so never wrap it in HTML (the AI host's PDF wraps this in a stamp-paper banner; you only emit the deed body). Then the parties block:
    "THIS DEED OF PARTNERSHIP / LLP AGREEMENT / DEED OF RECONSTITUTION / DEED OF RETIREMENT / DEED OF RETIREMENT CUM ADMISSION / DEED OF DISSOLUTION is made and executed at <principal place>, on this <today's IST date>"
    followed by a numbered list of parties (one paragraph per partner) in this format:
    "(1) <Mr/Ms/Mrs/Shri> <Name>, aged <age> years, son/daughter/wife of ____, resident of <address>, holding PAN <PAN>, hereinafter referred to as the 'First Partner / Party of the First Part';"
@@ -162,8 +162,9 @@ Draft a complete, signature-ready RENT AGREEMENT in GitHub-Flavoured Markdown be
 
 DOCUMENT STRUCTURE (produce every section that applies, in this order)
 
-(1) **Preamble** — Title "RENT AGREEMENT" in ALL CAPS centred (the host wraps this in a stamp-paper banner; emit only the body). Then:
-   "THIS RENT AGREEMENT is made and executed at <property city/state>, on this <today's IST date>, BETWEEN <Landlord name>, residing at <landlord address>, holding PAN <PAN if given>, hereinafter referred to as the 'LANDLORD / LESSOR' (which expression shall include heirs, successors and assigns) of the ONE PART; AND <Tenant name>, residing at <tenant address>, holding PAN <PAN if given>, hereinafter referred to as the 'TENANT / LESSEE' (which expression shall include permitted assigns) of the OTHER PART."
+(1) **Preamble** — Title "RENT AGREEMENT" in ALL CAPS as a level-1 Markdown heading (\`# TITLE\`) — the host centres it, so never wrap it in HTML (the host wraps this in a stamp-paper banner; emit only the body). Then:
+   "THIS RENT AGREEMENT is made and executed at <property city/state>, on this <today's IST date>, BETWEEN <Landlord name>, residing at <landlord address>, holding PAN <PAN if given> and Aadhaar No. <landlordAadhaar if given>, hereinafter referred to as the 'LANDLORD / LESSOR' (which expression shall include heirs, successors and assigns) of the ONE PART; AND <Tenant name>, residing at <tenant address>, holding PAN <PAN if given> and Aadhaar No. <tenantAadhaar if given>, hereinafter referred to as the 'TENANT / LESSEE' (which expression shall include permitted assigns) of the OTHER PART."
+   Print an Aadhaar number exactly as supplied, grouped 4-4-4 (e.g. 1234 5678 9012). Where a PAN or Aadhaar number is not supplied, leave that phrase out entirely — never write "not provided" or a blank.
 
 (2) **Recitals (WHEREAS clauses)** — 2 to 3 short whereas clauses: that the Landlord is the absolute owner / lawfully entitled to the premises; that the Tenant has approached the Landlord to take the premises on rent for the stated purpose; and that the parties have agreed on the terms recorded below. End with "NOW THIS AGREEMENT WITNESSETH AS UNDER:".
 
@@ -178,7 +179,7 @@ DOCUMENT STRUCTURE (produce every section that applies, in this order)
    8. Obligations of the Tenant — pay rent on time, keep premises in good condition, permit inspection on reasonable notice, vacate on termination.
    9. Obligations of the Landlord — ensure quiet possession and enjoyment, hold valid title, carry out structural repairs.
    10. Termination & Notice — either party may terminate on the supplied notice period; consequences of default (non-payment, breach) including the Landlord's right to re-enter after due notice.
-   11. Registration & Stamp Duty — state that the agreement shall be stamped and, where the term is 12 months or more, registered under the Registration Act, 1908 at the Sub-Registrar's office, and that the registration/stamp cost is borne as agreed (default: shared equally / by the Tenant per local custom).
+   11. Registration & Stamp Duty — state that the agreement shall be stamped and, where the term EXCEEDS one year (or the lease is from year to year or reserves a yearly rent — Section 17(1)(d) of the Registration Act, 1908), registered at the Sub-Registrar's office, and that the registration/stamp cost is borne as agreed (default: shared equally / by the Tenant per local custom).
    12. Dispute Resolution & Jurisdiction — courts at the place where the property is situated; reference applicable State Rent Control / Tenancy law.
 
 (4) **Stamp Duty & Registration Schedule** — a sub-heading \`## Schedule A — Stamp Duty & Registration\`. Use Google Search to look up the CURRENT stamp duty AND registration charges payable on a rent / leave-and-license agreement in the property's State, for the supplied rent, deposit and term. Quote the rate and the computed amount. If you cannot determine it confidently, state "as per the prevailing rate under the <State> Stamp Act and the Registration Act, 1908" without inventing a number.
@@ -195,6 +196,19 @@ FORMATTING RULES (strict)
 - Never leave bracketed placeholders like [NAME] in the operative text — use a sensible legal fallback if a value is missing.
 - Complete every clause — never truncate mid-sentence.`;
 
+/** The prompts ask for Markdown only, but models still wrap the title in
+ *  `<div align="center">` or fence the whole body. The preview and the
+ *  PDF/Word exporters render Markdown, so stray HTML shows up as literal
+ *  text. Applied to every generated deed before it is saved. */
+export function cleanDeedMarkdown(text: string): string {
+  return text
+    .replace(/^[ \t]*```[a-z]*[ \t]*$/gim, '')
+    .replace(/<\/?(?:div|span|center|p|br|hr|b|i|u|strong|em|font|h[1-6]|table|thead|tbody|tr|td|th|ul|ol|li|html|body)\b[^>\n]*>/gi, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 // ── Joint-development-agreement system prompt ────────────────────────────
 const JDA_SYSTEM_PROMPT = `You are a senior real-estate / conveyancing advocate practising in India with 25+ years of experience drafting joint development agreements (JDAs) between landowners and developers. You are deeply familiar with the Transfer of Property Act, 1882; the Real Estate (Regulation and Development) Act, 2016 (RERA); the Registration Act, 1908; the Indian Stamp Act, 1899 (and each State's amendment); Section 45(5A) of the Income-tax Act, 1961; and GST implications on development rights (Notification 4/2019-CT(R) as amended).
 
@@ -203,7 +217,7 @@ Draft a complete, signature-ready JOINT DEVELOPMENT AGREEMENT in GitHub-Flavoure
 
 DOCUMENT STRUCTURE (produce every section that applies, in this order)
 
-(1) **Preamble** — Title "JOINT DEVELOPMENT AGREEMENT" in ALL CAPS centred (the host wraps this in a stamp-paper banner; emit only the body). Then the parties block: the Owner (name, address, PAN) of the ONE PART and the Developer (name, address, PAN) of the OTHER PART, with the usual heirs/successors/assigns inclusions.
+(1) **Preamble** — Title "JOINT DEVELOPMENT AGREEMENT" in ALL CAPS as a level-1 Markdown heading (\`# TITLE\`) — the host centres it, so never wrap it in HTML (the host wraps this in a stamp-paper banner; emit only the body). Then the parties block: the Owner (name, address, PAN) of the ONE PART and the Developer (name, address, PAN) of the OTHER PART, with the usual heirs/successors/assigns inclusions.
 
 (2) **Recitals (WHEREAS clauses)** — 3 to 4 clauses: the Owner is the absolute owner of the land (describe it: address, area, survey number); the Developer is engaged in the business of real-estate development and has approached the Owner; the parties have agreed to develop the land on the terms recorded below. End with "NOW THIS AGREEMENT WITNESSETH AS UNDER:".
 
@@ -242,7 +256,7 @@ Draft a complete, signature-ready EMPLOYMENT AGREEMENT in GitHub-Flavoured Markd
 
 DOCUMENT STRUCTURE
 
-(1) **Preamble** — Title "EMPLOYMENT AGREEMENT" in ALL CAPS centred. Parties block: the Employer (name, registered address), "hereinafter the 'Company' / 'Employer'", of the ONE PART; and the Employee (name, address, PAN if given), of the OTHER PART.
+(1) **Preamble** — Title "EMPLOYMENT AGREEMENT" in ALL CAPS as a level-1 Markdown heading (\`# TITLE\`) — the host centres it, so never wrap it in HTML. Parties block: the Employer (name, registered address), "hereinafter the 'Company' / 'Employer'", of the ONE PART; and the Employee (name, address, PAN if given), of the OTHER PART.
 
 (2) **Recitals** — 2 short WHEREAS clauses (the Company wishes to employ; the Employee has agreed to serve on the terms below). End with "NOW THIS AGREEMENT WITNESSETH AS UNDER:".
 
@@ -491,7 +505,7 @@ router.post('/drafts/:id/generate', async (req: AuthRequest, res: Response) => {
     userPrompt += `Governing Law: ${TEMPLATE_GOVERNING_ACT[draft.template_id]}\n`;
     userPrompt += `\nRent agreement details:\n${JSON.stringify(rentAgreement, null, 2)}\n`;
     userPrompt += `\n=== STAMP DUTY & REGISTRATION GROUNDING INSTRUCTION ===\n`;
-    userPrompt += `Use Google Search to look up the CURRENT stamp duty AND registration charges payable on a rent / leave-and-license agreement in the State of ${state}, for the supplied monthly rent, security deposit and lease term. Cite the rate, compute the amount, and reflect it in Schedule A. If the term is 12 months or more, note that registration under the Registration Act, 1908 is compulsory.\n`;
+    userPrompt += `Use Google Search to look up the CURRENT stamp duty AND registration charges payable on a rent / leave-and-license agreement in the State of ${state}, for the supplied monthly rent, security deposit and lease term. Cite the rate, compute the amount, and reflect it in Schedule A. Registration is compulsory under Section 17(1)(d) of the Registration Act, 1908 only where the term exceeds one year (or the lease is from year to year / reserves a yearly rent); say so accurately for the supplied term, and mention any State law that requires registration regardless of term (for example Section 55 of the Maharashtra Rent Control Act, 1999). Give ONE duty figure for this instrument — do not offer alternatives or "local practice" ranges.\n`;
     userPrompt += `\n=== YOUR TASK ===\n`;
     userPrompt += `Produce the COMPLETE rent agreement body in GitHub-Flavoured Markdown per the structure in the system prompt. Begin with the preamble (title + parties), then recitals, then the numbered operative clauses, then Schedule A, then the testimonium. End the body after the testimonium — do NOT emit witness or signature blocks. Do NOT output bracketed placeholders in the operative text.\n`;
   } else {
@@ -621,7 +635,7 @@ router.post('/drafts/:id/generate', async (req: AuthRequest, res: Response) => {
       return;
     }
     // updateGeneratedContent flips status='generating' → 'generated'.
-    partnershipDeedRepo.updateGeneratedContent(draft.id, req.user!.id, fullResponse);
+    partnershipDeedRepo.updateGeneratedContent(draft.id, req.user!.id, cleanDeedMarkdown(fullResponse));
 
     // Log TOTAL input tokens consumed (fresh + cache reads + cache writes).
     // usage.inputTokens already includes the cached portion; the cached

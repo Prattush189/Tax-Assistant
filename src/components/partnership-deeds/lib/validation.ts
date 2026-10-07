@@ -2,6 +2,12 @@ import { PartnershipDeedDraft, PartnerBlock } from './uiModel';
 
 const PAN_REGEX = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
 
+/** Aadhaar is 12 digits and never starts with 0 or 1. */
+export function isValidAadhaar(aadhaar: string | undefined): boolean {
+  if (!aadhaar) return false;
+  return /^[2-9][0-9]{11}$/.test(aadhaar.replace(/\s/g, ''));
+}
+
 export function isValidPan(pan: string | undefined): boolean {
   if (!pan) return false;
   return PAN_REGEX.test(pan.toUpperCase());
@@ -46,6 +52,12 @@ export function validateDraft(draft: PartnershipDeedDraft): ValidationResult {
     }
     if (r.tenantPan && !isValidPan(r.tenantPan)) {
       errors.push('Tenant PAN format is invalid (expected ABCDE1234F).');
+    }
+    if (r.landlordAadhaar && !isValidAadhaar(r.landlordAadhaar)) {
+      errors.push('Landlord Aadhaar must be 12 digits.');
+    }
+    if (r.tenantAadhaar && !isValidAadhaar(r.tenantAadhaar)) {
+      errors.push('Tenant Aadhaar must be 12 digits.');
     }
     return { ok: errors.length === 0, errors };
   }
