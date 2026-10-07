@@ -481,12 +481,25 @@ router.post(
         // See ChatRequest.economy — 3.x Deep thinking was billing far more
         // output tokens than the letter itself.
         economy: true,
+        // Backup rungs only: Deep thinking there used ~6K of the 8K output
+        // budget on a short test notice, leaving a long letter cut off.
+        thinking: 'low',
         onFallback: () => { sse.writeEvent({ providerFallback: true }); },
       },
       (text) => { fullResponse += text; sse.writeText(text); },
     );
 
     let sanitizationReport = { changed: false, droppedEntries: 0, totalEntries: 0, keptEntries: 0, droppedUrls: 0 };
+    if (fullResponse && usage.truncated) {
+      // A reply letter that stops mid-argument must not be saved as done.
+      // Tokens were spent: log them as 'failed', which the budget skips.
+      console.warn(`[notices] notice ${noticeId}: output cut off (${usage.modelUsed}, out=${usage.outputTokens})`);
+      noticeRepo.setError(noticeId, req.user.id, 'Model output was cut off before the reply was complete');
+      usageRepo.logWithBilling(clientIp, req.user!.id, billingUserId, usage.inputTokens, usage.outputTokens, usage.costUsd, false, usage.modelUsed, usage.withSearch, 'notice', 0, 'failed', 0, 0, usage.cacheReadTokens);
+      sse.writeError('The draft came back incomplete, so it was not saved. Please generate it again — you have not been charged.');
+      sse.end();
+      return;
+    }
     if (fullResponse) {
       // Strip any case-law citations the model produced without a
       // verifiable source URL, and strip the entire section when the
@@ -699,11 +712,21 @@ ${instruction}
         // See ChatRequest.economy — 3.x Deep thinking was billing far more
         // output tokens than the letter itself.
         economy: true,
+        // Backup rungs only: Deep thinking there used ~6K of the 8K output
+        // budget on a short test notice, leaving a long letter cut off.
+        thinking: 'low',
         onFallback: () => { sse.writeEvent({ providerFallback: true }); },
       },
       (text) => { fullResponse += text; sse.writeText(text); },
     );
 
+    if (fullResponse.trim() && usage.truncated) {
+      console.warn(`[notices] enhance ${notice.id}: output cut off (${usage.modelUsed}, out=${usage.outputTokens})`);
+      usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, usage.inputTokens, usage.outputTokens, usage.costUsd, false, usage.modelUsed, usage.withSearch, 'notice_enhance', 0, 'failed', 0, 0, usage.cacheReadTokens);
+      sse.writeError('The enhanced draft came back incomplete. Your existing draft is unchanged — please try again.');
+      sse.end();
+      return;
+    }
     if (!fullResponse.trim()) {
       // Leave the existing draft untouched — a failed enhancement must
       // never destroy work the user already has.
