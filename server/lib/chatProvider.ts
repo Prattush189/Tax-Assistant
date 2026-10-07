@@ -68,6 +68,10 @@ export interface ChatRequest {
    *  leave too little for the document itself — drafting from a fixed
    *  structure (deeds) should pass 'low'. */
   thinking?: 'low' | 'high';
+  /** Set false to skip the half-price Flex rungs. Flex queues, 503s
+   *  under load and has dropped streams mid-document; use it only
+   *  where a retry is cheap. Default: follow GEMINI_FLEX. */
+  flex?: boolean;
 }
 
 export interface ChatUsage {
@@ -86,7 +90,8 @@ export interface ChatUsage {
   modelUsed: string;
   /** True if this provider counts as a "search-grounded" call (for usage logs). */
   withSearch: boolean;
-  /** The model stopped at maxTokens — the text is incomplete. */
+  /** The text is incomplete: the model hit maxTokens, or the stream
+   *  was dropped before Gemini signalled a finish. */
   truncated: boolean;
 }
 
@@ -116,7 +121,7 @@ export const geminiChatProvider: ChatProvider = {
     // rungs buy availability rather than savings. Only the final 2.5
     // Flash-Lite rung is materially cheaper.
     const SEARCH_GROUNDING = req.searchGrounding ?? DEFAULT_SEARCH_GROUNDING;
-    const flexTier = GEMINI_FLEX ? GEMINI_FLEX_SERVICE_TIER : null;
+    const flexTier = GEMINI_FLEX && req.flex !== false ? GEMINI_FLEX_SERVICE_TIER : null;
     // Economy: 3.1 Flash-Lite first, thinking off. 3.7/3.8 stay underneath
     // purely as a rescue if 2.5 fails outright, so a bad day still
     // produces a letter — it just is not the normal path any more.
@@ -245,7 +250,7 @@ export const geminiChatProvider: ChatProvider = {
       costUsd: costForModel(modelUsed, result.inputTokens, result.outputTokens, result.cachedInputTokens),
       modelUsed,
       withSearch: SEARCH_GROUNDING,
-      truncated: result.finishReason === 'MAX_TOKENS',
+      truncated: result.finishReason === 'MAX_TOKENS' || result.finishReason === 'INCOMPLETE',
     };
   },
 };

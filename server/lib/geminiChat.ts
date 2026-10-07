@@ -77,7 +77,9 @@ export interface GeminiChatChunk {
   /** Portion of inputTokens served from context cache. */
   cachedInputTokens?: number;
   sources?: Array<{ title: string; url: string }>;
-  /** STOP | MAX_TOKENS | SAFETY | RECITATION | OTHER. Only set on done chunks. */
+  /** STOP | MAX_TOKENS | SAFETY | RECITATION | OTHER, or INCOMPLETE when
+   *  the stream closed without Gemini ever sending a finish reason (the
+   *  connection was dropped mid-answer). Only set on done chunks. */
   finishReason?: string;
 }
 
@@ -330,7 +332,7 @@ export async function* streamGeminiChat(
     outputTokens: totalOutputTokens,
     cachedInputTokens: totalCachedTokens,
     sources: uniqueSources.length > 0 ? uniqueSources : undefined,
-    finishReason,
+    finishReason: finishReason ?? 'INCOMPLETE',
   };
   } finally {
     clearIdle();

@@ -399,7 +399,10 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
                 outputTok = chunk.outputTokens ?? 0;
                 cachedTok = chunk.cachedInputTokens ?? 0;
                 if (chunk.sources?.length) sources = chunk.sources;
-                stopReason = chunk.finishReason === 'MAX_TOKENS' ? 'max_tokens' : 'end_turn';
+                // INCOMPLETE = stream dropped mid-answer; the client offers
+                // "Continue response" for network_error just like max_tokens.
+                stopReason = chunk.finishReason === 'MAX_TOKENS' ? 'max_tokens'
+                  : chunk.finishReason === 'INCOMPLETE' ? 'network_error' : 'end_turn';
               }
             }
             const tail = citeFilter.flush();

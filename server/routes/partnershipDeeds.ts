@@ -596,19 +596,25 @@ router.post('/drafts/:id/generate', async (req: AuthRequest, res: Response) => {
         // The structure is fixed by the system prompt; Deep thinking added
         // ~50 s to first token and ate the output budget.
         thinking: 'low',
+        // A document the user is waiting on: Standard tier only.
+        flex: false,
         onFallback: () => { sse.writeEvent({ providerFallback: true }); },
       },
       (text) => { fullResponse += text; sse.writeText(text); },
     );
 
-    if (!fullResponse || usage.truncated) {
+    // Every template is told to end on a fixed closing; without it the
+    // text stopped early even if the model reported a clean finish.
+    const closing = isAppointment ? /yours\s+sincerely/i : /in\s+witness\s+whereof/i;
+    const incomplete = usage.truncated || (!!fullResponse && !closing.test(fullResponse));
+    if (!fullResponse || incomplete) {
       // Never save half a legal document as "generated". The tokens were
       // spent, so record them — as 'failed', which the credit budget skips.
-      const why = usage.truncated ? 'Model output was cut off before the document was complete' : 'Model returned an empty response';
+      const why = incomplete ? 'Model output was cut off before the document was complete' : 'Model returned an empty response';
       console.warn(`[partnership-deeds] ${draft.template_id} ${draft.id}: ${why} (${usage.modelUsed}, out=${usage.outputTokens})`);
       partnershipDeedRepo.setError(draft.id, req.user!.id, why);
       usageRepo.logWithBilling(clientIp, req.user!.id, billingUserId, usage.inputTokens, usage.outputTokens, usage.costUsd, false, usage.modelUsed, usage.withSearch, 'partnership_deed', 0, 'failed', 0, Date.now() - callStartMs, usage.cacheReadTokens);
-      sse.writeError(usage.truncated
+      sse.writeError(incomplete
         ? 'The document came back incomplete, so it was not saved. Please generate it again — you have not been charged.'
         : 'Could not generate the document — the AI returned an empty reply. Please try again.');
       sse.end();
