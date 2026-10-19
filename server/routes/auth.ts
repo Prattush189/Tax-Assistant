@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { OAuth2Client } from 'google-auth-library';
-import { userRepo, normalizePhone } from '../db/repositories/userRepo.js';
+import { userRepo, normalizePhone, isValidIndianMobile } from '../db/repositories/userRepo.js';
 import { userSessionRepo } from '../db/repositories/userSessionRepo.js';
 import { verificationRepo } from '../db/repositories/verificationRepo.js';
 import { authMiddleware } from '../middleware/auth.js';
@@ -16,6 +16,7 @@ import { issueSignupLicense } from '../lib/issueLicense.js';
 import { applyDeletedAccountCarryover, recordDeletedAccount } from '../lib/deletedAccountGuard.js';
 import db from '../db/index.js';
 import { mailerConfigured, sendOtpEmail, sendPasswordResetEmail } from '../lib/mailer.js';
+import { whatsappConfigured, sendWhatsAppOtp, maskPhone } from '../lib/whatsapp.js';
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ?? process.env.VITE_GOOGLE_CLIENT_ID ?? '';
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET ?? '';
@@ -95,6 +96,9 @@ export function toUserResponse(u: {
   created_at?: string | null;
   plan_expires_at?: string | null;
   require_login_otp?: number | null;
+  otp_channel?: string | null;
+  phone?: string | null;
+  external_id?: string | null;
 }) {
   const createdAt = u.created_at ?? new Date().toISOString();
   return {
@@ -109,7 +113,34 @@ export function toUserResponse(u: {
     plan_expires_at: u.plan_expires_at ?? null,
     // 2FA opt-in flag — UI uses this to render the Settings toggle state.
     require_login_otp: u.require_login_otp === 1,
+    otp_channel: u.otp_channel === 'whatsapp' ? 'whatsapp' : 'email',
+    phone: u.phone ?? null,
+    // Every account needs a verified mobile before it can use the app
+    // (see phoneRequiredMiddleware). Admins and plugin-SSO accounts —
+    // whose parent app owns identity — are exempt.
+    needs_phone: needsPhone(u),
   };
+}
+
+export function needsPhone(u: { phone?: string | null; role?: string | null; external_id?: string | null }): boolean {
+  return !u.phone && u.role !== 'admin' && !u.external_id;
+}
+
+/** Why a mobile can't be attached to `userId`, or null when it's free.
+ *  A closed account keeps its number, so deleting an account and
+ *  signing up again doesn't free the number for a fresh trial. */
+function phoneUnavailableReason(phone: string, userId: string | null): string | null {
+  const owner = userRepo.findAnyByPhone(phone);
+  if (!owner || owner.id === userId) return null;
+  return owner.deleted_at
+    ? "This mobile number belongs to a closed account. Sign up again with that account's email to reopen it, or contact support."
+    : 'This mobile number is already linked to another account. Sign in to that account instead.';
+}
+
+function maskEmail(email: string): string {
+  const [local, domain] = email.split('@');
+  if (!local || !domain) return email;
+  return `${local.slice(0, 1)}${'*'.repeat(Math.max(1, local.length - 1))}@${domain}`;
 }
 
 const OTP_TTL_SECONDS = 10 * 60;           // 10 minutes
@@ -138,11 +169,26 @@ function isVerificationExempt(user: {
 // OTP. Responds with { needsEmailVerification: true } — NO JWT is issued
 // until the code is verified via /api/auth/verify-email.
 router.post('/signup', authLimiter, async (req: Request, res: Response) => {
-  const { email, password, name } = req.body;
+  const { email, password, name, phone } = req.body;
 
   // Validate
-  if (!email || !password || !name) {
-    res.status(400).json({ error: 'Name, email, and password are required' });
+  if (!email || !password || !name || !phone) {
+    res.status(400).json({ error: 'Name, email, mobile number and password are required' });
+    return;
+  }
+  // The mobile is verified over WhatsApp right after the email (the app
+  // is gated until it is); checking it here stops a reused number
+  // before an account is even created.
+  const signupPhone = typeof phone === 'string' ? normalizePhone(phone) : '';
+  if (!isValidIndianMobile(signupPhone)) {
+    res.status(400).json({ error: 'Enter a valid 10-digit Indian mobile number' });
+    return;
+  }
+  // A closed account reopened with its own email may keep its own number.
+  const reopening = typeof email === 'string' ? userRepo.findDeleted({ email: email.toLowerCase().trim() }) : undefined;
+  const phoneTaken = phoneUnavailableReason(signupPhone, reopening?.id ?? null);
+  if (phoneTaken) {
+    res.status(409).json({ error: phoneTaken });
     return;
   }
   if (typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -471,20 +517,24 @@ router.post('/login', authLimiter, async (req: Request, res: Response) => {
   // isn't locked out silently. Admin can disable the flag from the
   // DB if SMTP is down.
   if (user.require_login_otp === 1) {
-    if (!mailerConfigured) {
-      res.status(503).json({
-        error: 'Login OTP is required for this account but the email service is currently unavailable. Try again in a few minutes or contact support.',
-      });
-      return;
-    }
     const code = generateOtpCode();
     const codeHash = await bcrypt.hash(code, 10);
     verificationRepo.create(user.id, 'login', codeHash, OTP_TTL_SECONDS);
-    const sendResult = await sendOtpEmail(user.email, code);
-    if (!sendResult.ok) {
-      console.warn('[auth] login-OTP email send failed:', sendResult.error);
+    // WhatsApp when the user chose it and has a verified mobile; email
+    // otherwise, and email as the fallback if WhatsApp fails.
+    let channel: 'whatsapp' | 'email' | null = null;
+    if (user.otp_channel === 'whatsapp' && user.phone && whatsappConfigured) {
+      const wa = await sendWhatsAppOtp(user.phone, code);
+      if (wa.ok) channel = 'whatsapp';
+    }
+    if (!channel && mailerConfigured && !/@phone\.local$/i.test(user.email)) {
+      const sendResult = await sendOtpEmail(user.email, code);
+      if (sendResult.ok) channel = 'email';
+      else console.warn('[auth] login-OTP email send failed:', sendResult.error);
+    }
+    if (!channel) {
       res.status(503).json({
-        error: 'Failed to send the login verification email. Try again in a minute.',
+        error: 'Could not send your login code right now. Try again in a minute or contact support.',
       });
       return;
     }
@@ -493,17 +543,14 @@ router.post('/login', authLimiter, async (req: Request, res: Response) => {
       JWT_SECRET,
       { expiresIn: `${OTP_TTL_SECONDS}s` },
     );
-    // Mask the email for safer UI display ("p******@gmail.com").
-    const masked = (() => {
-      const [local, domain] = user.email.split('@');
-      if (!local || !domain) return user.email;
-      const head = local.slice(0, 1);
-      return `${head}${'*'.repeat(Math.max(1, local.length - 1))}@${domain}`;
-    })();
+    const destination = channel === 'whatsapp' ? `+91 ${maskPhone(user.phone!)}` : maskEmail(user.email);
     res.json({
       requiresOtp: true,
       pendingLoginToken,
-      emailMasked: masked,
+      otpChannel: channel,
+      // Named for the original email-only flow; holds whichever
+      // destination the code went to.
+      emailMasked: destination,
       otpTtlSeconds: OTP_TTL_SECONDS,
     });
     return;
@@ -537,7 +584,7 @@ router.post('/verify-login-otp', authLimiter, async (req: Request, res: Response
   }
   const normalised = code.trim();
   if (!/^\d{4,8}$/.test(normalised)) {
-    res.status(400).json({ error: 'Enter the 6-digit code from your email' });
+    res.status(400).json({ error: 'Enter the 6-digit code we sent you' });
     return;
   }
   let payload: { id: string; kind?: string };
@@ -806,15 +853,114 @@ router.patch('/settings/require-login-otp', authMiddleware, (req: AuthRequest, r
   // accounts can't receive the OTP). Phone-only accounts are
   // identifiable by an email that looks like the synthetic
   // "user-<digits>@phone.local" pattern userRepo creates for them.
+  // Phone-only accounts have no real email — their codes go on WhatsApp.
   if (enabled && /@phone\.local$/i.test(user.email)) {
-    res.status(400).json({
-      error: 'This account has no email on file. Add an email under Profile before enabling email OTP login.',
-    });
-    return;
+    if (!user.phone) {
+      res.status(400).json({ error: 'This account has no email or mobile on file to receive a login code.' });
+      return;
+    }
+    userRepo.setOtpChannel(user.id, 'whatsapp');
   }
   userRepo.setRequireLoginOtp(user.id, enabled);
   const fresh = userRepo.findById(user.id)!;
   res.json({ success: true, user: toUserResponse(fresh) });
+});
+
+// PATCH /api/auth/settings/otp-channel — body { channel: 'email' | 'whatsapp' }.
+// Where the 2FA login code is delivered. WhatsApp needs a verified mobile.
+router.patch('/settings/otp-channel', authMiddleware, (req: AuthRequest, res: Response) => {
+  const { channel } = req.body ?? {};
+  if (channel !== 'email' && channel !== 'whatsapp') {
+    res.status(400).json({ error: "`channel` must be 'email' or 'whatsapp'" });
+    return;
+  }
+  const user = userRepo.findById(req.user!.id);
+  if (!user) { res.status(404).json({ error: 'User not found' }); return; }
+  if (channel === 'whatsapp' && !user.phone) {
+    res.status(400).json({ error: 'Verify your mobile number first to get login codes on WhatsApp.' });
+    return;
+  }
+  if (channel === 'email' && /@phone\.local$/i.test(user.email)) {
+    res.status(400).json({ error: 'This account has no email on file.' });
+    return;
+  }
+  userRepo.setOtpChannel(user.id, channel);
+  res.json({ success: true, user: toUserResponse(userRepo.findById(user.id)!) });
+});
+
+const PHONE_CODES_PER_DAY = 8;
+
+// POST /api/auth/phone/send-code — body { phone }. Sends a 6-digit code on
+// WhatsApp to the number the signed-in user wants to add or change to.
+// Used by the mandatory "verify your mobile" screen and by Settings.
+router.post('/phone/send-code', authLimiter, authMiddleware, async (req: AuthRequest, res: Response) => {
+  const phone = typeof req.body?.phone === 'string' ? normalizePhone(req.body.phone) : '';
+  if (!isValidIndianMobile(phone)) {
+    res.status(400).json({ error: 'Enter a valid 10-digit Indian mobile number' });
+    return;
+  }
+  const user = userRepo.findById(req.user!.id);
+  if (!user) { res.status(404).json({ error: 'User not found' }); return; }
+  if (user.phone === phone) {
+    res.status(400).json({ error: 'This is already your verified mobile number.' });
+    return;
+  }
+  const taken = phoneUnavailableReason(phone, user.id);
+  if (taken) { res.status(409).json({ error: taken }); return; }
+  if (!whatsappConfigured) {
+    res.status(503).json({ error: 'WhatsApp verification is not available right now. Please try again later.' });
+    return;
+  }
+  const latest = verificationRepo.findActive(user.id, 'phone');
+  if (latest && Date.now() - new Date(latest.created_at.replace(' ', 'T') + '+05:30').getTime() < OTP_RESEND_COOLDOWN_MS) {
+    res.status(429).json({ error: 'Please wait a minute before requesting another code.' });
+    return;
+  }
+  if (verificationRepo.countSince(user.id, 'phone', 24) >= PHONE_CODES_PER_DAY) {
+    res.status(429).json({ error: 'Too many codes requested today. Try again tomorrow.' });
+    return;
+  }
+  const code = generateOtpCode();
+  verificationRepo.create(user.id, 'phone', await bcrypt.hash(code, 10), OTP_TTL_SECONDS, phone);
+  const sent = await sendWhatsAppOtp(phone, code);
+  if (!sent.ok) {
+    res.status(502).json({ error: 'Could not send the WhatsApp code. Check the number is on WhatsApp and try again.' });
+    return;
+  }
+  res.json({ ok: true, phoneMasked: `+91 ${maskPhone(phone)}`, otpTtlSeconds: OTP_TTL_SECONDS });
+});
+
+// POST /api/auth/phone/verify — body { code }. Attaches the number the
+// latest code was sent to.
+router.post('/phone/verify', authLimiter, authMiddleware, async (req: AuthRequest, res: Response) => {
+  const code = typeof req.body?.code === 'string' ? req.body.code.trim() : '';
+  if (!/^\d{6}$/.test(code)) {
+    res.status(400).json({ error: 'Enter the 6-digit code from WhatsApp' });
+    return;
+  }
+  const user = userRepo.findById(req.user!.id);
+  if (!user) { res.status(404).json({ error: 'User not found' }); return; }
+  const row = verificationRepo.findActive(user.id, 'phone');
+  if (!row || !row.target) {
+    res.status(410).json({ error: 'Code expired — request a new one' });
+    return;
+  }
+  if (row.attempts >= OTP_MAX_ATTEMPTS) {
+    verificationRepo.markConsumed(row.id);
+    res.status(429).json({ error: 'Too many wrong attempts — request a new code' });
+    return;
+  }
+  if (!(await bcrypt.compare(code, row.code_hash))) {
+    verificationRepo.incrementAttempts(row.id);
+    res.status(401).json({ error: 'Incorrect code' });
+    return;
+  }
+  verificationRepo.markConsumed(row.id);
+  // Re-check: another account may have claimed the number meanwhile.
+  const taken = phoneUnavailableReason(row.target, user.id);
+  if (taken) { res.status(409).json({ error: taken }); return; }
+  userRepo.setPhone(user.id, row.target);
+  res.json({ success: true, user: toUserResponse(userRepo.findById(user.id)!) });
 });
 
 router.patch('/password', authMiddleware, async (req: AuthRequest, res: Response) => {

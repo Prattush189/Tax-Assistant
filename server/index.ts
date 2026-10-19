@@ -40,7 +40,7 @@ import ledgerScrutinyRouter from './routes/ledgerScrutiny.js';
 import invitationsRouter, { publicInvitationRouter } from './routes/invitations.js';
 import billingDetailsRouter from './routes/billingDetails.js';
 import documentDownloadRouter from './routes/documentDownload.js';
-import { authMiddleware, adminMiddleware, trialCheckMiddleware } from './middleware/auth.js';
+import { authMiddleware, adminMiddleware, trialCheckMiddleware, phoneRequiredMiddleware } from './middleware/auth.js';
 import {
   chatLimiter,
   uploadLimiter,
@@ -166,6 +166,8 @@ app.use('/api/documents', documentDownloadRouter);
 
 // All remaining API routes require auth
 app.use('/api', authMiddleware);
+// Mobile gate — no app access until a WhatsApp-verified mobile is on the account (exempt: auth)
+app.use('/api', phoneRequiredMiddleware);
 // Trial gate — free-plan users blocked after 30 days (exempt: auth, usage, payments)
 app.use('/api', trialCheckMiddleware);
 app.use('/api/chat', chatLimiter);

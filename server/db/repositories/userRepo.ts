@@ -15,12 +15,13 @@ export interface UserRow {
   plugin_limits: string | null;       // JSON — see server/lib/planLimits.ts
   plugin_role: string | null;         // 'consultant' | 'staff' | 'client'
   plugin_consultant_id: string | null;
-  phone: string | null;               // digits-only, used for phone-login plugin users
+  phone: string | null;               // verified 10-digit Indian mobile (set only after WhatsApp OTP, or by plugin SSO)
   email_verified: number;             // 0 | 1 (SQLite has no bool)
   inviter_id: string | null;          // pool owner for shared-plan members
   itr_enabled: number;                // 0 | 1 — grants ITR tab without admin role
   books_paid_enabled: number;         // 0 | 1 — grants TB → Statements + CMA Report (admins always have)
   require_login_otp: number;          // 0 | 1 — when 1, every login emails a fresh OTP after password check
+  otp_channel: 'email' | 'whatsapp';  // where the 2FA login code goes
   session_token: string | null;       // random token per login — single-session enforcement
   plan_expires_at: string | null;           // ISO timestamp — paid plan expiry; NULL = no paid sub
   razorpay_subscription_id: string | null;  // active Razorpay subscription ID
@@ -50,6 +51,7 @@ const stmts = {
   findById: db.prepare('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL'),
   findAnyById: db.prepare('SELECT * FROM users WHERE id = ?'),
   findByPhone: db.prepare('SELECT * FROM users WHERE phone = ? AND deleted_at IS NULL'),
+  findAnyByPhone: db.prepare('SELECT * FROM users WHERE phone = ? ORDER BY deleted_at IS NOT NULL LIMIT 1'),
   findByGoogleId: db.prepare('SELECT * FROM users WHERE google_id = ? AND deleted_at IS NULL'),
   findByExternalId: db.prepare('SELECT * FROM users WHERE external_id = ? AND deleted_at IS NULL'),
   findDeleted: db.prepare(`
@@ -374,6 +376,16 @@ export const userRepo = {
     stmts.setPhone.run(normalizePhone(phone), userId);
   },
 
+  /** Owner of a mobile number, closed accounts included — a closed
+   *  account keeps its number so it can't be reused for a fresh trial. */
+  findAnyByPhone(phone: string): UserRow | undefined {
+    return stmts.findAnyByPhone.get(normalizePhone(phone)) as UserRow | undefined;
+  },
+
+  setOtpChannel(userId: string, channel: 'email' | 'whatsapp'): void {
+    db.prepare("UPDATE users SET otp_channel = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?").run(channel, userId);
+  },
+
   /**
    * Creates a phone-only user using a synthetic `<digits>@phone.local` email
    * placeholder so the `email NOT NULL` constraint stays intact. Login skips
@@ -472,15 +484,20 @@ export const userRepo = {
 };
 
 /**
- * Phone normalizer: strip all non-digit characters except a leading `+`.
- * Keeps the representation consistent so `9999999999`, `+91 99999 99999`,
- * and `(999) 999-9999` all hit the same row.
+ * Phone normalizer: Indian mobiles are stored as the bare 10 digits, so
+ * `9999999999`, `+91 99999 99999`, `919999999999` and `09999999999` all
+ * hit the same row. Anything else is returned as plain digits.
  */
 export function normalizePhone(raw: string): string {
-  const trimmed = raw.trim();
-  const hasPlus = trimmed.startsWith('+');
-  const digits = trimmed.replace(/\D/g, '');
-  return hasPlus ? `+${digits}` : digits;
+  const digits = raw.trim().replace(/\D/g, '');
+  if (digits.length === 12 && digits.startsWith('91')) return digits.slice(2);
+  if (digits.length === 11 && digits.startsWith('0')) return digits.slice(1);
+  return digits;
+}
+
+/** 10 digits starting 6-9, after normalizePhone. */
+export function isValidIndianMobile(phone: string): boolean {
+  return /^[6-9]\d{9}$/.test(phone);
 }
 
 /** Kept when an account is closed: the billing and quota ledger. */

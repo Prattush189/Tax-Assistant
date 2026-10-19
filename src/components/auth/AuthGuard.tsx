@@ -4,6 +4,7 @@ import { LoginPage } from './LoginPage';
 import { SignupPage } from './SignupPage';
 import { VerifyEmailPage } from './VerifyEmailPage';
 import { ForgotPasswordPage } from './ForgotPasswordPage';
+import { VerifyPhonePage } from './VerifyPhonePage';
 import { LoadingAnimation } from '../ui/LoadingAnimation';
 
 interface AuthGuardProps {
@@ -13,7 +14,7 @@ interface AuthGuardProps {
 type AuthView = 'login' | 'signup' | 'verify' | 'forgot';
 
 export function AuthGuard({ children }: AuthGuardProps) {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, user } = useAuth();
   const [authView, setAuthView] = useState<AuthView>('login');
   const [pendingEmail, setPendingEmail] = useState('');
 
@@ -75,6 +76,11 @@ export function AuthGuard({ children }: AuthGuardProps) {
         }}
       />
     );
+  }
+
+  // Signed in but no verified mobile yet — nothing else until it's done.
+  if (user?.needs_phone) {
+    return <VerifyPhonePage />;
   }
 
   return <>{children}</>;

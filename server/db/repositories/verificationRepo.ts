@@ -16,7 +16,7 @@ import db from '../index.js';
  *   5. After 5 failed attempts the route treats the code as expired.
  */
 
-export type VerificationPurpose = 'signup' | 'resend' | 'reset' | 'login';
+export type VerificationPurpose = 'signup' | 'resend' | 'reset' | 'login' | 'phone';
 
 export interface VerificationCodeRow {
   id: string;
@@ -27,11 +27,13 @@ export interface VerificationCodeRow {
   expires_at: string;
   consumed_at: string | null;
   created_at: string;
+  /** For 'phone' codes: the 10-digit mobile the code was sent to. */
+  target: string | null;
 }
 
 const stmts = {
   create: db.prepare(
-    "INSERT INTO email_verification_codes (id, user_id, code_hash, purpose, expires_at) VALUES (?, ?, ?, ?, datetime('now', '+5 hours', '+30 minutes', '+' || ? || ' seconds'))"
+    "INSERT INTO email_verification_codes (id, user_id, code_hash, purpose, expires_at, target) VALUES (?, ?, ?, ?, datetime('now', '+5 hours', '+30 minutes', '+' || ? || ' seconds'), ?)"
   ),
   findActive: db.prepare(
     "SELECT * FROM email_verification_codes WHERE user_id = ? AND purpose = ? AND consumed_at IS NULL AND expires_at > datetime('now', '+5 hours', '+30 minutes') ORDER BY created_at DESC LIMIT 1"
@@ -45,6 +47,9 @@ const stmts = {
   latestCreatedAt: db.prepare(
     'SELECT MAX(created_at) as t FROM email_verification_codes WHERE user_id = ?'
   ),
+  countSince: db.prepare(
+    "SELECT COUNT(*) AS n FROM email_verification_codes WHERE user_id = ? AND purpose = ? AND created_at > datetime('now', '+5 hours', '+30 minutes', '-' || ? || ' hours')"
+  ),
   deleteExpired: db.prepare(
     "DELETE FROM email_verification_codes WHERE expires_at < datetime('now', '+5 hours', '+30 minutes', '-1 day')"
   ),
@@ -56,9 +61,10 @@ export const verificationRepo = {
     purpose: VerificationPurpose,
     codeHash: string,
     ttlSeconds: number,
+    target: string | null = null,
   ): VerificationCodeRow {
     const id = crypto.randomBytes(16).toString('hex');
-    stmts.create.run(id, userId, codeHash, purpose, String(ttlSeconds));
+    stmts.create.run(id, userId, codeHash, purpose, String(ttlSeconds), target);
     return db
       .prepare('SELECT * FROM email_verification_codes WHERE id = ?')
       .get(id) as VerificationCodeRow;
@@ -83,6 +89,11 @@ export const verificationRepo = {
   latestCreatedAt(userId: string): string | null {
     const row = stmts.latestCreatedAt.get(userId) as { t: string | null };
     return row?.t ?? null;
+  },
+
+  /** How many codes of this purpose the user was sent in the last N hours (WhatsApp cost cap). */
+  countSince(userId: string, purpose: VerificationPurpose, hours: number): number {
+    return (stmts.countSince.get(userId, purpose, String(hours)) as { n: number }).n;
   },
 
   deleteExpired(): void {

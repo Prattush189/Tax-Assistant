@@ -19,6 +19,13 @@ interface User {
   /** 2FA opt-in. When true, every login emails a 6-digit OTP that the
    *  user must enter before tokens are issued. Toggled in Settings. */
   require_login_otp?: boolean;
+  /** Where 2FA login codes go. */
+  otp_channel?: 'email' | 'whatsapp';
+  /** Verified 10-digit mobile, or null. */
+  phone?: string | null;
+  /** True until a WhatsApp-verified mobile is on the account — the app
+   *  shows the VerifyPhonePage instead of the workspace. */
+  needs_phone?: boolean;
 }
 
 export interface SignupResult {
@@ -39,6 +46,8 @@ export interface LoginResult {
   requiresOtp?: boolean;
   pendingLoginToken?: string;
   emailMasked?: string;
+  /** 'whatsapp' or 'email' — where the 2FA code was sent. */
+  otpChannel?: 'email' | 'whatsapp';
   otpTtlSeconds?: number;
 }
 
@@ -56,7 +65,7 @@ interface AuthContextType {
   loginWithSso: (accessToken: string, refreshToken: string, user: User) => void;
   /** Returns `{ needsEmailVerification: true, email }` instead of setting the
    *  user — a JWT is only issued after POST /api/auth/verify-email succeeds. */
-  signup: (name: string, email: string, password: string) => Promise<SignupResult>;
+  signup: (name: string, email: string, phone: string, password: string) => Promise<SignupResult>;
   /** Called by VerifyEmailPage after the server returns tokens. */
   completeEmailVerification: (accessToken: string, refreshToken: string, user: User) => void;
   logout: () => void;
@@ -68,6 +77,7 @@ const AuthContext = createContext<AuthContextType | null>(null);
 
 const TOKEN_KEY = 'tax_access_token';
 const REFRESH_KEY = 'tax_refresh_token';
+export const PENDING_PHONE_KEY = 'tax_signup_phone';
 
 async function apiFetch(url: string, options: RequestInit = {}) {
   const res = await fetch(url, {
@@ -169,6 +179,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           requiresOtp: true,
           pendingLoginToken: data.pendingLoginToken,
           emailMasked: data.emailMasked,
+          otpChannel: data.otpChannel,
           otpTtlSeconds: data.otpTtlSeconds,
         };
       }
@@ -215,11 +226,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(ssoUser);
   }, []);
 
-  const signup = async (name: string, email: string, password: string): Promise<SignupResult> => {
+  const signup = async (name: string, email: string, phone: string, password: string): Promise<SignupResult> => {
     const data = await apiFetch('/api/auth/signup', {
       method: 'POST',
-      body: JSON.stringify({ name, email, password }),
+      body: JSON.stringify({ name, email, phone, password }),
     });
+    // Prefills the mandatory mobile-verification step after the email code.
+    try { sessionStorage.setItem(PENDING_PHONE_KEY, phone); } catch { /* storage blocked */ }
     if (data.needsEmailVerification) {
       // No tokens yet — caller routes to VerifyEmailPage
       return { needsEmailVerification: true, email: data.email ?? email.toLowerCase().trim() };

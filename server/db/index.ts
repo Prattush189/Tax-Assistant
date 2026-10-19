@@ -116,6 +116,11 @@ if (!colNames.includes('inviter_id')) {
 if (!colNames.includes('require_login_otp')) {
   db.exec("ALTER TABLE users ADD COLUMN require_login_otp INTEGER NOT NULL DEFAULT 0");
 }
+// 2026-10: where the 2FA login code goes — 'email' or 'whatsapp'.
+// WhatsApp only works once the user has a verified mobile (users.phone).
+if (!colNames.includes('otp_channel')) {
+  db.exec("ALTER TABLE users ADD COLUMN otp_channel TEXT NOT NULL DEFAULT 'email'");
+}
 // Single-session column kept for legacy migrations; the authoritative
 // store is the user_sessions table below (multi-session, up to 5
 // concurrent devices per user).
@@ -216,6 +221,12 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_email_codes_user_purpose ON email_verifi
     `);
     db.exec("CREATE INDEX IF NOT EXISTS idx_email_codes_user_purpose ON email_verification_codes(user_id, purpose, consumed_at)");
     console.log('[DB] Rebuilt email_verification_codes without legacy purpose CHECK');
+  }
+  // 2026-10: mobile-verification codes carry the number being verified,
+  // so the code can't be replayed against a different number.
+  const codeCols = (db.prepare('PRAGMA table_info(email_verification_codes)').all() as Array<{ name: string }>).map(c => c.name);
+  if (!codeCols.includes('target')) {
+    db.exec('ALTER TABLE email_verification_codes ADD COLUMN target TEXT');
   }
 }
 

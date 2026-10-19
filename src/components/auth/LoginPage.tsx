@@ -35,6 +35,7 @@ export function LoginPage({ onSwitchToSignup, onNeedsVerification, onForgotPassw
   // the user clicking "Back".
   const [pendingLoginToken, setPendingLoginToken] = useState<string | null>(null);
   const [emailMasked, setEmailMasked] = useState<string>('');
+  const [otpChannel, setOtpChannel] = useState<'email' | 'whatsapp'>('email');
   const [otpCode, setOtpCode] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -51,6 +52,7 @@ export function LoginPage({ onSwitchToSignup, onNeedsVerification, onForgotPassw
       if (result.requiresOtp && result.pendingLoginToken) {
         setPendingLoginToken(result.pendingLoginToken);
         setEmailMasked(result.emailMasked ?? '');
+        setOtpChannel(result.otpChannel ?? 'email');
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed');
@@ -142,7 +144,9 @@ export function LoginPage({ onSwitchToSignup, onNeedsVerification, onForgotPassw
             </h1>
             <p className="text-gray-500 dark:text-gray-400 mb-8">
               {pendingLoginToken
-                ? `We sent a 6-digit code to ${emailMasked || 'your email'}. It expires in 10 minutes.`
+                ? otpChannel === 'whatsapp'
+                  ? `We sent a 6-digit code on WhatsApp to ${emailMasked || 'your mobile'}. It expires in 10 minutes.`
+                  : `We sent a 6-digit code to ${emailMasked || 'your email'}. It expires in 10 minutes.`
                 : 'Sign in to your account to continue'}
             </p>
           </motion.div>
@@ -197,7 +201,7 @@ export function LoginPage({ onSwitchToSignup, onNeedsVerification, onForgotPassw
           ) : (
           <form onSubmit={handleSubmit} className="space-y-5">
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Email or phone</label>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Email or mobile number</label>
               <input
                 type="text"
                 value={identifier}
@@ -205,7 +209,7 @@ export function LoginPage({ onSwitchToSignup, onNeedsVerification, onForgotPassw
                 autoComplete="username"
                 required
                 className="w-full px-4 py-3 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 text-gray-900 dark:text-white transition-all placeholder:text-gray-400"
-                placeholder="you@example.com or 9999999999"
+                placeholder="you@example.com or 98765 43210"
               />
             </motion.div>
 

@@ -26,3 +26,6 @@ payees-labeled*.json
 # ad-hoc ledger samples (customer data)
 shakti-sample.pdf
 *-sample.pdf
+
+# Local billing exports (customer data)
+exports/

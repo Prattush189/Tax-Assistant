@@ -176,6 +176,22 @@ export function trialCheckMiddleware(req: AuthRequest, res: Response, next: Next
   next();
 }
 
+/**
+ * Mobile gate — every account needs a WhatsApp-verified mobile before it
+ * can use the app; one number per account (closed accounts keep theirs),
+ * so throwaway emails no longer buy a fresh trial. Must run AFTER
+ * authMiddleware. /api/auth stays open so the user can add the number.
+ * Admins and plugin-SSO accounts are exempt (see needsPhone in routes/auth).
+ */
+export function phoneRequiredMiddleware(req: AuthRequest, res: Response, next: NextFunction): void {
+  if (!req.user || req.user.role === 'admin') { next(); return; }
+  const fullPath = req.originalUrl.split('?')[0];
+  if (fullPath.startsWith('/api/auth')) { next(); return; }
+  const user = userRepo.findById(req.user.id);
+  if (!user || user.phone || user.external_id) { next(); return; }
+  res.status(403).json({ error: 'phone_required', phoneRequired: true });
+}
+
 // ITR access — admin only OR explicit itr_enabled grant via script.
 // Not tied to enterprise plan — ITR is not yet fully released to general users.
 export function itrAccessMiddleware(req: AuthRequest, res: Response, next: NextFunction): void {

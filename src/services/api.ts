@@ -2643,6 +2643,30 @@ export async function setRequireLoginOtp(enabled: boolean): Promise<{ success: b
   });
 }
 
+/** Where the 2FA login code goes. WhatsApp needs a verified mobile. */
+export async function setOtpChannel(channel: 'email' | 'whatsapp'): Promise<{ success: boolean; user: unknown }> {
+  return authFetch('/api/auth/settings/otp-channel', {
+    method: 'PATCH',
+    body: JSON.stringify({ channel }),
+  });
+}
+
+/** Send a 6-digit WhatsApp code to the mobile the user wants to add/change to. */
+export async function sendPhoneCode(phone: string): Promise<{ ok: boolean; phoneMasked: string; otpTtlSeconds: number }> {
+  return authFetch('/api/auth/phone/send-code', {
+    method: 'POST',
+    body: JSON.stringify({ phone }),
+  });
+}
+
+/** Confirm the WhatsApp code; on success the number is saved to the account. */
+export async function verifyPhoneCode(code: string): Promise<{ success: boolean; user: unknown }> {
+  return authFetch('/api/auth/phone/verify', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  });
+}
+
 
 /** Apply the user's current auto-tagging rules to an already-processed
  *  statement (separator-insensitive narration match → category /

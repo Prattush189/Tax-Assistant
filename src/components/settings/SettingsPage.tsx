@@ -3,7 +3,7 @@ import {
   User, Mail, Lock, Trash2, AlertTriangle, Check, Sliders, PenTool,
   CreditCard, MessageSquare, Paperclip, Lightbulb, FileText, FileSignature,
   ScrollText, Landmark, BookOpenCheck, Users, TrendingUp, Clock, Download, CheckCircle2, XCircle, Hourglass,
-  MapPin, Pencil, Building2, Loader2, Monitor, ShieldCheck,
+  MapPin, Pencil, Building2, Loader2, Monitor, ShieldCheck, Smartphone,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import {
@@ -12,6 +12,7 @@ import {
   updateAccountPassword,
   deleteAccount,
   setRequireLoginOtp,
+  setOtpChannel,
   fetchUserUsage,
   fetchUserLicense,
   fetchPaymentHistory,
@@ -28,6 +29,7 @@ import toast from 'react-hot-toast';
 import { TeamSection } from './TeamSection';
 import { StyleSection } from './StyleSection';
 import { SessionsSection } from './SessionsSection';
+import { PhoneVerifyForm } from '../auth/PhoneVerifyForm';
 import { generatePaymentReceipt, generatePaymentInvoice, type PaymentData } from '../../lib/paymentPdf';
 
 // ── types ─────────────────────────────────────────────────────────────────────
@@ -357,7 +359,11 @@ const billingLabelCls = "block text-xs font-medium text-gray-600 dark:text-gray-
 function TwoFactorToggle() {
   const { user, refreshUser } = useAuth();
   const enabled = !!user?.require_login_otp;
+  const channel = user?.otp_channel === 'whatsapp' ? 'whatsapp' : 'email';
   const [pending, setPending] = useState(false);
+  const destination = channel === 'whatsapp'
+    ? `WhatsApp (+91 ${user?.phone ?? ''})`
+    : (user?.email ?? 'your account email');
   const handleToggle = async () => {
     if (pending) return;
     setPending(true);
@@ -365,7 +371,7 @@ function TwoFactorToggle() {
       await setRequireLoginOtp(!enabled);
       await refreshUser();
       toast.success(!enabled
-        ? 'Two-factor login enabled — you\'ll get a code by email next sign-in.'
+        ? `Two-factor login enabled — you'll get a code on ${channel === 'whatsapp' ? 'WhatsApp' : 'email'} next sign-in.`
         : 'Two-factor login disabled.',
       );
     } catch (err) {
@@ -374,35 +380,120 @@ function TwoFactorToggle() {
       setPending(false);
     }
   };
+  const handleChannel = async (next: 'email' | 'whatsapp') => {
+    if (pending || next === channel) return;
+    setPending(true);
+    try {
+      await setOtpChannel(next);
+      await refreshUser();
+      toast.success(next === 'whatsapp' ? 'Login codes will come on WhatsApp.' : 'Login codes will come by email.');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update setting');
+    } finally {
+      setPending(false);
+    }
+  };
   return (
-    <div className="flex items-center justify-between gap-4">
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-gray-800 dark:text-gray-100">
-          {enabled ? 'Enabled' : 'Disabled'}
-        </p>
-        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-          {enabled
-            ? `A 6-digit code will be emailed to ${user?.email ?? 'your account email'} on every sign-in.`
-            : 'Adds an extra step to every login. Your account email will receive a one-time code.'}
-        </p>
-      </div>
-      <button
-        type="button"
-        onClick={handleToggle}
-        disabled={pending}
-        aria-pressed={enabled}
-        className={cn(
-          'relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:opacity-50 disabled:cursor-wait',
-          enabled ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-gray-700',
-        )}
-      >
-        <span
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-gray-800 dark:text-gray-100">
+            {enabled ? 'Enabled' : 'Disabled'}
+          </p>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+            {enabled
+              ? `A 6-digit code will be sent to ${destination} on every sign-in.`
+              : 'Adds an extra step to every login: a one-time code on email or WhatsApp.'}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={handleToggle}
+          disabled={pending}
+          aria-pressed={enabled}
           className={cn(
-            'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition-transform',
-            enabled ? 'translate-x-5' : 'translate-x-0',
+            'relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:opacity-50 disabled:cursor-wait',
+            enabled ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-gray-700',
           )}
-        />
-      </button>
+        >
+          <span
+            className={cn(
+              'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition-transform',
+              enabled ? 'translate-x-5' : 'translate-x-0',
+            )}
+          />
+        </button>
+      </div>
+      <div>
+        <p className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1.5">Send login codes to</p>
+        <div className="inline-flex rounded-xl border border-gray-200 dark:border-gray-700 p-1 gap-1">
+          {([
+            { id: 'email', label: 'Email', Icon: Mail, disabled: false },
+            { id: 'whatsapp', label: 'WhatsApp', Icon: Smartphone, disabled: !user?.phone },
+          ] as const).map(({ id, label, Icon, disabled }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => handleChannel(id)}
+              disabled={pending || disabled}
+              title={disabled ? 'Verify a mobile number first' : undefined}
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed',
+                channel === id
+                  ? 'bg-emerald-600 text-white'
+                  : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800',
+              )}
+            >
+              <Icon className="w-4 h-4" />
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Verified mobile: shown, and changeable via a fresh WhatsApp code.
+function MobileNumberSection() {
+  const { user, refreshUser } = useAuth();
+  const [changing, setChanging] = useState(false);
+  const done = async () => {
+    await refreshUser();
+    setChanging(false);
+    toast.success('Mobile number verified.');
+  };
+  if (user?.phone && !changing) {
+    return (
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-gray-800 dark:text-gray-100">+91 {user.phone}</p>
+          <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-0.5 flex items-center gap-1">
+            <CheckCircle2 className="w-3.5 h-3.5" /> Verified on WhatsApp — you can sign in with this number
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setChanging(true)}
+          className="text-sm font-medium text-emerald-600 dark:text-emerald-400 hover:underline shrink-0"
+        >
+          Change
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="max-w-sm">
+      <PhoneVerifyForm compact onVerified={done} />
+      {changing && (
+        <button
+          type="button"
+          onClick={() => setChanging(false)}
+          className="mt-3 text-sm text-gray-500 dark:text-gray-400 hover:underline"
+        >
+          Cancel
+        </button>
+      )}
     </div>
   );
 }
@@ -960,6 +1051,10 @@ export function SettingsPage() {
               </div>
             </Section>
 
+            <Section title="Mobile number" description="Used to sign in and, if you choose, to receive login codes on WhatsApp" icon={Smartphone}>
+              <MobileNumberSection />
+            </Section>
+
             <Section title="Change Password" description="Use a strong password with at least 8 characters" icon={Lock}>
               <div className="space-y-3">
                 <div>
@@ -995,7 +1090,7 @@ export function SettingsPage() {
 
             <Section
               title="Two-factor authentication"
-              description="Require a one-time code from your email on every sign-in. The code is sent to the email on this account."
+              description="Require a one-time code on every sign-in, sent to your email or WhatsApp."
               icon={ShieldCheck}
             >
               <TwoFactorToggle />

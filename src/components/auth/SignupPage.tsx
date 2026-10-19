@@ -22,6 +22,7 @@ export function SignupPage({ onSwitchToLogin, onNeedsVerification }: SignupPageP
   const { signup } = useAuth();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -32,6 +33,10 @@ export function SignupPage({ onSwitchToLogin, onNeedsVerification }: SignupPageP
     e.preventDefault();
     setError('');
 
+    if (!/^[6-9]\d{9}$/.test(phone)) {
+      setError('Enter a valid 10-digit Indian mobile number');
+      return;
+    }
     if (password !== confirmPassword) {
       setError('Passwords do not match');
       return;
@@ -43,7 +48,7 @@ export function SignupPage({ onSwitchToLogin, onNeedsVerification }: SignupPageP
 
     setIsSubmitting(true);
     try {
-      const result = await signup(name, email, password);
+      const result = await signup(name, email, phone, password);
       if (result.needsEmailVerification) {
         onNeedsVerification?.(result.email ?? email.toLowerCase().trim());
       }
@@ -139,6 +144,24 @@ export function SignupPage({ onSwitchToLogin, onNeedsVerification }: SignupPageP
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Email</label>
               <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required className={inputClass} placeholder="you@example.com" />
+            </motion.div>
+
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.32 }}>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Mobile number (WhatsApp)</label>
+              <div className="flex gap-2">
+                <span className="px-3 py-3 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl text-gray-600 dark:text-gray-300 font-medium">+91</span>
+                <input
+                  type="tel"
+                  inputMode="numeric"
+                  autoComplete="tel-national"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                  required
+                  className={inputClass}
+                  placeholder="98765 43210"
+                />
+              </div>
+              <p className="mt-1.5 text-xs text-gray-500 dark:text-gray-400">We'll verify it on WhatsApp after your email.</p>
             </motion.div>
 
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }}>
