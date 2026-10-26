@@ -61,7 +61,7 @@ interface ChatViewProps {
 const ATTACHMENT_LIMITS: Record<string, number> = { free: 1, pro: 3, enterprise: 5 };
 
 export function ChatView({ isPluginMode: _isPluginMode, chatManager, onNavigate }: ChatViewProps) {
-  const { messages, input, setInput, isLoading, messagesEndRef, scrollAreaRef, lastUserMsgRef, send, activeDocuments, attachDocument, detachDocument, continueResponse, referencedProfile, setReferencedProfile, injectExchange, currentChatId } = chatManager;
+  const { messages, input, setInput, isLoading, messagesEndRef, scrollAreaRef, lastUserMsgRef, send, activeDocuments, attachDocument, detachDocument, continueResponse, referencedProfile, setReferencedProfile, injectExchange, currentChatId, chatDocuments, forgetDocument } = chatManager;
   const { user } = useAuth();
   const fileUpload = useFileUpload();
   const [isDragOver, setIsDragOver] = useState(false);
@@ -501,6 +501,8 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager, onNavigate 
         onReferenceProfile={setReferencedProfile}
         onClearReference={() => setReferencedProfile(null)}
         isPro={isPro}
+        chatDocuments={chatDocuments}
+        onForgetDocument={forgetDocument}
       />
     </div>
   );

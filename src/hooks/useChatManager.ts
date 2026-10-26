@@ -6,6 +6,9 @@ import {
   fetchChatMessages,
   deleteChat as apiDeleteChat,
   updateChatTitle,
+  fetchChatDocuments,
+  forgetChatDocument,
+  ChatDocument,
   sendChatMessage,
   fetchUserUsage,
   ChatItem,
@@ -25,6 +28,9 @@ export function useChatManager() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [activeDocuments, setActiveDocuments] = useState<DocumentContext[]>([]);
+  // Documents already sent in the current chat — the server keeps these in
+  // context for every later turn.
+  const [chatDocuments, setChatDocuments] = useState<ChatDocument[]>([]);
   const [referencedProfile, setReferencedProfile] = useState<{ id: string; name: string; data: Record<string, unknown> } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
@@ -70,6 +76,27 @@ export function useChatManager() {
 
   useEffect(() => { loadChatList(); }, [loadChatList]);
 
+  const loadChatDocuments = useCallback(async (chatId: string) => {
+    try {
+      const docs = await fetchChatDocuments(chatId);
+      if (streamingChatIdRef.current === chatId) setChatDocuments(docs);
+    } catch {
+      // non-fatal — the strip just stays empty
+    }
+  }, []);
+
+  const forgetDocument = useCallback(async (docId: string) => {
+    const chatId = currentChatId;
+    if (!chatId) return;
+    setChatDocuments(prev => prev.filter(d => d.id !== docId));
+    try {
+      await forgetChatDocument(chatId, docId);
+    } catch (err) {
+      void loadChatDocuments(chatId);
+      throw err;
+    }
+  }, [currentChatId, loadChatDocuments]);
+
   const switchChat = useCallback(async (chatId: string) => {
     // Point the ref at the new chat — any ongoing stream for a *different* chat
     // becomes stale (isStale() returns true) while switching back to the same
@@ -78,6 +105,8 @@ export function useChatManager() {
     setIsLoading(false);
     setCurrentChatId(chatId);
     setActiveDocuments([]);
+    setChatDocuments([]);
+    void loadChatDocuments(chatId);
     scrollActionRef.current = 'to-bottom';
     try {
       const msgs = await fetchChatMessages(chatId);
@@ -115,6 +144,7 @@ export function useChatManager() {
     setCurrentChatId(chat.id);
     setMessages([]);
     setActiveDocuments([]);
+    setChatDocuments([]);
     return chat.id;
   }, []);
 
@@ -125,6 +155,7 @@ export function useChatManager() {
       setCurrentChatId(null);
       setMessages([]);
       setActiveDocuments([]);
+      setChatDocuments([]);
     }
   }, [currentChatId]);
 
@@ -296,10 +327,12 @@ export function useChatManager() {
         });
       }
 
-      // Clear attachments after send — the document context is now in the chat history,
-      // so we don't need to re-attach it to every subsequent message (prevents cost bloat)
+      // Clear attachments after send — the server now holds them as chat
+      // documents and re-sends them on every later turn.
       if (!isStale()) {
+        const sentDocs = activeDocuments.length > 0;
         setActiveDocuments([]);
+        if (sentDocs) void loadChatDocuments(thisChatId);
       }
 
       await loadChatList();
@@ -323,7 +356,7 @@ export function useChatManager() {
       streamingContentRef.current.delete(thisChatId); // stream complete
       if (!isStale()) setIsLoading(false);
     }
-  }, [isLoading, input, currentChatId, activeDocuments, referencedProfile, createNewChat, loadChatList]);
+  }, [isLoading, input, currentChatId, activeDocuments, referencedProfile, createNewChat, loadChatList, loadChatDocuments]);
 
   const continueResponse = useCallback(async () => {
     if (isLoading) return;
@@ -445,6 +478,7 @@ export function useChatManager() {
     setMessages([]);
     setInput('');
     setActiveDocuments([]);
+    setChatDocuments([]);
   };
 
   // Inject a synthetic user→model exchange WITHOUT calling the LLM.
@@ -464,6 +498,7 @@ export function useChatManager() {
       { role: 'user', content: userText, timestamp: new Date() },
       { role: 'model', content: modelText, timestamp: new Date() },
     ]);
+    setChatDocuments([]);
     if (chatId) {
       setCurrentChatId(chatId);
       // Fire-and-forget — sidebar refresh is a UX nicety, not a
@@ -489,6 +524,8 @@ export function useChatManager() {
     switchChat,
     deleteChatById,
     renameChat,
+    chatDocuments,
+    forgetDocument,
     activeDocuments,
     attachDocument,
     detachDocument,

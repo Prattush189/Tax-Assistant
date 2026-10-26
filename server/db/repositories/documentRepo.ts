@@ -18,9 +18,17 @@ const stmts = {
     'INSERT INTO documents (id, chat_id, message_id, filename, mime_type, size_bytes, file_uri, extracted_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
   ),
   findByChatId: db.prepare(
-    'SELECT * FROM documents WHERE chat_id = ? ORDER BY created_at DESC'
+    'SELECT * FROM documents WHERE chat_id = ? ORDER BY created_at DESC, rowid DESC'
   ),
+  // Sidebar/composer listing — skips the (possibly 40K-char) extracted text.
+  listByChatId: db.prepare(
+    'SELECT id, filename, mime_type, created_at FROM documents WHERE chat_id = ? ORDER BY created_at ASC, rowid ASC'
+  ),
+  findById: db.prepare('SELECT * FROM documents WHERE id = ?'),
+  delete: db.prepare('DELETE FROM documents WHERE id = ?'),
 };
+
+export type DocumentListItem = Pick<DocumentRow, 'id' | 'filename' | 'mime_type' | 'created_at'>;
 
 export const documentRepo = {
   create(
@@ -56,7 +64,21 @@ export const documentRepo = {
     };
   },
 
+  /** Newest first. */
   findByChatId(chatId: string): DocumentRow[] {
     return stmts.findByChatId.all(chatId) as DocumentRow[];
+  },
+
+  /** Oldest first, without extracted text. */
+  listByChatId(chatId: string): DocumentListItem[] {
+    return stmts.listByChatId.all(chatId) as DocumentListItem[];
+  },
+
+  findById(id: string): DocumentRow | undefined {
+    return stmts.findById.get(id) as DocumentRow | undefined;
+  },
+
+  delete(id: string): void {
+    stmts.delete.run(id);
   },
 };

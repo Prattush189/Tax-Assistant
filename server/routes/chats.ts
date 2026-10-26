@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { chatRepo } from '../db/repositories/chatRepo.js';
 import { messageRepo } from '../db/repositories/messageRepo.js';
+import { documentRepo } from '../db/repositories/documentRepo.js';
 import { messageReportRepo, REPORT_REASONS, type ReportReason } from '../db/repositories/messageReportRepo.js';
 import { AuthRequest } from '../types.js';
 
@@ -61,6 +62,28 @@ router.get('/:chatId/messages', (req: AuthRequest, res: Response) => {
   }
   const messages = messageRepo.findByChatId(chat.id);
   res.json(messages);
+});
+
+// GET /api/chats/:chatId/documents — documents the assistant remembers in this chat
+router.get('/:chatId/documents', (req: AuthRequest, res: Response) => {
+  const chat = chatRepo.findById(req.params.chatId);
+  if (!chat || chat.user_id !== req.user!.id) {
+    res.status(404).json({ error: 'Chat not found' });
+    return;
+  }
+  res.json(documentRepo.listByChatId(chat.id));
+});
+
+// DELETE /api/chats/:chatId/documents/:docId — stop sending a document with this chat
+router.delete('/:chatId/documents/:docId', (req: AuthRequest, res: Response) => {
+  const chat = chatRepo.findById(req.params.chatId);
+  const doc = documentRepo.findById(req.params.docId);
+  if (!chat || chat.user_id !== req.user!.id || !doc || doc.chat_id !== chat.id) {
+    res.status(404).json({ error: 'Document not found' });
+    return;
+  }
+  documentRepo.delete(doc.id);
+  res.json({ success: true });
 });
 
 // POST /api/chats/:chatId/messages/:messageId/report — flag an answer.

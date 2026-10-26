@@ -7,6 +7,7 @@ import { CiteMarkerStreamFilter, stripCiteMarkers } from '../lib/citeMarkerFilte
 import { referenceUrlsBlock } from '../lib/officialReferenceUrls.js';
 import { chatRepo } from '../db/repositories/chatRepo.js';
 import { messageRepo } from '../db/repositories/messageRepo.js';
+import { documentRepo } from '../db/repositories/documentRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { getUserLimits, getEffectivePlan } from '../lib/planLimits.js';
@@ -146,14 +147,111 @@ const ATTACHMENTS_PER_MESSAGE: Record<string, number> = {
   enterprise: 5,
 };
 
+// ── Per-chat document memory ──
+// Every attachment is stored in `documents` and re-sent at the START of each
+// turn's contents (as a user turn + short model acknowledgement, so roles
+// still alternate). Keeping it at the front leaves the prefix
+// system prompt + documents unchanged between turns, which lets Gemini's
+// implicit prefix caching bill the repeat at the cached rate.
+const MAX_STORED_DOC_CHARS = 60_000;   // one document's extracted JSON
+const MAX_CHAT_DOC_CHARS = 60_000;     // all documents re-sent per turn
+const MAX_CHAT_DOCS = 10;
+
+type FileContext = { filename: string; mimeType: string; extractedData?: unknown };
+
+/** Stores this turn's attachments; returns the names actually stored. A file
+ *  re-attached with identical content is not stored twice. */
+export function rememberChatDocuments(chatId: string, messageId: number, fileContexts: FileContext[]): string[] {
+  if (fileContexts.length === 0) return [];
+  const existing = documentRepo.findByChatId(chatId);
+  const names: string[] = [];
+  for (const fc of fileContexts) {
+    const data = fc.extractedData;
+    if (!data || typeof data !== 'object' || typeof fc.filename !== 'string') continue;
+    const json = JSON.stringify(data);
+    if (json.length > MAX_STORED_DOC_CHARS) continue;
+    const filename = fc.filename.slice(0, 255);
+    const dup = existing.some(d => d.filename === filename && d.extracted_data === json);
+    if (!dup) {
+      documentRepo.create(chatId, filename, String(fc.mimeType ?? ''), json.length, '', data as Record<string, unknown>, messageId);
+    }
+    names.push(filename);
+  }
+  return names;
+}
+
+function formatDocumentBlock(filename: string, data: any): string {
+  const parts: string[] = [`[Attached Document: ${filename}]`];
+  if (data.documentType) parts.push(`Type: ${data.documentType}`);
+  if (data.summary) parts.push(`Summary: ${data.summary}`);
+
+  // Tax-specific structured fields (only if present)
+  const taxFields: string[] = [];
+  if (data.financialYear) taxFields.push(`FY: ${data.financialYear}`);
+  if (data.employerName) taxFields.push(`Employer: ${data.employerName}`);
+  if (data.employeeName) taxFields.push(`Employee: ${data.employeeName}`);
+  if (data.pan) taxFields.push(`PAN: ${data.pan}`);
+  if (data.grossSalary) taxFields.push(`Gross Salary: ₹${data.grossSalary}`);
+  if (data.tdsDeducted) taxFields.push(`TDS: ₹${data.tdsDeducted}`);
+  if (data.deductions80C) taxFields.push(`80C: ₹${data.deductions80C}`);
+  if (data.deductions80D) taxFields.push(`80D: ₹${data.deductions80D}`);
+  if (taxFields.length > 0) parts.push(`Tax Data: ${taxFields.join(' | ')}`);
+
+  // Key points
+  if (Array.isArray(data.keyPoints) && data.keyPoints.length > 0) {
+    parts.push('Key Points:\n' + data.keyPoints.map((p: string) => `  • ${p}`).join('\n'));
+  }
+
+  // Full text excerpt
+  if (data.fullText) {
+    parts.push(`Content Extract:\n${data.fullText}`);
+  }
+  return parts.join('\n');
+}
+
+/** Leading user/model pair carrying every document in the chat, or [] when
+ *  there are none. Newest documents get the character budget first; older
+ *  ones that don't fit are named but left out. Output is oldest-first so it
+ *  only changes when a document is added or removed. */
+export function chatDocumentPreamble(chatId: string): Array<{ role: string; content: string }> {
+  const docs = documentRepo.findByChatId(chatId);
+  if (docs.length === 0) return [];
+  const kept: string[] = [];
+  const dropped: string[] = [];
+  let budget = MAX_CHAT_DOC_CHARS;
+  for (const d of docs) {
+    let data: unknown;
+    try { data = d.extracted_data ? JSON.parse(d.extracted_data) : null; } catch { data = null; }
+    if (!data || typeof data !== 'object' || kept.length >= MAX_CHAT_DOCS || budget <= 500) {
+      dropped.push(d.filename);
+      continue;
+    }
+    let block = formatDocumentBlock(d.filename, data);
+    if (block.length > budget) block = `${block.slice(0, budget)}\n[…document truncated for length]`;
+    budget -= block.length;
+    kept.push(block);
+  }
+  if (kept.length === 0) return [];
+  const note = dropped.length > 0
+    ? `\n\n(Also attached earlier but not included here for length: ${dropped.join(', ')}. If the user asks about these, say they need to re-attach them.)`
+    : '';
+  return [
+    {
+      role: 'user',
+      content: `[Documents I have attached in this conversation. Use them whenever my questions relate to them — including follow-up questions that don't name the file.]\n\n${kept.reverse().join('\n\n---\n\n')}${note}`,
+    },
+    { role: 'assistant', content: 'Noted — I have these documents and will refer to them when your questions relate to them.' },
+  ];
+}
+
 router.post('/chat', async (req: AuthRequest, res: Response) => {
   const { chatId, message, fileContext, fileContexts: rawFileContexts, profileContext, reasoningLevel: rawReasoning } = req.body;
   // Configurable thinking (Gemini 3): 'high' = Deep, anything else = Fast.
   // Defaults to Fast so ordinary chat stays snappy.
   const thinkingLevel: 'low' | 'high' = rawReasoning === 'high' ? 'high' : 'low';
   // Normalize: support both single fileContext and array fileContexts
-  const fileContexts: { filename: string; mimeType: string; extractedData?: unknown }[] =
-    rawFileContexts ?? (fileContext ? [fileContext] : []);
+  const fileContexts: FileContext[] =
+    Array.isArray(rawFileContexts) ? rawFileContexts : (fileContext ? [fileContext] : []);
 
   if (!req.user) {
     res.status(401).json({ error: 'Authentication required' });
@@ -210,7 +308,13 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
 
   // Persist user message (store first attachment for backward compat)
   const firstFile = fileContexts[0];
-  messageRepo.create(chatId, 'user', message.trim(), firstFile?.filename, firstFile?.mimeType);
+  const userMsg = messageRepo.create(chatId, 'user', message.trim(), firstFile?.filename, firstFile?.mimeType);
+
+  // Remember this turn's attachments for the rest of the chat. History is
+  // only the last few messages and stores the bare question, so without
+  // this a follow-up ("what's the penalty in clause 4?") lost the document.
+  const newDocNames = rememberChatDocuments(chatId, userMsg.id, fileContexts);
+  const docPreamble = chatDocumentPreamble(chatId);
 
   // Load history from DB — convert 'model' role to 'assistant' for OpenAI format
   const dbMessages = messageRepo.findByChatId(chatId);
@@ -226,44 +330,12 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
     history.shift();
   }
 
+  // The documents themselves ride in docPreamble (start of the conversation);
+  // here we only flag which ones arrived with this message so a vague
+  // "explain this" is answered about the new file.
   let userContent = message.trim();
-  if (fileContexts.length > 0) {
-    const contextBlocks: string[] = [];
-    for (const fc of fileContexts) {
-      const data: any = fc.extractedData ?? {};
-      if (!data || typeof data !== 'object') continue;
-
-      const parts: string[] = [`[Attached Document: ${fc.filename}]`];
-      if (data.documentType) parts.push(`Type: ${data.documentType}`);
-      if (data.summary) parts.push(`Summary: ${data.summary}`);
-
-      // Tax-specific structured fields (only if present)
-      const taxFields: string[] = [];
-      if (data.financialYear) taxFields.push(`FY: ${data.financialYear}`);
-      if (data.employerName) taxFields.push(`Employer: ${data.employerName}`);
-      if (data.employeeName) taxFields.push(`Employee: ${data.employeeName}`);
-      if (data.pan) taxFields.push(`PAN: ${data.pan}`);
-      if (data.grossSalary) taxFields.push(`Gross Salary: ₹${data.grossSalary}`);
-      if (data.tdsDeducted) taxFields.push(`TDS: ₹${data.tdsDeducted}`);
-      if (data.deductions80C) taxFields.push(`80C: ₹${data.deductions80C}`);
-      if (data.deductions80D) taxFields.push(`80D: ₹${data.deductions80D}`);
-      if (taxFields.length > 0) parts.push(`Tax Data: ${taxFields.join(' | ')}`);
-
-      // Key points
-      if (Array.isArray(data.keyPoints) && data.keyPoints.length > 0) {
-        parts.push('Key Points:\n' + data.keyPoints.map((p: string) => `  • ${p}`).join('\n'));
-      }
-
-      // Full text excerpt
-      if (data.fullText) {
-        parts.push(`Content Extract:\n${data.fullText}`);
-      }
-
-      contextBlocks.push(parts.join('\n'));
-    }
-    if (contextBlocks.length > 0) {
-      userContent = `${contextBlocks.join('\n\n---\n\n')}\n\n---\n\nUser question about the attached document(s): ${userContent}`;
-    }
+  if (newDocNames.length > 0) {
+    userContent = `User question about the newly attached document(s) (${newDocNames.join(', ')}): ${userContent}`;
   }
 
   // Profile context injection
@@ -314,7 +386,10 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
         // rates, sections, and amendments.
         const searchEnabled = true;
         let usedModel = '';
-        const historyPlain = history.map(m => ({ role: m.role as string, content: m.content as string }));
+        const historyPlain = [
+          ...docPreamble,
+          ...history.map(m => ({ role: m.role as string, content: m.content as string })),
+        ];
         let primaryFailedMidStream = false;
 
         const activeIdx = getActiveKeyIndex();

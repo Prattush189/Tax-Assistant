@@ -337,6 +337,22 @@ export async function updateChatTitle(chatId: string, title: string): Promise<vo
   });
 }
 
+/** A document the assistant keeps in context for the rest of a chat. */
+export interface ChatDocument {
+  id: string;
+  filename: string;
+  mime_type: string;
+  created_at: string;
+}
+
+export async function fetchChatDocuments(chatId: string): Promise<ChatDocument[]> {
+  return authFetch(`/api/chats/${chatId}/documents`);
+}
+
+export async function forgetChatDocument(chatId: string, docId: string): Promise<void> {
+  await authFetch(`/api/chats/${chatId}/documents/${docId}`, { method: 'DELETE' });
+}
+
 export interface ChatSearchResult extends ChatItem {
   /** Excerpt around the match in the latest matching message; null when only the title matched. */
   snippet: string | null;

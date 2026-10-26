@@ -1,10 +1,11 @@
 import { useState, useRef, useCallback, useLayoutEffect, useEffect } from 'react';
-import { ArrowUp, Paperclip, X, BookUser, Lock, BarChart3, Brain, Zap } from 'lucide-react';
+import { ArrowUp, Paperclip, X, BookUser, BookOpen, Lock, BarChart3, Brain, Zap } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { getReasoningLevel, setReasoningLevel, type ReasoningLevel } from '../../lib/chatReasoning';
 import { CHAT_ACCEPT, fileKind, fileKindLabel, FileKindIcon, unsupportedReason } from '../../lib/fileKind';
 import { UploadPhase } from '../../hooks/useFileUpload';
 import { DocumentContext } from '../../types';
+import { ChatDocument } from '../../services/api';
 import { LoadingAnimation } from '../ui/LoadingAnimation';
 import toast from 'react-hot-toast';
 
@@ -28,12 +29,16 @@ interface ChatInputProps {
   onReferenceProfile?: (profile: { id: string; name: string; data: Record<string, unknown> }) => void;
   onClearReference?: () => void;
   isPro?: boolean;
+  /** Documents sent earlier in this chat, still in the assistant's context. */
+  chatDocuments?: ChatDocument[];
+  onForgetDocument?: (docId: string) => Promise<void>;
 }
 
 export function ChatInput({
   input, isLoading, onInputChange, onSend,
   activeDocuments, onFileSelect, onDetachDocument, uploadPhase, attachmentLimit,
   profiles, referencedProfile, onReferenceProfile, onClearReference, isPro,
+  chatDocuments = [], onForgetDocument,
 }: ChatInputProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -129,6 +134,41 @@ export function ChatInput({
           multiple
           className="hidden"
         />
+
+        {/* Documents the assistant still has from earlier in this chat */}
+        {chatDocuments.length > 0 && (
+          <div className="flex items-center gap-1.5 flex-wrap mb-2 px-1 text-[11px] text-gray-500 dark:text-gray-400">
+            <span className="inline-flex items-center gap-1 mr-0.5" title="These documents are included with every question in this chat">
+              <BookOpen className="w-3.5 h-3.5" />
+              In this chat:
+            </span>
+            {chatDocuments.map(doc => {
+              const kind = fileKind(doc.filename, doc.mime_type);
+              return (
+                <span
+                  key={doc.id}
+                  className="inline-flex items-center gap-1.5 max-w-[14rem] pl-1 pr-0.5 py-0.5 rounded-lg bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700/70 text-gray-700 dark:text-gray-200"
+                >
+                  <FileKindIcon kind={kind} className="w-5 h-5" />
+                  <span className="truncate">{doc.filename}</span>
+                  {onForgetDocument && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onForgetDocument(doc.id).catch(() => toast.error('Could not remove the document.'));
+                      }}
+                      className="p-0.5 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:hover:text-gray-100 dark:hover:bg-gray-800"
+                      title="Stop using this document in this chat"
+                      aria-label={`Stop using ${doc.filename} in this chat`}
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </span>
+              );
+            })}
+          </div>
+        )}
 
         <div className="relative bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700/70 rounded-[1.25rem] shadow-[0_2px_12px_-4px_rgba(40,30,20,0.12)] dark:shadow-none focus-within:border-emerald-500/70 focus-within:shadow-[0_4px_20px_-6px_rgba(13,150,104,0.25)] transition-all">
           {/* Attachment cards */}
