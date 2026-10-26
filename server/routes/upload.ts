@@ -1,6 +1,7 @@
 // server/routes/upload.ts
 import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
+import mammoth from 'mammoth';
 // Document upload extraction runs through extractVisionWithFallback
 // (Gemini 3.1 Flash-Lite Preview → Gemini 2.5 Flash-Lite). The
 // Anthropic provider was removed from the project; Gemini handles
@@ -52,18 +53,34 @@ STRICT RULES:
 - For other documents: tax-specific fields = null, but summary/keyPoints/fullText must describe actual content.
 - NEVER return a placeholder summary like "Document uploaded". Always describe what's actually in the document.`;
 
+const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
 const ALLOWED_MIME_TYPES = [
   'application/pdf',
   'image/jpeg',
   'image/png',
   'image/webp',
+  DOCX_MIME,
 ] as const;
+
+/** Word text goes to the model verbatim — no vision call, so it can be far
+ *  longer than the 600-char vision extract. Capped so one attachment can't
+ *  blow out the prompt. */
+const DOCX_TEXT_LIMIT = 40_000;
+
+/** Some browsers (and Windows without Office installed) send .docx as
+ *  octet-stream; trust the extension in that case. Legacy .doc is binary
+ *  and mammoth can't read it, so it stays rejected. */
+function isDocx(file: { mimetype: string; originalname: string }): boolean {
+  return file.mimetype === DOCX_MIME
+    || (/\.docx$/i.test(file.originalname) && /^application\/(octet-stream|zip|x-zip-compressed)$/.test(file.mimetype));
+}
 
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
   fileFilter: (_req, file, cb) => {
-    if ((ALLOWED_MIME_TYPES as readonly string[]).includes(file.mimetype)) {
+    if ((ALLOWED_MIME_TYPES as readonly string[]).includes(file.mimetype) || isDocx(file)) {
       cb(null, true);
     } else {
       cb(new Error('INVALID_MIME_TYPE'));
@@ -98,8 +115,45 @@ router.post(
     const billingUser = actor ? getBillingUser(actor) : undefined;
     const billingUserId = billingUser?.id ?? req.user.id;
 
-    const { originalname, mimetype, size } = req.file;
+    const { originalname, size } = req.file;
+    const mimetype = isDocx(req.file) ? DOCX_MIME : req.file.mimetype;
     console.log(`[upload] Received: ${originalname} (${mimetype}, ${size} bytes)`);
+
+    if (mimetype === DOCX_MIME) {
+      let text: string;
+      try {
+        text = (await mammoth.extractRawText({ buffer: req.file.buffer })).value.replace(/\n{3,}/g, '\n\n').trim();
+      } catch (err) {
+        console.error('[upload] DOCX extraction error:', err);
+        res.status(400).json({ error: 'Could not read this Word file. Re-save it as .docx and try again.' });
+        return;
+      }
+      if (!text) {
+        res.status(400).json({ error: 'This Word file has no readable text.' });
+        return;
+      }
+      const truncated = text.length > DOCX_TEXT_LIMIT;
+      try {
+        featureUsageRepo.logWithBilling(req.user.id, billingUserId, 'attachment_upload');
+      } catch (logErr) {
+        console.error('[upload] Failed to log attachment usage:', logErr);
+      }
+      res.status(200).json({
+        success: true,
+        filename: originalname,
+        mimeType: mimetype,
+        sizeBytes: size,
+        fileUri: null,
+        extractedData: {
+          documentType: 'Word document',
+          summary: truncated
+            ? `Word document (${text.length.toLocaleString('en-IN')} characters; only the first ${DOCX_TEXT_LIMIT.toLocaleString('en-IN')} are included below).`
+            : 'Word document — full text included below.',
+          fullText: text.slice(0, DOCX_TEXT_LIMIT),
+        },
+      });
+      return;
+    }
 
     let extractedData: Record<string, unknown>;
 
@@ -158,7 +212,7 @@ router.use('/upload', (err: unknown, _req: Request, res: Response, _next: NextFu
   }
   if (err instanceof Error && err.message === 'INVALID_MIME_TYPE') {
     res.status(400).json({
-      error: 'Invalid file type. Please upload a PDF or image (JPEG, PNG, WebP).',
+      error: 'Invalid file type. Please upload a PDF, Word (.docx) or image (JPEG, PNG, WebP).',
     });
     return;
   }

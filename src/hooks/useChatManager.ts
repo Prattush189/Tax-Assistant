@@ -5,6 +5,7 @@ import {
   createChat as apiCreateChat,
   fetchChatMessages,
   deleteChat as apiDeleteChat,
+  updateChatTitle,
   sendChatMessage,
   fetchUserUsage,
   ChatItem,
@@ -126,6 +127,24 @@ export function useChatManager() {
       setActiveDocuments([]);
     }
   }, [currentChatId]);
+
+  const renameChat = useCallback(async (chatId: string, title: string) => {
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    // Optimistic: the sidebar shows the new name at once; roll back on failure.
+    let previous: string | undefined;
+    setChatList(prev => prev.map(c => {
+      if (c.id !== chatId) return c;
+      previous = c.title;
+      return { ...c, title: trimmed };
+    }));
+    try {
+      await updateChatTitle(chatId, trimmed);
+    } catch (err) {
+      setChatList(prev => prev.map(c => (c.id === chatId && previous !== undefined ? { ...c, title: previous } : c)));
+      throw err;
+    }
+  }, []);
 
   const send = useCallback(async () => {
     if (isLoading || input.trim() === '') return;
@@ -469,6 +488,7 @@ export function useChatManager() {
     createNewChat,
     switchChat,
     deleteChatById,
+    renameChat,
     activeDocuments,
     attachDocument,
     detachDocument,

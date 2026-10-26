@@ -337,6 +337,15 @@ export async function updateChatTitle(chatId: string, title: string): Promise<vo
   });
 }
 
+export interface ChatSearchResult extends ChatItem {
+  /** Excerpt around the match in the latest matching message; null when only the title matched. */
+  snippet: string | null;
+}
+
+export async function searchChats(query: string, signal?: AbortSignal): Promise<ChatSearchResult[]> {
+  return authFetch(`/api/chats/search?q=${encodeURIComponent(query)}`, { signal });
+}
+
 export async function deleteChat(chatId: string): Promise<void> {
   await authFetch(`/api/chats/${chatId}`, { method: 'DELETE' });
 }

@@ -12,6 +12,39 @@ router.get('/', (req: AuthRequest, res: Response) => {
   res.json(chats);
 });
 
+// GET /api/chats/search?q= — chats whose title or messages contain q,
+// each with a short snippet around the first hit in the latest match.
+router.get('/search', (req: AuthRequest, res: Response) => {
+  const q = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 200) : '';
+  if (q.length < 2) {
+    res.json([]);
+    return;
+  }
+  const rows = chatRepo.search(req.user!.id, q);
+  res.json(rows.map(r => ({
+    id: r.id,
+    title: r.title,
+    created_at: r.created_at,
+    updated_at: r.updated_at,
+    snippet: r.match_content ? makeSnippet(r.match_content, q) : null,
+  })));
+});
+
+function makeSnippet(content: string, q: string): string {
+  // Plain text for the sidebar: drop markdown emphasis/table/heading marks
+  // and the internal [[PDF:…]] wrappers before cutting the excerpt.
+  const flat = content
+    .replace(/\[\[\/?PDF:?[^\]]*\]\]/g, ' ')
+    .replace(/[*_`#>|]+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const at = flat.toLowerCase().indexOf(q.toLowerCase());
+  if (at < 0) return flat.slice(0, 120);
+  const start = Math.max(0, at - 40);
+  const end = Math.min(flat.length, at + q.length + 80);
+  return `${start > 0 ? '…' : ''}${flat.slice(start, end)}${end < flat.length ? '…' : ''}`;
+}
+
 // POST /api/chats — create a new chat
 router.post('/', (req: AuthRequest, res: Response) => {
   const { title } = req.body ?? {};
@@ -63,7 +96,12 @@ router.patch('/:chatId', (req: AuthRequest, res: Response) => {
     res.status(400).json({ error: 'Title is required' });
     return;
   }
-  chatRepo.updateTitle(chat.id, title.trim());
+  const trimmed = title.trim().slice(0, 120);
+  if (!trimmed) {
+    res.status(400).json({ error: 'Title is required' });
+    return;
+  }
+  chatRepo.rename(chat.id, trimmed);
   res.json({ success: true });
 });
 

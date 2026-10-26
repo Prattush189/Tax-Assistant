@@ -20,11 +20,33 @@ const stmts = {
   updateTitle: db.prepare(
     'UPDATE chats SET title = ?, updated_at = datetime(\'now\', \'+5 hours\', \'+30 minutes\') WHERE id = ?'
   ),
+  // User-initiated rename: leaves updated_at alone so the chat keeps its
+  // place in the Recent list.
+  rename: db.prepare('UPDATE chats SET title = ? WHERE id = ?'),
   updateTimestamp: db.prepare(
     'UPDATE chats SET updated_at = datetime(\'now\', \'+5 hours\', \'+30 minutes\') WHERE id = ?'
   ),
   delete: db.prepare('DELETE FROM chats WHERE id = ?'),
+  // Title or any message body matches. The correlated subquery picks the
+  // most recent matching message so the sidebar can show a snippet.
+  search: db.prepare(`
+    SELECT c.id, c.title, c.created_at, c.updated_at,
+      (SELECT m.content FROM messages m
+         WHERE m.chat_id = c.id AND m.content LIKE @pattern ESCAPE '\\'
+         ORDER BY m.id DESC LIMIT 1) AS match_content
+    FROM chats c
+    WHERE c.user_id = @userId
+      AND (c.title LIKE @pattern ESCAPE '\\'
+        OR EXISTS (SELECT 1 FROM messages m
+                     WHERE m.chat_id = c.id AND m.content LIKE @pattern ESCAPE '\\'))
+    ORDER BY c.updated_at DESC
+    LIMIT 50
+  `),
 };
+
+export interface ChatSearchRow extends Omit<ChatRow, 'user_id'> {
+  match_content: string | null;
+}
 
 export const chatRepo = {
   findByUserId(userId: string): ChatRow[] {
@@ -45,11 +67,20 @@ export const chatRepo = {
     stmts.updateTitle.run(title, id);
   },
 
+  rename(id: string, title: string): void {
+    stmts.rename.run(title, id);
+  },
+
   touchTimestamp(id: string): void {
     stmts.updateTimestamp.run(id);
   },
 
   delete(id: string): void {
     stmts.delete.run(id);
+  },
+
+  search(userId: string, query: string): ChatSearchRow[] {
+    const escaped = query.replace(/[\\%_]/g, ch => `\\${ch}`);
+    return stmts.search.all({ userId, pattern: `%${escaped}%` }) as ChatSearchRow[];
   },
 };

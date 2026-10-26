@@ -166,6 +166,7 @@ function AppContent() {
             setIsSidebarOpen(false);
           }}
           onDeleteChat={chatManager.deleteChatById}
+          onRenameChat={chatManager.renameChat}
           noticeList={noticeDrafter.notices}
           currentNoticeId={noticeDrafter.currentNoticeId}
           onNewNotice={noticeDrafter.clearDraft}

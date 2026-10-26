@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { User, FileText, Copy, Check, Flag, ChevronRight, BarChart3, Download, Loader2 } from 'lucide-react';
+import { Copy, Check, Flag, ChevronRight, BarChart3, Download, Loader2 } from 'lucide-react';
 import { Message } from '../../types';
 import { cn } from '../../lib/utils';
 import { ChartRenderer } from './ChartRenderer';
+import { fileKind, fileKindLabel, FileKindIcon } from '../../lib/fileKind';
 import toast from 'react-hot-toast';
 import { reportChatMessage, type ChatReportReason } from '../../services/api';
 
@@ -78,12 +79,14 @@ const markdownComponents = {
   ),
 };
 
+const PROSE = 'markdown-body prose max-w-none prose-sm sm:prose-base prose-gray dark:prose-invert overflow-x-auto';
+
 // A downloadable document the assistant produced on request. The model
 // wraps it in [[PDF:Title]] … [[/PDF]]; we show it inline (so the user sees
 // it) plus a button that renders it to a branded PDF via the local skill.
 const PDF_BLOCK = /\[\[PDF:([^\]\n]*)\]\]\n?([\s\S]*?)\n?\[\[\/PDF\]\]/g;
 
-function PdfDocBlock({ title, body, role }: { title: string; body: string; role: 'user' | 'model' }) {
+function PdfDocBlock({ title, body }: { title: string; body: string }) {
   const [busy, setBusy] = useState(false);
   const download = async () => {
     setBusy(true);
@@ -98,11 +101,11 @@ function PdfDocBlock({ title, body, role }: { title: string; body: string; role:
     }
   };
   return (
-    <div className="my-2 rounded-xl border border-emerald-200 dark:border-emerald-800/50 overflow-hidden">
-      <div className="flex items-center justify-between gap-2 px-3 py-2 bg-emerald-50 dark:bg-emerald-950/20 border-b border-emerald-100 dark:border-emerald-900/40">
+    <div className="my-3 rounded-xl border border-gray-200 dark:border-gray-700/70 bg-white dark:bg-gray-900 overflow-hidden shadow-sm">
+      <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-gray-100 dark:border-gray-800">
         <div className="flex items-center gap-2 min-w-0">
-          <FileText className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-          <span className="text-sm font-medium text-emerald-800 dark:text-emerald-300 truncate">{title || 'Document'}</span>
+          <FileKindIcon kind="pdf" />
+          <span className="text-sm font-medium text-gray-800 dark:text-gray-100 truncate">{title || 'Document'}</span>
         </div>
         <button
           type="button"
@@ -114,10 +117,7 @@ function PdfDocBlock({ title, body, role }: { title: string; body: string; role:
           Download PDF
         </button>
       </div>
-      <div className={cn(
-        "markdown-body prose max-w-none prose-sm sm:prose-base overflow-x-auto px-3 py-2",
-        role === 'user' ? 'prose-invert' : 'prose-gray dark:prose-invert'
-      )}>
+      <div className={cn(PROSE, 'px-4 py-3')}>
         <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{body}</Markdown>
       </div>
     </div>
@@ -126,7 +126,7 @@ function PdfDocBlock({ title, body, role }: { title: string; body: string; role:
 
 /** Render normal (non-PDF) content: chart-aware, with any stray PDF marker
  *  tokens stripped (e.g. a half-streamed `[[PDF:…` before its close). */
-function renderPlain(content: string, role: 'user' | 'model', baseKey: number) {
+function renderPlain(content: string, baseKey: number) {
   const cleaned = content
     .replace(/\[\[PDF:[^\]\n]*\]\]/g, '')
     .replace(/\[\[\/PDF\]\]/g, '');
@@ -137,28 +137,25 @@ function renderPlain(content: string, role: 'user' | 'model', baseKey: number) {
     }
     if (!part) return null;
     return (
-      <div key={`${baseKey}-${index}`} className={cn(
-        "markdown-body prose max-w-none prose-sm sm:prose-base overflow-x-auto",
-        role === 'user' ? 'prose-invert' : 'prose-gray dark:prose-invert'
-      )}>
+      <div key={`${baseKey}-${index}`} className={PROSE}>
         <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{part}</Markdown>
       </div>
     );
   });
 }
 
-function renderContent(content: string, role: 'user' | 'model') {
+function renderContent(content: string) {
   const nodes: React.ReactNode[] = [];
   let last = 0;
   let key = 0;
   PDF_BLOCK.lastIndex = 0;
   let m: RegExpExecArray | null;
   while ((m = PDF_BLOCK.exec(content)) !== null) {
-    if (m.index > last) nodes.push(...renderPlain(content.slice(last, m.index), role, key++));
-    nodes.push(<PdfDocBlock key={`pdf-${key++}`} title={m[1].trim()} body={m[2].trim()} role={role} />);
+    if (m.index > last) nodes.push(...renderPlain(content.slice(last, m.index), key++));
+    nodes.push(<PdfDocBlock key={`pdf-${key++}`} title={m[1].trim()} body={m[2].trim()} />);
     last = m.index + m[0].length;
   }
-  nodes.push(...renderPlain(content.slice(last), role, key++));
+  nodes.push(...renderPlain(content.slice(last), key++));
   return nodes;
 }
 
@@ -181,7 +178,7 @@ function StreamingWrapper({ children, isStreaming }: { children: React.ReactNode
       {children}
       {showOverlay && (
         <div
-          className="absolute bottom-0 left-0 right-0 h-10 pointer-events-none rounded-b-2xl bg-gradient-to-t from-white dark:from-gray-800 to-transparent"
+          className="absolute bottom-0 left-0 right-0 h-10 pointer-events-none bg-gradient-to-t from-gray-50 dark:from-[#0E0C0A] to-transparent"
           style={{
             opacity: isStreaming ? 1 : 0,
             transition: 'opacity 0.5s ease-out',
@@ -242,86 +239,87 @@ export function MessageBubble({ message, chatId, onContinue, isLastModel, isLoad
     }
   };
 
+  const atts = attachments ?? (attachment ? [attachment] : []);
+  const time = timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  if (role === 'user') {
+    return (
+      <div className="flex flex-col items-end gap-1.5 group/user animate-[fadeSlideIn_0.3s_ease-out]">
+        {(atts.length > 0 || message.profileRef) && (
+          <div className="flex flex-wrap justify-end gap-1.5 max-w-[85%]">
+            {atts.map((att, i) => {
+              const kind = fileKind(att.filename, att.mimeType);
+              return (
+                <div key={i} className="flex items-center gap-2 pl-1.5 pr-3 py-1.5 rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700/70 max-w-[16rem]">
+                  <FileKindIcon kind={kind} className="w-8 h-8" />
+                  <div className="min-w-0 leading-tight">
+                    <p className="text-xs font-medium text-gray-800 dark:text-gray-100 truncate">{att.filename}</p>
+                    <p className="text-[10px] text-gray-500 dark:text-gray-400">{fileKindLabel(kind)}</p>
+                  </div>
+                </div>
+              );
+            })}
+            {message.profileRef && (
+              <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700/70 text-xs text-gray-700 dark:text-gray-200">
+                <BarChart3 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                <span>Profile: {message.profileRef}</span>
+              </div>
+            )}
+          </div>
+        )}
+        <div className="max-w-[85%] min-w-0 px-4 py-2.5 rounded-[1.25rem] rounded-br-md bg-emerald-50 dark:bg-emerald-900/25 border border-emerald-100 dark:border-emerald-800/40 text-gray-900 dark:text-gray-100">
+          {renderContent(content)}
+        </div>
+        <span className="text-[10px] text-gray-400 pr-1 opacity-0 group-hover/user:opacity-100 transition-opacity select-none">{time}</span>
+      </div>
+    );
+  }
+
   return (
-    <div className={cn("flex gap-3 animate-[fadeSlideIn_0.3s_ease-out]", role === 'user' ? 'flex-row-reverse' : '')}>
-      {/* Avatar */}
-      <div className={cn(
-        "w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 mt-1",
-        role === 'user'
-          ? 'bg-emerald-600 text-white'
-          : 'bg-gray-100 dark:bg-gray-800'
-      )}>
-        {role === 'user' ? <User className="w-4 h-4" /> : <img src="/logoAI.png" alt="" className="w-5 h-5 object-contain" />}
+    <div className="flex gap-3 sm:gap-4 group/model animate-[fadeSlideIn_0.3s_ease-out]">
+      {/* Assistant mark */}
+      <div className="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700/70 shadow-sm">
+        <img src="/logoAI.png" alt="" className="w-5 h-5 object-contain" />
       </div>
 
-      <div className="max-w-[85%] min-w-0">
-        {/* Message body */}
-        <div className={cn(
-          "px-4 py-3 rounded-2xl",
-          role === 'user'
-            ? 'bg-emerald-600 text-white rounded-tr-sm'
-            : 'bg-white dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700/50 text-gray-800 dark:text-gray-200 rounded-tl-sm'
-        )}>
-          {/* Show attachments (support both single and array) */}
-          {(attachments ?? (attachment ? [attachment] : [])).map((att, i) => (
-            <div key={i} className={cn(
-              "flex items-center gap-1.5 mb-1 px-2 py-1 rounded-lg text-xs w-fit",
-              role === 'user'
-                ? "bg-white/15 text-white/90"
-                : "bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400"
-            )}>
-              <FileText className="w-3 h-3" />
-              <span className="truncate max-w-[200px]">{att.filename}</span>
-            </div>
-          ))}
-          {message.profileRef && (
-            <div className={cn(
-              "flex items-center gap-1.5 mb-1 px-2 py-1 rounded-lg text-xs w-fit",
-              role === 'user'
-                ? "bg-white/15 text-white/90"
-                : "bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400"
-            )}>
-              <BarChart3 className="w-3 h-3" />
-              <span>Profile: {message.profileRef}</span>
-            </div>
-          )}
+      <div className="flex-1 min-w-0 pt-0.5">
+        {/* Answers sit directly on the page (no card) so long tables and
+            computations get the full column width. */}
+        <div className="text-gray-800 dark:text-gray-200">
           <StreamingWrapper isStreaming={isStreaming}>
-            {renderContent(content, role)}
+            {renderContent(content)}
           </StreamingWrapper>
           {/* Grounding sources — the real citations behind the answer. */}
-          {role === 'model' && sources && sources.length > 0 && (
-            <div className="mt-2 pt-2 border-t border-gray-200/70 dark:border-gray-700/60">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Sources</p>
-              <ol className="space-y-0.5">
+          {sources && sources.length > 0 && (
+            <div className="mt-3">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1.5">Sources</p>
+              <div className="flex flex-wrap gap-1.5">
                 {sources.slice(0, 8).map((src, i) => {
                   const host = hostOf(src.url);
                   return (
-                    <li key={src.url + i} className="text-[11px] leading-snug text-gray-600 dark:text-gray-300 flex gap-1.5 min-w-0">
-                      <span className="text-gray-400 shrink-0">{i + 1}.</span>
-                      <span className="min-w-0 truncate">
+                    <span key={src.url + i} className="inline-flex items-center gap-1.5 max-w-[18rem] px-2 py-1 rounded-lg bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700/70 text-[11px] text-gray-600 dark:text-gray-300">
+                      <span className="w-4 h-4 rounded bg-gray-100 dark:bg-gray-800 text-[9px] font-semibold flex items-center justify-center shrink-0 text-gray-500">{i + 1}</span>
+                      <span className="truncate">
                         <ExternalLink href={src.url}>{src.title || host || src.url}</ExternalLink>
-                        {host && src.title && <span className="text-gray-400"> · {host}</span>}
                       </span>
-                    </li>
+                      {host && src.title && <span className="text-gray-400 shrink-0 hidden sm:inline">· {host}</span>}
+                    </span>
                   );
                 })}
-              </ol>
+              </div>
             </div>
           )}
-          <div className={cn(
-            "text-[10px] mt-2 opacity-0 hover:opacity-40 transition-opacity select-none",
-            role === 'user' ? 'text-right text-white/60' : 'text-gray-400'
-          )}>
-            {timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-          </div>
         </div>
 
-        {/* Action buttons */}
-        {role === 'model' && content.length > 0 && (
-          <div className="flex items-center gap-0.5 mt-1.5 ml-1">
+        {/* Action buttons — always shown on the latest answer, on hover for older ones */}
+        {content.length > 0 && !isStreaming && (
+          <div className={cn(
+            'flex items-center gap-0.5 mt-2 -ml-1.5 transition-opacity',
+            isLastModel || reportOpen ? 'opacity-100' : 'opacity-0 group-hover/model:opacity-100 focus-within:opacity-100',
+          )}>
             <button
               onClick={handleCopy}
-              className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-all"
+              className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-all"
               title="Copy response"
             >
               {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
@@ -361,12 +359,13 @@ export function MessageBubble({ message, chatId, onContinue, isLastModel, isLoad
                 </div>
               )}
             </div>
+            <span className="ml-1.5 text-[10px] text-gray-400 select-none">{time}</span>
           </div>
         )}
 
         {/* Continue button */}
         {truncated && (
-          <div className="mt-2 ml-1">
+          <div className="mt-2">
             <p className="text-[11px] text-gray-400 dark:text-gray-500 mb-1.5">
               This response was cut short before it finished.
             </p>
@@ -379,7 +378,6 @@ export function MessageBubble({ message, chatId, onContinue, isLastModel, isLoad
             </button>
           </div>
         )}
-
       </div>
     </div>
   );

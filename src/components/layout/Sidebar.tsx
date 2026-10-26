@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { usePreferences } from '../../hooks/usePreferences';
 import { useAuth } from '../../contexts/AuthContext';
 import { CalculatorTab, CALCULATOR_TABS } from '../calculator/CalculatorView';
+import { ChatHistoryList } from '../chat/ChatHistoryList';
 
 type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions' | 'partnership_deeds' | 'bank_statements' | 'ledger_scrutiny' | 'cma' | 'tb_bs';
 
@@ -36,6 +37,7 @@ interface SidebarProps {
   onNewChat: () => void;
   onSwitchChat: (chatId: string) => void;
   onDeleteChat: (chatId: string) => void;
+  onRenameChat?: (chatId: string, title: string) => Promise<void>;
   noticeList: NoticeItem[];
   currentNoticeId: string | null;
   onNewNotice: () => void;
@@ -134,7 +136,7 @@ function planBadgeClass(plan?: string): string {
 
 export function Sidebar({
   isOpen, onClose,
-  chatList, currentChatId, onNewChat, onSwitchChat, onDeleteChat,
+  chatList, currentChatId, onNewChat, onSwitchChat, onDeleteChat, onRenameChat,
   noticeList, currentNoticeId, onNewNotice, onSwitchNotice, onDeleteNotice,
   itrDraftList, currentItrDraftId, onNewItrDraft, onSwitchItrDraft, onDeleteItrDraft,
   boardResolutionList, currentBoardResolutionId, onNewBoardResolution, onSwitchBoardResolution, onDeleteBoardResolution,
@@ -550,47 +552,14 @@ export function Sidebar({
       {/* History */}
       <div className="flex-1 overflow-y-auto p-2">
         {activeView === 'chat' ? (
-          <>
-            <h2 className="text-[11px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider px-2 py-2">Recent</h2>
-            {chatList.length === 0 ? (
-              <p className="text-sm text-gray-400 dark:text-gray-500 px-3 py-4 text-center">No chats yet. Start one!</p>
-            ) : (
-              <div className="space-y-0.5">
-                {chatList.map((chat) => {
-                  const isActive = currentChatId === chat.id;
-                  return (
-                    <div key={chat.id} className="relative group">
-                      <button
-                        onClick={() => { onSwitchChat(chat.id); onClose(); }}
-                        className={cn(
-                          "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left transition-all pr-8",
-                          isActive
-                            ? "bg-emerald-50 dark:bg-emerald-900/15 text-emerald-700 dark:text-emerald-300"
-                            : "text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/60"
-                        )}
-                      >
-                        <MessageSquare className={cn(
-                          "w-4 h-4 shrink-0",
-                          isActive ? "text-emerald-500" : "text-gray-300 dark:text-gray-600"
-                        )} />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate">{chat.title}</p>
-                          <p className="text-[11px] text-gray-400 dark:text-gray-500">{timeAgo(chat.updated_at)}</p>
-                        </div>
-                      </button>
-                      <button
-                        onClick={(e) => handleDelete(e, chat.id)}
-                        disabled={deletingId === chat.id}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all"
-                      >
-                        <Trash2 className="w-3.5 h-3.5 text-red-500" />
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </>
+          <ChatHistoryList
+            chatList={chatList}
+            currentChatId={currentChatId}
+            deletingId={deletingId}
+            onSwitch={(id) => { onSwitchChat(id); onClose(); }}
+            onDelete={handleDelete}
+            onRename={onRenameChat}
+          />
         ) : activeView === 'notices' ? (
           <>
             <h2 className="text-[11px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider px-2 py-2">Saved Drafts</h2>

@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Upload, FileText, Loader2, ExternalLink, Landmark, Scale, FileSignature, ScrollText, Calculator, Stamp, Sparkles, Brain } from 'lucide-react';
+import { Upload, FileText, FileType2, Search, Loader2, ExternalLink, Landmark, Scale, FileSignature, ScrollText, Calculator, Stamp, Sparkles, Brain } from 'lucide-react';
+import { CHAT_ACCEPT_LABEL } from '../../lib/fileKind';
 import { useChatManager } from '../../hooks/useChatManager';
 import { useFileUpload } from '../../hooks/useFileUpload';
 import { useAuth } from '../../contexts/AuthContext';
@@ -29,6 +30,18 @@ const CATEGORY_BADGE: Record<TaxNotificationListItem['category'], string> = {
   OTHER: 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300',
 };
 
+function greeting(): string {
+  const h = new Date().getHours();
+  return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
+}
+
+const WHATS_NEW: Array<{ icon: typeof Brain; title: string; desc: string }> = [
+  { icon: Brain, title: 'Fast / Deep answers', desc: 'Pick Deep in the box below for notices, computations and complex cases.' },
+  { icon: FileType2, title: 'Word attachments', desc: 'Attach a .docx — drafts, agreements, replies — and ask about it.' },
+  { icon: Search, title: 'Search & rename chats', desc: 'Find any past answer from the sidebar (Ctrl K). Double-click a chat to rename it.' },
+  { icon: FileText, title: 'PDF export', desc: 'Ask “give me this as a PDF” to download a clean, branded document.' },
+];
+
 function formatNotificationDate(iso: string | null): string {
   if (!iso) return '';
   // YYYY-MM-DD → "30 Apr 2026"
@@ -55,6 +68,7 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager, onNavigate 
   const [profiles, setProfiles] = useState<{ id: string; name: string; data: Record<string, unknown> }[]>([]);
   const attachmentLimit = ATTACHMENT_LIMITS[user?.plan ?? 'free'] ?? 1;
   const isPro = user?.plan === 'pro' || user?.plan === 'enterprise';
+  const firstName = user?.name?.trim().split(/\s+/)[0] ?? '';
 
   // Daily-refreshed notification list. Loads once on mount; if the
   // server has never run the fetch (fresh install) the list is empty
@@ -205,11 +219,13 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager, onNavigate 
     >
       {/* Drag overlay */}
       {isDragOver && (
-        <div className="absolute inset-0 z-20 bg-emerald-50/90 dark:bg-emerald-950/80 backdrop-blur-sm flex items-center justify-center">
-          <div className="flex flex-col items-center gap-3 p-8 border-2 border-dashed border-emerald-400 dark:border-emerald-600 rounded-3xl">
-            <Upload className="w-12 h-12 text-emerald-500" />
-            <p className="text-lg font-semibold text-emerald-700 dark:text-emerald-300">Drop your document here</p>
-            <p className="text-sm text-emerald-500">PDF, JPEG, PNG, WebP, or HEIC</p>
+        <div className="absolute inset-3 z-20 rounded-3xl bg-white/85 dark:bg-[#0E0C0A]/85 backdrop-blur-md border-2 border-dashed border-emerald-400/80 dark:border-emerald-600/80 flex items-center justify-center pointer-events-none">
+          <div className="flex flex-col items-center gap-3 text-center">
+            <div className="w-14 h-14 rounded-2xl bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center">
+              <Upload className="w-7 h-7 text-emerald-600 dark:text-emerald-400" />
+            </div>
+            <p className="text-lg font-semibold text-gray-900 dark:text-white">Drop to attach</p>
+            <p className="text-sm text-gray-500 dark:text-gray-400">{CHAT_ACCEPT_LABEL} · up to 10 MB</p>
           </div>
         </div>
       )}
@@ -226,24 +242,35 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager, onNavigate 
              `min-h-full` keeps the empty / loading state balanced
              when content is short, but lets it grow naturally when
              there are many cards so all of them are scrollable. */
-          <div className="min-h-full flex flex-col items-center py-12 space-y-8">
-            <div className="flex flex-col items-center text-center max-w-2xl space-y-6">
-              <div className="w-20 h-20 rounded-2xl bg-emerald-50 dark:bg-emerald-900/20 flex items-center justify-center">
-                <img src="/logoAI.png" alt="Smartbiz AI" className="w-14 h-14 object-contain" />
+          <div className="min-h-full flex flex-col items-center pt-2 pb-10 space-y-10">
+            <div className="flex flex-col items-center text-center max-w-2xl pt-6 sm:pt-10 space-y-4">
+              <div className="relative">
+                <div className="absolute -inset-4 rounded-full bg-emerald-400/20 dark:bg-emerald-500/10 blur-2xl" aria-hidden />
+                <div className="relative w-16 h-16 rounded-2xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700/70 shadow-sm flex items-center justify-center">
+                  <img src="/logoAI.png" alt="Smartbiz AI" className="w-10 h-10 object-contain" />
+                </div>
               </div>
-              <div className="space-y-3">
-                <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white">
-                  Welcome to Smartbiz AI
-                </h2>
-                <p className="text-gray-500 dark:text-gray-400 text-base sm:text-lg">
-                  Latest GST, TDS, and Income Tax notifications — click any item for a detailed explanation.
-                </p>
-              </div>
+              <h2 className="text-3xl sm:text-4xl font-semibold tracking-tight text-gray-900 dark:text-white">
+                {greeting()}{firstName ? `, ${firstName}` : ''}
+              </h2>
+              <p className="text-gray-500 dark:text-gray-400 text-base sm:text-lg max-w-xl">
+                Ask anything on Income Tax, GST or TDS — or attach a notice, Form 16 or Word draft and ask about it.
+              </p>
             </div>
             {/* Notifications marquee — pinned to the TOP of the welcome
                column (order-first) so the live tax updates sit just below
                the nav tabs, above the welcome heading. Full chat-area width. */}
             <div className="w-full order-first">
+              {(notificationsLoading || notifications.length > 0) && (
+                <div className="flex items-center gap-2 px-1 pb-2 text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                  <span className="relative flex w-2 h-2">
+                    <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60 animate-ping" />
+                    <span className="relative inline-flex w-2 h-2 rounded-full bg-emerald-500" />
+                  </span>
+                  Latest tax updates
+                  <span className="normal-case font-normal tracking-normal text-gray-400">· click for a full explanation</span>
+                </div>
+              )}
               {notificationsLoading ? (
                 <div className="flex items-center justify-center gap-2 py-12 text-sm text-gray-500 dark:text-gray-400">
                   <Loader2 className="w-4 h-4 animate-spin" />
@@ -349,7 +376,7 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager, onNavigate 
                           handleNotificationClick(n);
                         }}
                         disabled={pendingNotificationId !== null}
-                        className="shrink-0 w-[26rem] px-4 py-2.5 bg-white dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700/50 rounded-lg text-left hover:border-emerald-400 dark:hover:border-emerald-600 hover:shadow-md transition-all group disabled:opacity-50 disabled:cursor-wait"
+                        className="shrink-0 w-[26rem] max-w-[85vw] px-4 py-2.5 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700/60 rounded-xl text-left hover:border-emerald-400 dark:hover:border-emerald-600 hover:shadow-md transition-all group disabled:opacity-50 disabled:cursor-wait"
                       >
                         <div className="flex items-center gap-3">
                           <div className="w-7 h-7 rounded-md bg-emerald-50 dark:bg-emerald-900/20 flex items-center justify-center shrink-0 group-hover:bg-emerald-100 dark:group-hover:bg-emerald-900/30 transition-colors">
@@ -402,30 +429,27 @@ export function ChatView({ isPluginMode: _isPluginMode, chatManager, onNavigate 
             </div>
 
             {/* What's new — recent upgrades, below the live notifications. */}
-            <div className="w-full max-w-2xl rounded-xl border border-emerald-200 dark:border-emerald-800/50 bg-emerald-50/60 dark:bg-emerald-900/15 px-4 py-3 text-left">
-              <div className="flex items-center gap-2 mb-2">
+            <div className="w-full max-w-4xl px-2">
+              <div className="flex items-center gap-2 mb-3">
                 <Sparkles className="w-4 h-4 text-emerald-500" />
                 <span className="text-sm font-semibold text-gray-800 dark:text-gray-100">What's new</span>
               </div>
-              <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-300">
-                <li className="flex items-start gap-2">
-                  <Brain className="w-4 h-4 text-emerald-500 mt-0.5 shrink-0" />
-                  <span>
-                    <span className="font-medium text-gray-800 dark:text-gray-100">Smarter answers.</span> Upgraded to a stronger reasoning model with live tax-law search. Use the <span className="font-medium">Fast / Deep</span> toggle in the box below — pick Deep for notices, computations, and complex cases.
-                  </span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <FileText className="w-4 h-4 text-emerald-500 mt-0.5 shrink-0" />
-                  <span>
-                    <span className="font-medium text-gray-800 dark:text-gray-100">PDF export.</span> Just ask — e.g. “give me this as a PDF” — and download a clean, branded document.
-                  </span>
-                </li>
-              </ul>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                {WHATS_NEW.map(({ icon: Icon, title, desc }) => (
+                  <div key={title} className="rounded-xl border border-gray-200 dark:border-gray-700/60 bg-white/70 dark:bg-gray-900/60 px-3.5 py-3">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Icon className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                      <span className="text-[13px] font-semibold text-gray-800 dark:text-gray-100">{title}</span>
+                    </div>
+                    <p className="text-xs leading-relaxed text-gray-500 dark:text-gray-400">{desc}</p>
+                  </div>
+                ))}
+              </div>
             </div>
             <FeaturesGuide onNavigate={onNavigate} />
           </div>
         ) : (
-          <div className="max-w-4xl mx-auto space-y-6">
+          <div className="max-w-3xl mx-auto space-y-8 pb-4">
             <AnimatePresence initial={false}>
               {messages.filter(msg => msg.role === 'user' || msg.content !== '').map((msg, idx, filtered) => {
                 const isLastUser = msg.role === 'user' &&
@@ -524,8 +548,8 @@ function FeaturesGuide({ onNavigate }: { onNavigate?: (view: string) => void }) 
               onClick={() => onNavigate?.(f.view)}
               disabled={!interactive}
               className={cn(
-                'text-left p-3.5 rounded-xl border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800/40 transition-all',
-                interactive ? 'hover:border-emerald-400 dark:hover:border-emerald-600 hover:shadow-md cursor-pointer' : 'cursor-default',
+                'group text-left p-4 rounded-2xl border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-900 transition-all',
+                interactive ? 'hover:border-emerald-400 dark:hover:border-emerald-600 hover:shadow-md hover:-translate-y-0.5 cursor-pointer' : 'cursor-default',
               )}
             >
               <div className="flex items-center gap-2.5 mb-1.5">
