@@ -171,6 +171,7 @@ function PaymentSuccessDialog({
       <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-md p-6 relative">
         <button
           onClick={onClose}
+          aria-label="Close"
           className="absolute top-4 right-4 p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
         >
           <X className="w-4 h-4" />

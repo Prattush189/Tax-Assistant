@@ -209,6 +209,8 @@ export function IncomeStep({ draft, onChange }: Props) {
                   </p>
                   <button
                     onClick={() => removeEmployer(e._uid)}
+                    aria-label="Remove employer"
+                    title="Remove employer"
                     className="text-red-500 hover:text-red-600 p-1 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
                   >
                     <Trash2 className="w-3.5 h-3.5" />

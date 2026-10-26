@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { LineChart, ChevronLeft, ChevronRight } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { BackToList } from '../ui/BackToList';
 import { CMAManager } from '../../hooks/useCMAManager';
 import {
   STEP_ORDER,
@@ -69,6 +70,7 @@ export function CMAView({ manager }: Props) {
       {/* Left rail — step navigation */}
       <aside className="hidden md:flex w-64 border-r border-gray-200 dark:border-gray-800 bg-white dark:bg-[#151210] p-4 flex-col shrink-0">
         <div className="mb-4">
+          <BackToList onClick={manager.clear} label="All CMA reports" />
           <div className="flex items-center gap-2 mb-1">
             <LineChart className="w-4 h-4 text-emerald-500" />
             <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">CMA Report</h2>
@@ -114,6 +116,7 @@ export function CMAView({ manager }: Props) {
         <div className="flex-1 overflow-y-auto p-4 md:p-6">
           <div className="max-w-3xl mx-auto w-full">
             <div className="mb-4 md:hidden">
+              <BackToList onClick={manager.clear} label="All CMA reports" />
               <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
                 Step {stepIndex + 1} of {STEP_ORDER.length}
               </p>

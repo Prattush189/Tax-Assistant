@@ -162,7 +162,7 @@ export function GenerateLicenseDialog({ onClose, onIssued }: Props) {
             <Plus className="w-4 h-4 text-emerald-600" />
             Generate License
           </h2>
-          <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-600">
+          <button type="button" onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-600">
             <X className="w-5 h-5" />
           </button>
         </div>

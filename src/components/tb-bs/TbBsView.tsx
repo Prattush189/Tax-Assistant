@@ -6,6 +6,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { FileSpreadsheet, ChevronLeft, ChevronRight } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { BackToList } from '../ui/BackToList';
 import { TbBsManager } from '../../hooks/useTbBsManager';
 import {
   STEP_ORDER, STEP_LABELS, STEP_DESCRIPTIONS,
@@ -50,6 +51,7 @@ export function TbBsView({ manager }: Props) {
     <div className="flex-1 flex flex-col md:flex-row overflow-hidden bg-gray-50 dark:bg-[#0E0C0A]">
       <aside className="hidden md:flex w-64 border-r border-gray-200 dark:border-gray-800 bg-white dark:bg-[#151210] p-4 flex-col shrink-0">
         <div className="mb-4">
+          <BackToList onClick={manager.clear} label="All statements" />
           <div className="flex items-center gap-2 mb-1">
             <FileSpreadsheet className="w-4 h-4 text-emerald-500" />
             <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">TB → Statements</h2>
@@ -91,6 +93,9 @@ export function TbBsView({ manager }: Props) {
       <div className="flex-1 flex flex-col overflow-hidden">
         <div className="flex-1 overflow-y-auto p-4 md:p-6">
           <div className="max-w-3xl mx-auto w-full">
+            <div className="md:hidden">
+              <BackToList onClick={manager.clear} label="All statements" />
+            </div>
             <div className="hidden md:block mb-5">
               <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">{STEP_LABELS[step]}</h2>
               <p className="text-sm text-gray-500 dark:text-gray-500 mt-0.5">{STEP_DESCRIPTIONS[step]}</p>

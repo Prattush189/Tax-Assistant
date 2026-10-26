@@ -113,7 +113,7 @@ export function BillingDetailsDialog({ planName, userEmail, onConfirm, onCancel 
               <p className="text-xs text-gray-500 dark:text-gray-400">For your {planName} plan invoice</p>
             </div>
           </div>
-          <button onClick={onCancel} className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+          <button onClick={onCancel} aria-label="Close" className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>

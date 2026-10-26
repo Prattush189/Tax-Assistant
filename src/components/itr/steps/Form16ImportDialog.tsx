@@ -103,6 +103,7 @@ export function Form16ImportDialog({ open, onClose, onImported }: Props) {
           <button
             onClick={onClose}
             disabled={phase === 'uploading'}
+            aria-label="Close"
             className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors disabled:opacity-30"
           >
             <X className="w-4 h-4 text-gray-400" />

@@ -21,6 +21,14 @@ export function NoticeDrafterPage({ drafter }: NoticeDrafterPageProps) {
         </div>
       </div>
 
+      {/* Below lg the preview pane (which holds the desktop error banner) is
+          hidden, so failures need their own banner here or they're silent. */}
+      {drafter.error && (
+        <div role="alert" className="lg:hidden mx-4 mt-3 px-4 py-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg shrink-0">
+          <p className="text-sm text-red-600 dark:text-red-400">{drafter.error}</p>
+        </div>
+      )}
+
       {/* Main Content */}
       <div className="flex-1 flex min-h-0">
         {/* Left: Form */}
@@ -38,7 +46,7 @@ export function NoticeDrafterPage({ drafter }: NoticeDrafterPageProps) {
         {/* Right: Preview */}
         <div className="hidden lg:flex flex-1 flex-col min-w-0">
           {drafter.error && (
-            <div className="mx-4 mt-3 px-4 py-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+            <div role="alert" className="mx-4 mt-3 px-4 py-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
               <p className="text-sm text-red-600 dark:text-red-400">{drafter.error}</p>
             </div>
           )}

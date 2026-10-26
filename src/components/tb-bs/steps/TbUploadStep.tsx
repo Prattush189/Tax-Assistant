@@ -210,7 +210,7 @@ function UploadPanel({ label, hint, upload, onUpdate }: UploadPanelProps) {
                 </p>
               </div>
             </div>
-            <button type="button" onClick={onClear} className="p-1 rounded hover:bg-emerald-100 dark:hover:bg-emerald-900/30">
+            <button type="button" onClick={onClear} aria-label="Remove file" title="Remove file" className="p-1 rounded hover:bg-emerald-100 dark:hover:bg-emerald-900/30">
               <X className="w-4 h-4 text-gray-500" />
             </button>
           </div>

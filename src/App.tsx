@@ -44,8 +44,13 @@ import { ProfileView } from './components/profile/ProfileView';
 import { TaxCalculatorProvider } from './contexts/TaxCalculatorContext';
 import type { ParentToIframeMessage } from './lib/pluginProtocol';
 import { cn } from './lib/utils';
+import { onNavigateRequest } from './lib/appNavigation';
 
 type ActiveView = 'chat' | 'calculator' | 'dashboard' | 'admin' | 'plan' | 'notices' | 'settings' | 'itr' | 'profile' | 'board_resolutions' | 'partnership_deeds' | 'bank_statements' | 'ledger_scrutiny' | 'cma' | 'tb_bs';
+
+// Every view can be restored after a reload. Access is enforced where each
+// view renders (e.g. the paid-Books redirect below for cma / tb_bs).
+const RESTORABLE_VIEWS: ActiveView[] = ['chat', 'calculator', 'dashboard', 'admin', 'plan', 'notices', 'settings', 'itr', 'profile', 'board_resolutions', 'partnership_deeds', 'bank_statements', 'ledger_scrutiny', 'cma', 'tb_bs'];
 
 /**
  * Dispatches SET_VIEW / SET_CALCULATOR_TAB / LOGOUT into local state.
@@ -89,8 +94,7 @@ function AppContent() {
   const { isPluginMode } = usePluginMode(setIsDarkMode);
   const [activeView, setActiveView] = useState<ActiveView>(() => {
     const saved = localStorage.getItem('activeView') as ActiveView | null;
-    const valid: ActiveView[] = ['chat', 'calculator', 'dashboard', 'admin', 'plan', 'notices', 'settings', 'itr', 'profile', 'board_resolutions', 'partnership_deeds', 'bank_statements', 'ledger_scrutiny'];
-    return saved && valid.includes(saved) ? saved : 'chat';
+    return saved && RESTORABLE_VIEWS.includes(saved) ? saved : 'chat';
   });
   const [calculatorTab, setCalculatorTab] = useState<CalculatorTab>('income');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -100,6 +104,12 @@ function AppContent() {
     localStorage.setItem('activeView', view);
     setActiveView(view);
   }, []);
+
+  // Deep components (ProLock, wizard upgrade links) ask for a view via
+  // requestNavigate() instead of prop-drilling navigateTo.
+  useEffect(() => onNavigateRequest((view) => {
+    if (RESTORABLE_VIEWS.includes(view as ActiveView)) navigateTo(view as ActiveView);
+  }), [navigateTo]);
 
   const chatManager = useChatManager();
   const noticeDrafter = useNoticeDrafter();

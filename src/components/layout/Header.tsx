@@ -79,6 +79,8 @@ export function Header({
         {!isPluginMode && (
           <button
             onClick={onOpenSidebar}
+            aria-label="Open menu"
+            title="Menu"
             className="lg:hidden p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl transition-colors"
           >
             <Menu className="w-5 h-5 text-gray-500 dark:text-gray-400" />
@@ -141,6 +143,8 @@ export function Header({
       <div className="flex items-center gap-1 shrink-0">
         <button
           onClick={onToggleTheme}
+          aria-label={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+          title={isDarkMode ? 'Light mode' : 'Dark mode'}
           className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl transition-colors"
         >
           {isDarkMode ? <Sun className="w-4 h-4 text-gray-400" /> : <Moon className="w-4 h-4 text-gray-500" />}

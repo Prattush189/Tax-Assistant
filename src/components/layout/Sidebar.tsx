@@ -411,6 +411,7 @@ export function Sidebar({
           </div>
           <button
             onClick={onClose}
+            aria-label="Close menu"
             className="lg:hidden p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
           >
             <X className="w-5 h-5 text-gray-400" />
@@ -609,8 +610,9 @@ export function Sidebar({
                       <button
                         onClick={(e) => handleDeleteNotice(e, notice.id)}
                         disabled={deletingId === notice.id || isGenerating}
-                        title={isGenerating ? "Can't delete while the notice is generating" : undefined}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                        title={isGenerating ? "Can't delete while the notice is generating" : 'Delete notice draft'}
+                        aria-label="Delete notice draft"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
                       >
                         <Trash2 className="w-3.5 h-3.5 text-red-500" />
                       </button>
@@ -652,7 +654,9 @@ export function Sidebar({
                       <button
                         onClick={(e) => handleDeleteProfile(e, profile.id)}
                         disabled={deletingId === profile.id}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all"
+                        title="Delete profile"
+                        aria-label="Delete profile"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all"
                       >
                         <Trash2 className="w-3.5 h-3.5 text-red-500" />
                       </button>
@@ -700,7 +704,9 @@ export function Sidebar({
                       <button
                         onClick={(e) => handleDeleteItr(e, draft.id)}
                         disabled={deletingId === draft.id}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all"
+                        title="Delete ITR draft"
+                        aria-label="Delete ITR draft"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all"
                       >
                         <Trash2 className="w-3.5 h-3.5 text-red-500" />
                       </button>
@@ -748,7 +754,9 @@ export function Sidebar({
                       <button
                         onClick={(e) => handleDeleteBoardResolution(e, draft.id)}
                         disabled={deletingId === draft.id}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all"
+                        title="Delete resolution"
+                        aria-label="Delete resolution"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all"
                       >
                         <Trash2 className="w-3.5 h-3.5 text-red-500" />
                       </button>
@@ -807,8 +815,9 @@ export function Sidebar({
                       <button
                         onClick={(e) => handleDeletePartnershipDeed(e, draft.id)}
                         disabled={deletingId === draft.id || isGenerating}
-                        title={isGenerating ? "Can't delete while the deed is generating" : undefined}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                        title={isGenerating ? "Can't delete while the deed is generating" : 'Delete deed'}
+                        aria-label="Delete deed"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
                       >
                         <Trash2 className="w-3.5 h-3.5 text-red-500" />
                       </button>
@@ -867,8 +876,9 @@ export function Sidebar({
                       <button
                         onClick={(e) => handleDeleteBankStatement(e, stmt.id)}
                         disabled={deletingId === stmt.id || isAnalyzing}
-                        title={isAnalyzing ? "Can't delete a statement while it's being analyzed" : undefined}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                        title={isAnalyzing ? "Can't delete a statement while it's being analyzed" : 'Delete statement'}
+                        aria-label="Delete statement"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
                       >
                         <Trash2 className="w-3.5 h-3.5 text-red-500" />
                       </button>
@@ -927,8 +937,9 @@ export function Sidebar({
                       <button
                         onClick={(e) => handleDeleteLedgerScrutiny(e, job.id)}
                         disabled={deletingId === job.id || isRunning}
-                        title={isRunning ? "Can't delete a running audit" : undefined}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                        title={isRunning ? "Can't delete a running audit" : 'Delete audit'}
+                        aria-label="Delete audit"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
                       >
                         <Trash2 className="w-3.5 h-3.5 text-red-500" />
                       </button>

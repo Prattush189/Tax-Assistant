@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ScrollText, ChevronRight, ChevronLeft } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { requestNavigate } from '../../lib/appNavigation';
 import { PartnershipDeedsManager } from '../../hooks/usePartnershipDeedsManager';
 import {
   PartnershipDeedDraft,
@@ -89,14 +90,8 @@ export function PartnershipDeedView({ manager }: Props) {
   const goPrev = () => { if (canGoPrev) setStep(stepOrder[stepIndex - 1]); };
   const goNext = () => { if (canGoNext) setStep(stepOrder[stepIndex + 1]); };
 
-  const handleUpgrade = () => {
-    // Navigation is handled by App-level state via the hub's outer onViewChange.
-    // We can't access it here without prop-drilling — the user sees the
-    // "View upgrade options" affordance on the error banner; clicking it
-    // would normally route to '/plan'. For now we just emit an event;
-    // wiring is handled in ReviewStep when used standalone.
-    window.location.hash = '#plan';
-  };
+  // "View upgrade options" on the review step's error banner.
+  const handleUpgrade = () => requestNavigate('plan');
 
   if (!manager.currentDraft) {
     return <NoDraftSelected manager={manager} />;

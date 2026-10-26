@@ -232,7 +232,7 @@ export function AdminDashboard() {
               <option value="week">This Week</option>
               <option value="month">This Month</option>
             </select>
-            <button onClick={loadData} disabled={loading} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors">
+            <button onClick={loadData} disabled={loading} aria-label="Refresh" title="Refresh" className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors">
               {loading ? <LoadingAnimation size="xs" /> : <RefreshCw className="w-4 h-4 text-gray-500" />}
             </button>
             {/* Self-only quota reset. Only clears the calling admin's

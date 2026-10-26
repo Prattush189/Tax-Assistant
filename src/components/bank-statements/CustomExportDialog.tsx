@@ -129,7 +129,7 @@ export function CustomExportDialog({ transactions, filenameBase, onClose }: Prop
             <Filter className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
             <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Custom export</h2>
           </div>
-          <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
+          <button type="button" onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
             <X className="w-5 h-5" />
           </button>
         </div>

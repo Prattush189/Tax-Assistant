@@ -295,7 +295,7 @@ export function NoticeForm({ onGenerate, isGenerating, usage, letterhead, onLett
           <div className="flex items-center gap-2 px-3 py-2.5 border-2 border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20 rounded-lg">
             <FileText className="w-4 h-4 text-green-500 shrink-0" />
             <span className="text-sm text-green-700 dark:text-green-400 flex-1 truncate">{noticeFile.name}</span>
-            <button type="button" onClick={handleClearUpload} className="text-green-400 hover:text-green-600 shrink-0">
+            <button type="button" onClick={handleClearUpload} aria-label="Remove uploaded notice" title="Remove" className="text-green-400 hover:text-green-600 shrink-0">
               <X className="w-4 h-4" />
             </button>
           </div>

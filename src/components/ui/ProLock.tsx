@@ -1,5 +1,6 @@
 import { Lock } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
+import { requestNavigate } from '../../lib/appNavigation';
 
 interface ProLockProps {
   requiredPlan: 'pro' | 'enterprise';
@@ -28,7 +29,7 @@ export function ProLock({ requiredPlan, children, featureName }: ProLockProps) {
           {featureName || 'This feature'} requires {planLabel} plan
         </p>
         <button
-          onClick={() => { window.location.href = '/plan'; }}
+          onClick={() => requestNavigate('plan')}
           className="px-4 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors"
         >
           Upgrade to {planLabel}

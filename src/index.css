@@ -46,6 +46,14 @@
     padding: 0;
   }
 
+  /* Keyboard focus ring for anything clickable. :focus-visible only fires
+     for keyboard navigation, so mouse clicks stay ring-free. In the base
+     layer, so a component's own outline/ring utilities still win. */
+  :where(button, a[href], [role="button"], [role="tab"], summary):focus-visible {
+    outline: 2px solid var(--color-emerald-500);
+    outline-offset: 2px;
+  }
+
   /* Global button press feedback */
   button:active:not(:disabled) {
     transform: scale(0.98);
