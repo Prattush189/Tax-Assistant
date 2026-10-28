@@ -258,6 +258,14 @@ router.post(
     res.status(400).json({ error: 'Notice type and key points are required' });
     return;
   }
+  // Wrong types used to throw deep in prompt building (e.g. a numeric
+  // noticeType hit .toLowerCase()) and crash the process.
+  if (typeof noticeType !== 'string' || typeof keyPoints !== 'string'
+    || (subType !== undefined && typeof subType !== 'string')
+    || (extractedText !== undefined && typeof extractedText !== 'string')) {
+    res.status(400).json({ error: 'Invalid notice fields' });
+    return;
+  }
 
   // Check plan limit against the BILLING (pool) user.
   const actor = userRepo.findById(req.user.id);

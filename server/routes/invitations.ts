@@ -4,20 +4,23 @@
  *   POST   /api/invitations            auth required — inviter creates
  *   GET    /api/invitations            auth required — list own invites + members
  *   DELETE /api/invitations/:id        auth required — revoke pending OR detach accepted
- *   POST   /api/invitations/accept     public — consume token, link/create user
+ *   POST   /api/invitations/accept     public — consume token, link/create user.
+ *                                       Linking an EXISTING account requires
+ *                                       being signed in as that account.
  *
  * The accept endpoint is mounted BEFORE authMiddleware so unauthenticated
  * new users can consume an invite link. `server/index.ts` handles that via
  * route ordering.
  */
-import { Router, Request, Response } from 'express';
+import { Router, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { invitationRepo, hashInviteToken, generateInviteToken, InvitationStatus } from '../db/repositories/invitationRepo.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { issueSignupLicense } from '../lib/issueLicense.js';
 import { canInvite, countSeats, SEAT_CAP } from '../lib/billing.js';
 import { mailerConfigured, sendInviteEmail } from '../lib/mailer.js';
-import { generateTokens, toUserResponse } from './auth.js';
+import { loginAndIssueTokens, toUserResponse } from './auth.js';
+import { optionalAuthMiddleware } from '../middleware/auth.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
@@ -32,7 +35,7 @@ const APP_URL = process.env.APP_URL ?? 'http://localhost:3000';
  * ------------------------------------------------------------------------ */
 export const publicInvitationRouter = Router();
 
-publicInvitationRouter.post('/accept', async (req: Request, res: Response) => {
+publicInvitationRouter.post('/accept', optionalAuthMiddleware, async (req: AuthRequest, res: Response) => {
   const { token, password, name } = req.body ?? {};
   if (typeof token !== 'string' || token.length === 0) {
     res.status(400).json({ error: 'token is required' });
@@ -60,6 +63,12 @@ publicInvitationRouter.post('/accept', async (req: Request, res: Response) => {
     return;
   }
 
+  // The inviter may have left Enterprise since sending the invite.
+  if (!canInvite(inviter)) {
+    res.status(410).json({ error: 'This team is no longer accepting members', code: 'inviter_ineligible' });
+    return;
+  }
+
   // Seat guard: reject if the pool has filled up since the invite was sent
   if (countSeats(inviter.id).total > SEAT_CAP) {
     res.status(409).json({ error: 'Seat limit reached', cap: SEAT_CAP });
@@ -70,15 +79,27 @@ publicInvitationRouter.post('/accept', async (req: Request, res: Response) => {
   let user = row.email ? userRepo.findByEmail(row.email.toLowerCase()) : undefined;
 
   if (user) {
-    // Existing user — attach the inviter
+    // Existing account — only its owner can join it to a team. The token
+    // alone isn't enough: the inviter holds it too (it's returned for
+    // phone-only / unsent invites), and used to be able to pull any
+    // account into their pool and read its name and phone. No tokens are
+    // issued here; the caller already has a session.
+    if (!req.user) {
+      res.status(401).json({
+        error: 'An account with this email already exists. Sign in to it to join the team.',
+        code: 'login_required',
+        email: user.email,
+      });
+      return;
+    }
+    if (req.user.id !== user.id) {
+      res.status(403).json({ error: 'This invitation was sent to a different account.', code: 'wrong_account' });
+      return;
+    }
     userRepo.setInviterId(user.id, inviter.id);
     invitationRepo.markAccepted(row.id, user.id);
     const fresh = userRepo.findById(user.id)!;
-    const tokens = generateTokens(fresh);
-    res.json({
-      ...tokens,
-      user: toUserResponse(fresh),
-    });
+    res.json({ success: true, user: toUserResponse(fresh) });
     return;
   }
 
@@ -103,8 +124,11 @@ publicInvitationRouter.post('/accept', async (req: Request, res: Response) => {
   const created = closed
     ? userRepo.reactivate(closed.id, { password: hashedPassword, name: name.trim(), emailVerified: true })
     : userRepo.create(row.email.toLowerCase(), hashedPassword, name.trim());
-  // Invited users skip email OTP — the inviter vouches for them
-  userRepo.markEmailVerified(created.id);
+  // Holding an EMAILED token proves the inbox, so skip email OTP. If the
+  // raw link went to the inviter instead (link_shared), it proves nothing:
+  // leave the email unverified and the user confirms it by OTP on their
+  // next password sign-in.
+  if (!row.link_shared) userRepo.markEmailVerified(created.id);
   // Issue a FREE-trial license. Enterprise-pool sharing is a
   // separate concern handled at plan-resolution time (the invitee's
   // effective plan resolves through their inviter's billing user
@@ -114,7 +138,9 @@ publicInvitationRouter.post('/accept', async (req: Request, res: Response) => {
   invitationRepo.markAccepted(row.id, created.id);
 
   const fresh = userRepo.findById(created.id)!;
-  const tokens = generateTokens(fresh);
+  // Session-backed tokens — bare generateTokens() has no sessionToken, which
+  // authMiddleware rejects, so new invitees were bounced to the login page.
+  const tokens = loginAndIssueTokens(fresh, req);
   res.status(201).json({
     ...tokens,
     user: toUserResponse(fresh),
@@ -221,6 +247,11 @@ router.post('/', async (req: AuthRequest, res: Response) => {
     emailSent = r.ok;
   }
 
+  // The raw link is returned only when the invitee won't get it by email
+  // (phone-only invite or a failed send), so the inviter can share it.
+  // Once handed out it no longer proves inbox ownership — see accept.
+  const shareLink = !emailSent;
+  if (shareLink) invitationRepo.markLinkShared(invitation.id);
   res.status(201).json({
     id: invitation.id,
     email: invitation.email,
@@ -228,9 +259,8 @@ router.post('/', async (req: AuthRequest, res: Response) => {
     status: invitation.status,
     expires_at: invitation.expires_at,
     created_at: invitation.created_at,
-    // Only surfaced on create so phone-only invites can be shared manually
-    acceptUrl,
-    token: plainToken,
+    acceptUrl: shareLink ? acceptUrl : null,
+    token: shareLink ? plainToken : null,
     emailSent,
   });
 });

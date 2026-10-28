@@ -144,6 +144,13 @@ const stmts = {
   markEmailVerified: db.prepare(
     "UPDATE users SET email_verified = 1, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
   ),
+  markEmailUnverified: db.prepare(
+    "UPDATE users SET email_verified = 0, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
+  ),
+  // See reclaimUnverifiedForOwner below.
+  reclaimUnverified: db.prepare(
+    "UPDATE users SET password = '', phone = NULL, email_verified = 1, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
+  ),
   updateSessionToken: db.prepare(
     "UPDATE users SET session_token = ?, updated_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
   ),
@@ -403,6 +410,19 @@ export const userRepo = {
 
   markEmailVerified(userId: string): void {
     stmts.markEmailVerified.run(userId);
+  },
+
+  markEmailUnverified(userId: string): void {
+    stmts.markEmailUnverified.run(userId);
+  },
+
+  /** The email's real owner has just proved it (e.g. Google sign-in) on an
+   *  account whose email was never verified. Whoever created that account
+   *  never proved owning the address, so drop the credentials they set —
+   *  password and phone (the 2FA channel) — and mark the email verified.
+   *  The caller also revokes the account's sessions. */
+  reclaimUnverifiedForOwner(userId: string): void {
+    stmts.reclaimUnverified.run(userId);
   },
 
   setInviterId(userId: string, inviterId: string): void {

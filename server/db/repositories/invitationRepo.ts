@@ -21,6 +21,8 @@ export interface InvitationRow {
   expires_at: string;
   accepted_at: string | null;
   created_at: string;
+  /** 1 when the raw link was handed to the inviter (see db/index.ts). */
+  link_shared: number;
 }
 
 export function hashInviteToken(plaintext: string): string {
@@ -48,6 +50,7 @@ const stmts = {
   revoke: db.prepare(
     "UPDATE invitations SET status = 'revoked' WHERE id = ? AND status = 'pending'"
   ),
+  markLinkShared: db.prepare('UPDATE invitations SET link_shared = 1 WHERE id = ?'),
   markAccepted: db.prepare(
     "UPDATE invitations SET status = 'accepted', accepted_user_id = ?, accepted_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?"
   ),
@@ -89,6 +92,10 @@ export const invitationRepo = {
   /** Returns true if a pending row was marked revoked. */
   revoke(id: string): boolean {
     return stmts.revoke.run(id).changes > 0;
+  },
+
+  markLinkShared(id: string): void {
+    stmts.markLinkShared.run(id);
   },
 
   markAccepted(id: string, acceptedUserId: string): void {

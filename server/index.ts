@@ -10,6 +10,9 @@ import 'dotenv/config';
 import { validateSecrets } from './lib/validateSecrets.js';
 import './db/index.js';
 import express from 'express';
+// Must load before any request is served: forwards rejected async route
+// handlers to the error handler instead of crashing the process.
+import { jsonErrorHandler, installProcessSafetyNet } from './lib/asyncErrors.js';
 
 import chatRouter from './routes/chat.js';
 import uploadRouter from './routes/upload.js';
@@ -252,6 +255,11 @@ if (process.env.NODE_ENV === 'production') {
     res.sendFile(path.join(distPath, 'index.html'));
   });
 }
+
+// Errors from any route (sync throws and, via lib/asyncErrors, rejected
+// async handlers) land here. Must be registered after every route.
+app.use(jsonErrorHandler);
+installProcessSafetyNet();
 
 app.listen(PORT, () => {
   console.log(`[API] Server running on :${PORT} (${process.env.NODE_ENV ?? 'development'})`);

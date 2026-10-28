@@ -64,7 +64,7 @@ export function TeamSection() {
       });
       setEmail('');
       setPhone('');
-      setLastCreatedUrl(created.acceptUrl);
+      setLastCreatedUrl(created.acceptUrl ?? null);
       if (created.email && created.emailSent) {
         toast.success('Invitation email sent');
       } else if (created.email && !created.emailSent) {

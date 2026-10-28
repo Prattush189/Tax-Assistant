@@ -63,7 +63,7 @@ export function generateTokens(user: { id: string; email: string; role?: string;
  * at MAX_SESSIONS_PER_USER (5) inside the repo — callers don't need
  * to handle that.
  */
-function loginAndIssueTokens(
+export function loginAndIssueTokens(
   user: { id: string; email: string; role?: string; plan?: string },
   req: Request,
 ) {
@@ -449,7 +449,17 @@ router.post('/reset-password', authLimiter, async (req: Request, res: Response) 
     userRepo.markEmailVerified(user.id);
   }
 
+  // A reset usually means the password may be known to someone else: end
+  // every existing session, including any a thief already holds.
+  userSessionRepo.deleteAllForUser(user.id);
+
   const fresh = userRepo.findById(user.id)!;
+  // With WhatsApp 2FA on, an emailed reset code alone mustn't sign anyone
+  // in — that would skip the second factor. Send them through /login.
+  if (fresh.require_login_otp === 1) {
+    res.json({ success: true, signInRequired: true });
+    return;
+  }
   const tokens = loginAndIssueTokens(fresh, req);
   res.json({
     ...tokens,
@@ -707,6 +717,13 @@ router.post('/google', authLimiter, async (req: Request, res: Response) => {
       return;
     }
 
+    // Only trust addresses Google itself has verified; linking below is
+    // keyed on the email.
+    if (payload.email_verified !== true) {
+      res.status(401).json({ error: 'Your Google account email is not verified. Verify it with Google, or sign up with email instead.' });
+      return;
+    }
+
     const { sub: googleId, email, name: googleName } = payload;
     const displayName = googleName || email.split('@')[0];
 
@@ -717,6 +734,17 @@ router.post('/google', authLimiter, async (req: Request, res: Response) => {
       // 2. Check if user exists by email → auto-link
       user = userRepo.findByEmail(email);
       if (user) {
+        if (user.email_verified !== 1) {
+          // Someone registered this address without ever verifying it —
+          // possibly to squat it before its owner arrived. Google has just
+          // proved this person owns it: take the account back from whoever
+          // set its password/phone, and end their sessions. (Before this,
+          // linking made the account verification-exempt, so the squatter's
+          // password started working on the victim's account.)
+          console.warn(`[auth/google] reclaiming unverified account ${user.id} for its verified Google owner`);
+          userRepo.reclaimUnverifiedForOwner(user.id);
+          userSessionRepo.deleteAllForUser(user.id);
+        }
         userRepo.linkGoogle(user.id, googleId!);
         user = userRepo.findById(user.id)!;
       }
@@ -824,6 +852,11 @@ router.patch('/email', authMiddleware, async (req: AuthRequest, res: Response) =
   }
 
   userRepo.updateEmail(user.id, normalizedEmail);
+  // The new address hasn't been proven yet. Without this the account kept
+  // email_verified=1 from the OLD address, letting anyone claim an address
+  // they don't own (and then have Google sign-in for it link to them).
+  // The user confirms it by OTP on their next password sign-in.
+  userRepo.markEmailUnverified(user.id);
   const updated = userRepo.findById(user.id)!;
   const tokens = loginAndIssueTokens(updated, req);
   res.json({
@@ -992,8 +1025,13 @@ router.patch('/password', authMiddleware, async (req: AuthRequest, res: Response
 
   const hashedPassword = await bcrypt.hash(newPassword, 12);
   userRepo.updatePassword(user.id, hashedPassword);
+  // Sign out every other device; this one stays signed in.
+  const keep = (req as AuthRequest & { sessionToken?: string }).sessionToken;
+  const signedOut = keep
+    ? userSessionRepo.deleteAllOtherForUser(user.id, keep)
+    : userSessionRepo.deleteAllForUser(user.id);
 
-  res.json({ success: true });
+  res.json({ success: true, otherSessionsSignedOut: signedOut });
 });
 
 // DELETE /api/auth/account (protected) — permanently delete the account

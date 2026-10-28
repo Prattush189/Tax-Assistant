@@ -4,7 +4,8 @@
  * Security model:
  *  - RAZORPAY_KEY_SECRET is server-side only; frontend never sees it.
  *  - Order verify uses HMAC-SHA256(order_id|payment_id, key_secret).
- *  - Ownership check: order ID is looked up in DB and owner confirmed before upgrade.
+ *  - Plan and owner come from the Razorpay ORDER (server-written notes), never
+ *    from the request body; an order created by another user is rejected.
  *  - Idempotent: double-verify on same order_id returns success without side effects.
  *  - Rate-limited per user.
  *
@@ -14,7 +15,6 @@
  */
 
 import { Router, Response } from 'express';
-import Razorpay from 'razorpay';
 import crypto from 'crypto';
 import { AuthRequest } from '../types.js';
 import { userRepo } from '../db/repositories/userRepo.js';
@@ -26,15 +26,9 @@ import { sendPlanWelcomeEmail, sendInvoiceEmail } from '../lib/mailer.js';
 import { issuePaymentLicense } from '../lib/issueLicense.js';
 import { fanoutEvent } from '../lib/externalWebhook.js';
 import { licenseKeyRepo } from '../db/repositories/licenseKeyRepo.js';
+import { getRazorpay, fetchOrderPurchase } from '../lib/razorpayOrders.js';
 
 const router = Router();
-
-function getRazorpay(): Razorpay {
-  const keyId     = process.env.RAZORPAY_KEY_ID;
-  const keySecret = process.env.RAZORPAY_KEY_SECRET;
-  if (!keyId || !keySecret) throw new Error('RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET not configured');
-  return new Razorpay({ key_id: keyId, key_secret: keySecret });
-}
 
 /** Fallback expiry: now + 1 year. Only yearly billing is supported. */
 function fallbackExpiry(): string {
@@ -109,7 +103,7 @@ router.post(['/create-order', '/create-subscription'], createLimiter, async (req
 // POST /api/payments/verify
 // Verifies a completed Razorpay Order payment and activates the plan.
 // ---------------------------------------------------------------------------
-router.post('/verify', verifyLimiter, (req: AuthRequest, res: Response) => {
+router.post('/verify', verifyLimiter, async (req: AuthRequest, res: Response) => {
   if (!req.user) { res.status(401).json({ error: 'Authentication required' }); return; }
 
   const body = req.body ?? {};
@@ -155,11 +149,24 @@ router.post('/verify', verifyLimiter, (req: AuthRequest, res: Response) => {
     return;
   }
 
-  // 3. Determine plan from request body
-  const { plan } = req.body ?? {};
-  if (!['pro', 'enterprise'].includes(plan)) {
-    res.status(400).json({ error: 'plan must be pro or enterprise' }); return;
+  // 3. Plan and owner come from the order itself — never from req.body.
+  //    The browser still sends `plan`, but it is ignored.
+  let purchase;
+  try {
+    purchase = await fetchOrderPurchase(razorpay_order_id);
+  } catch (err) {
+    console.error('[payments/verify] order lookup failed:', razorpay_order_id, err);
+    res.status(502).json({ error: 'Could not confirm the payment with Razorpay. Please try again in a moment.' });
+    return;
   }
+  if (!purchase) {
+    res.status(400).json({ error: 'Unknown order' }); return;
+  }
+  if (purchase.userId !== req.user.id) {
+    console.warn(`[payments/verify] order ${razorpay_order_id} belongs to ${purchase.userId}, verify called by ${req.user.id}`);
+    res.status(403).json({ error: 'This payment belongs to a different account' }); return;
+  }
+  const plan: PaidPlan = purchase.plan;
   const billing: BillingCycle = 'yearly';
 
   // 4. Activate plan
@@ -173,7 +180,7 @@ router.post('/verify', verifyLimiter, (req: AuthRequest, res: Response) => {
   );
 
   // 5. Log payment record
-  const amount = PLAN_AMOUNTS[planKey(plan as PaidPlan, billing)];
+  const amount = purchase.amount || PLAN_AMOUNTS[planKey(plan, billing)];
   let paymentRowId: string | null = null;
   try {
     const existing = paymentRepo.findByOrderId(razorpay_order_id);

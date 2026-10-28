@@ -4,6 +4,7 @@ import { ArrowLeft, Eye, EyeOff, KeyRound, Mail, RefreshCw } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext';
 import { requestPasswordReset, resetPassword } from '../../services/api';
 import { LoadingAnimation } from '../ui/LoadingAnimation';
+import toast from 'react-hot-toast';
 
 interface ForgotPasswordPageProps {
   /** Optional starting email, e.g. prefilled from the LoginPage field. */
@@ -111,6 +112,11 @@ export function ForgotPasswordPage({ initialEmail = '', onBack, onDone }: Forgot
     setIsSubmitting(true);
     try {
       const result = await resetPassword(email.trim(), code, newPassword);
+      if ('signInRequired' in result) {
+        toast.success('Password changed. Sign in to continue.');
+        onBack();
+        return;
+      }
       completeEmailVerification(result.accessToken, result.refreshToken, result.user);
       onDone();
     } catch (err) {

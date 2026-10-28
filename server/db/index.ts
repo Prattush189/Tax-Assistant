@@ -196,6 +196,17 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_profiles_billing ON profiles(billing_use
 // indexes live here for idempotency.
 db.exec("CREATE INDEX IF NOT EXISTS idx_invitations_inviter ON invitations(inviter_user_id)");
 db.exec("CREATE INDEX IF NOT EXISTS idx_invitations_status ON invitations(status)");
+
+// invitations.link_shared — 1 when the raw invite link was returned to the
+// inviter (phone-only invite, or the email failed to send). Holding the
+// token then proves nothing about owning the invited email, so a new
+// account created from it is not auto-verified.
+{
+  const invCols = (db.prepare("PRAGMA table_info(invitations)").all() as { name: string }[]).map(c => c.name);
+  if (!invCols.includes('link_shared')) {
+    db.exec("ALTER TABLE invitations ADD COLUMN link_shared INTEGER NOT NULL DEFAULT 0");
+  }
+}
 db.exec("CREATE INDEX IF NOT EXISTS idx_email_codes_user_purpose ON email_verification_codes(user_id, purpose, consumed_at)");
 
 // Drop the legacy CHECK(purpose IN ('signup','resend')) constraint on the

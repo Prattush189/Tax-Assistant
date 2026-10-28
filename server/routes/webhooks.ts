@@ -27,6 +27,7 @@ import {
 } from '../lib/mailer.js';
 import { licenseKeyRepo } from '../db/repositories/licenseKeyRepo.js';
 import { fanoutEvent } from '../lib/externalWebhook.js';
+import { fetchOrderPurchase } from '../lib/razorpayOrders.js';
 
 const router = Router();
 
@@ -36,7 +37,7 @@ function fallbackExpiry(): string {
   return d.toISOString().replace('Z', '');
 }
 
-function handleEvent(eventType: string, event: Record<string, unknown>): void {
+async function handleEvent(eventType: string, event: Record<string, unknown>): Promise<void> {
   const payload    = event.payload as Record<string, unknown> | undefined;
   const payEntity  = (payload?.payment as Record<string, unknown> | undefined)?.entity as Record<string, unknown> | undefined;
 
@@ -54,14 +55,22 @@ function handleEvent(eventType: string, event: Record<string, unknown>): void {
 
       const orderId   = payEntity.order_id as string | undefined;
       const paymentId = payEntity.id as string | undefined;
-      const notes     = (payEntity.notes ?? {}) as Record<string, string>;
-      const userId    = notes.user_id;
-      const plan      = notes.plan as PaidPlan | undefined;
-
-      if (!orderId || !paymentId || !userId || !plan) {
-        console.warn('[webhook] payment.captured — missing fields:', { orderId, paymentId, userId, plan });
+      if (!orderId || !paymentId) {
+        console.warn('[webhook] payment.captured — missing fields:', { orderId, paymentId });
         return;
       }
+
+      // Buyer and plan come from the ORDER's server-written notes. The
+      // payment's own notes are settable by the buyer from Checkout, so
+      // trusting them let a Pro payment claim Enterprise. A lookup failure
+      // throws → 500 → Razorpay retries the webhook.
+      const purchase = await fetchOrderPurchase(orderId);
+      if (!purchase) {
+        console.warn(`[webhook] payment.captured — order ${orderId} has no smartbiz plan notes; ignoring`);
+        return;
+      }
+      const userId: string = purchase.userId;
+      const plan: PaidPlan = purchase.plan;
 
       // Idempotent — skip if /verify already activated it
       const existingPayment = paymentRepo.findByOrderId(orderId);
@@ -73,8 +82,7 @@ function handleEvent(eventType: string, event: Record<string, unknown>): void {
       const expiresAt = fallbackExpiry();
       userRepo.updateSubscription(userId, orderId, 'active', plan, expiresAt);
 
-      const amountPaise = (payEntity.amount as number | undefined)
-        ?? PLAN_AMOUNTS[planKey(plan, 'yearly')];
+      const amountPaise = purchase.amount || PLAN_AMOUNTS[planKey(plan, 'yearly')];
 
       let paymentRowId: string | null = null;
       try {
@@ -154,7 +162,7 @@ function handleEvent(eventType: string, event: Record<string, unknown>): void {
 // ---------------------------------------------------------------------------
 // POST /api/webhooks/razorpay
 // ---------------------------------------------------------------------------
-router.post('/razorpay', (req: Request, res: Response) => {
+router.post('/razorpay', async (req: Request, res: Response) => {
   const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
   if (!webhookSecret) {
     console.error('[webhook] RAZORPAY_WEBHOOK_SECRET not configured');
@@ -202,7 +210,7 @@ router.post('/razorpay', (req: Request, res: Response) => {
   console.log(`[webhook] Received: ${eventType}`);
 
   try {
-    handleEvent(eventType, event);
+    await handleEvent(eventType, event);
   } catch (err) {
     console.error(`[webhook] Error handling ${eventType}:`, err);
     res.status(500).json({ error: 'Event processing failed' });

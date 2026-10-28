@@ -2169,11 +2169,15 @@ export async function requestPasswordReset(email: string): Promise<void> {
   if (!res.ok) throw new Error(data.error || 'Could not request password reset');
 }
 
+/** Tokens, or `signInRequired` when the account has WhatsApp 2FA on (the
+ *  user then signs in normally so the second factor still applies). */
+export type ResetPasswordResult = VerifyEmailResult | { success: true; signInRequired: true };
+
 export async function resetPassword(
   email: string,
   code: string,
   newPassword: string,
-): Promise<VerifyEmailResult> {
+): Promise<ResetPasswordResult> {
   const res = await fetch('/api/auth/reset-password', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -2212,8 +2216,9 @@ export interface InvitationsListResponse {
 }
 
 export interface CreatedInvitation extends InvitationListItem {
-  acceptUrl: string;
-  token: string;
+  /** Only set when the invite wasn't emailed (phone-only or send failed). */
+  acceptUrl: string | null;
+  token: string | null;
   emailSent: boolean;
 }
 
@@ -2235,18 +2240,29 @@ export async function revokeInvitation(id: string): Promise<{ action: 'revoked' 
   return authFetch(`/api/invitations/${id}`, { method: 'DELETE' });
 }
 
+/** New account: tokens + user. Existing account (caller signed in as it): user only. */
+export type AcceptInvitationResult = Partial<Pick<VerifyEmailResult, 'accessToken' | 'refreshToken'>> & Pick<VerifyEmailResult, 'user'>;
+
+export class InviteAcceptError extends Error {
+  constructor(message: string, readonly code?: string, readonly email?: string) {
+    super(message);
+  }
+}
+
 export async function acceptInvitation(input: {
   token: string;
   password?: string;
   name?: string;
-}): Promise<VerifyEmailResult> {
+}): Promise<AcceptInvitationResult> {
+  // Sends the session if there is one: joining an EXISTING account to a
+  // team requires being signed in as that account.
   const res = await fetch('/api/invitations/accept', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
     body: JSON.stringify(input),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'Failed to accept invitation');
+  if (!res.ok) throw new InviteAcceptError(data.error || 'Failed to accept invitation', data.code, data.email);
   return data;
 }
 

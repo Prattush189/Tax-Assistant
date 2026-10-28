@@ -311,30 +311,55 @@ function AppContent() {
  * so an unauthenticated invitee can land directly on the accept flow. After
  * accepting, we clear the query string so refresh doesn't re-fire.
  */
-function useInviteToken(): { token: string | null; clear: () => void } {
+const PENDING_INVITE_KEY = 'pendingInvite';
+
+function readPendingInvite(): string | null {
+  try { return sessionStorage.getItem(PENDING_INVITE_KEY); } catch { return null; }
+}
+
+function useInviteToken(): { token: string | null; clear: () => void; deferUntilSignedIn: () => void } {
   const [token, setToken] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null;
     return new URLSearchParams(window.location.search).get('invite');
   });
-  const clear = useCallback(() => {
+  // Bumped when the held (sessionStorage) invite changes, so App re-reads it.
+  const [, setVersion] = useState(0);
+  const clearUrl = () => {
     if (typeof window !== 'undefined') {
       window.history.replaceState({}, '', window.location.pathname);
     }
+  };
+  const clear = useCallback(() => {
+    clearUrl();
+    try { sessionStorage.removeItem(PENDING_INVITE_KEY); } catch { /* ignore */ }
     setToken(null);
+    setVersion(v => v + 1);
   }, []);
-  return { token, clear };
+  // Invite for an existing account while signed out: hold the token for
+  // this tab, show sign-in, and resume once authenticated (see App).
+  const deferUntilSignedIn = useCallback(() => {
+    if (token) {
+      try { sessionStorage.setItem(PENDING_INVITE_KEY, token); } catch { /* ignore */ }
+    }
+    clearUrl();
+    setToken(null);
+    setVersion(v => v + 1);
+  }, [token]);
+  return { token, clear, deferUntilSignedIn };
 }
 
 export default function App() {
   const { setIsDarkMode } = useTheme();
   const { isPluginMode } = usePluginMode(setIsDarkMode);
   const invite = useInviteToken();
+  const { isAuthenticated } = useAuth();
 
   // Invite accept flow supersedes both plugin auth AND the normal AuthGuard.
   // Anyone landing with `?invite=<token>` sees the accept page until they
-  // consume the token.
-  if (invite.token) {
-    return <AcceptInvitePage token={invite.token} onDone={invite.clear} />;
+  // consume the token; a held invite resumes right after sign-in.
+  const inviteToken = invite.token ?? (isAuthenticated ? readPendingInvite() : null);
+  if (inviteToken) {
+    return <AcceptInvitePage token={inviteToken} onDone={invite.clear} onNeedSignIn={invite.deferUntilSignedIn} />;
   }
 
   if (isPluginMode) {
