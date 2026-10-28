@@ -6,6 +6,7 @@ import {
   fetchChatMessages,
   deleteChat as apiDeleteChat,
   updateChatTitle,
+  setChatPinned,
   fetchChatDocuments,
   forgetChatDocument,
   ChatDocument,
@@ -19,6 +20,16 @@ import { getReasoningLevel } from '../lib/chatReasoning';
 
 const isPluginMode = typeof window !== 'undefined'
   && new URLSearchParams(window.location.search).get('plugin') === 'true';
+
+/** Pinned chats first (most recently pinned on top), then most recent activity — same order as GET /api/chats. */
+function sortChats(list: ChatItem[]): ChatItem[] {
+  return [...list].sort((a, b) => {
+    const ap = a.pinned_at ?? '', bp = b.pinned_at ?? '';
+    if (!!ap !== !!bp) return ap ? -1 : 1;
+    if (ap !== bp) return ap < bp ? 1 : -1;
+    return a.updated_at < b.updated_at ? 1 : a.updated_at > b.updated_at ? -1 : 0;
+  });
+}
 
 export function useChatManager() {
   const { isAuthenticated } = useAuth();
@@ -176,6 +187,23 @@ export function useChatManager() {
       throw err;
     }
   }, []);
+
+  const togglePin = useCallback(async (chatId: string) => {
+    const target = chatList.find(c => c.id === chatId);
+    if (!target) return;
+    const pin = !target.pinned_at;
+    // Optimistic, in the server's order: pinned first (newest pin on top),
+    // then by activity. Rolled back if the request fails.
+    const istNow = new Date(Date.now() + 5.5 * 3600_000).toISOString().replace('T', ' ').slice(0, 19);
+    setChatList(prev => sortChats(prev.map(c => (c.id === chatId ? { ...c, pinned_at: pin ? istNow : null } : c))));
+    try {
+      const updated = await setChatPinned(chatId, pin);
+      setChatList(prev => sortChats(prev.map(c => (c.id === chatId ? { ...c, pinned_at: updated.pinned_at ?? null } : c))));
+    } catch (err) {
+      setChatList(prev => sortChats(prev.map(c => (c.id === chatId ? { ...c, pinned_at: target.pinned_at ?? null } : c))));
+      throw err;
+    }
+  }, [chatList]);
 
   const send = useCallback(async () => {
     if (isLoading || input.trim() === '') return;
@@ -524,6 +552,7 @@ export function useChatManager() {
     switchChat,
     deleteChatById,
     renameChat,
+    togglePin,
     chatDocuments,
     forgetDocument,
     activeDocuments,

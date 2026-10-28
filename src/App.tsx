@@ -177,6 +177,7 @@ function AppContent() {
           }}
           onDeleteChat={chatManager.deleteChatById}
           onRenameChat={chatManager.renameChat}
+          onTogglePinChat={chatManager.togglePin}
           noticeList={noticeDrafter.notices}
           currentNoticeId={noticeDrafter.currentNoticeId}
           onNewNotice={noticeDrafter.clearDraft}

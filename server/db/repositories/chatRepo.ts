@@ -7,11 +7,14 @@ export interface ChatRow {
   title: string;
   created_at: string;
   updated_at: string;
+  /** IST timestamp when pinned; null when not pinned. */
+  pinned_at: string | null;
 }
 
 const stmts = {
   findByUserId: db.prepare(
-    'SELECT * FROM chats WHERE user_id = ? ORDER BY updated_at DESC'
+    // Pinned first (most recently pinned on top), then by activity.
+    'SELECT * FROM chats WHERE user_id = ? ORDER BY pinned_at IS NULL, pinned_at DESC, updated_at DESC'
   ),
   findById: db.prepare('SELECT * FROM chats WHERE id = ?'),
   create: db.prepare(
@@ -26,11 +29,15 @@ const stmts = {
   updateTimestamp: db.prepare(
     'UPDATE chats SET updated_at = datetime(\'now\', \'+5 hours\', \'+30 minutes\') WHERE id = ?'
   ),
+  // Like rename, pinning leaves updated_at alone.
+  setPinned: db.prepare(
+    "UPDATE chats SET pinned_at = CASE WHEN @pinned = 1 THEN datetime('now', '+5 hours', '+30 minutes') ELSE NULL END WHERE id = @id"
+  ),
   delete: db.prepare('DELETE FROM chats WHERE id = ?'),
   // Title or any message body matches. The correlated subquery picks the
   // most recent matching message so the sidebar can show a snippet.
   search: db.prepare(`
-    SELECT c.id, c.title, c.created_at, c.updated_at,
+    SELECT c.id, c.title, c.created_at, c.updated_at, c.pinned_at,
       (SELECT m.content FROM messages m
          WHERE m.chat_id = c.id AND m.content LIKE @pattern ESCAPE '\\'
          ORDER BY m.id DESC LIMIT 1) AS match_content
@@ -69,6 +76,10 @@ export const chatRepo = {
 
   rename(id: string, title: string): void {
     stmts.rename.run(title, id);
+  },
+
+  setPinned(id: string, pinned: boolean): void {
+    stmts.setPinned.run({ id, pinned: pinned ? 1 : 0 });
   },
 
   touchTimestamp(id: string): void {

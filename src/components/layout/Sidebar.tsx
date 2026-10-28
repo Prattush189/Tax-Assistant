@@ -38,6 +38,7 @@ interface SidebarProps {
   onSwitchChat: (chatId: string) => void;
   onDeleteChat: (chatId: string) => void;
   onRenameChat?: (chatId: string, title: string) => Promise<void>;
+  onTogglePinChat?: (chatId: string) => Promise<void>;
   noticeList: NoticeItem[];
   currentNoticeId: string | null;
   onNewNotice: () => void;
@@ -136,7 +137,7 @@ function planBadgeClass(plan?: string): string {
 
 export function Sidebar({
   isOpen, onClose,
-  chatList, currentChatId, onNewChat, onSwitchChat, onDeleteChat, onRenameChat,
+  chatList, currentChatId, onNewChat, onSwitchChat, onDeleteChat, onRenameChat, onTogglePinChat,
   noticeList, currentNoticeId, onNewNotice, onSwitchNotice, onDeleteNotice,
   itrDraftList, currentItrDraftId, onNewItrDraft, onSwitchItrDraft, onDeleteItrDraft,
   boardResolutionList, currentBoardResolutionId, onNewBoardResolution, onSwitchBoardResolution, onDeleteBoardResolution,
@@ -560,6 +561,7 @@ export function Sidebar({
             onSwitch={(id) => { onSwitchChat(id); onClose(); }}
             onDelete={handleDelete}
             onRename={onRenameChat}
+            onTogglePin={onTogglePinChat}
           />
         ) : activeView === 'notices' ? (
           <>

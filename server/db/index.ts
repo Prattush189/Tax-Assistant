@@ -1193,6 +1193,16 @@ db.exec(`CREATE INDEX IF NOT EXISTS idx_format_requests_user ON format_requests(
   }
 }
 
+// chats.pinned_at — when the user pinned the chat (NULL = not pinned).
+// Pinned chats list first, most recently pinned on top. Idempotent guard so
+// existing and fresh databases match.
+{
+  const chatCols = (db.prepare("PRAGMA table_info(chats)").all() as { name: string }[]).map(c => c.name);
+  if (!chatCols.includes('pinned_at')) {
+    db.exec("ALTER TABLE chats ADD COLUMN pinned_at TEXT");
+  }
+}
+
 // message_reports — the chat "Report response" flag. Until 2026-09 the
 // button only showed a thank-you toast, so every flagged answer was lost.
 // One row per (answer, reporter); cascades with the message so a deleted

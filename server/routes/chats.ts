@@ -27,6 +27,7 @@ router.get('/search', (req: AuthRequest, res: Response) => {
     title: r.title,
     created_at: r.created_at,
     updated_at: r.updated_at,
+    pinned_at: r.pinned_at,
     snippet: r.match_content ? makeSnippet(r.match_content, q) : null,
   })));
 });
@@ -107,25 +108,36 @@ router.post('/:chatId/messages/:messageId/report', (req: AuthRequest, res: Respo
   res.json({ success: true });
 });
 
-// PATCH /api/chats/:chatId — update chat title
+// PATCH /api/chats/:chatId — rename and/or pin. Body: { title?, pinned? }.
+// Returns the updated chat.
 router.patch('/:chatId', (req: AuthRequest, res: Response) => {
   const chat = chatRepo.findById(req.params.chatId);
   if (!chat || chat.user_id !== req.user!.id) {
     res.status(404).json({ error: 'Chat not found' });
     return;
   }
-  const { title } = req.body;
-  if (!title || typeof title !== 'string') {
-    res.status(400).json({ error: 'Title is required' });
+  const { title, pinned } = req.body ?? {};
+  if (title === undefined && pinned === undefined) {
+    res.status(400).json({ error: 'Nothing to update' });
     return;
   }
-  const trimmed = title.trim().slice(0, 120);
-  if (!trimmed) {
-    res.status(400).json({ error: 'Title is required' });
+  let trimmed: string | undefined;
+  if (title !== undefined) {
+    trimmed = typeof title === 'string' ? title.trim().slice(0, 120) : '';
+    if (!trimmed) {
+      res.status(400).json({ error: 'Title is required' });
+      return;
+    }
+  }
+  if (pinned !== undefined && typeof pinned !== 'boolean') {
+    res.status(400).json({ error: 'pinned must be true or false' });
     return;
   }
-  chatRepo.rename(chat.id, trimmed);
-  res.json({ success: true });
+  if (trimmed) chatRepo.rename(chat.id, trimmed);
+  // Re-pinning an already pinned chat keeps its original pin time.
+  if (pinned !== undefined && pinned !== (chat.pinned_at !== null)) chatRepo.setPinned(chat.id, pinned);
+  const updated = chatRepo.findById(chat.id)!;
+  res.json({ id: updated.id, title: updated.title, created_at: updated.created_at, updated_at: updated.updated_at, pinned_at: updated.pinned_at });
 });
 
 // DELETE /api/chats/:chatId — delete a chat (cascades to messages + documents)

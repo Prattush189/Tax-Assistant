@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Search, X, Pencil, Trash2, Check, Loader2, MessageSquareText } from 'lucide-react';
+import { Search, X, Pencil, Trash2, Check, Loader2, MessageSquareText, Pin, PinOff } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { cn } from '../../lib/utils';
 import { ChatItem, ChatSearchResult, searchChats } from '../../services/api';
@@ -11,6 +11,7 @@ interface ChatHistoryListProps {
   onSwitch: (chatId: string) => void;
   onDelete: (e: React.MouseEvent, chatId: string) => void;
   onRename?: (chatId: string, title: string) => Promise<void>;
+  onTogglePin?: (chatId: string) => Promise<void>;
 }
 
 /** Chat timestamps are stored as IST wall-clock strings ("YYYY-MM-DD HH:MM:SS",
@@ -51,7 +52,7 @@ function Highlight({ text, q }: { text: string; q: string }) {
   return <>{out}</>;
 }
 
-export function ChatHistoryList({ chatList, currentChatId, deletingId, onSwitch, onDelete, onRename }: ChatHistoryListProps) {
+export function ChatHistoryList({ chatList, currentChatId, deletingId, onSwitch, onDelete, onRename, onTogglePin }: ChatHistoryListProps) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<ChatSearchResult[] | null>(null);
   const [searching, setSearching] = useState(false);
@@ -99,11 +100,14 @@ export function ChatHistoryList({ chatList, currentChatId, deletingId, onSwitch,
       .map(c => ({ ...c, snippet: null }));
     if (!results) return local;
     // Server results win (they carry snippets); keep local title hits the
-    // server hasn't returned yet, and reflect any rename made meanwhile.
-    const titles = new Map(chatList.map(c => [c.id, c.title]));
+    // server hasn't returned yet, and reflect any rename or pin made meanwhile.
+    const live = new Map(chatList.map(c => [c.id, c]));
     const seen = new Set(results.map(r => r.id));
     return [
-      ...results.map(r => ({ ...r, title: titles.get(r.id) ?? r.title })),
+      ...results.map(r => {
+        const c = live.get(r.id);
+        return c ? { ...r, title: c.title, pinned_at: c.pinned_at } : r;
+      }),
       ...local.filter(c => !seen.has(c.id)),
     ];
   }, [q, chatList, results]);
@@ -111,7 +115,10 @@ export function ChatHistoryList({ chatList, currentChatId, deletingId, onSwitch,
   const groups = useMemo(() => {
     if (q) return [{ label: `${shown.length} result${shown.length === 1 ? '' : 's'}`, items: shown }];
     const out: { label: string; items: ChatSearchResult[] }[] = [];
+    const pinned = shown.filter(c => c.pinned_at);
+    if (pinned.length > 0) out.push({ label: 'Pinned', items: pinned });
     for (const c of shown) {
+      if (c.pinned_at) continue;
       const label = groupLabel(c.updated_at);
       const last = out[out.length - 1];
       if (last?.label === label) last.items.push(c);
@@ -228,13 +235,15 @@ export function ChatHistoryList({ chatList, currentChatId, deletingId, onSwitch,
                       onDoubleClick={e => onRename && startRename(e, chat)}
                       title={chat.title}
                       className={cn(
-                        'w-full text-left px-2.5 py-2 rounded-lg transition-colors pr-14',
+                        'w-full text-left px-2.5 py-2 rounded-lg transition-colors pr-20',
                         isActive
                           ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-800 dark:text-emerald-200'
                           : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100/80 dark:hover:bg-gray-800/60',
                       )}
                     >
                       <p className={cn('text-[13px] truncate', isActive ? 'font-semibold' : 'font-medium')}>
+                        {/* Search results aren't grouped, so mark pinned ones inline. */}
+                        {q && chat.pinned_at && <Pin className="inline w-3 h-3 mr-1 -mt-0.5 text-emerald-600 dark:text-emerald-400" aria-label="Pinned" />}
                         <Highlight text={chat.title} q={q} />
                       </p>
                       {chat.snippet && (
@@ -249,6 +258,25 @@ export function ChatHistoryList({ chatList, currentChatId, deletingId, onSwitch,
                       // Touch screens have no hover — keep actions visible there.
                       'opacity-0 group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100',
                     )}>
+                      {onTogglePin && (
+                        <button
+                          onClick={e => {
+                            e.stopPropagation();
+                            onTogglePin(chat.id).catch(() => toast.error(chat.pinned_at ? 'Could not unpin the chat.' : 'Could not pin the chat.'));
+                          }}
+                          className={cn(
+                            'p-1 rounded-md hover:bg-white dark:hover:bg-gray-700',
+                            chat.pinned_at
+                              ? 'text-emerald-600 dark:text-emerald-400 hover:text-emerald-700'
+                              : 'text-gray-400 hover:text-gray-700 dark:hover:text-gray-200',
+                          )}
+                          title={chat.pinned_at ? 'Unpin' : 'Pin to top'}
+                          aria-label={`${chat.pinned_at ? 'Unpin' : 'Pin'} ${chat.title}`}
+                          aria-pressed={!!chat.pinned_at}
+                        >
+                          {chat.pinned_at ? <PinOff className="w-3.5 h-3.5" /> : <Pin className="w-3.5 h-3.5" />}
+                        </button>
+                      )}
                       {onRename && (
                         <button
                           onClick={e => startRename(e, chat)}

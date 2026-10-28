@@ -213,6 +213,8 @@ export interface ChatItem {
   title: string;
   created_at: string;
   updated_at: string;
+  /** IST timestamp when pinned; null/absent when not pinned. */
+  pinned_at?: string | null;
 }
 
 export interface ChatMessage {
@@ -360,6 +362,13 @@ export interface ChatSearchResult extends ChatItem {
 
 export async function searchChats(query: string, signal?: AbortSignal): Promise<ChatSearchResult[]> {
   return authFetch(`/api/chats/search?q=${encodeURIComponent(query)}`, { signal });
+}
+
+export async function setChatPinned(chatId: string, pinned: boolean): Promise<ChatItem> {
+  return authFetch(`/api/chats/${chatId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ pinned }),
+  });
 }
 
 export async function deleteChat(chatId: string): Promise<void> {
