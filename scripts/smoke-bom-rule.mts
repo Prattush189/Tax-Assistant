@@ -62,6 +62,38 @@ const opening = +(txns[0].balance! - txns[0].amount).toFixed(2);
 let cr = 0, dr = 0; for (const t of txns) { if (t.amount > 0) cr += t.amount; else dr += -t.amount; }
 ck('reconciles to closing balance', +(opening + cr - dr).toFixed(2) === txns[txns.length - 1].balance, `(opening ${opening} +${cr} −${dr})`);
 
+// 5-column shape: a SHORT BOM statement (a few pages) resolves to one
+// fewer column, with Reference and Debit fused into one cell and every
+// later column shifted left. Fixed column indexes used to read the UPI
+// reference as the amount (₹100 credit came out as a ₹50 crore debit).
+const rows5: string[][] = [
+  ['Account Holder Names', 'JAGJIT CHEMIST & DRUG STORE', '', 'Primary GSTIN', 'NA'],
+  ['Phone No', '2234060 Email Id', 'bom1245@mahabank.co.in', 'GSTIN', 'NA'],
+  ['Sr No', 'Date Particulars', 'Debit', 'Credit', 'Balance Channel'],
+  ['', 'UPI 111111111111/UTIB/ALICE', '', '', ''],
+  ['1', '01/04/2025', '111111111111 -', '100.00', '1,100.00 UPI'],
+  ['', 'PAY/UPI', '', '', ''],
+  ['', 'UPI 222222222222/HDFC/BOB', '', '', ''],
+  ['2', '02/04/2025', '222222222222 50.00', '-', '1,050.00 UPI'],
+  ['', 'UPI 333333333333/SBIN/CAR', '', '', ''],
+  ['3', '03/04/2025', '333333333333 -', '25.00', '1,075.00 UPI'],
+];
+const grid5 = { ...grid, rows: rows5, columnCount: 5, columnXs: [0, 60, 120, 180, 240], columnHeaders: ['Type', 'Date', 'Date', null, null] };
+const det5 = detectAndMapBank(grid5 as never);
+ck('5-col: detected Bank of Maharashtra', det5?.bank === 'Bank of Maharashtra', `(got ${det5?.bank})`);
+if (det5) {
+  const { rows: t5 } = applyMapping(det5.grid, det5.mapping, 'bank');
+  ck('5-col: amounts +100, −50, +25', JSON.stringify(t5.map(t => t.amount)) === JSON.stringify([100, -50, 25]), JSON.stringify(t5.map(t => t.amount)));
+  ck('5-col: balances preserved', JSON.stringify(t5.map(t => t.balance)) === JSON.stringify([1100, 1050, 1075]), JSON.stringify(t5.map(t => t.balance)));
+  ck('5-col: reference kept, not read as an amount', t5[0]?.reference === '111111111111', `(got ${t5[0]?.reference})`);
+}
+
+// A layout with no readable balance must not be "reconstructed" from the
+// wrong cells: the preprocess hands the raw grid back so the user maps it.
+const noBal = { ...grid, rows: rows.map(r => (/^\d+$/.test(r[0]) ? [r[0], r[1], '', '', '', ''] : r)) };
+const detNoBal = detectAndMapBank(noBal as never);
+ck('no balances → grid left for the wizard', !detNoBal || detNoBal.grid === (noBal as never));
+
 // A non-BOM grid must NOT trip the rule (no "mahabank" fingerprint).
 const other = { ...grid, rows: grid.rows.map(r => r.map(c => c.replace(/mahabank|MAHB0\d+/gi, 'xxx'))) };
 ck('non-BOM grid not detected as BOM', detectAndMapBank(other as never)?.bank !== 'Bank of Maharashtra');

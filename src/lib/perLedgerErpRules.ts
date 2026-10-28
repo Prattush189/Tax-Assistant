@@ -73,6 +73,129 @@ interface ErpRule {
   required: ColumnRole[];
 }
 
+// Marg multi-account ledgers (Ledger_Account.PDF, 89 accounts / 387
+// pages) resolve to 5 columns — Date | Narration | Debit | Credit |
+// Balance — but print a lot of non-transaction rows inside the table:
+//
+//   ["", "", "A.M INDUSTRIES", "", ""]                 account name, in the DEBIT column
+//   ["", "504,GARDEN ROSE…", "", "MUMBAI GSTIN …", ""]  address line(s)
+//   ["", "", "Balance c/f: 17,82,281.00", "17,00,000.00", "82,281.00 Dr"]   page carry
+//   ["", "", "Balance b/f: 17,34,211.00", "15,20,195.00", "2,14,016.00 Dr."] page carry
+//   ["Debit:", "66,080.00", "", "Opening Balance:", "0.00"]                 account footer
+//   ["Credit:", "66,080.00", "", "Closing Balance:", "0.00"]                account footer
+//   ["", "", "MOHIT INDUSTRIES", "", ""] + address + ["Ledger Account", …, "Page 40 of 387"]
+//                                                       company banner, every page
+//
+// applyMapping's ledger subtotal guard looks for "Balance c/f" in the
+// narration/voucher/reference cells only, so the carry rows (label in
+// the Debit cell) were summed as transactions — crores of phantom
+// Dr/Cr — and, never flushing the pending transaction, they made the
+// next account header read as a continuation line, so whole accounts
+// merged into their neighbour. 1 of 89 accounts reconciled.
+//
+// The preprocess tags every transaction row with its account in a new
+// Account column (applyMapping honours the 'account' role per row, no
+// header heuristics needed) and drops the carry / footer / banner rows.
+// Openings stay as the dated "Opening Balance" row; the closing falls
+// out of the last row's Dr/Cr balance.
+const MARG_DATE_RE = /^\d{2}\.\d{2}\.\d{4}$/;
+const MARG_MONEY_RE = /\d[\d,]*\.\d{2}/;
+const MARG_CARRY_RE = /^balance\s+[cb]\/f:/i;
+function preprocessMarg(grid: PdfGrid): PdfGrid {
+  if (grid.columnCount !== 5) return grid;
+  const cells = (r: string[]) => [0, 1, 2, 3, 4].map(i => (r[i] ?? '').trim());
+  const isDated = (r: string[]) => MARG_DATE_RE.test((r[0] ?? '').trim());
+  const opensAccount = (r: string[]) =>
+    (isDated(r) && /^opening\s+balance$/i.test((r[1] ?? '').trim()))
+    || cells(r).some(c => MARG_CARRY_RE.test(c) && /b\/f/i.test(c));
+  const nameOnly = (r: string[]) => {
+    const c = cells(r);
+    return !!c[2] && c.every((v, i) => i === 2 || !v) && !MARG_CARRY_RE.test(c[2]) && !MARG_MONEY_RE.test(c[2]);
+  };
+  // Includes col-2-only lines: the address under a name is sometimes
+  // just ["", "", "LUDHIANA GSTIN : 03AB…", "", ""], the same shape as
+  // the name itself.
+  const addressLike = (r: string[]) => {
+    const c = cells(r);
+    return !isDated(r) && c.some(Boolean) && !c.some(v => MARG_MONEY_RE.test(v) || MARG_CARRY_RE.test(v));
+  };
+  const isPageBanner = (r: string[]) => /^ledger\s+account$/i.test((r[0] ?? '').trim()) || /^page\s+\d+\s+of\s+\d+$/i.test((r[4] ?? '').trim());
+
+  // Page furniture: the page banner, the repeated column header, and the
+  // company banner — exactly the name row + address row above each page
+  // banner. Exactly two: an account that starts at the very bottom of a
+  // page has its name right above the next page's company banner, and a
+  // wider sweep deleted it (SHREE JI EXIM swallowed the next account).
+  const isColumnHeader = (r: string[]) => /^date$/i.test((r[0] ?? '').trim()) && /^narration$/i.test((r[1] ?? '').trim());
+  const drop = new Set<number>();
+  grid.rows.forEach((r, i) => {
+    if (isColumnHeader(r)) drop.add(i);
+    if (!isPageBanner(r)) return;
+    drop.add(i);
+    if (i >= 2 && addressLike(grid.rows[i - 1]) && nameOnly(grid.rows[i - 2])) { drop.add(i - 1); drop.add(i - 2); }
+  });
+  const kept = grid.rows.map((_, i) => i).filter(i => !drop.has(i));
+
+  const out: string[][] = [];
+  let account = '';
+  let headers = 0;
+  const seenNames = new Map<string, number>();
+  for (let p = 0; p < kept.length; p++) {
+    const r = grid.rows[kept[p]];
+    const c = cells(r);
+    if (nameOnly(r)) {
+      // Account header: up to two address lines, then the account's
+      // dated Opening Balance row or (on a continuation page) Balance b/f.
+      // Look-ahead runs over kept rows so page furniture in between
+      // doesn't hide the account's opening.
+      let q = p + 1;
+      while (q < kept.length && q <= p + 2 && !opensAccount(grid.rows[kept[q]]) && addressLike(grid.rows[kept[q]])) q++;
+      if (q < kept.length && opensAccount(grid.rows[kept[q]])) {
+        const name = c[2].replace(/^-\s*/, '');
+        // A name followed by a dated Opening Balance starts a NEW account;
+        // followed by "Balance b/f" it's the same account continuing on a
+        // new page. Books can hold two parties with one name (two "SHREE
+        // JI EXIM" at different GSTINs) — number the repeat so the
+        // name-keyed grouping downstream doesn't merge them.
+        const startsNew = isDated(grid.rows[kept[q]]);
+        if (startsNew && seenNames.has(name)) {
+          const n = (seenNames.get(name) ?? 1) + 1;
+          seenNames.set(name, n);
+          account = `${name} (${n})`;
+        } else if (startsNew || name !== account.replace(/ \(\d+\)$/, '')) {
+          seenNames.set(name, seenNames.get(name) ?? 1);
+          account = name;
+        }
+        headers++;
+        p = q - 1;
+        continue;
+      }
+    }
+    if (c.some(v => MARG_CARRY_RE.test(v))) continue;
+    if (/^(?:debit|credit):$/i.test(c[0])) continue;
+    // "*** * CANCELLED * Bill 169 ***": printed with an amount but the
+    // balance doesn't move (cell repeats it as "6,55,655.00 ***", or
+    // "0.00 NIL" on a nil account). Not a posting — counting it broke 13
+    // of the 14 remaining accounts.
+    if (/^\*+\s*\*?\s*cancelled\s*\*/i.test(c[1])) continue;
+    // Leftover text in the Debit column (a name / GSTIN line the PDF
+    // ordered below the account's opening row) is never a narration in
+    // Marg — merged as a continuation, "GSTIN : 09AA…" read as a ₹9 debit.
+    if (!isDated(r) && c[2] && !MARG_MONEY_RE.test(c[2]) && !c[1]) continue;
+    out.push([...c, account]);
+  }
+  if (headers === 0) return grid;
+  gridLog(`[perLedgerErpRules] Marg: tagged ${headers} account header(s), ${grid.rows.length - out.length} non-transaction rows dropped`);
+  const xs = grid.columnXs ?? [0, 60, 120, 180, 240];
+  return {
+    ...grid,
+    rows: out,
+    columnCount: 6,
+    columnXs: [...xs.slice(0, 5), (xs[4] ?? 240) + 60],
+    columnHeaders: ['Date', 'Narration', 'Debit', 'Credit', 'Balance', 'Account'],
+  };
+}
+
 const MARG: ErpRule = {
   name: 'Marg ERP',
   fingerprints: [
@@ -82,7 +205,9 @@ const MARG: ErpRule = {
     'balance c/f:',
     'balance b/f:',
   ],
+  preprocess: preprocessMarg,
   headerRules: [
+    { pattern: /^account$/i, role: 'account' },
     { pattern: /balance/i, role: 'balance' },
     { pattern: /debit/i, role: 'debit' },
     { pattern: /credit/i, role: 'credit' },
@@ -182,10 +307,15 @@ function tallySplitMergedVchNoDebit(grid: PdfGrid): PdfGrid {
   //   - 1-4 separator+digit groups: BBL/2025-26/21 has THREE separator
   //     groups (/2025, -26, /21). The original regex with one
   //     optional group missed this layout entirely.
-  const vchNoAlphaNum = /^[A-Z]{1,6}(?:[\/\-]\d+){1,4}$/;
+  //   - 2026-10: OR digits straight after the letters, no separator
+  //     (GINJA25003725 on ASSA TALLY's Debit Note rows). Without this
+  //     "GINJA25003725 9,109.60" fell to the unrecognised branch and the
+  //     ₹9,109.60 debit was silently dropped.
+  const VCH_ALPHA = '[A-Z]{1,6}(?:\\d+(?:[\\/\\-]\\d+){0,3}|(?:[\\/\\-]\\d+){1,4})';
+  const vchNoAlphaNum = new RegExp(`^${VCH_ALPHA}$`);
   // Alphanumeric voucher + currency on the same line (rare but seen
   // on some Tally exports where the payment row also has a bill ref).
-  const vchNoAlphaPlusAmount = /^([A-Z]{1,6}(?:[\/\-]\d+){1,4})\s+([\d,]+\.\d+)$/;
+  const vchNoAlphaPlusAmount = new RegExp(`^(${VCH_ALPHA})\\s+([\\d,]+\\.\\d+)$`);
   const matchesSplit = (s: string): boolean =>
     vchNoMaybeAmount.test(s)
     || pureCurrency.test(s)

@@ -1593,6 +1593,12 @@ export function applyMapping(
   // balance(N) − balance(N-1). Only fires when no other amount
   // source is available.
   let lastBalance: number | null = null;
+  // Account the lastBalance belongs to. A running balance only means
+  // anything inside one account: on multi-account ledgers (Marg) the
+  // balance-delta fallback below used the PREVIOUS account's closing as
+  // the base, turning each account's "Opening Balance 0.00 NIL" row into
+  // a phantom opening worth that closing.
+  let lastBalanceAccount: string | null = null;
   // Cash Credit account detection. CC statements (J&K Bank, etc.)
   // print every running balance with a "Dr" suffix because the
   // customer owes the bank. On these accounts a DEPOSIT reduces the
@@ -1654,7 +1660,7 @@ export function applyMapping(
         balance: pending.balance,
         account: pending.account,
       });
-      if (pending.balance != null) lastBalance = pending.balance;
+      if (pending.balance != null) { lastBalance = pending.balance; lastBalanceAccount = pending.account; }
       pending = null;
       return;
     }
@@ -1682,7 +1688,7 @@ export function applyMapping(
     // printed balance is authoritative — if it moved by X, the
     // transaction was X. Recovers rows that would otherwise be
     // silently dropped as "no amount".
-    if (amount == null && pending.balance != null && lastBalance != null) {
+    if (amount == null && pending.balance != null && lastBalance != null && lastBalanceAccount === pending.account) {
       const delta = pending.balance - lastBalance;
       if (Math.abs(delta) > 0.005) {
         amount = delta;
@@ -1820,7 +1826,7 @@ export function applyMapping(
       balance: pending.balance,
       account: pending.account,
     });
-    if (pending.balance != null) lastBalance = pending.balance;
+    if (pending.balance != null) { lastBalance = pending.balance; lastBalanceAccount = pending.account; }
     pending = null;
   };
 
@@ -2137,6 +2143,42 @@ export function applyMapping(
         // of the FY start year; closing on day 1 of FY+1. The exact
         // day doesn't affect totals, only date sorting.
         date: /closing/i.test(narr) ? `${inferredYear + 1}-03-31` : `${inferredYear}-04-01`,
+        narration: narr,
+        voucher,
+        reference,
+        debit,
+        credit,
+        amountSingle,
+        drCrMarker,
+        balance,
+        account: lastAccount,
+      };
+      continue;
+    }
+
+    // Date-less Tally "To / By Closing Balance" row after the last
+    // transaction (ASSA TALLY: ["", "To Closing Balance", …, "40,19,592.03"]).
+    // It carries the closing as a Dr/Cr AMOUNT, not a balance, so the
+    // balance-only rescue above skips it and the row was dropped —
+    // leaving closing = 0 and a phantom RECON_BREAK. Emit it as its own
+    // row so mappedRowsToExtractedLedger's closing-marker pickup sees it.
+    // Closing only: Finsys rewrites EVERY page's "Balance B/f" to
+    // "Opening Balance", and those page repeats must stay swallowed.
+    if (
+      !date
+      && kind === 'ledger'
+      && (debit != null || credit != null || amountSingle != null)
+      && /^\s*(?:-\s*)?(?:to\s+|by\s+)?closing\s+balance\s*$/i.test(narr ?? '')
+    ) {
+      // The last transaction's date, not the inferred FY: inferredYear is
+      // junk on some multi-year books (Tally.pdf's SBI A/C gave 1184-03-31)
+      // and a closing row mid-account sits at that year's end anyway.
+      const closingDate: string | null = pending?.date ?? out[out.length - 1]?.date
+        ?? (inferredYear != null ? `${inferredYear + 1}-03-31` : null);
+      pendingAwaitingCrossPage = false;
+      flushPending();
+      pending = {
+        date: closingDate,
         narration: narr,
         voucher,
         reference,

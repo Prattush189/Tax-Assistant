@@ -775,6 +775,33 @@ function bomParseNum(s: string | undefined): number | null {
   const m = s.replace(/(\d),(\d)/g, '$1$2').match(/-?\d+\.\d{2}|-?\d{2,}/);
   return m ? parseFloat(m[0]) : null;
 }
+const BOM_MONEY_RE = /\d[\d,]*\.\d{2}/g;
+/** Read Reference / Debit / Credit / Balance from a BOM data row by
+ *  CONTENT, not column index. The column count depends on the whole
+ *  document: the 65-page statement resolves to 6 columns
+ *  (Sr | Date | - | Ref [Dr] | Cr | Bal+Channel) but a short one
+ *  resolves to 5 with Ref and Debit fused
+ *  (Sr | Date | Ref Dr | Cr | Bal+Channel). Fixed indexes read the UPI
+ *  reference as an amount on the 5-column shape. The balance is always
+ *  the last money figure on the row; the cells between Date and the
+ *  balance hold the reference (a bare 6+ digit integer) and the Dr/Cr
+ *  pair, with "-" marking the empty side. */
+function bomDataCells(r: string[]): { ref: string; bal: number | null; exDr: number | null; exCr: number | null } {
+  let balIdx = -1;
+  for (let c = r.length - 1; c >= 2; c--) {
+    if (/\d[\d,]*\.\d{2}/.test(r[c] ?? '')) { balIdx = c; break; }
+  }
+  if (balIdx < 0) return { ref: '', bal: null, exDr: null, exCr: null };
+  const balMatches = (r[balIdx] ?? '').match(BOM_MONEY_RE) ?? [];
+  const bal = bomParseNum(balMatches[balMatches.length - 1]);
+  const middle = r.slice(2, balIdx).join(' ');
+  const ref = (middle.match(/(?<![\d.,])\d{6,}(?![\d.,])/) ?? [''])[0];
+  // Dr/Cr tokens in print order: money figures and "-" placeholders.
+  const tokens = (ref ? middle.replace(ref, ' ') : middle).match(/\d[\d,]*\.\d{2}|(?<!\S)-(?!\S)/g) ?? [];
+  const num = (t: string | undefined) => (t && t !== '-' ? bomParseNum(t) : null);
+  return { ref, bal, exDr: tokens.length >= 2 ? num(tokens[0]) : null, exCr: tokens.length >= 2 ? num(tokens[1]) : null };
+}
+
 function preprocessBom(grid: PdfGrid): PdfGrid {
   // A "data row": col 0 is a bare Sr No integer AND col 1 carries a date.
   const mainSet = new Set<number>();
@@ -816,12 +843,15 @@ function preprocessBom(grid: PdfGrid): PdfGrid {
     recs.push({
       date: dm ? dm[1] : '',
       narr: parts.join(' ').replace(/\s+/g, ' ').trim(),
-      ref: ((r[3] ?? '').match(/\d{6,}/) ?? [''])[0],
-      bal: bomParseNum(r[5]),
-      exDr: bomParseNum(r[2]),
-      exCr: bomParseNum(r[4]),
+      ...bomDataCells(r),
     });
   }
+
+  // Every BOM data row prints a balance. If most came back empty the
+  // layout differs from what this rule understands — hand the grid to
+  // the wizard rather than emit amounts derived from the wrong cells.
+  const withBal = recs.filter(rec => rec.bal != null).length;
+  if (withBal < recs.length * 0.9) return grid;
 
   // Amounts from the balance chain. Seed the opening balance from the
   // first row's explicit Debit/Credit cell so transaction #1 is signed
