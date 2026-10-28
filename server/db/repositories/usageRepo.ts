@@ -241,6 +241,22 @@ export const usageRepo = {
    *  '—' for legacy / non-applicable rows.
    *  status: 'success' (default) | 'cancelled' | 'failed'. Token quota
    *  counts success + cancelled but excludes failed. */
+  /** Log billed attempts that produced nothing usable (a Claude refusal /
+   *  empty answer before the Gemini fallback answered) as
+   *  `<category>_failed` rows, so that spend is billed like every other
+   *  wasted attempt. See ChatUsage.wastedAttempts. */
+  logWastedAttempts(
+    ip: string,
+    userId: string | null,
+    billingUserId: string | null,
+    category: string,
+    attempts: Array<{ model: string; inputTokens: number; outputTokens: number; cachedInputTokens: number; costUsd: number }> | undefined,
+  ): void {
+    for (const a of attempts ?? []) {
+      this.logWithBilling(ip, userId, billingUserId, a.inputTokens, a.outputTokens, a.costUsd, false, a.model, false, `${category}_failed`, 0, 'failed', 0, 0, a.cachedInputTokens);
+    }
+  },
+
   logWithBilling(
     ip: string,
     /** users.id of the user who triggered the call. Pass null for

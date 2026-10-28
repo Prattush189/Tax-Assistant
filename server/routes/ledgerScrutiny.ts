@@ -2003,22 +2003,32 @@ router.post(
         // attempts
         // are already logged separately via recordLedgerAttempt.
         try {
-          const inputTok = chunkResults.reduce((s, r) => s + r.inputTokens, 0);
-          const outputTok = chunkResults.reduce((s, r) => s + r.outputTokens, 0);
-          const cost = chunkResults.reduce((s, r) => s + costForModel(r.modelUsed, r.inputTokens, r.outputTokens), 0);
-          const modelUsed = chunkResults[0]?.modelUsed ?? GEMINI_CHAT_MODEL_T2;
-          usageRepo.logWithBilling(
+          // One row per model: chunks can mix Claude and its Gemini
+          // fallback, and weighted_tokens (the quota charge) is computed
+          // from the row's model — a single row labelled with chunk 0's
+          // model billed every chunk at that model's rate.
+          const byModel = new Map<string, { inputTok: number; outputTok: number; cost: number; tx: number }>();
+          for (const r of chunkResults) {
+            const m = r.modelUsed || GEMINI_CHAT_MODEL_T2;
+            const agg = byModel.get(m) ?? { inputTok: 0, outputTok: 0, cost: 0, tx: 0 };
+            agg.inputTok += r.inputTokens;
+            agg.outputTok += r.outputTokens;
+            agg.cost += costForModel(m, r.inputTokens, r.outputTokens);
+            agg.tx += r.actualCount;
+            byModel.set(m, agg);
+          }
+          for (const [modelUsed, agg] of byModel) usageRepo.logWithBilling(
             ledgerClientIp,
             req.user.id,
             quota.billingUserId,
-            inputTok,
-            outputTok,
-            cost,
+            agg.inputTok,
+            agg.outputTok,
+            agg.cost,
             false,
             modelUsed,
             false,
             'ledger_extract',
-            totalTx,
+            agg.tx,
             'success',
             0,
             Date.now() - extractStartMs,
@@ -2405,6 +2415,7 @@ router.post('/:id/scrutinize', async (req: AuthRequest, res: Response) => {
         }
       },
     );
+    usageRepo.logWastedAttempts(clientIp, req.user.id, quota.billingUserId, 'ledger_scrutiny', usage.wastedAttempts);
 
     const parsed = safeParseJson<ScrutinyResultRaw>(fullResponse);
     if (!parsed || !Array.isArray(parsed.observations)) {

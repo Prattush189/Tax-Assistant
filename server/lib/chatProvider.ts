@@ -98,6 +98,11 @@ export interface ChatUsage {
   /** The text is incomplete: the model hit maxTokens, or the stream
    *  was dropped before Gemini signalled a finish. */
   truncated: boolean;
+  /** Billed attempts that produced nothing usable before the winning
+   *  model answered — a Claude refusal / empty answer that fell back to
+   *  Gemini. Callers log each as a `<category>_failed` row so the spend
+   *  is billed like every other wasted attempt. */
+  wastedAttempts?: Array<{ model: string; inputTokens: number; outputTokens: number; cachedInputTokens: number; costUsd: number }>;
 }
 
 export interface ChatProvider {
@@ -153,6 +158,7 @@ export const geminiChatProvider: ChatProvider = {
 
     let emittedAnyText = false;
     let pinGeminiKey1 = false;
+    const wastedAttempts: NonNullable<ChatUsage['wastedAttempts']> = [];
     let firstFallbackFired = false;
 
     // Claude first for anything that doesn't need Google Search (admin
@@ -182,6 +188,8 @@ export const geminiChatProvider: ChatProvider = {
       } catch (err) {
         // Partial draft already streamed — retrying would duplicate it.
         if (emittedAnyText) throw err;
+        const cu = (err as { claudeUsage?: { model: string; inputTokens: number; outputTokens: number; cachedInputTokens: number } }).claudeUsage;
+        if (cu) wastedAttempts.push({ ...cu, costUsd: costForModel(cu.model, cu.inputTokens, cu.outputTokens, cu.cachedInputTokens) });
         console.warn(`[chatProvider] ${CLAUDE_MODEL} failed after ${Date.now() - t0}ms, falling back to Gemini key 1:`, (err as Error).message?.slice(0, 160));
         pinGeminiKey1 = true;
         firstFallbackFired = true;
@@ -294,6 +302,7 @@ export const geminiChatProvider: ChatProvider = {
       modelUsed,
       withSearch: SEARCH_GROUNDING,
       truncated: result.finishReason === 'MAX_TOKENS' || result.finishReason === 'INCOMPLETE',
+      ...(wastedAttempts.length ? { wastedAttempts } : {}),
     };
   },
 };

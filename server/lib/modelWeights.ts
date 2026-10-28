@@ -66,14 +66,13 @@ const MODEL_WEIGHTS: Record<string, ModelWeight> = {
   'gemini-3.1-flash-lite-preview': { wIn: 2.5, wOut: 15.0,   wCached: 0.625 },   // $0.25 / $1.50 — old T1
   'gemini-2.5-flash':              { wIn: 3.0, wOut: 25.0,   wCached: 0.75 },   // $0.30 / $2.50
 
-  // Claude (2026-10, books + notices on free credits). Weighted like the
-  // Gemini primary it replaces, NOT at Claude's list price — the credits
-  // are ours, so a user's plan quota should drain at the same rate
-  // whichever provider answered. The USD cost column still shows the
-  // real Claude price via costForModel().
-  'claude-opus-5-5':               { wIn: 7.5,  wOut: 37.5,  wCached: 0.75 },
-  'claude-sonnet-5-5':             { wIn: 7.5,  wOut: 37.5,  wCached: 0.75 },
-  'claude-haiku-5-5':              { wIn: 2.5,  wOut: 15.0,  wCached: 0.625 },
+  // Claude (2026-10, books + notices). Billed exactly like Gemini: weight
+  // = list price ÷ the $0.10/M unit, so a user's quota drains by what the
+  // call really cost whichever provider answered. Prices in
+  // lib/claudePricing.ts — keep in lockstep.
+  'claude-opus-5-5':               { wIn: 40.0, wOut: 200.0, wCached: 2.0 },   // $4 / $20, cache $0.20
+  'claude-sonnet-5-5':             { wIn: 20.0, wOut: 100.0, wCached: 2.0 },   // $2 / $10, cache $0.20
+  'claude-haiku-5-5':              { wIn: 1.0,  wOut: 5.0,   wCached: 0.1 },   // $0.10 / $0.50, cache $0.01
 
   // Retired (2026-05 Anthropic-removal). The vision pipeline used
   // Sonnet 4.5 briefly between the original Gemini-only path and the

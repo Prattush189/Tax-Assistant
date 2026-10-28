@@ -616,6 +616,7 @@ router.post('/drafts/:id/generate', async (req: AuthRequest, res: Response) => {
       },
       (text) => { fullResponse += text; sse.writeText(text); },
     );
+    usageRepo.logWastedAttempts(clientIp, req.user!.id, billingUserId, 'partnership_deed', usage.wastedAttempts);
 
     // Every template is told to end on a fixed closing; without it the
     // text stopped early even if the model reported a clean finish.

@@ -496,6 +496,7 @@ router.post(
       },
       (text) => { fullResponse += text; sse.writeText(text); },
     );
+    usageRepo.logWastedAttempts(clientIp, req.user!.id, billingUserId, 'notice', usage.wastedAttempts);
 
     let sanitizationReport = { changed: false, droppedEntries: 0, totalEntries: 0, keptEntries: 0, droppedUrls: 0 };
     if (fullResponse && usage.truncated) {
@@ -727,6 +728,7 @@ ${instruction}
       },
       (text) => { fullResponse += text; sse.writeText(text); },
     );
+    usageRepo.logWastedAttempts(clientIp, req.user.id, billingUserId, 'notice_enhance', usage.wastedAttempts);
 
     if (fullResponse.trim() && usage.truncated) {
       console.warn(`[notices] enhance ${notice.id}: output cut off (${usage.modelUsed}, out=${usage.outputTokens})`);
