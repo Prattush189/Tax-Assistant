@@ -1101,6 +1101,30 @@ const NUMBER_RE = /-?\d[\d,]*(?:\.\d+)?/;
 const DR_CR_RE = /\b(dr|cr|debit|credit)\b/i;
 const DATE_LIKE_RE = /\b(\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}|\d{4}-\d{2}-\d{2}|\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\.?(?:\s+\d{2,4})?|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\.?\s+\d{1,2}\b)/i;
 
+/** Debit / Credit / Amount cells: only amount-shaped text counts.
+ *  parseNumber takes the first number anywhere in the cell, so a wrapped
+ *  narration fragment in an amount column — ICICI's "27006465-" (part of
+ *  an NEFT reference) under Withdrawal — became a ₹2.7 crore debit.
+ *  Accepts an optional ₹/Rs/INR prefix, Indian or plain grouping, an
+ *  optional decimal part, brackets or a minus sign, and a Dr/Cr suffix. */
+const AMOUNT_CELL_RE = /^(?:₹|rs\.?|inr)?\s*[-(]?\s*\d[\d,]*(?:\.\d+)?\s*\)?\s*(?:dr|cr)?\.?$/i;
+/** An amount with paise LEADING other text — Dynamics AX prints
+ *  "124,688.00 5/23/2025 INR" (amount, due date, currency) in one cell.
+ *  Decimals required, so "27006465-" and "35 1,06,672.00" (a voucher
+ *  number ahead of the amount) stay rejected rather than misread. */
+const LEADING_AMOUNT_RE = /^(?:₹|rs\.?|inr)?\s*(\d[\d,]*\.\d{2})\s+\S/i;
+function parseAmountCell(raw: string): number | null {
+  const t = (raw ?? '').trim();
+  if (!t) return null;
+  if (AMOUNT_CELL_RE.test(t)) return parseNumber(t);
+  // Trailing-minus debits ("1,234.00-") — decimals required, unlike the
+  // "27006465-" reference fragment. Sign is the column's job here.
+  const trailing = /^(\d[\d,]*\.\d+)-$/.exec(t);
+  if (trailing) return parseNumber(trailing[1]);
+  const lead = LEADING_AMOUNT_RE.exec(t);
+  return lead ? parseNumber(lead[1]) : null;
+}
+
 function parseNumber(raw: string): number | null {
   if (!raw) return null;
   const m = raw.match(NUMBER_RE);
@@ -1389,14 +1413,17 @@ function detectAccountHeader(
   // Strip Tally's leading dash and trim.
   let name = candidate.replace(/^[\s\-•]+/, '').trim();
   // "Account: HDFC Bank" → "HDFC Bank"
+  const explicitAccount = /^Account\s*[:.]\s*\S/i.test(name);
   name = name.replace(/^Account\s*[:.]\s*/i, '').trim();
   // Strip the "( Contd. )" suffix if it slipped past the candidate
   // check — sometimes the longest-cell heuristic picks a different
   // cell on the same row.
   name = name.replace(/\s*\(\s*contd\.?\s*\)\s*$/i, '').trim();
 
-  // Need a meaningful length.
-  if (name.length < 3) return null;
+  // Need a meaningful length — unless the row said "Account : X"
+  // outright. Real parties can be two letters ("Account : OM" in Shakti
+  // Sanitary); rejecting it folded OM's rows into the account before.
+  if (name.length < (explicitAccount ? 1 : 3)) return null;
   return name;
 }
 
@@ -1410,6 +1437,8 @@ function detectAccountHeader(
  *  separate, broader marker (SUBTOTAL_MARKER inside applyMapping)
  *  that DOES include opening/closing because banks don't use those
  *  rows the same way. */
+/** A per-account footer label sitting in an amount column (see applyMapping). */
+const LEDGER_FOOTER_IN_AMOUNT_CELL = /^\s*(?:grand\s+total|totals?|(?:closing|opening|debit|credit)\s+balance|balance\s+[bc]\s*\/\s*f:?)\b/i;
 const LEDGER_SUBTOTAL_MARKER = /\b(?:totals?\s*[bc]\s*\/\s*f|^totals?\s*$|totals?\s*&\s*balance|page\s+total|carried\s+over|brought\s+forward|carried\s+forward|balance\s+[bc]\s*\/\s*f|continued\.\.|^[bc]\s*\/\s*f$)/i;
 
 /**
@@ -1691,7 +1720,12 @@ export function applyMapping(
     if (amount == null && pending.balance != null && lastBalance != null && lastBalanceAccount === pending.account) {
       const delta = pending.balance - lastBalance;
       if (Math.abs(delta) > 0.005) {
-        amount = delta;
+        // amount is credit-positive. On a bank statement a rising balance
+        // is an inflow (credit). Ledger balances are Dr-positive (Dr/Cr
+        // suffix → sign above), so there a rising balance is a DEBIT —
+        // using +delta booked every derived ledger row on the wrong side
+        // (Shakti AXIS BANK C/A payments came out as debits).
+        amount = kind === 'ledger' ? -delta : delta;
       }
     }
 
@@ -1864,6 +1898,27 @@ export function applyMapping(
         stats.skippedNoAmount += 1;
         continue;
       }
+      // Same footers with the LABEL in an amount cell. Tally's
+      // "Account : X" layout prints each account's footer as
+      //   ["", "", "", "", "Total 94,948.00", "0.00", ""]
+      //   ["", "", "", "", "Debit Balance", "94,948.00", ""]
+      //   ["", "", "", "", "Grand Total 94,948.00", "94,948.00", ""]
+      // in the "Narration Debit" column; parseNumber pulled the figure
+      // out of "Total 94,948.00" and posted the account's own totals as
+      // transactions (Shakti Sanitary: expense accounts doubled, Sales
+      // read ₹9,078 crore of credits). A label in the narration column
+      // keeps the existing paths (Tally "To Closing Balance" is the
+      // account's closing marker there).
+      const amountCells = [cell('debit'), cell('credit'), cell('amount'), cell('balance')];
+      if (
+        !parseDate(cell('date'), inferredYear ?? undefined)
+        && amountCells.some(v => LEDGER_FOOTER_IN_AMOUNT_CELL.test(v))
+      ) {
+        flushPending();
+        prevRowWasAccountHeader = false;
+        stats.skippedNoAmount += 1;
+        continue;
+      }
 
       // Tally page-total rows: date-less, narration-less, voucher-less
       // rows where debit AND credit (or amount) are both populated
@@ -1960,9 +2015,9 @@ export function applyMapping(
     const dateRaw = cell('date');
     const date = parseDate(dateRaw, inferredYear ?? undefined);
     const narr = cell('narration');
-    const debit = parseNumber(cell('debit'));
-    const credit = parseNumber(cell('credit'));
-    const amountSingle = parseNumber(cell('amount'));
+    const debit = parseAmountCell(cell('debit'));
+    const credit = parseAmountCell(cell('credit'));
+    const amountSingle = parseAmountCell(cell('amount'));
     const drCrMarker = cell('drCrMarker');
     // Tally prints the running balance as an unsigned magnitude with
     // a "Dr" or "Cr" suffix, e.g. "1,08,560.00 Cr" or "19,500.00 Dr".
@@ -2041,7 +2096,11 @@ export function applyMapping(
       // a date AND the Page Total values). These tokens never appear
       // in legitimate transaction narrations.
       const UNAMBIGUOUS_MARKER = /\b(?:page\s+total|grand\s+total|effective\s+available\s+amount|total\s+available\s+amount|funds\s+in\s+clearing|ffd\s+contribution|unless\s+the\s+constituent|type\s*:\s*cash\s+credit|cash\s+credit\s+scheme|type\s*:\s*general\s+saving|statement\s+of\s+account\s+for\s+the\s+period|transaction\s+details|printed\s+by\s+\d|page\s+\d+\s+of\b|ifsc\s+code|micr\s+code|phone\s+code|a\/c\s+no|no\s+nomination\s+available|nomination\s+available\s+for\s+the\s+account|interest\s+rate|jammu\s+and\s+kashmir\s+bank|ckyc\s+id|cKYC|chand\s+nagar)|https?:\/\/|\.jsp\b|\.jkb\.com/i;
-      const haystack = `${narr} ${voucher ?? ''} ${reference ?? ''}`.trim();
+      // Include the date cell when it isn't a date: J&K Bank's e-statement
+      // prints its closing totals as ["Total", "", "78,755.5", "94,153.0",
+      // "78,047.69"] — the label in the Date column — and that row was
+      // merged into the last transaction as a ₹78,755.50 withdrawal.
+      const haystack = `${date ? '' : dateRaw} ${narr} ${voucher ?? ''} ${reference ?? ''}`.trim();
       // J&K Bank CC pages split "Page Total :" across two adjacent
       // pdfjs cells ("Page" in the narration column, "Total:" in the
       // skip column), so the marker isn't visible in the narration-
@@ -2146,6 +2205,39 @@ export function applyMapping(
         narration: narr,
         voucher,
         reference,
+        debit,
+        credit,
+        amountSingle,
+        drCrMarker,
+        balance,
+        account: lastAccount,
+      };
+      continue;
+    }
+
+    // Same opening row, but labelled outside the narration column and
+    // carrying its value as a Dr/Cr AMOUNT. Tally's compact "Ledger
+    // Report" has no narration column at all:
+    //   ["", "Opening Balance", "", "1,06,672.32", "", ""]   (Type | Vch No | Debit | Credit | Balance)
+    // The rescue above needs the label in narration and a balance, so the
+    // row was dropped and the account's opening read 0 (PURCHASE.pdf off
+    // by exactly ₹1,06,672.32). Opening only, and only before any
+    // transaction — page-repeat openings arrive with one pending.
+    const openingLabel = [narr, voucher, reference].find(v => /^\s*(?:-\s*)?(?:to\s+|by\s+)?opening\s+balance\s*$/i.test(v ?? ''));
+    if (
+      !date
+      && !pending
+      && kind === 'ledger'
+      && openingLabel
+      && (debit != null || credit != null || amountSingle != null)
+    ) {
+      pending = {
+        // FY start when the year is known; otherwise no date — row order
+        // (first in the account) is what marks it as the opening.
+        date: inferredYear != null ? `${inferredYear}-04-01` : null,
+        narration: openingLabel.trim(),
+        voucher: voucher === openingLabel ? null : voucher,
+        reference: reference === openingLabel ? null : reference,
         debit,
         credit,
         amountSingle,

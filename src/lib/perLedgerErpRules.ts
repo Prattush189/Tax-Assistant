@@ -499,6 +499,82 @@ function tallyMergeParticularsNarration(grid: PdfGrid): PdfGrid {
   return { ...grid, rows: newRows };
 }
 
+// Tally "Account : X" exports sometimes fuse a row's amount into its
+// Balance cell, leaving Debit and Credit empty:
+//   ["21-10-2025", "Pymt", "Dr SSK SALES", "", "", "", "27,872.00 12,68,331.30 Dr"]
+// parseNumber read the balance as 27,872, corrupting the running balance
+// for every row after it (Shakti Sanitary's AXIS BANK C/A, 7,500 rows).
+// Keep only the trailing Dr/Cr balance: the amount — and its direction —
+// then comes from applyMapping's same-account balance-delta fallback,
+// which is exact by construction.
+const TALLY_FUSED_AMOUNT_BALANCE_RE = /^[\d,]+\.\d{2}\s+([\d,]+\.\d{2}\s*(?:dr|cr)\.?)$/i;
+function tallySplitFusedAmountBalance(grid: PdfGrid): PdfGrid {
+  const headers = grid.columnHeaders ?? [];
+  let balIdx = -1;
+  headers.forEach((h, i) => { if (h && /balance/i.test(h)) balIdx = i; });
+  if (balIdx < 0) return grid;
+  let changed = 0;
+  const rows = grid.rows.map(r => {
+    const m = TALLY_FUSED_AMOUNT_BALANCE_RE.exec((r[balIdx] ?? '').trim());
+    if (!m) return r;
+    changed++;
+    const out = [...r];
+    out[balIdx] = m[1];
+    return out;
+  });
+  if (!changed) return grid;
+  gridLog(`[perLedgerErpRules] Tally: split ${changed} amount(s) fused into the Balance cell`);
+  return { ...grid, rows };
+}
+
+// Tally "Account : X" exports print a fused "Narration Debit ( )" column,
+// so text lands in the Debit cell:
+//   "S-079-25-26 21,500.00"            narration + amount → parseNumber read 79
+//   "Account : G.P.S 2-B IQBAL GANJ"   account header → the "2" made it look
+//                                      like an amount, so the header was
+//                                      rejected and its rows joined the
+//                                      previous account
+//   "Cash"                             narration only
+// Move the text into Particulars and leave only the amount. Footer labels
+// ("Total …", "Debit Balance", "Grand Total …") stay put — applyMapping's
+// footer-in-amount-cell guard skips those rows. Runs only when the Debit
+// column clearly carries text (≥3 such cells), so plain layouts are untouched.
+const TALLY_FOOTER_LABEL_RE = /^\s*(?:grand\s+total|totals?|(?:closing|opening|debit|credit)\s+balance)\b/i;
+function tallyMoveTextOutOfDebit(grid: PdfGrid): PdfGrid {
+  const headers = grid.columnHeaders ?? [];
+  const debitIdx = headers.findIndex(h => !!h && /^debit/i.test(h.trim()));
+  const partIdx = headers.findIndex(h => !!h && /particulars/i.test(h));
+  if (debitIdx < 0 || partIdx < 0 || debitIdx === partIdx) return grid;
+  const hasText = (v: string) => /[a-z]/i.test(v) && !TALLY_FOOTER_LABEL_RE.test(v) && !/^\s*[\d,]+\.\d{2}\s*(?:dr|cr)\.?\s*$/i.test(v);
+  const textCells = grid.rows.filter(r => hasText((r[debitIdx] ?? '').trim()) && !/^debit/i.test((r[debitIdx] ?? '').trim())).length;
+  if (textCells < 3) return grid;
+  let moved = 0;
+  const rows = grid.rows.map(r => {
+    const cell = (r[debitIdx] ?? '').trim();
+    if (!hasText(cell) || /^(?:narration\s+)?debit\b/i.test(cell)) return r;
+    const out = [...r];
+    const join = (t: string) => { out[partIdx] = [(out[partIdx] ?? '').trim(), t].filter(Boolean).join(' '); };
+    const m = /^(.*?[a-z].*?)\s+([\d,]+\.\d{2})$/i.exec(cell);
+    if (/^account\s*:/i.test(cell)) {
+      // Header: Particulars is empty on these rows, so it moves cleanly.
+      join(cell);
+      out[debitIdx] = '';
+    } else if (m) {
+      join(m[1]);
+      out[debitIdx] = m[2];
+    } else if (!/\d[\d,]*\.\d{2}/.test(cell)) {
+      join(cell);
+      out[debitIdx] = '';
+    } else {
+      return r;
+    }
+    moved++;
+    return out;
+  });
+  gridLog(`[perLedgerErpRules] Tally: moved text out of the Debit column on ${moved} row(s)`);
+  return { ...grid, rows };
+}
+
 const TALLY: ErpRule = {
   name: 'Tally',
   fingerprints: [
@@ -539,7 +615,11 @@ const TALLY: ErpRule = {
   // export, so they compose safely in either order; we run the
   // Particulars merge first since it's the simpler op (no column-
   // insertion bookkeeping).
-  preprocess: grid => tallySplitMergedVchNoDebit(tallyMergeParticularsNarration(grid)),
+  //   3. tallySplitFusedAmountBalance — strip an amount fused into the
+  //      Balance cell (see above). Content-only, column-count-stable.
+  //   4. tallyMoveTextOutOfDebit — move narration / account-header text
+  //      out of a fused "Narration Debit" column (see above).
+  preprocess: grid => tallyMoveTextOutOfDebit(tallySplitFusedAmountBalance(tallySplitMergedVchNoDebit(tallyMergeParticularsNarration(grid)))),
   // headerRules: 'reference' is listed BEFORE 'debit' so that on
   // unmerged Tally exports (with a plain "Vch No." header) the Vch
   // No column gets 'reference' first and isn't grabbed by /^debit/.
@@ -613,7 +693,7 @@ const TALLY_COMPACT: ErpRule = {
   // Reuse Tally's preprocess hooks — they cover the merged
   // "Vch No. Debit" case (which CAN happen on this layout too) and
   // are no-ops on already-split grids.
-  preprocess: grid => tallySplitMergedVchNoDebit(tallyMergeParticularsNarration(grid)),
+  preprocess: grid => tallyMoveTextOutOfDebit(tallySplitFusedAmountBalance(tallySplitMergedVchNoDebit(tallyMergeParticularsNarration(grid)))),
   headerRules: [
     { pattern: /balance/i, role: 'balance' },
     { pattern: /^(?:vch\.?\s*)?no\.?\b/i, role: 'reference' },

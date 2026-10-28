@@ -172,8 +172,34 @@ const ICICI: BankRule = {
 // applyMapping's existing date-less-row continuation merge (kind=
 // 'bank') already appends those to the transaction correctly once the
 // date on the FIRST row parses.
-function iciciAccountStatementSplitYear(grid: PdfGrid): PdfGrid {
-  if (grid.columnCount !== 5) return grid;
+// The current-account variant (CAFE QALAVIO, 2026-09) resolves to SIX
+// columns — an extra Cheque No column sits between Withdrawal and
+// Deposit:
+//   ["1 S6794891 01-Sep-", "UPI/Zomato", "",        "",  "3992.49", "4176.73"]
+//   ["3 S8856010 03-Sep-", "BIL/ONL/00", "3991.99", "",  "",        "1491.74"]
+// Fold it to the same 5 columns (cheque no. appended to the narration)
+// so the positional roles and every check below apply unchanged.
+function iciciAccountStatementTo5Cols(grid: PdfGrid): PdfGrid {
+  if (grid.columnCount !== 6) return grid;
+  const money = /^\d[\d,]*\.\d{2}$/;
+  // Col 3 must never carry an amount, or this isn't the layout above.
+  if (grid.rows.some(r => money.test((r[3] ?? '').trim()))) return grid;
+  const rows = grid.rows.map(r => {
+    const narr = [r[1], r[3]].map(v => (v ?? '').trim()).filter(Boolean).join(' ');
+    return [r[0] ?? '', narr, r[2] ?? '', r[4] ?? '', r[5] ?? ''];
+  });
+  const xs = grid.columnXs ?? [];
+  const hs = grid.columnHeaders ?? [];
+  return {
+    ...grid,
+    rows,
+    columnCount: 5,
+    columnXs: [xs[0] ?? 0, xs[1] ?? 60, xs[2] ?? 120, xs[4] ?? 180, xs[5] ?? 240],
+    columnHeaders: [hs[0] ?? null, hs[1] ?? null, hs[2] ?? null, hs[4] ?? null, hs[5] ?? null],
+  };
+}
+
+function iciciAccountStatementSplitYear(gridIn: PdfGrid): PdfGrid {
   // Serial no. + alphanumeric transaction ID + day-month, with the
   // year either attached (fits on one line) or missing (wraps below).
   const splitDate = /^\d{1,6}\s+\S+\s+(\d{1,2})-([A-Za-z]{3})-(\d{4})?$/;
@@ -181,10 +207,12 @@ function iciciAccountStatementSplitYear(grid: PdfGrid): PdfGrid {
 
   // Structural gate: demand a healthy sample of this exact split
   // pattern before reshaping — protects against false-positive
-  // fingerprint hits from an unrelated 5-column ICICI export.
-  const sample = grid.rows.slice(0, 200);
+  // fingerprint hits from an unrelated 5/6-column ICICI export.
+  const sample = gridIn.rows.slice(0, 200);
   const hits = sample.filter(r => splitDate.test((r[0] ?? '').trim())).length;
-  if (hits < 5) return grid;
+  if (hits < 5) return gridIn;
+  const grid = iciciAccountStatementTo5Cols(gridIn);
+  if (grid.columnCount !== 5) return gridIn;
 
   const newRows: string[][] = [];
   for (let i = 0; i < grid.rows.length; i++) {
@@ -531,17 +559,49 @@ const JK_BANK: BankRule = {
 // turning the grid into the 5-column layout the positional mapping
 // expects. applyMapping's pending/continuation machinery then
 // reassembles each two-row transaction exactly like the CC format.
-function jkBankSplitLeadingDate(grid: PdfGrid): PdfGrid {
+// The grid extractor now resolves amitT.pdf to FIVE columns — an extra,
+// empty column 1 between the fused date+narration and Withdrawals:
+//   ["704/DR/Mrs SUNITA", "", "200.00", "", "73510.27Cr"]
+// so the 4-column gate below silently stopped firing and the 95-page
+// statement fell through to an unusable wizard. Drop that column when
+// it's empty on (nearly) every balance-bearing row.
+function jkBankDropEmptySecondColumn(grid: PdfGrid): PdfGrid {
+  if (grid.columnCount !== 5) return grid;
+  const drCr = /^-?[\d,]+(?:\.\d+)?(Dr|Cr)$/i;
+  // Page-total footers ("Page Total: 0 | 5938.00 | …") are the one row
+  // type that uses col 1 — leave them out of the emptiness check.
+  const txnRows = grid.rows.filter(r => drCr.test((r[4] ?? '').trim()) && !/^page\s+total/i.test((r[0] ?? '').trim()));
+  if (txnRows.length < 5) return grid;
+  const filled = txnRows.filter(r => (r[1] ?? '').trim()).length;
+  if (filled > txnRows.length * 0.05) return grid;
+  const drop = (a: Array<string | null> | undefined) => (a ?? []).filter((_, i) => i !== 1);
+  return {
+    ...grid,
+    rows: grid.rows.map(r => {
+      // Page-total rows put their figure in col 1 — keep it visible in col 0's text.
+      const extra = (r[1] ?? '').trim();
+      const out = r.filter((_, i) => i !== 1);
+      if (extra) out[0] = [(out[0] ?? '').trim(), extra].filter(Boolean).join(' ');
+      return out;
+    }),
+    columnCount: 4,
+    columnXs: (grid.columnXs ?? []).filter((_, i) => i !== 1),
+    columnHeaders: drop(grid.columnHeaders),
+  };
+}
+
+function jkBankSplitLeadingDate(gridIn: PdfGrid): PdfGrid {
+  const grid = jkBankDropEmptySecondColumn(gridIn);
   // Structural gate: this fusion only happens on the 4-column savings
   // layout. Never touch the 6-column CC grids (JK_BANK_DCR territory)
   // or anything else that shares the J&K fingerprints.
-  if (grid.columnCount !== 4) return grid;
+  if (grid.columnCount !== 4) return gridIn;
   const leadingDate = /^(\d{2}-\d{2}-\d{4})\s+(.+)$/;
   // Demand a healthy sample of date-prefixed col-0 cells before
   // reshaping — protects against false-positive fingerprint hits.
   const sample = grid.rows.slice(0, 120);
   const hits = sample.filter(r => leadingDate.test((r[0] ?? '').trim())).length;
-  if (hits < 5) return grid;
+  if (hits < 5) return gridIn;
 
   const newColumnCount = grid.columnCount + 1;
   const newRows: string[][] = grid.rows.map(r => {
