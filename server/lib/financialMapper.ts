@@ -92,6 +92,7 @@ export async function aiSuggestMappings(
       // generation task. flash-lite handles it well and costs a
       // fraction of pro.
       primaryModel: GEMINI_CHAT_MODEL_T2,
+      claude: 'fast',
     },
   );
 

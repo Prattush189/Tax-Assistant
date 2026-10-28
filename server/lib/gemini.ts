@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { isClaudeModel, costForClaude } from './claudePricing.js';
 
 // ── Gemini chat models ─────────────────────────────────────────────
 // Three-model line-up across every route:
@@ -167,6 +168,10 @@ export function costForModel(
    *  caching rate. Omit for models/paths that don't cache. */
   cachedInputTokens = 0,
 ): number {
+  // Claude rows (books / notices since 2026-10) share this entry point so
+  // every caller's costForModel(result.modelUsed, …) keeps working.
+  if (isClaudeModel(model)) return costForClaude(model, inputTokens, outputTokens, cachedInputTokens);
+
   const cached = Math.max(0, Math.min(cachedInputTokens, inputTokens));
   const fresh = inputTokens - cached;
   // cacheCost defaults to 25% of input for models without a published

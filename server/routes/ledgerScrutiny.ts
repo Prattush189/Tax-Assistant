@@ -52,6 +52,8 @@ import {
 import { ledgerComparisonRepo } from '../db/repositories/ledgerComparisonRepo.js';
 import { compareLedgersByBill } from '../lib/ledgerBillMatcher.js';
 import { callGeminiJson } from '../lib/geminiJson.js';
+import { claudeComplete, isClaudeActive, CLAUDE_MODEL, CLAUDE_MODEL_FAST, type ClaudeCompletion } from '../lib/claude.js';
+import { isClaudeModel } from '../lib/claudePricing.js';
 import { billableOpenAiUsage } from '../lib/geminiChat.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
@@ -579,6 +581,27 @@ function parseLedgerTsvResponse(raw: string): Omit<LedgerTsvChunkResult, 'inputT
 type RecordAttempt = (input: { failed: boolean; inputTokens: number; outputTokens: number; model: string }) => void;
 const NOOP_RECORD: RecordAttempt = () => {};
 
+/** Claude leg of the extract / scrutiny calls, shaped like the Gemini
+ *  branch so the parse + integrity checks below run unchanged. A refusal
+ *  or empty answer still bills, so it's recorded before rethrowing. */
+async function claudeLedgerCall(
+  messages: ChatCompletionMessageParam[],
+  maxTokens: number,
+  effort: 'low' | 'medium',
+  timeoutMs: number,
+  model: string,
+  recordAttempt: RecordAttempt,
+): Promise<{ raw: string; finishReason: string; inputTokens: number; outputTokens: number }> {
+  try {
+    const r = await claudeComplete(messages, { model, maxTokens, effort, timeoutMs });
+    return { raw: r.text, finishReason: r.finishReason, inputTokens: r.inputTokens, outputTokens: r.outputTokens };
+  } catch (err) {
+    const u = (err as { claudeUsage?: ClaudeCompletion }).claudeUsage;
+    if (u) recordAttempt({ failed: true, inputTokens: u.inputTokens, outputTokens: u.outputTokens, model });
+    throw err;
+  }
+}
+
 async function extractLedgerTsvOnce(
   chunkText: string,
   model: string,
@@ -596,17 +619,23 @@ async function extractLedgerTsvOnce(
   // from already-extracted text needs no reasoning. `temperature: 0` makes
   // the extraction deterministic so the same ledger run twice produces the
   // same accounts and transactions.
-  const response = await gemini.chat.completions.create({
-    model,
-    max_tokens: maxTokens,
-    messages,
-    stream: false,
-    reasoning_effort: reasoningEffort,
-    temperature: 0,
-  });
-  const raw = response.choices[0]?.message?.content ?? '';
-  const finishReason = response.choices[0]?.finish_reason ?? 'unknown';
-  const { inputTokens, outputTokens } = billableOpenAiUsage(response.usage);
+  const { raw, finishReason, inputTokens, outputTokens } = isClaudeModel(model)
+    ? await claudeLedgerCall(messages, maxTokens, 'low', 180_000, model, recordAttempt)
+    : await (async () => {
+        const response = await gemini.chat.completions.create({
+          model,
+          max_tokens: maxTokens,
+          messages,
+          stream: false,
+          reasoning_effort: reasoningEffort,
+          temperature: 0,
+        });
+        return {
+          raw: response.choices[0]?.message?.content ?? '',
+          finishReason: response.choices[0]?.finish_reason ?? 'unknown',
+          ...billableOpenAiUsage(response.usage),
+        };
+      })();
   // Capture usage immediately. If any of the validation steps below throw,
   // the caller still gets the cost reported via the recordAttempt closure.
   // Mark `failed: true` until we know parsing succeeded.
@@ -711,6 +740,18 @@ async function extractLedgerTsv(chunkText: string, maxTokens: number, recordAtte
     if (!isRetryableStatus(status) && status !== 0) return true;
     return false;
   };
+
+  // Claude first when the admin switch is on; one attempt, then the
+  // normal Gemini ladder (key 1). A truncation here is still worth the
+  // Gemini tiers — T1 runs with a doubled output ceiling.
+  if (isClaudeActive()) {
+    try {
+      return await extractLedgerTsvOnce(chunkText, CLAUDE_MODEL_FAST, maxTokens, 'none', recordAttempt);
+    } catch (err) {
+      lastErr = err;
+      console.warn(`[ledger-scrutiny] ${CLAUDE_MODEL_FAST} extract failed, falling back to Gemini: ${(err as Error).message?.slice(0, 140)}`);
+    }
+  }
 
   const PRIMARY_BACKOFFS_MS = [2_000, 5_000, 12_000];
   for (let attempt = 0; attempt < MAX_PRIMARY_ATTEMPTS; attempt++) {
@@ -1010,28 +1051,35 @@ async function scrutinizeAccountGroupOnce(
   const preRaisedBlock = formatPreRaisedFlags(relevantFlags);
   const userMessage = `${LEDGER_SCRUTINY_USER_PROMPT_HEAD}${preRaisedBlock}This is a SUBSET of ${groupAccounts.length} accounts out of ${totalAccounts} in the full ledger. Emit ONLY narration-driven observations (personal expense, round-tripping with contra evidence, large unexplained credits, RCM categorisation, deemed dividend, documentation requests). Threshold/arithmetic checks above are already covered — do NOT re-emit any code listed in the system prompt's deterministic-codes block.\n\n${JSON.stringify(ledgerForPrompt, null, 2)}`;
 
-  const response = await gemini.chat.completions.create({
-    model,
-    max_tokens: maxTokens,
-    messages: [
-      { role: 'system', content: LEDGER_SCRUTINY_SYSTEM_PROMPT },
-      { role: 'user', content: userMessage },
-    ],
-    stream: false,
-    response_format: { type: 'json_object' },
-    temperature: 0,
-  }, {
-    // Per-call timeout override: scrutiny chunks pack 8 × 60 = 480
-    // transactions into a single Gemini call with 16-24K of output
-    // budget. Real wall time on a dense chunk is 60-120s on T2; the
-    // default 90s client timeout was clipping these mid-stream on
-    // the slower end. 180s gives comfortable margin without leaving
-    // truly hung calls wedged forever.
-    timeout: 180_000,
-  });
-  const raw = response.choices[0]?.message?.content ?? '{}';
-  const finishReason = response.choices[0]?.finish_reason ?? 'unknown';
-  const { inputTokens, outputTokens } = billableOpenAiUsage(response.usage);
+  const scrutinyMessages: ChatCompletionMessageParam[] = [
+    { role: 'system', content: LEDGER_SCRUTINY_SYSTEM_PROMPT },
+    { role: 'user', content: userMessage },
+  ];
+  const { raw, finishReason, inputTokens, outputTokens } = isClaudeModel(model)
+    ? await claudeLedgerCall(scrutinyMessages, maxTokens, 'medium', 240_000, model, recordAttempt)
+    : await (async () => {
+        const response = await gemini.chat.completions.create({
+          model,
+          max_tokens: maxTokens,
+          messages: scrutinyMessages,
+          stream: false,
+          response_format: { type: 'json_object' },
+          temperature: 0,
+        }, {
+          // Per-call timeout override: scrutiny chunks pack 8 × 60 = 480
+          // transactions into a single Gemini call with 16-24K of output
+          // budget. Real wall time on a dense chunk is 60-120s on T2; the
+          // default 90s client timeout was clipping these mid-stream on
+          // the slower end. 180s gives comfortable margin without leaving
+          // truly hung calls wedged forever.
+          timeout: 180_000,
+        });
+        return {
+          raw: response.choices[0]?.message?.content ?? '{}',
+          finishReason: response.choices[0]?.finish_reason ?? 'unknown',
+          ...billableOpenAiUsage(response.usage),
+        };
+      })();
   let succeeded = false;
   try {
     const parsed = safeParseJson<ScrutinyResultRaw>(raw);
@@ -1063,6 +1111,15 @@ async function scrutinizeAccountGroup(
   const isRetryableStatus = (s: number) =>
     s === 429 || s === 500 || s === 502 || s === 503 || s === 504;
   const PRIMARY_BACKOFFS_MS = [2_000, 5_000];
+
+  if (isClaudeActive()) {
+    try {
+      return await scrutinizeAccountGroupOnce(extracted, groupAccounts, txPerAccount, totalAccounts, CLAUDE_MODEL, 16384, recordAttempt, preRaisedFlags);
+    } catch (err) {
+      lastErr = err;
+      console.warn(`[ledger-scrutiny] ${CLAUDE_MODEL} scrutiny failed, falling back to Gemini: ${(err as Error).message?.slice(0, 140)}`);
+    }
+  }
 
   for (let attempt = 0; attempt < MAX_PRIMARY_ATTEMPTS; attempt++) {
     try {

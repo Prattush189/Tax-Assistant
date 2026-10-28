@@ -1,7 +1,10 @@
 /**
  * ChatProvider abstraction for streaming-text LLM calls.
  *
- * Used today by the notice route. Gemini-only, Deep-reasoning, on the same
+ * Calls without search grounding try Claude first (lib/claude.ts, admin
+ * switch) and fall back to the Gemini ladder below pinned to key 1.
+ *
+ * Used today by the notice route. Gemini: Deep-reasoning, on the same
  * model ladder as chat — 3.8 Flash (Flex) → 3.7 Flash (Flex → Standard)
  * → 3.1 Flash-Lite — with Google Search grounding enabled.
  *
@@ -25,6 +28,8 @@ import {
 } from './gemini.js';
 import { streamGeminiChat } from './geminiChat.js';
 import { selectTier, confirmUsed } from './searchQuota.js';
+import { claudeComplete, isClaudeActive, CLAUDE_MODEL } from './claude.js';
+import { withBreaker } from './circuitBreaker.js';
 
 /** Google-Search grounding for notice / deed / ledger drafting.
  *  Default OFF since 2026-09-07. Set NOTICE_SEARCH_GROUNDING=1 to restore: the letter's authority is statutory, the case law that
@@ -147,6 +152,43 @@ export const geminiChatProvider: ChatProvider = {
     const topRung = ladder[0].model;
 
     let emittedAnyText = false;
+    let pinGeminiKey1 = false;
+    let firstFallbackFired = false;
+
+    // Claude first for anything that doesn't need Google Search (admin
+    // switch in app_config). Searching calls stay on Gemini's free pool.
+    if (!SEARCH_GROUNDING && isClaudeActive()) {
+      const t0 = Date.now();
+      try {
+        const r = await withBreaker('claude', () => claudeComplete(
+          [{ role: 'system', content: req.systemPrompt }, { role: 'user', content: req.userMessage }],
+          {
+            maxTokens: req.maxTokens,
+            effort: req.economy || req.thinking === 'low' ? 'low' : 'medium',
+            onText: (t) => { emittedAnyText = true; onText(t); },
+          },
+        ));
+        console.log(`[chatProvider-timing] ${r.model} total=${Date.now() - t0}ms in=${r.inputTokens} out=${r.outputTokens}${r.finishReason !== 'stop' ? ` finish=${r.finishReason}` : ''}`);
+        return {
+          inputTokens: r.inputTokens,
+          outputTokens: r.outputTokens,
+          cacheReadTokens: r.cachedInputTokens,
+          cacheCreationTokens: 0,
+          costUsd: costForModel(r.model, r.inputTokens, r.outputTokens, r.cachedInputTokens),
+          modelUsed: r.model,
+          withSearch: false,
+          truncated: r.finishReason === 'length',
+        };
+      } catch (err) {
+        // Partial draft already streamed — retrying would duplicate it.
+        if (emittedAnyText) throw err;
+        console.warn(`[chatProvider] ${CLAUDE_MODEL} failed after ${Date.now() - t0}ms, falling back to Gemini key 1:`, (err as Error).message?.slice(0, 160));
+        pinGeminiKey1 = true;
+        firstFallbackFired = true;
+        try { req.onFallback?.({ from: CLAUDE_MODEL, to: topRung }); }
+        catch (e) { console.warn('[chatProvider] onFallback hook threw:', (e as Error).message); }
+      }
+    }
 
     const tryModel = async (
       model: string,
@@ -154,7 +196,9 @@ export const geminiChatProvider: ChatProvider = {
       thinking: 'low' | 'high' | null,
     ): Promise<{ inputTokens: number; outputTokens: number; cachedInputTokens: number; ttftMs: number; totalMs: number; finishReason: string }> => {
       const selection = selectTier(true);
-      const apiKey = GEMINI_API_KEYS[selection.keyIndex] ?? '';
+      // After a Claude failure the Gemini fallback is pinned to key 1.
+      const keyIndex = pinGeminiKey1 ? 0 : selection.keyIndex;
+      const apiKey = GEMINI_API_KEYS[keyIndex] ?? '';
       let inputTokens = 0;
       let outputTokens = 0;
       let cachedInputTokens = 0;
@@ -190,7 +234,7 @@ export const geminiChatProvider: ChatProvider = {
           cachedInputTokens = chunk.cachedInputTokens ?? 0;
           finishReason = chunk.finishReason ?? '';
           const tag = model.startsWith('gemini-2.5') ? 'gemini-2.5' : 'gemini-3';
-          confirmUsed(tag, selection.keyIndex, true);
+          confirmUsed(tag, keyIndex, true);
         }
       }
       // A stream can end "successfully" with no answer at all (thinking
@@ -204,7 +248,6 @@ export const geminiChatProvider: ChatProvider = {
 
     let used: { model: string; tier: string | null } | null = null;
     let result = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, ttftMs: 0, totalMs: 0, finishReason: '' };
-    let firstFallbackFired = false;
 
     for (let i = 0; i < ladder.length; i++) {
       const rung = ladder[i];

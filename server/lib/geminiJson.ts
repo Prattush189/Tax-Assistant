@@ -8,6 +8,7 @@ import { gemini, GEMINI_MODEL, GEMINI_FALLBACK_MODEL } from './gemini.js';
 import { withBreaker, BreakerOpenError } from './circuitBreaker.js';
 import { buildGeminiUserError } from './geminiUserError.js';
 import { billableOpenAiUsage } from './geminiChat.js';
+import { claudeComplete, isClaudeActive, CLAUDE_MODEL, CLAUDE_MODEL_FAST, type ClaudeCompletion } from './claude.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 
 export interface GeminiJsonOptions {
@@ -46,6 +47,12 @@ export interface GeminiJsonOptions {
   onFallback?: (input: { from: string; to: string }) => void;
   /** Retry when the model returns malformed/truncated JSON. */
   retryParseFailures?: boolean;
+  /** Try Claude first when the admin switch is on (books features):
+   *  'fast' = CLAUDE_MODEL_FAST (Haiku) for classification / short
+   *  fixed-format output, 'smart' = CLAUDE_MODEL (Sonnet). Any Claude
+   *  failure drops onto the normal Gemini ladder, which runs on Gemini
+   *  key 1 (the `gemini` client). */
+  claude?: 'fast' | 'smart';
 }
 
 /** Parse JSON safely — strips markdown fences and attempts recovery on truncated strings. */
@@ -153,6 +160,38 @@ async function callOnce<T>(
   }
 }
 
+async function callClaudeOnce<T>(
+  messages: ChatCompletionMessageParam[],
+  model: string,
+  maxTokens: number,
+  recordAttempt?: GeminiJsonOptions['recordAttempt'],
+): Promise<GeminiJsonResult<T>> {
+  let r: ClaudeCompletion;
+  try {
+    r = await claudeComplete(messages, { model, maxTokens, effort: 'low' });
+  } catch (err) {
+    // Refusals / empty answers still billed — report them as wasted spend.
+    const u = (err as { claudeUsage?: ClaudeCompletion }).claudeUsage;
+    if (u) recordAttempt?.({ failed: true, inputTokens: u.inputTokens, outputTokens: u.outputTokens, model: u.model });
+    throw err;
+  }
+  let succeeded = false;
+  try {
+    const parsed = safeParseJson<T>(r.text);
+    if (parsed === null) throw new Error('Failed to parse AI response');
+    succeeded = true;
+    return {
+      data: parsed,
+      inputTokens: r.inputTokens,
+      outputTokens: r.outputTokens,
+      cachedInputTokens: r.cachedInputTokens,
+      modelUsed: r.model,
+    };
+  } finally {
+    recordAttempt?.({ failed: !succeeded, inputTokens: r.inputTokens, outputTokens: r.outputTokens, model: r.model });
+  }
+}
+
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 const isParseFailure = (err: unknown) =>
   err instanceof Error && /Failed to parse AI response/i.test(err.message);
@@ -194,6 +233,21 @@ export async function callGeminiJson<T = unknown>(
   const onFallback = opts.onFallback;
   const retryParseFailures = opts.retryParseFailures === true;
   let fallbackFired = false;
+
+  // Claude first (opt-in per call site, admin-switchable). One attempt:
+  // the SDK already retried transient errors once, and Gemini is right
+  // behind it.
+  if (opts.claude && isClaudeActive()) {
+    const claudeModel = opts.claude === 'fast' ? CLAUDE_MODEL_FAST : CLAUDE_MODEL;
+    try {
+      return await withBreaker('claude', () => callClaudeOnce<T>(messages, claudeModel, maxTokens, recordAttempt));
+    } catch (err) {
+      console.warn(`[geminiJson] ${claudeModel} failed, falling back to Gemini key 1: ${(err as Error).message?.slice(0, 200)}`);
+      fallbackFired = true;
+      try { onFallback?.({ from: claudeModel, to: primary }); }
+      catch (e) { console.warn('[geminiJson] onFallback hook threw:', (e as Error).message); }
+    }
+  }
 
   // Circuit-breaker wraps the WHOLE retry-and-fallback ladder for this provider.
   // If Gemini is genuinely down, the breaker opens after a handful of failures

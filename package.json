@@ -17,6 +17,7 @@
     "chat:eval": "tsx server/scripts/chat-eval.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.3.0",
     "@huggingface/transformers": "^4.2.0",
     "@react-oauth/google": "^0.13.5",
     "@tailwindcss/typography": "^0.5.19",

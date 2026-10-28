@@ -1901,6 +1901,27 @@ export async function adminSetActiveKey(keyIndex: number): Promise<GeminiConfig>
   });
 }
 
+// ── Admin Claude routing (books + notices, Gemini key 1 fallback) ─────
+
+export interface ClaudeConfig {
+  enabled: boolean;
+  configured: boolean;
+  active: boolean;
+  model: string;
+  fastModel: string;
+}
+
+export async function adminFetchClaudeConfig(): Promise<ClaudeConfig> {
+  return authFetch('/api/admin/claude-config');
+}
+
+export async function adminSetClaudeEnabled(enabled: boolean): Promise<ClaudeConfig> {
+  return authFetch('/api/admin/claude-config', {
+    method: 'POST',
+    body: JSON.stringify({ enabled }),
+  });
+}
+
 // ── Licensing (admin) ──────────────────────────────────────────────────
 
 export interface AdminLicenseRow {

@@ -471,6 +471,7 @@ router.get('/stats/plans', (_req: AuthRequest, res: Response) => {
 import { getQuotaStatus, getGeminiConfig, setGeminiLimits, setActiveKey } from '../lib/searchQuota.js';
 import { getRateLimiterStatus } from '../lib/rateLimiter.js';
 import { getBreakerStatus } from '../lib/circuitBreaker.js';
+import { getClaudeConfig, setClaudeEnabled } from '../lib/claude.js';
 
 // ── API Cost Analytics Dashboard ──────────────────────────────────────────
 
@@ -591,6 +592,22 @@ router.post('/active-key', (req: AuthRequest, res: Response) => {
     return;
   }
   res.json(getGeminiConfig());
+});
+
+// GET /api/admin/claude-config — Claude-first routing for non-search work
+router.get('/claude-config', (_req: AuthRequest, res: Response) => {
+  res.json(getClaudeConfig());
+});
+
+// POST /api/admin/claude-config — body: { enabled: boolean }
+router.post('/claude-config', (req: AuthRequest, res: Response) => {
+  const { enabled } = req.body ?? {};
+  if (typeof enabled !== 'boolean') {
+    res.status(400).json({ error: 'enabled must be a boolean' });
+    return;
+  }
+  setClaudeEnabled(enabled);
+  res.json(getClaudeConfig());
 });
 
 // ── External API keys (for assist.smartbizin.com etc.) ──────────────────

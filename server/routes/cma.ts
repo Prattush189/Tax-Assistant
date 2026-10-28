@@ -271,7 +271,7 @@ Hard rules:
       rateOfInterestNotes?: string;
     }>(
       [{ role: 'user', content: userPrompt }],
-      { maxTokens: 1024 },
+      { maxTokens: 1024, claude: 'fast' },
     );
 
     // Log cost under a dedicated feature tag — matches the rest of

@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Cpu, Zap, Shield, Key, Save, RotateCcw } from 'lucide-react';
+import { Cpu, Zap, Shield, Key, Save, RotateCcw, Sparkles } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { cn } from '../../lib/utils';
 import {
   fetchApiCosts, ApiCostData,
   adminFetchGeminiConfig, adminSetGeminiLimits, adminSetActiveKey, GeminiConfig,
+  adminFetchClaudeConfig, adminSetClaudeEnabled, ClaudeConfig,
 } from '../../services/api';
 
 const PERIODS = [
@@ -29,6 +30,9 @@ function fmtTokens(n: number): string {
 // label instead of the raw string. Add new active models above the
 // retired block so they get a distinct colour.
 const MODEL_COLORS: Record<string, string> = {
+  'claude-sonnet-5-5':             'bg-orange-500',   // Scrutiny + notices (Claude-first)
+  'claude-haiku-5-5':              'bg-orange-300',   // Extraction + mapping (Claude-first)
+  'claude-opus-5-5':               'bg-orange-600',
   'gemini-3.8-flash':              'bg-amber-500',    // Primary — active
   'gemini-3.8-flash-flex':         'bg-amber-400',    // Primary on Flex
   'gemini-3.7-flash':              'bg-violet-400',   // T1 — active fallback
@@ -50,6 +54,9 @@ const MODEL_COLORS: Record<string, string> = {
 };
 
 const MODEL_LABELS: Record<string, string> = {
+  'claude-sonnet-5-5':             'Claude Sonnet 5.5 (scrutiny + notices)',
+  'claude-haiku-5-5':              'Claude Haiku 5.5 (extraction + mapping)',
+  'claude-opus-5-5':               'Claude Opus 5.5',
   'gemini-3.8-flash':              'Gemini 3.8 Flash (primary, all features)',
   'gemini-3.8-flash-flex':         'Gemini 3.8 Flash (primary, Flex)',
   'gemini-3.7-flash':              'Gemini 3.7 Flash (fallback, all features)',
@@ -89,16 +96,20 @@ export function ModelUsageDashboard() {
   const [t2Input, setT2Input] = useState<string>('');
   const [savingLimits, setSavingLimits] = useState(false);
   const [switchingKey, setSwitchingKey] = useState(false);
+  const [claude, setClaude] = useState<ClaudeConfig | null>(null);
+  const [savingClaude, setSavingClaude] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [costs, cfg] = await Promise.all([
+      const [costs, cfg, claudeCfg] = await Promise.all([
         fetchApiCosts(period),
         adminFetchGeminiConfig(),
+        adminFetchClaudeConfig().catch(() => null),
       ]);
       setData(costs);
       setConfig(cfg);
+      setClaude(claudeCfg);
       setT1Input(String(cfg.t1Limit));
       setT2Input(String(cfg.t2Limit));
     } catch { /* silent */ }
@@ -146,6 +157,20 @@ export function ModelUsageDashboard() {
       toast.error('Failed to reset limits');
     } finally {
       setSavingLimits(false);
+    }
+  };
+
+  const toggleClaude = async () => {
+    if (!claude) return;
+    setSavingClaude(true);
+    try {
+      const next = await adminSetClaudeEnabled(!claude.enabled);
+      setClaude(next);
+      toast.success(next.enabled ? 'Books & notices now try Claude first' : 'Books & notices back on Gemini');
+    } catch {
+      toast.error('Failed to update Claude routing');
+    } finally {
+      setSavingClaude(false);
     }
   };
 
@@ -354,6 +379,45 @@ export function ModelUsageDashboard() {
               className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors disabled:opacity-50"
             >
               <Save className="w-3.5 h-3.5" /> {savingLimits ? 'Saving...' : 'Save Limits'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Claude-first routing for non-search work */}
+      {claude && (
+        <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2 mb-1">
+                <Sparkles className="w-4 h-4 text-orange-500" />
+                Claude for books &amp; notices
+              </h3>
+              <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                When on, ledger scrutiny and notice drafting (when search is off) use {claude.model}; ledger extraction,
+                financial mapping and CMA narrative use {claude.fastModel}. Any failure falls back to Gemini key 1.
+                Tax chat and deeds keep Google Search on Gemini.
+              </p>
+              {!claude.configured && (
+                <p className="text-[11px] text-red-500 mt-1">ANTHROPIC_API_KEY is not set on the server — Gemini is used regardless.</p>
+              )}
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={claude.enabled}
+              aria-label="Use Claude for books and notices"
+              onClick={toggleClaude}
+              disabled={savingClaude}
+              className={cn(
+                'relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-50',
+                claude.enabled ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-gray-700',
+              )}
+            >
+              <span className={cn(
+                'inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform',
+                claude.enabled ? 'translate-x-5' : 'translate-x-0.5',
+              )} />
             </button>
           </div>
         </div>

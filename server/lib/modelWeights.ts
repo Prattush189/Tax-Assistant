@@ -66,6 +66,15 @@ const MODEL_WEIGHTS: Record<string, ModelWeight> = {
   'gemini-3.1-flash-lite-preview': { wIn: 2.5, wOut: 15.0,   wCached: 0.625 },   // $0.25 / $1.50 — old T1
   'gemini-2.5-flash':              { wIn: 3.0, wOut: 25.0,   wCached: 0.75 },   // $0.30 / $2.50
 
+  // Claude (2026-10, books + notices on free credits). Weighted like the
+  // Gemini primary it replaces, NOT at Claude's list price — the credits
+  // are ours, so a user's plan quota should drain at the same rate
+  // whichever provider answered. The USD cost column still shows the
+  // real Claude price via costForModel().
+  'claude-opus-5-5':               { wIn: 7.5,  wOut: 37.5,  wCached: 0.75 },
+  'claude-sonnet-5-5':             { wIn: 7.5,  wOut: 37.5,  wCached: 0.75 },
+  'claude-haiku-5-5':              { wIn: 2.5,  wOut: 15.0,  wCached: 0.625 },
+
   // Retired (2026-05 Anthropic-removal). The vision pipeline used
   // Sonnet 4.5 briefly between the original Gemini-only path and the
   // current Gemini-only path. Weights kept here so any api_usage row
