@@ -11,6 +11,8 @@ import { structureOcrTextIntoRows } from '../lib/paddleStructurer.js';
 import { parsePrintedTotals, grossTotalNote } from '../lib/bankGrossReconcile.js';
 import type { GeminiJsonResult } from '../lib/geminiJson.js';
 import { callBankEnrichment } from '../lib/bankEnrichmentClient.js';
+import { readStatementPdfWithClaude } from '../lib/claudeStatementReader.js';
+import { isClaudeActive } from '../lib/claude.js';
 import { getBreakerStatus } from '../lib/circuitBreaker.js';
 import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_CATEGORIES, type BankStatementCategory } from '../lib/bankStatementPrompt.js';
 import { classifyWithLearning, classifyRow, extractCounterpartyAndReference, extractNarrationFingerprint, markRecurring, unifyAmbiguousCounterparties, validateDirectionCategory, applyRetailBusinessPromotion, remapOtherByDirection } from '../lib/bankClassifier.js';
@@ -1472,6 +1474,42 @@ router.post(
         let pdfPageCount: number | null = null;
         if (mimeType === 'application/pdf') {
           pdfPageCount = await getPdfPageCount(req.file.buffer);
+          // 2026-10: Claude reads the PDF first (admin switch "Claude for
+          // books & notices"). Bake-off: 99% of printed balances
+          // reconciling vs 96% for PaddleOCR + Gemini, which also dropped
+          // rows outright. Output is only used when the running balance
+          // re-walks cleanly — otherwise PaddleOCR below runs as before,
+          // and the Claude tokens are still billed (claudeWastedUsages).
+          if (isClaudeActive()) {
+            const claudeStart = Date.now();
+            try {
+              const read = await readStatementPdfWithClaude(req.file.buffer);
+              console.log(`[bank-statements] Claude PDF read: ${read.rows.length} rows from ${read.chunks} chunk(s) in ${Date.now() - claudeStart}ms — ${read.check.reason}${read.check.repaired ? `, ${read.check.repaired} balance(s) repaired` : ''}`);
+              if (read.check.passed) {
+                extracted = {
+                  transactions: read.rows.map((r) => ({
+                    date: r.date,
+                    narration: r.narration,
+                    type: r.type,
+                    amount: r.type === 'credit' ? r.amount : -r.amount,
+                    balance: r.balance,
+                  })),
+                  amountsFromOcr: true,
+                  printedTotals: null,
+                } as ExtractedStatement;
+                (res.locals as Record<string, unknown>).geminiUsages = read.usages;
+                extractedFromOcr = true;
+              } else {
+                (res.locals as Record<string, unknown>).claudeWastedUsages = read.usages;
+                console.warn(`[bank-statements] Claude PDF read failed the balance check, falling back to PaddleOCR`);
+              }
+            } catch (err) {
+              (res.locals as Record<string, unknown>).claudeWastedUsages = (err as { usages?: unknown[] }).usages ?? [];
+              console.warn(`[bank-statements] Claude PDF read failed after ${Date.now() - claudeStart}ms, falling back to PaddleOCR: ${(err as Error).message?.slice(0, 200)}`);
+            }
+          }
+        }
+        if (mimeType === 'application/pdf' && !extractedFromOcr) {
           try {
             const ocrStart = Date.now();
             console.log(`[bank-statements] PaddleOCR start: ${filename} (${req.file.size} bytes, ${pdfPageCount ?? '?'} pages)`);
@@ -2564,13 +2602,29 @@ INPUT_ROWS — TSV, one row per line, columns narration<TAB>type<TAB>amount:
         const usages = (res.locals as Record<string, unknown>).geminiUsages as
           Array<{ inputTokens: number; outputTokens: number; modelUsed: string }> | undefined;
         if (usages && usages.length > 0) {
-          const inputTok = usages.reduce((a, u) => a + u.inputTokens, 0);
-          const outputTok = usages.reduce((a, u) => a + u.outputTokens, 0);
-          // Price each call by its actual model. The chunked TSV path
-          // runs on gemini-2.5-flash / gemini-3-flash-preview; flat T2
-          // rates were under-counting by 3-6x.
-          const cost = usages.reduce((a, u) => a + costForModel(u.modelUsed, u.inputTokens, u.outputTokens), 0);
-          usageRepo.logWithBilling(clientIp, req.user.id, quota.billingUserId, inputTok, outputTok, cost, false, usages[0].modelUsed, false, bankCategory, txCount, 'success', tokenQuota.estimatedTokens, Date.now() - analyzeStartMs);
+          // One row per model: price AND quota weight (weighted_tokens is
+          // computed from the row's model) must follow the model that ran.
+          // A single row labelled usages[0] weighted a Claude/Gemini mix
+          // all at the first model's rate.
+          const byModel = new Map<string, { inputTokens: number; outputTokens: number }>();
+          for (const u of usages) {
+            const agg = byModel.get(u.modelUsed) ?? { inputTokens: 0, outputTokens: 0 };
+            agg.inputTokens += u.inputTokens;
+            agg.outputTokens += u.outputTokens;
+            byModel.set(u.modelUsed, agg);
+          }
+          let first = true;
+          for (const [model, agg] of byModel) {
+            usageRepo.logWithBilling(clientIp, req.user.id, quota.billingUserId, agg.inputTokens, agg.outputTokens, costForModel(model, agg.inputTokens, agg.outputTokens), false, model, false, bankCategory, first ? txCount : 0, 'success', first ? tokenQuota.estimatedTokens : 0, Date.now() - analyzeStartMs);
+            first = false;
+          }
+        }
+        // A Claude PDF read that failed its balance check (PaddleOCR then
+        // produced the rows) was still billed by Anthropic.
+        const claudeWasted = (res.locals as Record<string, unknown>).claudeWastedUsages as
+          Array<{ inputTokens: number; outputTokens: number; modelUsed: string }> | undefined;
+        for (const u of claudeWasted ?? []) {
+          usageRepo.logWithBilling(clientIp, req.user.id, quota.billingUserId, u.inputTokens, u.outputTokens, costForModel(u.modelUsed, u.inputTokens, u.outputTokens), false, u.modelUsed, false, `${bankCategory}_failed`, 0, 'failed', 0, 0);
         }
         // Local-model row: deterministic + semantic + cache hits cost no
         // tokens, but we record them under model='local' so the optimized

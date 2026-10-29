@@ -2705,6 +2705,36 @@ export function mappedRowsToExtractedLedger(
   };
 }
 
+/** How well mapped bank rows agree with the statement's own printed
+ *  running balance. Used to catch a per-bank rule that matched by
+ *  fingerprint but mapped the columns wrongly — those land near 0%,
+ *  while correct mappings sit at ~100% (≥93% even on J&K exports that
+ *  print same-day balances out of order). Direction-agnostic per file
+ *  (cash-credit accounts run the other way) and tolerant of a balance
+ *  crossing Dr↔Cr when the Dr/Cr suffix was stripped. */
+export function mappedRowsBalanceAgreement(rows: MappedRow[]): { checkpoints: number; agreeing: number } {
+  let best = { checkpoints: 0, agreeing: 0 };
+  for (const sign of [1, -1]) {
+    let prev: number | null = null;
+    let acc = 0;
+    let checkpoints = 0;
+    let agreeing = 0;
+    for (const r of rows) {
+      acc += r.amount;
+      if (r.balance == null || !Number.isFinite(r.balance)) continue;
+      if (prev != null) {
+        checkpoints++;
+        const moved = sign * acc;
+        if (Math.abs(r.balance - prev - moved) < 1.01 || Math.abs(r.balance + prev - moved) < 1.01) agreeing++;
+      }
+      prev = r.balance;
+      acc = 0;
+    }
+    if (agreeing > best.agreeing || best.checkpoints === 0) best = { checkpoints, agreeing };
+  }
+  return best;
+}
+
 /** Build a CSV string ready for the existing /api/bank-statements
  *  csvText path (separate debit/credit columns + balance). The server
  *  parses these column names verbatim, so the header line is fixed. */

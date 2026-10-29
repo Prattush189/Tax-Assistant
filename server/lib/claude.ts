@@ -108,9 +108,9 @@ export interface ClaudeCallOptions {
 
 const THINKING_HEADROOM = 8_192;
 
-type ClaudeContent = Anthropic.TextBlockParam | Anthropic.ImageBlockParam;
+type ClaudeContent = Anthropic.TextBlockParam | Anthropic.ImageBlockParam | Anthropic.DocumentBlockParam;
 
-type ContentPart = { type: string; text?: string; image_url?: { url: string } };
+type ContentPart = { type: string; text?: string; image_url?: { url: string }; file?: { file_data?: string } };
 
 function toClaudeContent(content: string | ContentPart[]): string | ClaudeContent[] {
   if (typeof content === 'string') return content;
@@ -122,6 +122,11 @@ function toClaudeContent(content: string | ContentPart[]): string | ClaudeConten
       const m = /^data:(image\/(?:png|jpeg|gif|webp));base64,(.+)$/.exec(part.image_url.url);
       if (!m) throw new Error('Claude adapter: only base64 data-URL images are supported');
       blocks.push({ type: 'image', source: { type: 'base64', media_type: m[1] as 'image/png', data: m[2] } });
+    } else if (part.type === 'file' && part.file?.file_data) {
+      // OpenAI-shaped file part carrying a PDF (statement pages read directly).
+      const m = /^data:application\/pdf;base64,(.+)$/.exec(part.file.file_data);
+      if (!m) throw new Error('Claude adapter: only base64 PDF file parts are supported');
+      blocks.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: m[1] } });
     } else {
       throw new Error(`Claude adapter: unsupported content part "${part.type}"`);
     }

@@ -14,6 +14,7 @@ import { excelToRows } from '../../lib/excelToRows';
 import {
   applyMapping,
   extractPdfGrid,
+  mappedRowsBalanceAgreement,
   mappedRowsToBankCsv,
   rowsToFakeGrid,
   PdfPasswordError,
@@ -297,6 +298,17 @@ export function BankStatementUploader({ manager }: Props) {
           gridLog(`[BankStatementUploader] no per-bank rule matched — cols=${grid.columnCount}, rows=${grid.rows.length}, headers=${JSON.stringify(grid.columnHeaders)}, sbi-markers=${JSON.stringify(sbiMarkers)}`);
         }
         if (detected && grid) {
+          // A rule can match by fingerprint yet map the columns wrongly
+          // (a bank changed its layout). When the mapped rows don't agree
+          // with the statement's own running balance, don't show the user
+          // a wrong mapping — read the PDF directly instead.
+          const agreement = mappedRowsBalanceAgreement(applyMapping(detected.grid, detected.mapping, 'bank').rows);
+          if (agreement.checkpoints >= 5 && agreement.agreeing < agreement.checkpoints * 0.9) {
+            gridLog(`[BankStatementUploader] ${detected.bank} rule matched but only ${agreement.agreeing}/${agreement.checkpoints} balances agree — reading the PDF directly`);
+            setIsReadingPdf(false);
+            void analyzeRawFile(file);
+            return;
+          }
           gridLog(`[BankStatementUploader] auto-detected ${detected.bank} — pre-filling wizard for review`);
           setIsReadingPdf(false);
           setPendingGrid({
@@ -420,9 +432,15 @@ export function BankStatementUploader({ manager }: Props) {
         // wizard handles every grid it can; only completely-empty grids
         // fall to vision. Wizard's downstream `required` check still
         // refuses uploads that genuinely can't be mapped.
+        // No bank rule matched: an unknown format. Read the PDF directly
+        // (server: Claude, checked against the printed running balance,
+        // else PaddleOCR) instead of asking the user to map columns —
+        // a guessed mapping on an unfamiliar layout is how statements
+        // got mis-read.
         if (grid && grid.rows.length >= 3 && (grid.columnCount ?? 0) >= 3) {
+          gridLog('[BankStatementUploader] no bank rule matched — reading the PDF directly');
           setIsReadingPdf(false);
-          setPendingGrid({ grid, filename: file.name, file });
+          void analyzeRawFile(file);
           return;
         }
         if (grid && (grid.columnCount ?? 0) < 3) {
