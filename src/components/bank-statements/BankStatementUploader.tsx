@@ -1,28 +1,22 @@
 import { useRef, useState } from 'react';
-import { gridLog } from '../../lib/gridDebug';
 import { Upload, FileText, Loader2, Sparkles } from 'lucide-react';
 import Papa from 'papaparse';
 import toast from 'react-hot-toast';
 import { FormatSupportNotice } from '../shared/FormatSupportNotice';
 import { SUPPORTED_BANKS } from '../../lib/perBankRules';
 import { BankStatementManager } from '../../hooks/useBankStatementManager';
-import type { BankStatementAnalyzeProgress } from '../../services/api';
+import type { BankStatementAnalyzeProgress, StatementFormatMeta } from '../../services/api';
 import { cn } from '../../lib/utils';
-import { ColumnMappingWizard } from '../shared/ColumnMappingWizard';
-import { ScannedPdfConfirmDialog, PdfTooLargeDialog } from '../shared/ScannedPdfConfirmDialog';
+import { PdfTooLargeDialog } from '../shared/ScannedPdfConfirmDialog';
 import { excelToRows } from '../../lib/excelToRows';
 import {
   applyMapping,
   extractPdfGrid,
-  mappedRowsBalanceAgreement,
   mappedRowsToBankCsv,
   rowsToFakeGrid,
   PdfPasswordError,
-  type ColumnMapping,
-  type PdfGrid,
 } from '../../lib/pdfGrid';
-import { detectAndMapBank } from '../../lib/perBankRules';
-import { detectJkbankRptFormat, extractJkbankRpt } from '../../lib/jkbankRptParser';
+import { routePdf, routeSpreadsheet, rowsToTsv, type StatementRoute } from '../../lib/statementRouting';
 import { PasswordPromptDialog } from '../shared/PasswordPromptDialog';
 
 function AnalyzeProgressBar({
@@ -83,6 +77,9 @@ function AnalyzeProgressBar({
   );
 }
 
+
+type Mapped = ReturnType<typeof applyMapping>;
+
 interface Props {
   manager: BankStatementManager;
 }
@@ -92,23 +89,8 @@ const ACCEPT = '.pdf,.csv,.xlsx,.xls,application/pdf,text/csv,application/vnd.op
 export function BankStatementUploader({ manager }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
-  // Wizard state. When set, the user is mid-mapping for a digital PDF;
-  // we hold onto the grid + filename until they confirm or cancel.
-  // The original File is kept too so the "Use AI Vision instead"
-  // escape hatch in the wizard can route the same upload through the
-  // vision pipeline without re-prompting.
-  // pendingGrid optionally carries a preset mapping + detected bank
-  // name. When present, the wizard opens with the columns pre-tagged
-  // and a banner saying "Auto-detected as <Bank>" so the user
-  // reviews the mapping before clicking Continue rather than having
-  // transactions silently extracted on the wrong columns.
-  const [pendingGrid, setPendingGrid] = useState<{
-    grid: PdfGrid;
-    filename: string;
-    file: File | null;
-    presetMapping?: ColumnMapping;
-    detectedBank?: string;
-  } | null>(null);
+  // There is no column-mapping screen for statements — see
+  // lib/statementRouting for where each upload goes.
   // Password-protected PDFs go here. The dialog calls onSubmit with
   // the entered password; we re-run extractPdfGrid with it. If it
   // still fails, wrongPassword flips and the user can try again.
@@ -116,11 +98,10 @@ export function BankStatementUploader({ manager }: Props) {
     file: File;
     wrongPassword: boolean;
   } | null>(null);
-  // True while extractPdfGrid is parsing a freshly-picked PDF, before
-  // the column-mapping wizard opens. Without this the dropzone looks
-  // idle for the 1-3s pdfjs takes on a multi-page statement, which
-  // reads as "did my click register?". Cleared when the wizard opens
-  // OR when we route to the analyze pipeline.
+  // True while extractPdfGrid is parsing a freshly-picked PDF. Without
+  // this the dropzone looks idle for the 1-3s pdfjs takes on a
+  // multi-page statement, which reads as "did my click register?".
+  // Cleared when we route to the analyze pipeline.
   const [isReadingPdf, setIsReadingPdf] = useState(false);
   // Scanned-PDF warning + over-100-page block dialogs. Shown when the
   // PDF has no text layer and we'd route to AI vision — at which point
@@ -176,13 +157,13 @@ export function BankStatementUploader({ manager }: Props) {
       try {
         const rows = await excelToRows(file);
         const grid = rows ? rowsToFakeGrid(rows) : null;
-        if (!grid) {
+        if (!rows || !grid) {
           toast.error('Excel appears empty or has no data rows.');
           setIsReadingPdf(false);
           return;
         }
         setIsReadingPdf(false);
-        setPendingGrid({ grid, filename: file.name, file });
+        await followSheetRoute(routeSpreadsheet(grid), rows, file);
       } catch (err) {
         console.error('[BankStatementUploader] excel parse failed:', err);
         toast.error('Could not read this Excel file. Re-export as .xlsx and try again.');
@@ -192,266 +173,37 @@ export function BankStatementUploader({ manager }: Props) {
     }
 
     if (isCsv) {
-      // Route CSVs through the same column-mapping wizard PDFs use,
-      // not directly to the server CSV path. The server's CSV path
-      // falls back to hardcoded header guesses
-      // (r.date ?? r.Date ?? r['Txn Date'] ?? ...), and any CSV that
-      // doesn't match one of those guesses ends up with the wrong
-      // signed amount on some rows — the same sign-flip class of
-      // failure the wizard was built to eliminate. Going through
-      // applyMapping → mappedRowsToBankCsv normalizes to the canonical
-      // header set the server expects, so the deterministic
-      // categorisation pass produces totals that match the PDF path
-      // exactly.
+      // CSVs are mapped in the browser (applyMapping → mappedRowsToBankCsv
+      // normalizes to the canonical header set the server expects), not
+      // posted raw: the server CSV path's hardcoded header guesses
+      // (r.date ?? r.Date ?? r['Txn Date'] ?? ...) mis-sign rows on any
+      // CSV that doesn't match them.
       setIsReadingPdf(true);
       const text = await file.text();
       const parsed = Papa.parse<string[]>(text, { skipEmptyLines: true });
-      const grid = rowsToFakeGrid(parsed.data as string[][]);
+      const rows = parsed.data as string[][];
+      const grid = rowsToFakeGrid(rows);
       if (!grid) {
         toast.error('CSV appears empty or has no data rows.');
         setIsReadingPdf(false);
         return;
       }
       setIsReadingPdf(false);
-      setPendingGrid({ grid, filename: file.name, file });
+      await followSheetRoute(routeSpreadsheet(grid), rows, file);
       return;
     }
 
-    // Digital PDF → extract a structured 2D grid and route through the
-    // mandatory column-mapping wizard. The wizard maps user → CSV → the
-    // existing CSV path, which builds signed amounts deterministically
-    // (no LLM in the credit/debit decision). Scanned PDFs with no text
-    // layer fall through to the legacy multipart vision path.
+    // Digital PDF → extract a structured 2D grid. A matching bank rule
+    // maps it → CSV → the existing CSV path, which builds signed amounts
+    // deterministically (no LLM in the credit/debit decision). Anything
+    // else, and scanned PDFs with no text layer, go to the server's AI
+    // reader.
     if (isPdf) {
       setIsReadingPdf(true);
       try {
-        const grid = await extractPdfGrid(file);
-
-        // Wrong-page guard. If the user dropped a ledger PDF (Tally
-        // / Busy / Marg / Finsys) here, the per-bank rule will miss
-        // and they'll end up in a wizard built for bank statements
-        // — confusing roles, broken column hints, no Finsys vision
-        // shortcut. Surface a pointed error instead.
-        const ledgerFingerprints = [
-          { fp: 'generated by finsys erp', erp: 'Finsys ERP' },
-          { fp: 'totals c/f', erp: 'Busy' },
-          { fp: 'totals b/f', erp: 'Busy' },
-          { fp: 'balance c/f:', erp: 'Marg' },
-          { fp: 'balance b/f:', erp: 'Marg' },
-          { fp: 'continued..', erp: 'Tally' },
-          { fp: 'sundry debtors', erp: 'a ledger' },
-          { fp: 'sundry creditors', erp: 'a ledger' },
-        ];
-        const earlyText = grid
-          ? grid.rows.slice(0, 100).flat().join(' ').toLowerCase()
-          : '';
-        const ledgerHit = ledgerFingerprints.find(l => earlyText.includes(l.fp));
-        if (ledgerHit) {
-          gridLog(`[BankStatementUploader] looks like ${ledgerHit.erp} — wrong page`);
-          setIsReadingPdf(false);
-          toast.error(`This looks like ${ledgerHit.erp === 'a ledger' ? 'a ledger export' : `a ${ledgerHit.erp} ledger`}, not a bank statement. Open the Ledger Scrutiny page from the sidebar and upload it there — the ledger flow handles ERP-specific layouts (and routes Finsys exports to AI vision automatically).`, { duration: 9000 });
-          return;
-        }
-
-        // J&K Bank "RPT" / "RPTNFS" / loan-recovery report format.
-        // Detected BEFORE the per-bank rule because the grid extractor
-        // can't recover this layout (date is split into 5 separate
-        // x-positions, transactions span 2 lines, narrations wrap
-        // mid-word). The parser works on raw pdfjs text items and
-        // emits MappedRow directly.
-        //
-        // UX choice: instead of submitting the parsed rows directly to
-        // the CSV endpoint, we round-trip them through the wizard so
-        // the user gets a preview + a chance to abort. The wizard
-        // shows the parsed Date / Narration / Debit / Credit / Balance
-        // columns with the mapping pre-applied and a green "Auto-
-        // detected as J&K Bank Report" banner, matching the existing
-        // HDFC / ICICI / Canara auto-detect flow. Clicking Continue
-        // re-applies the (already correct) mapping and submits to
-        // the analyze-CSV endpoint.
-        //
-        // Per-bank deterministic column rule FIRST — it runs on the
-        // already-parsed grid (cheap, no I/O). The J&K RPT detection
-        // below re-opens and re-reads the WHOLE PDF (a second full
-        // pdfjs parse), so we only pay for it when no per-bank rule
-        // matched. Previously RPT ran for every upload, doubling the
-        // parse time and causing a multi-second UI freeze on larger
-        // statements (24-page HDFC report etc.).
-        const detected = detectAndMapBank(grid);
-        if (!detected && grid) {
-          // Diagnostic: when no per-bank rule matched, surface the grid
-          // shape + the fingerprint window the detector scanned, so a
-          // "should have matched but didn't" case is debuggable straight
-          // from the browser console instead of guessing at deploy state.
-          // Mirror detectAndMapBank's 60-row window and test every SBI
-          // marker — if all are false but cols===6 the layout is SBI yet
-          // the cover page didn't surface a fingerprint (widen further);
-          // if cols!==6 the grid itself differs from the test fixture.
-          const fpWindow = grid.rows.slice(0, 60).flat().join(' ').toLowerCase();
-          const sbiMarkers = {
-            email: fpWindow.includes('sbi.co.in'),
-            name: fpWindow.includes('state bank of india'),
-            ifsc: /\bsbin0\d{4,}\b/i.test(fpWindow),
-            relSummary: fpWindow.includes('relationship summary'),
-            myBranchInfo: /\bmy information\b.*\bbranch information\b/i.test(fpWindow),
-          };
-          gridLog(`[BankStatementUploader] no per-bank rule matched — cols=${grid.columnCount}, rows=${grid.rows.length}, headers=${JSON.stringify(grid.columnHeaders)}, sbi-markers=${JSON.stringify(sbiMarkers)}`);
-        }
-        if (detected && grid) {
-          // A rule can match by fingerprint yet map the columns wrongly
-          // (a bank changed its layout). When the mapped rows don't agree
-          // with the statement's own running balance, don't show the user
-          // a wrong mapping — read the PDF directly instead.
-          const agreement = mappedRowsBalanceAgreement(applyMapping(detected.grid, detected.mapping, 'bank').rows);
-          if (agreement.checkpoints >= 5 && agreement.agreeing < agreement.checkpoints * 0.9) {
-            gridLog(`[BankStatementUploader] ${detected.bank} rule matched but only ${agreement.agreeing}/${agreement.checkpoints} balances agree — reading the PDF directly`);
-            setIsReadingPdf(false);
-            void analyzeRawFile(file);
-            return;
-          }
-          gridLog(`[BankStatementUploader] auto-detected ${detected.bank} — pre-filling wizard for review`);
-          setIsReadingPdf(false);
-          setPendingGrid({
-            // Use the rule's preprocessed grid, NOT the raw grid from
-            // extractPdfGrid. For Kotak (and any future rule that
-            // defines a `preprocess` hook), the grid has been reshaped
-            // (e.g. merged Date+Description split into two) and
-            // `detected.mapping.roles` is indexed against the
-            // post-preprocess column count. For non-preprocess rules
-            // detected.grid === the input grid, so this is a no-op.
-            grid: detected.grid,
-            filename: file.name,
-            file,
-            presetMapping: detected.mapping,
-            detectedBank: detected.bank,
-          });
-          return;
-        }
-
-        try {
-          const rptDetected = await detectJkbankRptFormat(file);
-          if (rptDetected) {
-            gridLog('[BankStatementUploader] detected J&K Bank RPT/RPTNFS format — invoking dedicated parser');
-            const rows = await extractJkbankRpt(file);
-            if (rows && rows.length > 0) {
-              // Convert the parsed MappedRow[] back into a wizard-shaped
-              // grid: a header row + one row per transaction with five
-              // columns (Date, Narration, Debit, Credit, Balance). The
-              // wizard's preset mapping pins each column to its role,
-              // so applyMapping in submitMapping turns the grid right
-              // back into the same MappedRow[] we already had — but
-              // the round-trip lets the user see and confirm the data
-              // before any AI cost is incurred.
-              const fakeGridRows: string[][] = [
-                ['Date', 'Narration', 'Debit', 'Credit', 'Balance'],
-                ...rows.map(r => [
-                  r.date ?? '',
-                  r.narration,
-                  r.amount < 0 ? Math.abs(r.amount).toFixed(2) : '',
-                  r.amount > 0 ? r.amount.toFixed(2) : '',
-                  r.balance != null ? r.balance.toFixed(2) : '',
-                ]),
-              ];
-              const fakeGrid = rowsToFakeGrid(fakeGridRows);
-              if (fakeGrid) {
-                setIsReadingPdf(false);
-                setPendingGrid({
-                  grid: fakeGrid,
-                  filename: file.name,
-                  file,
-                  presetMapping: { roles: ['date', 'narration', 'debit', 'credit', 'balance'] },
-                  detectedBank: 'J&K Bank Report',
-                });
-                return;
-              }
-              console.warn('[BankStatementUploader] RPT parser produced rows but rowsToFakeGrid returned null; falling through');
-            } else {
-              console.warn('[BankStatementUploader] RPT detected but parser returned 0 rows; falling through to wizard / vision');
-            }
-          }
-        } catch (rptErr) {
-          // Detection failure is non-fatal — fall through to the
-          // existing pipeline. Log so we can spot a recurring break.
-          console.warn('[BankStatementUploader] RPT detection threw:', rptErr);
-        }
-
-        // (Per-bank deterministic column detection already ran above,
-        // before the RPT re-parse.)
-
-        // Bank fingerprint shortcut for layouts we don't yet have a
-        // per-bank rule for, OR layouts that ship as image-only PDFs
-        // and need vision regardless of fingerprint. BoB packs all
-        // transaction text into one column. Union/CBI/BoI/Indian
-        // Bank/IDBI ship multi-row headers that bleed into data.
-        // Axis Bank's e-statement is a glyph-rendered PDF (no text
-        // layer at all), so even when the grid extractor returns a
-        // grid it has zero useful content. SBI's most common export
-        // is similarly image-only.
-        //
-        // HDFC / ICICI / Canara / PNB / Yes Bank / J&K Bank are NOT
-        // in this list — they have deterministic rules above. PNB
-        // was previously here but the e-statement turned out to be
-        // text-extractable on closer inspection.
-        const KNOWN_VISION_ONLY_BANKS = [
-          'bank of baroda', 'bob',
-          'union bank',
-          'central bank of india',
-          'bank of india',
-          'indian bank',
-          'idbi',
-          'axis bank', 'axisbank', 'utib0',
-          'state bank of india', 'sbin0',
-        ];
-        const fingerprint = grid
-          ? grid.rows.slice(0, 30).flat().join(' ').toLowerCase()
-          : '';
-        const matchedBank = KNOWN_VISION_ONLY_BANKS.find(b => fingerprint.includes(b));
-        // A bank name can appear INSIDE a transaction narration — e.g. a
-        // ledger whose receipt lines read "Dr AXIS BANK C/A". That must
-        // NOT hijack a perfectly mappable digital PDF into the vision
-        // path. Only route a "known-difficult" bank to vision when we
-        // DON'T already have a clean dated table to map. "Real table" =
-        // ≥3 columns and several rows carrying a parseable date.
-        const dateLike = /\b\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}\b/;
-        const datedRows = grid ? grid.rows.filter(r => r.some(c => dateLike.test(c ?? ''))).length : 0;
-        const looksLikeRealTable = !!grid && (grid.columnCount ?? 0) >= 3 && datedRows >= 5;
-        if (matchedBank && !looksLikeRealTable) {
-          gridLog(`[BankStatementUploader] detected ${matchedBank} — routing to vision (no clean table to map)`);
-          setIsReadingPdf(false);
-          void analyzeRawFile(file);
-          return;
-        }
-
-        // Wizard threshold: ≥3 cols is enough to map date + narration +
-        // (amount OR debit OR credit), which is the minimum applyMapping
-        // requires. The threshold was ≥5 historically — that flagged
-        // sparse grids as "broken" and routed them through the AI
-        // extraction path (TSV via Gemini), but TSV cost averaged ~3×
-        // higher than running the same upload through the wizard with
-        // user-confirmed sparse mapping. With TSV killed entirely, the
-        // wizard handles every grid it can; only completely-empty grids
-        // fall to vision. Wizard's downstream `required` check still
-        // refuses uploads that genuinely can't be mapped.
-        // No bank rule matched: an unknown format. Read the PDF directly
-        // (server: Claude, checked against the printed running balance,
-        // else PaddleOCR) instead of asking the user to map columns —
-        // a guessed mapping on an unfamiliar layout is how statements
-        // got mis-read.
-        if (grid && grid.rows.length >= 3 && (grid.columnCount ?? 0) >= 3) {
-          gridLog('[BankStatementUploader] no bank rule matched — reading the PDF directly');
-          setIsReadingPdf(false);
-          void analyzeRawFile(file);
-          return;
-        }
-        if (grid && (grid.columnCount ?? 0) < 3) {
-          gridLog(`[BankStatementUploader] only ${grid.columnCount} columns detected — routing to vision (genuinely sparse)`);
-        }
-        // No usable grid (no text layer / glyph-rendered / too sparse) —
-        // route to the OCR pipeline. No page cap any more: OCR is free
-        // server-side, and digital PDFs map via the wizard above
-        // regardless of length (the old 100-page AI-vision cap is gone).
+        const route = await routePdf(await extractPdfGrid(file), file);
         setIsReadingPdf(false);
-        void analyzeRawFile(file);
+        await followPdfRoute(route, file);
         return;
       } catch (err) {
         if (err instanceof PdfPasswordError) {
@@ -470,9 +222,9 @@ export function BankStatementUploader({ manager }: Props) {
     await analyzeRawFile(file);
   };
 
-  const analyzeRawFile = async (file: File) => {
+  const analyzeRawFile = async (file: File, formatMeta?: StatementFormatMeta) => {
     try {
-      const result = await manager.analyzeFile(file);
+      const result = await manager.analyzeFile(file, formatMeta);
       toast.success(result.alreadyAnalyzed
         ? `This statement was already analyzed earlier — opened the existing one (${result.transactions.length} transactions).`
         : `Analyzed ${result.transactions.length} transactions`);
@@ -481,27 +233,42 @@ export function BankStatementUploader({ manager }: Props) {
     }
   };
 
-  /** Shared finish path for both the auto-mapping bank-rule shortcut
-   *  and the user-confirmed wizard mapping. Applies the mapping, surfaces
-   *  filter stats, builds the CSV, and submits to the analyze endpoint.
-   *  Set successPrefix to label the toast (e.g. "Auto-mapped HDFC Bank
-   *  layout — analyzed N transactions"). */
-  const submitMapping = async (
-    grid: PdfGrid,
-    mapping: ColumnMapping,
+  const followPdfRoute = async (route: StatementRoute, file: File, pdfPassword?: string) => {
+    if (route.kind === 'ledger') {
+      toast.error(`This looks like ${route.erp === 'a ledger' ? 'a ledger export' : `a ${route.erp} ledger`}, not a bank statement. Open the Ledger Scrutiny page from the sidebar and upload it there — the ledger flow handles ERP-specific layouts (and routes Finsys exports to AI vision automatically).`, { duration: 9000 });
+      return;
+    }
+    if (route.kind === 'mapped') {
+      await submitMapped(route.checked.mapped, file.name, `Auto-mapped ${route.bank} layout`);
+      return;
+    }
+    // A protected PDF: the server needs the password to open it.
+    await analyzeRawFile(file, pdfPassword ? { ...route.meta, pdfPassword } : route.meta);
+  };
+
+  const followSheetRoute = async (route: StatementRoute, rows: string[][], file: File) => {
+    if (route.kind === 'mapped') {
+      await submitMapped(route.checked.mapped, file.name, route.bank === 'Columns recognised' ? route.bank : `Auto-mapped ${route.bank} layout`);
+      return;
+    }
+    try {
+      const result = await manager.analyzeTable(rowsToTsv(rows), file.name, route.kind === 'reader' && route.meta ? route.meta : { formatReason: 'no-rule' });
+      toast.success(result.alreadyAnalyzed
+        ? `This statement was already analyzed earlier — opened the existing one (${result.transactions.length} transactions).`
+        : `Analyzed ${result.transactions.length} transactions`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Analysis failed');
+    }
+  };
+
+  /** Shared finish path: surfaces filter stats, builds the CSV, and
+   *  submits to the analyze endpoint. successPrefix labels the toast
+   *  (e.g. "Auto-mapped HDFC Bank layout — analyzed N transactions"). */
+  const submitMapped = async (
+    { rows: mapped, stats }: Mapped,
     filename: string,
     successPrefix?: string,
   ) => {
-    const { rows: mapped, stats } = applyMapping(grid, mapping, 'bank');
-    if (mapped.length === 0) {
-      const reason = stats.skippedNoAmount > 0
-        ? `Found ${stats.skippedNoAmount.toLocaleString('en-IN')} dated row${stats.skippedNoAmount === 1 ? '' : 's'} but none had a usable Debit / Credit / Amount value. Re-check the amount column mapping.`
-        : stats.totalGridRows === 0
-          ? 'Grid is empty — re-upload the file.'
-          : `Scanned ${stats.totalGridRows.toLocaleString('en-IN')} grid rows but none had a parseable date in the column mapped to "Date". Re-open the wizard and pick the column that actually contains dates (e.g. 09/04/2025).`;
-      toast.error(`No transactions extracted. ${reason}`, { duration: 8000 });
-      return;
-    }
     const filteredCount = stats.totalGridRows - stats.transactions;
     if (filteredCount > 0) {
       const parts: string[] = [];
@@ -531,13 +298,6 @@ export function BankStatementUploader({ manager }: Props) {
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Analysis failed');
     }
-  };
-
-  const handleMappingConfirm = async (mapping: ColumnMapping) => {
-    if (!pendingGrid) return;
-    const { grid, filename } = pendingGrid;
-    setPendingGrid(null);
-    await submitMapping(grid, mapping, filename);
   };
 
   return (
@@ -597,7 +357,7 @@ export function BankStatementUploader({ manager }: Props) {
             {/* Supported-bank list is derived from the per-bank rules
                 themselves, so it can't drift from what actually works. */}
             <div className="mt-3 text-left" onClick={(e) => e.stopPropagation()}>
-              <FormatSupportNotice kind="bank" supported={SUPPORTED_BANKS} />
+              <FormatSupportNotice kind="bank" supported={SUPPORTED_BANKS} allowRequests={false} />
             </div>
           </>
         )}
@@ -644,22 +404,6 @@ export function BankStatementUploader({ manager }: Props) {
       <p className="text-xs text-gray-400 dark:text-gray-500 max-w-md text-center">
         Transactions are categorised automatically — you can reassign any row before exporting.
       </p>
-      {pendingGrid && (
-        <ColumnMappingWizard
-          kind="bank"
-          grid={pendingGrid.grid}
-          filename={pendingGrid.filename}
-          initialMapping={pendingGrid.presetMapping}
-          detectedSource={pendingGrid.detectedBank}
-          onConfirm={handleMappingConfirm}
-          onCancel={() => setPendingGrid(null)}
-          onUseVision={pendingGrid.file && pendingGrid.file.type === 'application/pdf' ? () => {
-            const file = pendingGrid.file!;
-            setPendingGrid(null);
-            void analyzeRawFile(file);
-          } : undefined}
-        />
-      )}
       {pendingPassword && (
         <PasswordPromptDialog
           filename={pendingPassword.file.name}
@@ -669,37 +413,10 @@ export function BankStatementUploader({ manager }: Props) {
             const file = pendingPassword.file;
             try {
               const grid = await extractPdfGrid(file, password);
-              if (grid && grid.rows.length >= 3) {
-                setPendingPassword(null);
-                // Run the SAME per-bank auto-map the main (unencrypted)
-                // path runs. Without this, an encrypted statement always
-                // landed in the wizard with EVERY column unmapped even
-                // when we have a deterministic rule for it. The SBI
-                // net-banking PDF is password-protected, so it only ever
-                // reached this path — which is why detectAndMapBank fired
-                // in the Node harness but never in the browser: the
-                // encrypted path skipped detection entirely.
-                const detected = detectAndMapBank(grid);
-                if (detected) {
-                  gridLog(`[BankStatementUploader] auto-detected ${detected.bank} (encrypted PDF) — pre-filling wizard for review`);
-                  setPendingGrid({
-                    grid: detected.grid,
-                    filename: file.name,
-                    file,
-                    presetMapping: detected.mapping,
-                    detectedBank: detected.bank,
-                  });
-                } else {
-                  setPendingGrid({ grid, filename: file.name, file });
-                }
-                return;
-              }
-              // Decrypted but no usable text layer: fall through to
-              // AI vision silently — column mapping is unavailable on
-              // image-only PDFs but the cost difference isn't worth a
-              // separate confirmation step.
               setPendingPassword(null);
-              await analyzeRawFile(file);
+              // Same routing as an unprotected PDF (the SBI net-banking
+              // PDF is password-protected, so it only ever arrives here).
+              await followPdfRoute(await routePdf(grid, file), file, password);
             } catch (err) {
               if (err instanceof PdfPasswordError) {
                 // Wrong password — re-show with the inline error.

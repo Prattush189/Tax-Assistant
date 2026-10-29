@@ -43,6 +43,14 @@ ck('passes when its one checkpoint reconciles', sh.passed, sh.reason);
 const shortBad = [row('credit', 100, 5100), row('debit', 100, 5050)];
 ck('fails when it does not', !checkAndRepairBalances(shortBad).passed);
 
+console.log('newest-first statement (Bank of Baroda OpTransactionHistory)');
+const newestFirst = clean().reverse();
+const nf = checkAndRepairBalances(newestFirst);
+ck('passes', nf.passed, nf.reason);
+ck('rows put in date order (oldest first)', newestFirst[0].balance === 1000 && newestFirst[5].balance === 1020, `(first ${newestFirst[0].balance}, last ${newestFirst[5].balance})`);
+const nfSwapped = clean().reverse().map(r => ({ ...r, type: r.type === 'credit' ? 'debit' : 'credit' } as Row));
+ck('newest-first with every debit/credit swapped still fails', !checkAndRepairBalances(nfSwapped).passed);
+
 console.log('no balances at all');
 const none = clean().map(r => ({ ...r, balance: null }));
 ck('fails — cannot verify, OCR decides', !checkAndRepairBalances(none).passed);

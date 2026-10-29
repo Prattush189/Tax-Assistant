@@ -3,7 +3,9 @@ import {
   fetchBankStatements,
   fetchBankStatement,
   analyzeBankStatementFile,
+  type StatementFormatMeta,
   analyzeBankStatementCsv,
+  analyzeBankStatementTable,
   renameBankStatement,
   deleteBankStatement,
   cancelBankStatement,
@@ -157,12 +159,12 @@ export function useBankStatementManager(enabled: boolean) {
     previousStatusRef.current = liveStatus;
   }, [currentId, statements, load]);
 
-  const analyzeFile = useCallback(async (file: File): Promise<BankStatementDetail> => {
+  const analyzeFile = useCallback(async (file: File, formatMeta?: StatementFormatMeta): Promise<BankStatementDetail> => {
     setIsAnalyzing(true);
     setAnalyzeProgress(null);
     setError(null);
     try {
-      const result = await analyzeBankStatementFile(file, (p) => setAnalyzeProgress(p));
+      const result = await analyzeBankStatementFile(file, (p) => setAnalyzeProgress(p), formatMeta);
       // Replace if the row already exists in the list (server returned
       // an existing analysis via the file_hash dedup, OR the polling
       // loop has already added it). Without this guard a re-upload of
@@ -192,15 +194,14 @@ export function useBankStatementManager(enabled: boolean) {
     }
   }, [refresh]);
 
-  const analyzeCsv = useCallback(async (
-    csvText: string,
-    filename?: string,
-    accountKind?: 'asset' | 'liability',
+  /** Shared JSON-body analyze (mapped CSV, or a sheet for the AI reader). */
+  const analyzeJson = useCallback(async (
+    post: () => Promise<BankStatementDetail>,
   ): Promise<BankStatementDetail> => {
     setIsAnalyzing(true);
     setError(null);
     try {
-      const result = await analyzeBankStatementCsv(csvText, filename, accountKind);
+      const result = await post();
       setStatements((prev) => {
         const filtered = prev.filter((s) => s.id !== result.statement.id);
         return [result.statement, ...filtered];
@@ -219,6 +220,19 @@ export function useBankStatementManager(enabled: boolean) {
       setIsAnalyzing(false);
     }
   }, [refresh]);
+
+  const analyzeCsv = useCallback((
+    csvText: string,
+    filename?: string,
+    accountKind?: 'asset' | 'liability',
+  ) => analyzeJson(() => analyzeBankStatementCsv(csvText, filename, accountKind)), [analyzeJson]);
+
+  /** Spreadsheet nothing could map — the server's AI reader reads it. */
+  const analyzeTable = useCallback((
+    tableText: string,
+    filename: string,
+    formatMeta: StatementFormatMeta,
+  ) => analyzeJson(() => analyzeBankStatementTable(tableText, filename, formatMeta)), [analyzeJson]);
 
   const rename = useCallback(async (id: string, name: string) => {
     const { statement } = await renameBankStatement(id, name);
@@ -382,6 +396,7 @@ export function useBankStatementManager(enabled: boolean) {
     load,
     analyzeFile,
     analyzeCsv,
+    analyzeTable,
     rename,
     remove,
     cancel,

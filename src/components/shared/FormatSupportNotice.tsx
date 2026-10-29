@@ -9,6 +9,12 @@ interface FormatSupportNoticeProps {
    *  files so this component can never list something that no longer
    *  works. */
   supported: ReadonlyArray<string>;
+  /** Show the "Ask us to add it" request form. Off for bank statements:
+   *  an unrecognised digital statement is read by AI automatically and
+   *  filed in Format Support Requests on the server, so users never
+   *  need to ask. Ledgers still use it — their unknown formats go
+   *  through the mapping wizard. */
+  allowRequests?: boolean;
 }
 
 const COPY = {
@@ -42,7 +48,7 @@ const COPY = {
  * through the column-mapping wizard. This is an "it'll be smoother
  * later" affordance, not an error.
  */
-export function FormatSupportNotice({ kind, supported }: FormatSupportNoticeProps) {
+export function FormatSupportNotice({ kind, supported, allowRequests = true }: FormatSupportNoticeProps) {
   const copy = COPY[kind];
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
@@ -85,10 +91,12 @@ export function FormatSupportNotice({ kind, supported }: FormatSupportNoticeProp
             {supported.join(' · ')}
           </p>
           <p className="text-gray-400 mt-0.5">
-            Anything else still imports — you'll just map the columns yourself once.
+            {allowRequests
+              ? "Anything else still imports — you'll just map the columns yourself once."
+              : 'Any other bank or scanned statement is read automatically — no column mapping needed.'}
           </p>
 
-          {sent ? (
+          {!allowRequests ? null : sent ? (
             <p className="mt-1.5 text-emerald-600 dark:text-emerald-400 font-medium">
               Thanks — your request is with us.
             </p>
@@ -105,7 +113,7 @@ export function FormatSupportNotice({ kind, supported }: FormatSupportNoticeProp
         </div>
       </div>
 
-      {open && !sent && (
+      {allowRequests && open && !sent && (
         <div className="mt-2.5 pt-2.5 border-t border-gray-200 dark:border-gray-700/60 space-y-2">
           <div>
             <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1">

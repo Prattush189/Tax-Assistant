@@ -2385,9 +2385,21 @@ export interface BankStatementAnalyzeProgress {
   pages?: [number, number];
 }
 
+/** Why a DIGITAL statement is being sent to the AI reader. The server
+ *  files it in Format Support Requests so a bank rule can be built
+ *  (no formatReason = a scan, nothing to file). */
+export interface StatementFormatMeta {
+  formatReason?: 'no-rule' | 'rule-mismatch' | 'known-difficult-bank';
+  detectedBank?: string;
+  /** Password the user typed to unlock a protected PDF in the browser;
+   *  the server needs it to read the file. Never stored. */
+  pdfPassword?: string;
+}
+
 export async function analyzeBankStatementFile(
   file: File,
   _onProgress?: (p: BankStatementAnalyzeProgress) => void,
+  formatMeta?: StatementFormatMeta,
 ): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[]; anomalies?: BankTransactionAnomaly[]; alreadyAnalyzed?: boolean }> {
   // Vision-only fallback path. The "TSV via Gemini text extraction"
   // path used to live here — when the client could pull a text layer
@@ -2406,6 +2418,9 @@ export async function analyzeBankStatementFile(
   // don't need to change.
   const formData = new FormData();
   formData.append('file', file);
+  if (formatMeta?.formatReason) formData.append('formatReason', formatMeta.formatReason);
+  if (formatMeta?.detectedBank) formData.append('detectedBank', formatMeta.detectedBank);
+  if (formatMeta?.pdfPassword) formData.append('pdfPassword', formatMeta.pdfPassword);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 360_000);
   const doFetch = () => fetch('/api/bank-statements/analyze', {
@@ -2453,18 +2468,35 @@ export async function analyzeBankStatementCsv(
   filename?: string,
   accountKind?: 'asset' | 'liability',
 ): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[]; anomalies?: BankTransactionAnomaly[]; alreadyAnalyzed?: boolean }> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 120_000);
   // accountKind tells the server's balance-delta reconciler which
   // sign convention this account uses. 'liability' (Cash Credit /
   // Overdraft / Loan) inverts the delta sign so a deposit reducing
   // the Dr-balance is correctly recorded as an inflow. Omitting the
   // field defaults the server to 'asset' (savings-style) — fine for
   // regular accounts but inverts every CC sign.
+  return postStatementJson({ csvText, filename, accountKind }, 120_000);
+}
+
+/** A CSV / Excel statement no bank rule or header guess could map, sent
+ *  as its raw sheet (tab-separated) for the server's AI reader. */
+export async function analyzeBankStatementTable(
+  tableText: string,
+  filename: string,
+  formatMeta: StatementFormatMeta,
+): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[]; anomalies?: BankTransactionAnomaly[]; alreadyAnalyzed?: boolean }> {
+  return postStatementJson({ tableText, filename, formatReason: formatMeta.formatReason, detectedBank: formatMeta.detectedBank }, 360_000);
+}
+
+async function postStatementJson(
+  body: Record<string, unknown>,
+  timeoutMs: number,
+): Promise<{ statement: BankStatementSummary; transactions: BankTransaction[]; anomalies?: BankTransactionAnomaly[]; alreadyAnalyzed?: boolean }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   const doFetch = () => fetch('/api/bank-statements/analyze', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-    body: JSON.stringify({ csvText, filename, accountKind }),
+    body: JSON.stringify(body),
     signal: controller.signal,
   });
   try {
@@ -2474,7 +2506,7 @@ export async function analyzeBankStatementCsv(
       if (refreshed) res = await doFetch();
     }
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || 'Failed to analyze CSV');
+    if (!res.ok) throw new Error([data.error || 'Failed to analyze statement', data.detail && `(${data.detail})`].filter(Boolean).join(' '));
     return data;
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {

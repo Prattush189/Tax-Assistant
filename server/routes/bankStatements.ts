@@ -11,7 +11,8 @@ import { structureOcrTextIntoRows } from '../lib/paddleStructurer.js';
 import { parsePrintedTotals, grossTotalNote } from '../lib/bankGrossReconcile.js';
 import type { GeminiJsonResult } from '../lib/geminiJson.js';
 import { callBankEnrichment } from '../lib/bankEnrichmentClient.js';
-import { readStatementPdfWithClaude } from '../lib/claudeStatementReader.js';
+import { readStatementPdfWithClaude, readStatementTableWithClaude, unlockPdf, splitTable, checkAndRepairBalances, type ClaudeStatementRow } from '../lib/claudeStatementReader.js';
+import { formatRequestRepo } from '../db/repositories/formatRequestRepo.js';
 import { isClaudeActive } from '../lib/claude.js';
 import { getBreakerStatus } from '../lib/circuitBreaker.js';
 import { BANK_STATEMENT_PROMPT, BANK_STATEMENT_CATEGORIES, type BankStatementCategory } from '../lib/bankStatementPrompt.js';
@@ -38,6 +39,30 @@ import { usageRepo } from '../db/repositories/usageRepo.js';
 import { getBillingUser } from '../lib/billing.js';
 import { getUserLimits, getUsagePeriodStart, getEffectivePlan } from '../lib/planLimits.js';
 import { AuthRequest } from '../types.js';
+
+/** Why the uploader sent a digital statement to the AI reader (see the
+ *  auto format request after the placeholder in /analyze). */
+const AUTO_FORMAT_REASONS: Record<string, string> = {
+  'no-rule': 'digital statement whose layout matches no bank rule.',
+  'rule-mismatch': "a bank rule matched, but its rows did not agree with the statement's printed balances (the mapping was wrong).",
+  'known-difficult-bank': 'digital statement from a bank whose PDF has no usable table to map.',
+};
+
+type ClaudeUsage = { inputTokens: number; outputTokens: number; modelUsed: string };
+
+/** A spreadsheet read that was rejected (or threw) was still billed by
+ *  Anthropic — log it like the PDF reader's wasted attempts. */
+function logWastedTableRead(req: AuthRequest, billingUserId: string, usages: ClaudeUsage[]): void {
+  if (!req.user) return;
+  const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
+  for (const u of usages) {
+    try {
+      usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, u.inputTokens, u.outputTokens, costForModel(u.modelUsed, u.inputTokens, u.outputTokens), false, u.modelUsed, false, 'bank_statement_failed', 0, 'failed', 0, 0);
+    } catch (err) {
+      console.error('[bank-statements] failed to log wasted table read:', err);
+    }
+  }
+}
 
 const router = Router();
 
@@ -1322,7 +1347,11 @@ router.post(
     if (!tokenQuota.ok) return;
     res.once('close', () => tokenQuota.release());
 
-    const isCsv = !req.file && typeof req.body?.csvText === 'string';
+    // tableText: a spreadsheet statement no bank rule recognised, sent as
+    // the raw grid (tab-separated). Claude reads it into rows below, then
+    // it runs the CSV path like a mapped upload.
+    const isTable = !req.file && typeof req.body?.tableText === 'string';
+    const isCsv = !req.file && (typeof req.body?.csvText === 'string' || isTable);
 
     if (!req.file && !isCsv) {
       // The legacy `pdfText` body shape used to land here and dispatch
@@ -1362,7 +1391,7 @@ router.post(
     if (req.file) {
       fileHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
     } else if (isCsv) {
-      fileHash = crypto.createHash('sha256').update(String(req.body.csvText)).digest('hex');
+      fileHash = crypto.createHash('sha256').update(String(isTable ? req.body.tableText : req.body.csvText)).digest('hex');
     }
 
     if (fileHash) {
@@ -1409,7 +1438,7 @@ router.post(
       // Rough count without re-parsing the whole CSV — header + non-empty
       // lines. The full Papa.parse runs later in the CSV branch; close
       // enough for the pre-flight gate.
-      const csvLines = String(req.body.csvText).split(/\r?\n/).filter(l => l.trim()).length;
+      const csvLines = String(isTable ? req.body.tableText : req.body.csvText).split(/\r?\n/).filter(l => l.trim()).length;
       pagesTotal = Math.max(0, csvLines - 1); // minus header
       creditsNeeded = creditsForCsvRows('bank_statement', pagesTotal);
       pagesUnit = 'rows';
@@ -1435,17 +1464,130 @@ router.post(
     const placeholderMime = req.file?.mimetype ?? (isCsv ? 'text/csv' : 'application/pdf');
     const analyzeStartMs = Date.now();
     const placeholder = bankStatementRepo.createPlaceholder(req.user.id, quota.billingUserId, {
-      name: placeholderFilename.replace(/\.(pdf|csv|jpe?g|png|webp)$/i, '') || 'Bank Statement',
+      name: placeholderFilename.replace(/\.(pdf|csv|xlsx?|jpe?g|png|webp)$/i, '') || 'Bank Statement',
       sourceFilename: placeholderFilename,
       sourceMime: placeholderMime,
       fileHash,
       pagesTotal,
     });
 
+    // A DIGITAL statement the uploader could not map with a bank rule is
+    // sent here to be read by AI. File it in Format Support Requests so
+    // the team can build a rule from a real sample — this replaces the
+    // "Don't see your bank? Ask us to add it" form. Scanned PDFs carry no
+    // formatReason (no rule can be written for them). Repeat uploads of
+    // the same file returned earlier (file-hash dedup), so one request
+    // per file. Never blocks the analysis.
+    const formatReason = typeof req.body?.formatReason === 'string' ? req.body.formatReason : '';
+    // A password-protected PDF arrives with the password the user typed to
+    // unlock it in the browser. Remove it once, up front, so every reader
+    // (and the sample filed below) gets a plain PDF. The password is never
+    // stored or logged. A failure leaves the file as uploaded — the
+    // readers then fail and the user sees the error.
+    const pdfPassword = req.file && typeof req.body?.pdfPassword === 'string' && req.body.pdfPassword ? req.body.pdfPassword as string : undefined;
+    if (req.file && pdfPassword) {
+      try {
+        req.file.buffer = await unlockPdf(req.file.buffer, pdfPassword);
+        req.file.size = req.file.buffer.length;
+      } catch (err) {
+        console.warn(`[bank-statements] could not unlock password-protected PDF: ${(err as Error).message.slice(0, 200)}`);
+      }
+    }
+    if ((req.file || isTable) && AUTO_FORMAT_REASONS[formatReason]) {
+      try {
+        const detected = typeof req.body?.detectedBank === 'string' ? req.body.detectedBank.trim().slice(0, 100) : '';
+        const sample = req.file
+          ? { name: req.file.originalname, mime: req.file.mimetype, size: req.file.size, buffer: req.file.buffer }
+          : (() => {
+              const buffer = Buffer.from(String(req.body.tableText), 'utf8');
+              return { name: `${placeholderFilename.replace(/\.[^.]+$/, '')}.tsv`, mime: 'text/tab-separated-values', size: buffer.length, buffer };
+            })();
+        const requestId = formatRequestRepo.create({
+          userId: req.user.id,
+          billingUserId: quota.billingUserId,
+          kind: 'bank',
+          softwareName: detected || 'Unrecognised bank',
+          notes: `Auto-filed: ${AUTO_FORMAT_REASONS[formatReason]} It was read by the AI reader instead (statement ${placeholder.id}).`
+            + (isTable ? ` Uploaded as ${placeholderFilename}; attached is its sheet as tab-separated text.` : '')
+            + (pdfPassword ? ' The upload was password-protected; the attached copy has the password removed.' : ''),
+          file: sample,
+        });
+        console.log(`[bank-statements] auto-filed format request ${requestId} (${formatReason}${detected ? `, ${detected}` : ''}) for ${sample.name}`);
+      } catch (err) {
+        console.warn('[bank-statements] auto format request failed:', (err as Error).message);
+      }
+    }
+
     try {
       let extracted: ExtractedStatement;
       let filename: string | null;
       let mimeType: string | null;
+
+      // Spreadsheet no rule recognised: Claude reads the grid (Gemini's OCR
+      // structurer when Claude is off or its read is rejected), the running
+      // balance must re-walk (same gate as the PDF reader), and the rows
+      // then go down the CSV path exactly like a mapped upload. A sheet
+      // with no balance column can't be checked — accepted with a warning.
+      if (isTable) {
+        const tsv = String(req.body.tableText);
+        const tableStart = Date.now();
+        const accept = (rows: ClaudeStatementRow[], ok: boolean) => rows.length > 0 && (ok || rows.every(r => r.balance == null));
+        let rows: ClaudeStatementRow[] | null = null;
+        let usages: ClaudeUsage[] = [];
+        let lastReason = '';
+        if (isClaudeActive()) {
+          try {
+            const read = await readStatementTableWithClaude(tsv);
+            console.log(`[bank-statements] Claude table read: ${read.rows.length} rows from ${read.chunks} chunk(s) in ${Date.now() - tableStart}ms — ${read.check.reason}`);
+            lastReason = read.check.reason;
+            if (accept(read.rows, read.check.passed)) { rows = read.rows; usages = read.usages; }
+            else logWastedTableRead(req, quota.billingUserId, read.usages);
+          } catch (err) {
+            logWastedTableRead(req, quota.billingUserId, (err as { usages?: ClaudeUsage[] }).usages ?? []);
+            console.warn(`[bank-statements] Claude table read failed, trying Gemini: ${(err as Error).message?.slice(0, 200)}`);
+          }
+        }
+        if (!rows) {
+          const pages = splitTable(tsv, 60).map(c => [c.header, ...c.lines].join('\n'));
+          const structured = await structureOcrTextIntoRows(pages);
+          const gUsages: ClaudeUsage[] = structured.usages?.length
+            ? structured.usages
+            : [{ inputTokens: structured.inputTokens, outputTokens: structured.outputTokens, modelUsed: structured.modelUsed }];
+          // The structurer may leave an amount empty (it can be derived
+          // from the balance on a scan); take it from the balance move.
+          const gRows: ClaudeStatementRow[] = [];
+          for (const r of structured.transactions) {
+            const prev = gRows.length ? gRows[gRows.length - 1].balance : null;
+            const amount = r.amount ?? (r.balance != null && prev != null ? Math.abs(r.balance - prev) : null);
+            if (amount == null || amount === 0) continue;
+            gRows.push({ date: r.date, narration: r.narration, type: r.type, amount, balance: r.balance ?? null });
+          }
+          const check = checkAndRepairBalances(gRows);
+          console.log(`[bank-statements] Gemini table read: ${gRows.length} rows — ${check.reason}`);
+          lastReason = check.reason;
+          if (accept(gRows, check.passed)) { rows = gRows; usages = gUsages; }
+          else logWastedTableRead(req, quota.billingUserId, gUsages);
+        }
+        if (!rows) {
+          throw new Error(lastReason
+            ? `The rows read from this spreadsheet don't agree with its running balance (${lastReason}). Please check the file is a bank statement export.`
+            : 'No transactions could be read from this spreadsheet.');
+        }
+        if (rows.every(r => r.balance == null)) {
+          (res.locals as Record<string, unknown>).analyzerWarning = 'This spreadsheet has no running-balance column, so the rows read from it could not be cross-checked. Please compare the totals with the bank statement.';
+        }
+        req.body.csvText = Papa.unparse({
+          fields: ['date', 'narration', 'debit', 'credit', 'balance'],
+          data: rows.map(r => [
+            r.date ?? '',
+            r.narration,
+            r.type === 'debit' ? r.amount.toFixed(2) : '',
+            r.type === 'credit' ? r.amount.toFixed(2) : '',
+            r.balance != null ? r.balance.toFixed(2) : '',
+          ]),
+        });
+        (res.locals as Record<string, unknown>).tableReadUsages = usages;
+      }
 
       if (req.file) {
         filename = req.file.originalname;
@@ -2492,7 +2634,10 @@ INPUT_ROWS — TSV, one row per line, columns narration<TAB>type<TAB>amount:
           amountsAuthoritative: true,
           transactions: mergedTransactions,
         };
-        (res.locals as Record<string, unknown>).geminiUsages = aiUsages;
+        (res.locals as Record<string, unknown>).geminiUsages = [
+          ...((res.locals as Record<string, unknown>).tableReadUsages as ClaudeUsage[] | undefined ?? []),
+          ...aiUsages,
+        ];
       }
 
       // Honor a mid-flight cancel. If the user clicked Cancel while
