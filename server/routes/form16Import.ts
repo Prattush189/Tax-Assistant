@@ -1,9 +1,9 @@
 // server/routes/form16Import.ts
 import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
-// Form 16 extraction runs through extractVisionWithFallback (Gemini 3.1
-// Flash-Lite Preview → Gemini 2.5 Flash-Lite). The Anthropic provider
-// was removed from the project; Gemini handles all vision now.
+// Form 16 extraction runs through extractVisionWithFallback: Claude Haiku first
+// (2026-10-29 blind test: more accurate and complete than Gemini on real
+// notices and attachments), Gemini 3.1 Flash-Lite → 3.7 Flash as the rescue.
 import { extractVisionWithFallback } from '../lib/visionFallback.js';
 import { costForModel } from '../lib/gemini.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
@@ -108,6 +108,7 @@ router.post(
         const cachedIn = result.cachedInputTokens ?? 0;
         const cost = costForModel(result.modelUsed, result.inputTokens, result.outputTokens, cachedIn);
         usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, result.inputTokens, result.outputTokens, cost, false, result.modelUsed, false, 'form16', 0, 'success', 0, Date.now() - callStartMs, cachedIn);
+        usageRepo.logWastedAttempts(clientIp, req.user.id, billingUserId, 'form16', result.claudeWasted);
       } catch (logErr) {
         console.error('[form16] Failed to log AI cost:', logErr);
       }

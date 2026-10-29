@@ -14,9 +14,9 @@ import { usageRepo } from '../db/repositories/usageRepo.js';
 import { enforceTokenQuota } from '../lib/tokenQuota.js';
 import { getBillingUser } from '../lib/billing.js';
 import { getUsagePeriodStart } from '../lib/planLimits.js';
-// Notice extraction runs through extractVisionWithFallback (Gemini 3.1
-// Flash-Lite Preview → Gemini 2.5 Flash-Lite). The Anthropic provider
-// was removed from the project; Gemini handles all vision now.
+// Notice extraction runs through extractVisionWithFallback: Claude Haiku first
+// (2026-10-29 blind test: more accurate and complete than Gemini on real
+// notices and attachments), Gemini 3.1 Flash-Lite → 3.7 Flash as the rescue.
 import { extractVisionWithFallback } from '../lib/visionFallback.js';
 import { costForModel } from '../lib/gemini.js';
 import { AuthRequest } from '../types.js';
@@ -349,6 +349,7 @@ router.post(
         const cachedIn = extraction.cachedInputTokens ?? 0;
         const cost = costForModel(extraction.modelUsed, extraction.inputTokens, extraction.outputTokens, cachedIn);
         usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, extraction.inputTokens, extraction.outputTokens, cost, false, extraction.modelUsed, false, 'notice_extract', 0, 'success', 0, Date.now() - extractStartMs, cachedIn);
+        usageRepo.logWastedAttempts(clientIp, req.user.id, billingUserId, 'notice_extract', extraction.claudeWasted);
       } catch (logErr) {
         console.error('[notices] Failed to log extraction cost:', logErr);
       }

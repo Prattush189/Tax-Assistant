@@ -2,10 +2,9 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
 import mammoth from 'mammoth';
-// Document upload extraction runs through extractVisionWithFallback
-// (Gemini 3.1 Flash-Lite Preview → Gemini 2.5 Flash-Lite). The
-// Anthropic provider was removed from the project; Gemini handles
-// all vision now.
+// Document upload extraction runs through extractVisionWithFallback: Claude Haiku first
+// (2026-10-29 blind test: more accurate and complete than Gemini on real
+// notices and attachments), Gemini 3.1 Flash-Lite → 3.7 Flash as the rescue.
 import { extractVisionWithFallback } from '../lib/visionFallback.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
@@ -178,6 +177,7 @@ router.post(
         const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
         const cost = result.inputTokens * GEMINI_T2_INPUT_COST + result.outputTokens * GEMINI_T2_OUTPUT_COST;
         usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, result.inputTokens, result.outputTokens, cost, false, result.modelUsed, false, 'document', 0, 'success', 0, Date.now() - callStartMs);
+        usageRepo.logWastedAttempts(clientIp, req.user.id, billingUserId, 'document', result.claudeWasted);
       } catch (logErr) {
         console.error('[upload] Failed to log AI cost:', logErr);
       }

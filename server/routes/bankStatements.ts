@@ -1623,6 +1623,7 @@ router.post(
                 {
                   maxTokens: 65_536,
                   imageParts: chunkParts,
+                  claude: false, // the Claude PDF reader already ran upstream
                   looksValid: (data) => {
                     const txns = (data as { transactions?: unknown })?.transactions;
                     return Array.isArray(txns) && txns.length > 0;
@@ -1672,6 +1673,7 @@ router.post(
             // the fallback to Gemini 2.5 Flash-Lite, which handles
             // long PDFs more reliably.
             {
+              claude: false, // the Claude PDF reader already ran upstream
               maxTokens: 65_536,
               imageParts: singleParts,
               looksValid: (data) => {

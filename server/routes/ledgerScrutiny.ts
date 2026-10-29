@@ -2050,6 +2050,9 @@ router.post(
         // extraction so its key is reliably configured.
         const result = await extractVisionWithFallback<ExtractedLedger>(req.file!.buffer, mimeType, LEDGER_EXTRACT_PROMPT, {
           maxTokens: 16_384,
+          // Sonnet: the only reader that got every row of all three scanned
+          // test ledgers (Gemini failed 2 of 3, Haiku broke on the dense one).
+          claude: 'smart',
         });
         extracted = normalizeExtraction(result.data);
         rawJson = JSON.stringify(extracted);
@@ -2074,6 +2077,7 @@ router.post(
             0,
             Date.now() - extractStartMs,
           );
+          usageRepo.logWastedAttempts(clientIp, req.user.id, quota.billingUserId, 'ledger_extract', result.claudeWasted);
         } catch (err) {
           console.error('[ledger-scrutiny] cost log failed', err);
         }

@@ -34,8 +34,17 @@
  */
 
 import { extractGeminiVision } from './geminiVision.js';
-import { GEMINI_VISION_MODEL_T1, GEMINI_VISION_MODEL_T2 } from './gemini.js';
-import type { GeminiJsonResult, GeminiJsonOptions } from './geminiJson.js';
+import { GEMINI_VISION_MODEL_T1, GEMINI_VISION_MODEL_T2, costForModel } from './gemini.js';
+import { safeParseJson, type GeminiJsonResult, type GeminiJsonOptions } from './geminiJson.js';
+import { claudeComplete, isClaudeActive, CLAUDE_MODEL, CLAUDE_MODEL_FAST, type ClaudeCompletion } from './claude.js';
+
+/** Claude rejects requests over 32 MB; base64 inflates by 4/3. */
+const CLAUDE_MAX_UPLOAD_BYTES = 22 * 1024 * 1024;
+const CLAUDE_MIME = /^(application\/pdf|image\/(png|jpeg|gif|webp))$/;
+
+/** A billed Claude attempt that produced nothing usable before Gemini
+ *  answered. Callers log these as `<category>_failed` rows. */
+export type ClaudeWastedAttempt = { model: string; inputTokens: number; outputTokens: number; cachedInputTokens: number; costUsd: number };
 
 export interface VisionFallbackOptions {
   maxTokens?: number;
@@ -50,6 +59,15 @@ export interface VisionFallbackOptions {
    *  triggers the T2 rescue — which is what every caller intends. If
    *  T2 also fails the check, the error propagates. */
   looksValid?: (data: unknown) => boolean;
+  /** Claude reads the document first while the admin switch is on:
+   *  'fast' (Haiku, the default) for notices, Form 16 and attachments;
+   *  'smart' (Sonnet) for dense tables like scanned ledgers; false to
+   *  skip (bank statements, where Claude already ran earlier). Gemini
+   *  T1 → T2 below stays as the rescue. 2026-10-29 test, judged blind
+   *  against the documents: notices + attachments accuracy/completeness
+   *  Gemini 8.6/5.3, Haiku 9.6/8.4, Sonnet 9.2/8.7; scanned ledgers
+   *  Sonnet 576/576 rows, Gemini failed 2 of 3. */
+  claude?: 'fast' | 'smart' | false;
 }
 
 export async function extractVisionWithFallback<T = unknown>(
@@ -57,7 +75,37 @@ export async function extractVisionWithFallback<T = unknown>(
   mimeType: string,
   prompt: string,
   opts: VisionFallbackOptions = {},
-): Promise<GeminiJsonResult<T>> {
+): Promise<GeminiJsonResult<T> & { claudeWasted?: ClaudeWastedAttempt[] }> {
+  const claudeWasted: ClaudeWastedAttempt[] = [];
+  const tier = opts.claude ?? 'fast';
+  if (tier && isClaudeActive() && CLAUDE_MIME.test(mimeType) && buffer.length <= CLAUDE_MAX_UPLOAD_BYTES) {
+    const model = tier === 'smart' ? CLAUDE_MODEL : CLAUDE_MODEL_FAST;
+    const part = mimeType === 'application/pdf'
+      ? { type: 'file', file: { file_data: `data:application/pdf;base64,${buffer.toString('base64')}`, filename: 'document.pdf' } }
+      : { type: 'image_url', image_url: { url: `data:${mimeType};base64,${buffer.toString('base64')}` } };
+    const wasted = (u: Pick<ClaudeCompletion, 'model' | 'inputTokens' | 'outputTokens' | 'cachedInputTokens'>) => {
+      claudeWasted.push({ model: u.model, inputTokens: u.inputTokens, outputTokens: u.outputTokens, cachedInputTokens: u.cachedInputTokens, costUsd: costForModel(u.model, u.inputTokens, u.outputTokens, u.cachedInputTokens) });
+      opts.recordAttempt?.({ failed: true, inputTokens: u.inputTokens, outputTokens: u.outputTokens, model: u.model });
+    };
+    try {
+      const r = await claudeComplete([{ role: 'user', content: [part, { type: 'text', text: prompt }] as never }],
+        { model, maxTokens: opts.maxTokens ?? 8192, effort: 'medium', timeoutMs: 600_000 });
+      const data = safeParseJson<T>(r.text);
+      if (data !== null && r.finishReason !== 'length' && (!opts.looksValid || opts.looksValid(data))) {
+        opts.recordAttempt?.({ failed: false, inputTokens: r.inputTokens, outputTokens: r.outputTokens, model: r.model });
+        return { data, inputTokens: r.inputTokens, outputTokens: r.outputTokens, cachedInputTokens: r.cachedInputTokens, modelUsed: r.model };
+      }
+      wasted(r);
+      console.warn(`[visionFallback] ${model} output unusable (${data === null ? 'unparseable' : r.finishReason === 'length' ? 'output cap hit' : 'looksValid false'}); falling back to Gemini`);
+    } catch (err) {
+      const u = (err as { claudeUsage?: ClaudeCompletion }).claudeUsage;
+      if (u) wasted(u);
+      console.warn(`[visionFallback] ${model} failed (${(err as Error)?.message?.slice(0, 200)}); falling back to Gemini`);
+    }
+    opts.onFallback?.({ from: model, to: GEMINI_VISION_MODEL_T1 });
+  }
+  const withWasted = <R extends GeminiJsonResult<T>>(r: R) => (claudeWasted.length ? Object.assign(r, { claudeWasted }) : r);
+
   const attempt = async (model: string): Promise<GeminiJsonResult<T>> => {
     const result = await extractGeminiVision<T>(buffer, mimeType, prompt, {
       maxTokens: opts.maxTokens,
@@ -74,7 +122,7 @@ export async function extractVisionWithFallback<T = unknown>(
   };
 
   try {
-    return await attempt(GEMINI_VISION_MODEL_T1);
+    return withWasted(await attempt(GEMINI_VISION_MODEL_T1));
   } catch (err) {
     // Density failure — T2 cannot do better. Surface it unchanged.
     if ((err as { truncated?: boolean })?.truncated) throw err;
@@ -82,6 +130,6 @@ export async function extractVisionWithFallback<T = unknown>(
       `[visionFallback] ${GEMINI_VISION_MODEL_T1} failed (${(err as Error)?.message?.slice(0, 200)}); retrying on ${GEMINI_VISION_MODEL_T2}`,
     );
     opts.onFallback?.({ from: GEMINI_VISION_MODEL_T1, to: GEMINI_VISION_MODEL_T2 });
-    return await attempt(GEMINI_VISION_MODEL_T2);
+    return withWasted(await attempt(GEMINI_VISION_MODEL_T2));
   }
 }
