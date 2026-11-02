@@ -357,7 +357,7 @@ export function BankStatementUploader({ manager }: Props) {
             {/* Supported-bank list is derived from the per-bank rules
                 themselves, so it can't drift from what actually works. */}
             <div className="mt-3 text-left" onClick={(e) => e.stopPropagation()}>
-              <FormatSupportNotice kind="bank" supported={SUPPORTED_BANKS} allowRequests={false} />
+              <FormatSupportNotice kind="bank" supported={SUPPORTED_BANKS} />
             </div>
           </>
         )}

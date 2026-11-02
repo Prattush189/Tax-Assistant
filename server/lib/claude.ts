@@ -24,6 +24,11 @@ export const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5-5';
 /** Mechanical work: ledger TSV transcription, row classification, CMA
  *  narrative. Bulk of the tokens, so it gets the cheap model. */
 export const CLAUDE_MODEL_FAST = process.env.CLAUDE_MODEL_FAST || 'claude-haiku-5-5';
+/** Reading a ledger no software rule maps (rows → TSV, column roles).
+ *  Every row has to be right: in a 2026-10-30 bake-off on 7 ledgers Opus
+ *  copied every row exactly in two runs out of two, Sonnet and Haiku
+ *  dropped, flipped or misread rows on 3-5 of them. */
+export const CLAUDE_MODEL_BEST = process.env.CLAUDE_MODEL_BEST || 'claude-opus-5-5';
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? '';
 export const claudeConfigured = !!ANTHROPIC_API_KEY;

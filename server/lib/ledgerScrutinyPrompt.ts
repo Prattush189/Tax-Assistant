@@ -144,6 +144,7 @@ Account-type rules (apply the FIRST match against the account name, case-insensi
 STRICT RULES:
 - Output MUST start with HEADER, then alternating ACCOUNT / TX lines, then end with the ---END:<N>--- trailer. Nothing else.
 - Do NOT skip accounts that appear in this chunk, even those with only an opening balance (emit the ACCOUNT line with no TX lines).
+- The input may start part-way through an account whose head was printed on an earlier page (not in this text). Put those rows under an ACCOUNT named exactly (continued) — never invent a name such as "UNKNOWN ACCOUNT". They are joined to the right account afterwards.
 - "Opening Balance" rows are NOT transactions — they carry the brought-forward balance from the previous period. Read them into ACCOUNT.opening (signed: positive for "Dr.", negative for "Cr.") and DO NOT emit a TX line for them. If you fold the opening amount into TX.debit/credit, the audit pass downstream sees opening=0 and produces phantom recon-break flags + wrong §269SS / §68 flags treating brought-forward creditor balances as current-year acceptances. Both classes of false-positive originate from this one mistake.
 - Similarly, "Closing Balance" / "By Balance c/d" / "To Balance b/d" rows printed at year-end are NOT transactions — read into ACCOUNT.closing if shown, else leave for the audit to recompute.
 - Do NOT invent voucher numbers, narrations, dates, or amounts. If a field is unclear, leave it empty.

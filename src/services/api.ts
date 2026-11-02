@@ -925,34 +925,8 @@ export interface FormatRequestItem {
   user_name?: string;
 }
 
-/** File a "please support this format" request, optionally with a
- *  sample export. Multipart because of the sample. */
-export async function submitFormatRequest(input: {
-  kind: FormatRequestKind;
-  softwareName: string;
-  notes?: string;
-  sample?: File | null;
-}): Promise<{ success: boolean; id: string; message: string }> {
-  const form = new FormData();
-  form.append('kind', input.kind);
-  form.append('softwareName', input.softwareName);
-  if (input.notes) form.append('notes', input.notes);
-  if (input.sample) form.append('sample', input.sample);
-
-  const doFetch = () => fetch('/api/format-requests', {
-    method: 'POST',
-    headers: { ...getAuthHeaders() },
-    body: form,
-  });
-  let response = await doFetch();
-  if (response.status === 401) {
-    const refreshed = await tryRefreshToken();
-    if (refreshed) response = await doFetch();
-  }
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error ?? 'Could not send your request.');
-  return data;
-}
+// Requests are filed by the server when an upload goes to the AI reader
+// (bank statements and ledgers) — users no longer fill in a form.
 
 export async function fetchMyFormatRequests(): Promise<{ requests: FormatRequestItem[] }> {
   return authFetch('/api/format-requests/mine');
@@ -2945,69 +2919,81 @@ export async function fetchLedgerScrutinyJob(id: string): Promise<LedgerScrutiny
   return authFetch(`/api/ledger-scrutiny/${id}`);
 }
 
-export async function uploadLedgerScrutinyPdf(file: File): Promise<LedgerScrutinyDetail> {
-  // Fast / reliable path: digital Tally / Busy / Marg PDFs already carry a
-  // text layer. Extract it in the browser and send text-only JSON; the
-  // server runs the chunked TSV pipeline that handles 50+ pages cleanly.
-  // Scanned image-only PDFs (no text layer) fall through to multipart and
-  // get the legacy single-call vision pass.
-  if (file.type === 'application/pdf') {
-    try {
-      const { extractPdfTextClient } = await import('../lib/pdfText');
-      const text = await extractPdfTextClient(file);
-      if (text) {
-        return uploadLedgerScrutinyPdfText(text, file.name);
-      }
-    } catch (err) {
-      // Text extraction is best-effort — fall back to vision on any failure.
-      console.warn('[uploadLedgerScrutinyPdf] text extract failed, falling back to vision:', err);
-    }
-  }
+/** Why a DIGITAL ledger is being sent to the AI reader. The server files
+ *  it (with the file) in Format Support Requests so a software rule can
+ *  be built (no formatReason = a scan, nothing to file). */
+export interface LedgerFormatMeta {
+  formatReason?: 'no-rule' | 'rule-mismatch';
+  detectedSoftware?: string;
+  /** Password the user typed to unlock a protected PDF in the browser;
+   *  the server needs it to read a scan / open the filed copy. Never
+   *  stored. */
+  pdfPassword?: string;
+}
 
+/** `gridText`: for a digital PDF no software rule maps, its column grid
+ *  (ledgerReaderText) — the server reads it as well as the plain text and
+ *  keeps whichever reading's running balances agree more. */
+export async function uploadLedgerScrutinyPdf(file: File, meta?: LedgerFormatMeta, gridText?: string): Promise<LedgerScrutinyDetail> {
+  // Fast / reliable path: digital Tally / Busy / Marg PDFs already carry a
+  // text layer. Extract it in the browser and send it with the file; the
+  // server runs the chunked TSV pipeline on the text (handles 50+ pages
+  // cleanly) and keeps the file only as a format-request sample. Scanned
+  // image-only PDFs (no text layer) get the single-call vision pass.
+  let pdfText: string | null = null;
+  try {
+    const { extractPdfTextClient } = await import('../lib/pdfText');
+    pdfText = await extractPdfTextClient(file, meta?.pdfPassword);
+  } catch (err) {
+    // Text extraction is best-effort — fall back to vision on any failure.
+    console.warn('[uploadLedgerScrutinyPdf] text extract failed, falling back to vision:', err);
+  }
+  return postLedgerUpload(file, pdfText, meta ?? {}, false, pdfText ? gridText : undefined);
+}
+
+/** A CSV / Excel ledger no software rule or header guess could map: its
+ *  sheet goes as tab-separated text to the AI reader (same pipeline as a
+ *  digital PDF's text), with the file kept as the format-request sample.
+ *  Sent as both readings — the server reads it twice and keeps the read
+ *  whose running balances agree more. */
+export async function uploadLedgerScrutinySheet(file: File, sheetText: string, meta: LedgerFormatMeta): Promise<LedgerScrutinyDetail> {
+  return postLedgerUpload(file, sheetText, meta, false, sheetText);
+}
+
+/** AI column mapping for a ledger no software rule maps: the server's
+ *  model names each grid column (date, debit, credit, balance…) from the
+ *  header + first rows, and files the upload in Format Support Requests
+ *  (`filed`). The browser then builds the rows from the grid itself. */
+export async function suggestLedgerMapping(
+  file: File,
+  sample: { header: string[]; rows: string[][]; columnCount: number },
+  meta: LedgerFormatMeta,
+): Promise<{ roles: import('../lib/pdfGrid').ColumnRole[]; filed: boolean }> {
   const formData = new FormData();
   formData.append('file', file);
-  // Server now auto-chains extract → chunked scrutiny inline, so a single
-  // upload covers BOTH passes end-to-end (extract ~5-10 min, audit ~2-5 min
-  // for 170+ account ledgers, 7-15 min total typical). Cap at 20 min so a
-  // genuine slow-but-progressing run isn't killed by the client close-event
-  // mid-audit. The server keeps running even if the tab closes — the
-  // resumability poll picks the result back up on reload.
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 1_200_000);
-  const doFetch = () => fetch('/api/ledger-scrutiny/upload', {
+  formData.append('sample', JSON.stringify(sample));
+  if (meta.formatReason) formData.append('formatReason', meta.formatReason);
+  if (meta.detectedSoftware) formData.append('detectedSoftware', meta.detectedSoftware);
+  if (meta.pdfPassword) formData.append('pdfPassword', meta.pdfPassword);
+  const doFetch = () => fetch('/api/ledger-scrutiny/suggest-mapping', {
     method: 'POST',
     headers: { ...getAuthHeaders() },
     body: formData,
-    signal: controller.signal,
   });
-  try {
-    let res = await doFetch();
-    if (res.status === 401) {
-      const refreshed = await tryRefreshToken();
-      if (refreshed) res = await doFetch();
-    }
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const parts = [data.error ?? 'Failed to upload ledger'];
-      if (data.hint) parts.push(data.hint);
-      if (data.detail) parts.push(`(${data.detail})`);
-      throw new Error(parts.join(' — '));
-    }
-    return data;
-  } catch (err) {
-    if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error('Ledger extract + audit took longer than 20 minutes — the run is still going server-side; reload to pick it up, or split the year and try again.');
-    }
-    throw err;
-  } finally {
-    clearTimeout(timer);
+  let res = await doFetch();
+  if (res.status === 401) {
+    const refreshed = await tryRefreshToken();
+    if (refreshed) res = await doFetch();
   }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw Object.assign(new Error(data.error ?? 'AI column mapping failed'), { filed: !!data.filed });
+  return data;
 }
 
-/** Pre-extracted upload: the user ran the column-mapping wizard, so we
- *  ship a ready-built ExtractedLedger to the server which skips Gemini
- *  extraction and goes straight to the audit pass. Tokens saved (no
- *  extract) and credit/debit signs are deterministic from the wizard. */
+/** Pre-extracted upload: a software rule mapped the ledger in the
+ *  browser, so we ship a ready-built ExtractedLedger to the server which
+ *  skips AI extraction and goes straight to the audit pass. Tokens saved
+ *  (no extract) and credit/debit signs are deterministic from the rule. */
 export async function uploadLedgerScrutinyPreExtracted(
   preExtracted: unknown,
   filename: string,
@@ -3044,21 +3030,36 @@ export async function uploadLedgerScrutinyPreExtracted(
   }
 }
 
-async function uploadLedgerScrutinyPdfText(pdfText: string, filename: string): Promise<LedgerScrutinyDetail> {
-  // Long ledgers run chunked Gemini calls in parallel; allow 4 minutes
-  // before the client kills the request, matching the multipart timeout.
-  // Server now auto-chains extract → chunked scrutiny inline, so a single
-  // upload covers BOTH passes end-to-end (extract ~5-10 min, audit ~2-5 min
-  // for 170+ account ledgers, 7-15 min total typical). Cap at 20 min so a
-  // genuine slow-but-progressing run isn't killed by the client close-event
-  // mid-audit. The server keeps running even if the tab closes — the
-  // resumability poll picks the result back up on reload.
+/** Multipart upload of the original file plus (when it has one) its text
+ *  for the AI reader. Raw fetch, NOT authFetch: authFetch hard-codes
+ *  Content-Type: application/json, which collides with the multipart
+ *  boundary the browser generates for FormData bodies. */
+async function postLedgerUpload<T = LedgerScrutinyDetail>(
+  file: File,
+  text: string | null,
+  meta: LedgerFormatMeta,
+  extractOnly: boolean,
+  gridText?: string,
+): Promise<T> {
+  const formData = new FormData();
+  formData.append('file', file);
+  if (text) formData.append('pdfText', text);
+  if (gridText) formData.append('gridText', gridText);
+  if (meta.formatReason) formData.append('formatReason', meta.formatReason);
+  if (meta.detectedSoftware) formData.append('detectedSoftware', meta.detectedSoftware);
+  if (meta.pdfPassword) formData.append('pdfPassword', meta.pdfPassword);
+  // Server auto-chains extract → chunked scrutiny inline, so one upload
+  // covers BOTH passes end-to-end (extract ~5-10 min, audit ~2-5 min for
+  // 170+ account ledgers, 7-15 min total typical). Cap at 20 min so a
+  // genuine slow-but-progressing run isn't killed by the client
+  // close-event mid-audit. The server keeps running even if the tab
+  // closes — the resumability poll picks the result back up on reload.
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 1_200_000);
-  const doFetch = () => fetch('/api/ledger-scrutiny/upload', {
+  const timer = setTimeout(() => controller.abort(), extractOnly ? 600_000 : 1_200_000);
+  const doFetch = () => fetch(`/api/ledger-scrutiny/upload${extractOnly ? '?extractOnly=1' : ''}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-    body: JSON.stringify({ pdfText, filename }),
+    headers: { ...getAuthHeaders() },
+    body: formData,
     signal: controller.signal,
   });
   try {
@@ -3077,7 +3078,9 @@ async function uploadLedgerScrutinyPdfText(pdfText: string, filename: string): P
     return data;
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error('Ledger extract + audit took longer than 20 minutes — the run is still going server-side; reload to pick it up, or split the year and try again.');
+      throw new Error(extractOnly
+        ? 'Reading the ledger took longer than 10 minutes — try again, or split the year.'
+        : 'Ledger extract + audit took longer than 20 minutes — the run is still going server-side; reload to pick it up, or split the year and try again.');
     }
     throw err;
   } finally {
@@ -3392,19 +3395,12 @@ export async function deleteLedgerComparison(id: string): Promise<void> {
   await authFetch(`/api/ledger-scrutiny/compare/${id}`, { method: 'DELETE' });
 }
 
-/** Run the ledger extract pass via AI vision and return the parsed
- *  ExtractedLedger without running the scrutiny audit. Compare mode
- *  uses this when one side is a Finsys / scanned PDF the
- *  deterministic grid extractor can't handle — feeds the result
- *  back into createLedgerComparison as preExtractedA/B.
- *
- *  Uses raw fetch (NOT authFetch) because authFetch hard-codes
- *  Content-Type: application/json which collides with the
- *  multipart/form-data the browser auto-generates for FormData
- *  bodies. The server's body-parser ends up trying to JSON.parse
- *  the multipart boundary ("Unexpected token '-', '------WebK'..."
- *  in production logs). Same pattern as uploadLedgerScrutinyPdf. */
-export async function extractLedgerViaVision(file: File): Promise<{
+/** Run only the ledger extract pass (AI reader, no audit) and return the
+ *  parsed ExtractedLedger. Compare mode uses this for a side no software
+ *  rule could map — the result feeds createLedgerComparison as
+ *  preExtractedA/B. `sheetText`: a spreadsheet's grid as text; for a
+ *  PDF, its text is pulled out here and `gridText` is its column grid. */
+export async function extractLedgerWithAi(file: File, texts: { sheetText?: string; gridText?: string }, meta: LedgerFormatMeta): Promise<{
   id: string;
   status: string;
   extracted: {
@@ -3430,31 +3426,10 @@ export async function extractLedgerViaVision(file: File): Promise<{
     }>;
   };
 }> {
-  const formData = new FormData();
-  formData.append('file', file);
-  // 10-minute cap — vision-extract on a 30-50 page Finsys ledger
-  // typically lands in 2-5 min; the cap is just to stop a stalled
-  // request from hanging the dialog forever.
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 600_000);
-  const doFetch = () => fetch('/api/ledger-scrutiny/upload?extractOnly=1', {
-    method: 'POST',
-    headers: { ...getAuthHeaders() },
-    body: formData,
-    signal: controller.signal,
-  });
-  try {
-    let res = await doFetch();
-    if (res.status === 401) {
-      const refreshed = await tryRefreshToken();
-      if (refreshed) res = await doFetch();
-    }
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      throw new Error(data.error ?? `Vision extract failed (${res.status})`);
-    }
-    return data;
-  } finally {
-    clearTimeout(timer);
+  let text = texts.sheetText ?? null;
+  if (text === null) {
+    const { extractPdfTextClient } = await import('../lib/pdfText');
+    text = await extractPdfTextClient(file, meta.pdfPassword).catch(() => null);
   }
+  return postLedgerUpload(file, text, meta, true, texts.sheetText ?? (text ? texts.gridText : undefined));
 }

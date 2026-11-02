@@ -1,28 +1,23 @@
 /**
  * Ledger compare flow: reconcile Entity A's copy of a ledger against
- * Entity B's copy. Each side runs through the same wizard pipeline as
- * the single ledger flow (PDF/CSV/Excel → grid → ColumnMappingWizard →
- * mappedRowsToExtractedLedger), then once both are extracted we POST to
- * /api/ledger-scrutiny/compare which returns a reconciliation report.
+ * Entity B's copy. Each side is routed like the single ledger flow
+ * (lib/ledgerRouting: a software rule maps it in the browser, anything
+ * else is read by the server's AI reader in extract-only mode), then once
+ * both are extracted we POST to /api/ledger-scrutiny/compare which
+ * returns a reconciliation report.
  */
 import { useEffect, useRef, useState } from 'react';
-import { gridLog } from '../../lib/gridDebug';
 import { Loader2, Scale, Upload, FileCheck2, X, Download } from 'lucide-react';
 import Papa from 'papaparse';
 import toast from 'react-hot-toast';
-import { ColumnMappingWizard } from '../shared/ColumnMappingWizard';
 import { excelToRows } from '../../lib/excelToRows';
-import {
-  applyMapping,
-  extractPdfGrid,
-  mappedRowsToExtractedLedger,
-  rowsToFakeGrid,
-  type ColumnMapping,
-  type PdfGrid,
-} from '../../lib/pdfGrid';
-import { detectAndMapLedgerErp } from '../../lib/perLedgerErpRules';
+import { extractPdfGrid, rowsToFakeGrid } from '../../lib/pdfGrid';
+import { ledgerReaderText, routeLedgerPdf, routeLedgerSheet, type LedgerRoute } from '../../lib/ledgerRouting';
+import { mapLedgerWithAi } from '../../lib/ledgerAiMapping';
+import type { PdfGrid } from '../../lib/pdfGrid';
 import {
   createLedgerComparison,
+  extractLedgerWithAi,
   fetchLedgerComparison,
   fetchLedgerComparisons,
   LEDGER_TYPE_LABELS,
@@ -488,17 +483,6 @@ export function LedgerCompareView() {
       processing: false,
     };
   });
-  const [pendingGrid, setPendingGrid] = useState<{
-    side: Side;
-    grid: PdfGrid;
-    filename: string;
-    /** The original File reference so the wizard's "Use AI Vision
-     *  instead" button can re-POST it to the extract-only endpoint
-     *  if the deterministic mapping doesn't fit. */
-    file: File | null;
-    presetMapping?: ColumnMapping;
-    detectedErp?: string;
-  } | null>(null);
   const [comparing, setComparing] = useState(false);
   const [report, setReport] = useState<LedgerComparisonReport | null>(
     () => loadStored<LedgerComparisonReport>(STORAGE_KEYS.report),
@@ -508,8 +492,7 @@ export function LedgerCompareView() {
   );
 
   // Persist state to sessionStorage on every change. Bound to the
-  // serialisable fields only — `processing` is transient UI state and
-  // `pendingGrid` carries an unserialisable File ref.
+  // serialisable fields only — `processing` is transient UI state.
   useEffect(() => {
     saveStored(STORAGE_KEYS.sideA, {
       label: sideA.label,
@@ -627,11 +610,8 @@ export function LedgerCompareView() {
     }
 
     // Show the per-side spinner with the filename as soon as parse
-    // work begins. Cleared by a `finally` below — covers the wizard-
-    // open path, the error-toast path, and the CSV/Excel quick paths
-    // alike. Without this the upload button just disabled itself for
-    // the 1-3s of extractPdfGrid work and the user couldn't tell if
-    // anything was happening.
+    // work begins (including an AI read, which can take minutes).
+    // Cleared by the `finally` below.
     const setProcessing = (on: boolean) => {
       const updater = (prev: SideState) => ({ ...prev, processing: on, filename: on ? file.name : prev.filename });
       if (side === 'A') setSideA(updater);
@@ -639,128 +619,82 @@ export function LedgerCompareView() {
     };
     setProcessing(true);
     try {
-
-    if (isCsv) {
-      const text = await file.text();
-      const parsed = Papa.parse<string[]>(text, { skipEmptyLines: true });
-      const grid = rowsToFakeGrid(parsed.data as string[][]);
-      if (!grid) { toast.error('CSV appears empty.'); return; }
-      setPendingGrid({ side, grid, filename: file.name, file: null });
-      return;
-    }
-    if (isExcel) {
-      try {
-        const rows = await excelToRows(file);
-        const grid = rows ? rowsToFakeGrid(rows) : null;
-        if (!grid) { toast.error('Excel appears empty.'); return; }
-        setPendingGrid({ side, grid, filename: file.name, file: null });
-      } catch (err) {
-        console.error(err);
-        toast.error('Could not read Excel file.');
-      }
-      return;
-    }
-    // PDF
-    try {
-      const grid = await extractPdfGrid(file);
-      if (grid && grid.rows.length >= 3) {
-        // Per-ERP deterministic auto-mapping. If the grid matches
-        // a known Tally / Busy / Marg / Finsys layout, pre-fill the
-        // wizard with the rule's mapping + a banner identifying
-        // the ERP — the user reviews and confirms rather than
-        // having transactions silently extracted on the wrong
-        // columns. Finsys is included: its 2-rows-per-transaction
-        // layout used to defeat the grid extractor (row-2 voucher
-        // rows fail parseDate) and force AI vision, but with the
-        // mergeHeaderDataColumnPairs pass + applyMapping's
-        // continuation-merge that joins row-2 onto row-1, the
-        // deterministic path now handles Finsys cleanly — same as
-        // the single-ledger uploader.
-        //
-        // Use detected.grid (post-preprocess) — when a rule's
-        // preprocess hook reshapes the grid (e.g. Tally splits the
-        // merged "Vch No. Debit" column into two), the mapping is
-        // indexed against the new grid. Feeding the wizard the raw
-        // grid would render an off-by-one preview.
-        const detected = detectAndMapLedgerErp(grid);
-        if (detected) {
-          gridLog(`[LedgerCompareView] side ${side} auto-detected ${detected.erp} — pre-filling wizard for review`);
-          setPendingGrid({
-            side,
-            grid: detected.grid,
-            filename: file.name,
-            file,
-            presetMapping: detected.mapping,
-            detectedErp: detected.erp,
-          });
+      if (isCsv || isExcel) {
+        let rows: string[][] | null;
+        try {
+          rows = isExcel
+            ? await excelToRows(file)
+            : Papa.parse<string[]>(await file.text(), { skipEmptyLines: true }).data as string[][];
+        } catch (err) {
+          console.error(err);
+          toast.error(isExcel ? 'Could not read Excel file.' : 'Could not read CSV file.');
           return;
         }
-        setPendingGrid({ side, grid, filename: file.name, file });
+        const grid = rows ? rowsToFakeGrid(rows) : null;
+        if (!rows || !grid) { toast.error(`${isExcel ? 'Excel' : 'CSV'} appears empty.`); return; }
+        await storeRoute(side, routeLedgerSheet(grid), file, grid, true);
         return;
       }
-      // No text layer — compare mode requires structured input on
-      // both sides for the diff to be reliable, so scanned PDFs
-      // are refused here. The user can run the file through
-      // single-ledger scrutiny first (which uses vision) then
-      // export the parsed result to bring into compare.
-      toast.error('This PDF has no readable text layer. Compare mode requires a digital PDF / CSV / Excel on both sides. Scanned files: run single-ledger scrutiny first, then bring the parsed result into compare.', { duration: 9000 });
-    } catch (err) {
-      console.error(err);
-      toast.error('Could not read this PDF.');
-    }
-
+      // PDF
+      let route: LedgerRoute;
+      let grid: Awaited<ReturnType<typeof extractPdfGrid>>;
+      try {
+        grid = await extractPdfGrid(file);
+        route = routeLedgerPdf(grid);
+      } catch (err) {
+        console.error(err);
+        toast.error('Could not read this PDF.');
+        return;
+      }
+      if (route.kind === 'reader' && !route.meta) {
+        // No text layer — compare needs structured input on both sides
+        // for the diff to be reliable, so scans are refused here. The
+        // user can run the file through single-ledger scrutiny first
+        // (which uses vision) then bring the parsed result into compare.
+        toast.error('This PDF has no readable text layer. Compare mode requires a digital PDF / CSV / Excel on both sides. Scanned files: run single-ledger scrutiny first, then bring the parsed result into compare.', { duration: 9000 });
+        return;
+      }
+      await storeRoute(side, route, file, grid, false);
     } finally {
-      // Always clear the spinner — whether we exited via the wizard
-      // (pendingGrid set, the wizard takes over visually), via toast
-      // error, or via successful CSV/Excel commit.
       setProcessing(false);
     }
   };
 
-  /** Shared finish path. Used by both the per-ERP auto-mapping
-   *  shortcut (no wizard) and the user-confirmed wizard mapping.
-   *  Pulls the extracted ledger into the relevant side's state and
-   *  surfaces the transaction count + ERP name (when auto-detected)
-   *  so the user can see which side mapped automatically. */
-  const applyAndStore = (
-    side: Side,
-    grid: PdfGrid,
-    mapping: ColumnMapping,
-    filename: string,
-    autoErp?: string,
-  ) => {
-    const { rows: mapped, stats } = applyMapping(grid, mapping, 'ledger');
-    if (mapped.length === 0) {
-      const reason = stats.skippedNoAmount > 0
-        ? `Found ${stats.skippedNoAmount.toLocaleString('en-IN')} candidate row${stats.skippedNoAmount === 1 ? '' : 's'} with parseable dates, but none had a usable Debit / Credit / Amount value. Re-check the amount column mapping.`
-        : stats.totalGridRows === 0
-          ? 'Grid is empty — re-upload the file.'
-          : `Scanned ${stats.totalGridRows.toLocaleString('en-IN')} grid rows but none had a parseable date in the column you mapped to "Date". Open the wizard again and pick the column that actually contains dates.`;
-      toast.error(`No transactions extracted. ${reason}`, { duration: 8000 });
+  /** Put a side's ledger in place: the browser-mapped one, or the AI
+   *  reader's (extract-only — no audit) for a layout no rule maps, which
+   *  the server also files as a format request. */
+  const storeRoute = async (side: Side, route: LedgerRoute, file: File, grid: PdfGrid | null, sheet: boolean) => {
+    const store = (extracted: SideState['extracted'], note: string) => {
+      if (side === 'A') setSideA(prev => ({ ...prev, filename: file.name, extracted }));
+      else setSideB(prev => ({ ...prev, filename: file.name, extracted }));
+      toast.success(`Side ${side}: ${note}`);
+    };
+    if (route.kind === 'mapped') {
+      const n = route.checked.mapped.rows.length;
+      store(route.checked.extracted, `${route.software} — ${n.toLocaleString('en-IN')} transactions ready.`);
       return;
     }
-    // Pull party name from the Tally / Finsys "Ledger Account :
-    // <NAME>" banner so single-account exports don't bucket
-    // everything under literal 'Default'. Same pattern as the
-    // single-ledger uploader.
-    const bannerText = grid.rows.slice(0, 30).flat().filter(Boolean).join(' ');
-    const partyMatch = /(?:ledger\s+account|account|statement\s+of\s+account|acc\s*[:.])\s*[:.]?\s*([A-Z][A-Z0-9 &.,'\-/()]{3,80})/i.exec(bannerText);
-    const partyFromBanner = partyMatch?.[1]?.trim().replace(/\s{2,}/g, ' ');
-    const extracted = mappedRowsToExtractedLedger(mapped, partyFromBanner);
-    if (side === 'A') {
-      setSideA(prev => ({ ...prev, filename, extracted }));
-    } else {
-      setSideB(prev => ({ ...prev, filename, extracted }));
+    toast(`Side ${side}: this layout isn't one we map automatically yet — reading it with AI.`, { duration: 5000 });
+    // 1. AI names the columns; rows come from the grid, kept only when the
+    //    running balances prove the mapping. 2. Otherwise AI transcription.
+    const meta = route.meta ?? {};
+    let filed = false;
+    if (grid) {
+      const ai = await mapLedgerWithAi(file, grid, meta);
+      filed = ai.filed;
+      if (ai.checked) {
+        store(ai.checked.extracted, `columns mapped by AI, checked against the running balances — ${ai.checked.mapped.rows.length.toLocaleString('en-IN')} transactions ready.`);
+        return;
+      }
     }
-    const prefix = autoErp ? `${autoErp} — ` : '';
-    toast.success(`Side ${side}: ${prefix}${mapped.length.toLocaleString('en-IN')} transactions ready.`);
-  };
-
-  const handleMappingConfirm = (mapping: ColumnMapping) => {
-    if (!pendingGrid) return;
-    const { side, grid, filename } = pendingGrid;
-    setPendingGrid(null);
-    applyAndStore(side, grid, mapping, filename);
+    const texts = sheet && grid ? { sheetText: ledgerReaderText(grid) } : { gridText: grid ? ledgerReaderText(grid) : undefined };
+    try {
+      const res = await extractLedgerWithAi(file, texts, filed ? {} : meta);
+      const n = res.extracted.accounts.reduce((sum, a) => sum + a.transactions.length, 0);
+      store(res.extracted, `read by AI — ${n.toLocaleString('en-IN')} transactions ready.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not read this ledger.', { duration: 9000 });
+    }
   };
 
   const canCompare = !!sideA.extracted && !!sideB.extracted && !comparing;
@@ -876,22 +810,6 @@ export function LedgerCompareView() {
           </button>
         )}
       </div>
-
-      {pendingGrid && (
-        <ColumnMappingWizard
-          kind="ledger"
-          grid={pendingGrid.grid}
-          filename={pendingGrid.filename}
-          initialMapping={pendingGrid.presetMapping}
-          detectedSource={pendingGrid.detectedErp}
-          onConfirm={handleMappingConfirm}
-          onCancel={() => setPendingGrid(null)}
-          /* No onUseVision in compare mode — vision output isn't
-             reliable enough for a structural diff (see handleFile
-             comment). User cancels and re-runs the file through
-             single-ledger scrutiny instead. */
-        />
-      )}
 
       {report && (
         <div className="space-y-4">

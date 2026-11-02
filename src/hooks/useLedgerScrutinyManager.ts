@@ -3,6 +3,8 @@ import {
   fetchLedgerScrutinyJobs,
   fetchLedgerScrutinyJob,
   uploadLedgerScrutinyPdf,
+  uploadLedgerScrutinySheet,
+  type LedgerFormatMeta,
   uploadLedgerScrutinyPreExtracted,
   scrutinizeLedger,
   renameLedgerScrutinyJob,
@@ -100,11 +102,19 @@ export function useLedgerScrutinyManager(enabled: boolean) {
     return () => { clearTimeout(fast); clearInterval(handle); };
   }, [enabled, isUploading, isScrutinizing, jobs, currentId, refresh, load]);
 
-  const upload = useCallback(async (file: File): Promise<LedgerScrutinyDetail> => {
+  /** A PDF (with its column grid as `gridText` when it has one), or a
+   *  spreadsheet (`sheetText`), for the AI reader. */
+  const upload = useCallback(async (
+    file: File,
+    meta?: LedgerFormatMeta,
+    texts: { sheetText?: string; gridText?: string } = {},
+  ): Promise<LedgerScrutinyDetail> => {
     setIsUploading(true);
     setError(null);
     try {
-      const result = await uploadLedgerScrutinyPdf(file);
+      const result = texts.sheetText != null
+        ? await uploadLedgerScrutinySheet(file, texts.sheetText, meta ?? {})
+        : await uploadLedgerScrutinyPdf(file, meta, texts.gridText);
       setJobs((prev) => [result.job, ...prev.filter((j) => j.id !== result.job.id)]);
       setCurrentId(result.job.id);
       setCurrent(result);

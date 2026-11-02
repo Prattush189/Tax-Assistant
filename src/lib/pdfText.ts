@@ -46,12 +46,13 @@ export async function countPdfPagesClient(file: File): Promise<number | null> {
  * Extract concatenated text from every page of a PDF file. Returns null
  * if the PDF has less than ~300 characters of extractable text (almost
  * always means it's a scanned image) or if parsing fails outright.
+ * `password`: for a protected PDF the user has unlocked.
  */
-export async function extractPdfTextClient(file: File): Promise<string | null> {
+export async function extractPdfTextClient(file: File, password?: string): Promise<string | null> {
   if (file.type !== 'application/pdf') return null;
   try {
     const buf = await file.arrayBuffer();
-    const pdf = await pdfjs.getDocument({ data: new Uint8Array(buf) }).promise;
+    const pdf = await pdfjs.getDocument({ data: new Uint8Array(buf), password }).promise;
     const pages: string[] = [];
     for (let i = 1; i <= pdf.numPages; i++) {
       const page = await pdf.getPage(i);

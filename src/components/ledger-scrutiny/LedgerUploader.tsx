@@ -1,28 +1,19 @@
 import { useRef, useState } from 'react';
-import { gridLog } from '../../lib/gridDebug';
 import { Upload, FileText, Loader2 } from 'lucide-react';
 import Papa from 'papaparse';
 import toast from 'react-hot-toast';
 import { FormatSupportNotice } from '../shared/FormatSupportNotice';
 import { SUPPORTED_LEDGER_SOFTWARE } from '../../lib/perLedgerErpRules';
 import type { LedgerScrutinyManager } from '../../hooks/useLedgerScrutinyManager';
-import type { LedgerScrutinyProgress } from '../../services/api';
+import type { LedgerFormatMeta, LedgerScrutinyProgress } from '../../services/api';
 import { cn } from '../../lib/utils';
-import { ColumnMappingWizard } from '../shared/ColumnMappingWizard';
 import { PasswordPromptDialog } from '../shared/PasswordPromptDialog';
 import { ScannedPdfConfirmDialog, PdfTooLargeDialog } from '../shared/ScannedPdfConfirmDialog';
 import { countPdfPagesClient } from '../../lib/pdfText';
 import { excelToRows } from '../../lib/excelToRows';
-import {
-  applyMapping,
-  extractPdfGrid,
-  PdfPasswordError,
-  mappedRowsToExtractedLedger,
-  rowsToFakeGrid,
-  type ColumnMapping,
-  type PdfGrid,
-} from '../../lib/pdfGrid';
-import { detectAndMapLedgerErp } from '../../lib/perLedgerErpRules';
+import { extractPdfGrid, PdfPasswordError, rowsToFakeGrid, type PdfGrid } from '../../lib/pdfGrid';
+import { ledgerReaderText, routeLedgerPdf, routeLedgerSheet, type LedgerMapCheck, type LedgerRoute } from '../../lib/ledgerRouting';
+import { mapLedgerWithAi } from '../../lib/ledgerAiMapping';
 
 interface Props {
   manager: LedgerScrutinyManager;
@@ -107,18 +98,8 @@ const MAX_BYTES = 50 * 1024 * 1024;
 export function LedgerUploader({ manager }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
-  // pendingGrid optionally carries a preset mapping + the detected
-  // ERP label. When present, the wizard opens with the columns
-  // pre-tagged and a banner saying "Auto-detected as <ERP>" so the
-  // user reviews the mapping before clicking Confirm rather than
-  // having transactions silently extracted on the wrong columns.
-  const [pendingGrid, setPendingGrid] = useState<{
-    grid: PdfGrid;
-    filename: string;
-    file: File | null;
-    presetMapping?: ColumnMapping;
-    detectedErp?: string;
-  } | null>(null);
+  // There is no column-mapping screen for ledgers — see
+  // lib/ledgerRouting for where each upload goes.
   // Password-protected PDFs go here; the dialog re-runs extractPdfGrid
   // with the supplied password. wrongPassword flips on a retry so the
   // user gets the inline "try again" hint.
@@ -126,11 +107,14 @@ export function LedgerUploader({ manager }: Props) {
     file: File;
     wrongPassword: boolean;
   } | null>(null);
-  // True while extractPdfGrid is parsing a freshly-picked PDF, before
-  // the column-mapping wizard opens. Bridges the silent 1-3s gap so
-  // the dropzone doesn't look idle after the user clicks.
+  // True while extractPdfGrid is parsing a freshly-picked PDF. Bridges
+  // the silent 1-3s gap so the dropzone doesn't look idle after the
+  // user clicks.
   const [isReadingPdf, setIsReadingPdf] = useState(false);
-  const [pendingScannedPdf, setPendingScannedPdf] = useState<File | null>(null);
+  // Scans go to AI vision (Claude Sonnet, ~10x a digital read) — the
+  // user confirms the cost first. Carries the password of a protected
+  // scan so the server can open it.
+  const [pendingScannedPdf, setPendingScannedPdf] = useState<{ file: File; pdfPassword?: string } | null>(null);
   const [pdfTooLarge, setPdfTooLarge] = useState<{ file: File; pageCount: number } | null>(null);
 
   const handleFiles = async (files: FileList | null) => {
@@ -159,153 +143,103 @@ export function LedgerUploader({ manager }: Props) {
       return;
     }
 
-    // CSV → wrap into the same grid shape the wizard expects, then
-    // run through the same wizard → preExtracted → audit pipeline as
-    // PDFs. Tally / Busy CSV exports have varying column orders so
-    // the mapping wizard isn't optional even here.
-    if (isExcel) {
+    // CSV / Excel → a grid for the software rules / header guess; a sheet
+    // nothing maps goes to the AI reader as its grid's text.
+    if (isExcel || isCsv) {
       setIsReadingPdf(true);
+      let rows: string[][] | null;
       try {
-        const rows = await excelToRows(file);
-        const grid = rows ? rowsToFakeGrid(rows) : null;
-        if (!grid) {
-          toast.error('Excel appears empty or has no data rows.');
-          setIsReadingPdf(false);
-          return;
-        }
-        setIsReadingPdf(false);
-        setPendingGrid({ grid, filename: file.name, file });
+        rows = isExcel
+          ? await excelToRows(file)
+          : Papa.parse<string[]>(await file.text(), { skipEmptyLines: true }).data as string[][];
       } catch (err) {
-        console.error('[LedgerUploader] excel parse failed:', err);
-        toast.error('Could not read this Excel file. Re-export as .xlsx and try again.');
-        setIsReadingPdf(false);
-      }
-      return;
-    }
-
-    if (isCsv) {
-      setIsReadingPdf(true);
-      const text = await file.text();
-      const parsed = Papa.parse<string[]>(text, { skipEmptyLines: true });
-      const grid = rowsToFakeGrid(parsed.data as string[][]);
-      if (!grid) {
-        toast.error('CSV appears empty or has no data rows.');
+        console.error('[LedgerUploader] sheet parse failed:', err);
+        toast.error(isExcel ? 'Could not read this Excel file. Re-export as .xlsx and try again.' : 'Could not read this CSV file.');
         setIsReadingPdf(false);
         return;
       }
+      const grid = rows ? rowsToFakeGrid(rows) : null;
       setIsReadingPdf(false);
-      setPendingGrid({ grid, filename: file.name, file });
+      if (!rows || !grid) {
+        toast.error(`${isExcel ? 'Excel' : 'CSV'} appears empty or has no data rows.`);
+        return;
+      }
+      await followRoute(routeLedgerSheet(grid), file, { grid, sheet: true });
       return;
     }
 
-    // Digital PDF → extract grid + run column-mapping wizard.
-    // Scanned PDFs route to AI vision (Gemini 3.1 Flash-Lite Preview
-    // → 2.5 Flash-Lite fallback) with a cost warning; the audit
-    // pipeline can still produce useful signal on a vision-extracted
-    // ledger, just less crisp than from a wizard-mapped grid. PDFs
-    // over 100 pages block as a UX cost guard.
+    // PDF → grid → software rule, else the AI reader (the PDF's text, or
+    // vision for a scan).
     setIsReadingPdf(true);
     try {
       const grid = await extractPdfGrid(file);
-
-      // Finsys used to be force-routed to vision here because the
-      // 2-rows-per-transaction layout (date in row 1, voucher number
-      // in row 2 — voucher-number rows fail parseDate) confused the
-      // grid extractor. With the recent mergeHeaderDataColumnPairs
-      // pass + the applyMapping continuation-merge that joins row 2
-      // onto row 1 when the date column doesn't parse, the
-      // deterministic path now handles Finsys cleanly. The wizard's
-      // "Use AI Vision instead →" escape hatch remains if any
-      // specific export still trips up the grid extractor.
-
-      // Per-ERP deterministic column rule. Tally / Busy / Marg / Finsys
-      // exports have stable banner + header layouts; if the grid
-      // surfaced cleanly we can pre-fill the column mapping from
-      // an ERP-specific header→role table. We DON'T auto-submit
-      // any more — the user always sees the wizard with the
-      // detected mapping pre-applied (and a banner saying which
-      // ERP we matched) so they can verify the columns before
-      // committing. Catches the failure mode where the rule fires
-      // but the extractor's column anchors don't actually line up
-      // with the rule's role assignments — without the review
-      // step the user got an opaque "192 dated rows but no
-      // amount" toast instead of a fixable mapping screen.
-      const detected = detectAndMapLedgerErp(grid);
-      if (detected && grid) {
-        gridLog(`[LedgerUploader] auto-detected ${detected.erp} — pre-filling wizard for review`);
-        setIsReadingPdf(false);
-        // Use detected.grid (post-preprocess) — when the Tally rule
-        // splits a merged "Vch No. Debit" column the mapping indices
-        // align with the new column count, not the raw extractPdfGrid
-        // output. Feeding the wizard the raw grid would render an
-        // off-by-one preview. For ERPs without preprocess
-        // (Marg / Busy / Finsys) detected.grid === grid so this is
-        // a no-op.
-        setPendingGrid({
-          grid: detected.grid,
-          filename: file.name,
-          file,
-          presetMapping: detected.mapping,
-          detectedErp: detected.erp,
-        });
-        return;
-      }
-
-      // Auto-route to vision when the grid extractor surfaces <5
-      // columns. Indian ledger PDFs (Tally / Busy / Marg) have 6-7
-      // columns minimum (Date · Vch.No. · Particulars · Type · Debit
-      // · Credit · Balance); anything less means the detector merged
-      // adjacent columns and the wizard would produce broken
-      // mappings. Vision (Gemini 3.1) handles the layout cleanly.
-      if (grid && grid.rows.length >= 3 && (grid.columnCount ?? 0) >= 5) {
-        setIsReadingPdf(false);
-        setPendingGrid({ grid, filename: file.name, file });
-        return;
-      }
-      if (grid && (grid.columnCount ?? 0) < 5) {
-        gridLog(`[LedgerUploader] only ${grid.columnCount} columns detected — routing to vision`);
-      }
-      const pageCount = await countPdfPagesClient(file) ?? 0;
       setIsReadingPdf(false);
-      if (pageCount > 100) {
-        setPdfTooLarge({ file, pageCount });
-        return;
-      }
-      setPendingScannedPdf(file);
-      return;
+      await followRoute(routeLedgerPdf(grid), file, { grid });
     } catch (err) {
+      setIsReadingPdf(false);
       if (err instanceof PdfPasswordError) {
-        setIsReadingPdf(false);
         setPendingPassword({ file, wrongPassword: false });
         return;
       }
       console.warn('[LedgerUploader] grid extraction failed:', err);
       toast.error('Could not read this PDF. If it is scanned or image-only, export the ledger as a digital PDF or CSV and re-upload.');
-      setIsReadingPdf(false);
     }
   };
 
-  /** Shared finish path for both the auto-mapping per-ERP rule
-   *  shortcut and the user-confirmed wizard mapping. Applies the
-   *  mapping, surfaces filter stats, builds the extracted ledger,
-   *  and submits to the audit endpoint. The optional successPrefix
-   *  labels the audit-running toast with the ERP name. */
-  const submitMapping = async (
-    grid: PdfGrid,
-    mapping: ColumnMapping,
-    filename: string,
-    successPrefix?: string,
-  ) => {
-    const { rows: mapped, stats } = applyMapping(grid, mapping, 'ledger');
-    if (mapped.length === 0) {
-      const reason = stats.skippedNoAmount > 0
-        ? `Found ${stats.skippedNoAmount.toLocaleString('en-IN')} dated row${stats.skippedNoAmount === 1 ? '' : 's'} but none had a usable Debit / Credit / Amount value. Re-check the amount column mapping.`
-        : stats.totalGridRows === 0
-          ? 'Grid is empty — re-upload the file.'
-          : `Scanned ${stats.totalGridRows.toLocaleString('en-IN')} grid rows but none had a parseable date in the column mapped to "Date". Re-open the wizard and pick the column that actually contains dates (e.g. 09/04/2025).`;
-      toast.error(`No transactions extracted. ${reason}`, { duration: 8000 });
+  const followRoute = async (route: LedgerRoute, file: File, opts: { grid?: PdfGrid | null; sheet?: boolean; pdfPassword?: string } = {}) => {
+    if (route.kind === 'mapped') {
+      await submitMapped(route.checked, file.name, route.software === 'Columns recognised' ? route.software : `Auto-detected ${route.software}`);
       return;
     }
+    if (!route.meta && !opts.sheet) {
+      // A scan: AI vision is the expensive path — confirm, and block
+      // anything over 100 pages.
+      const pageCount = await countPdfPagesClient(file) ?? 0;
+      if (pageCount > 100) {
+        setPdfTooLarge({ file, pageCount });
+        return;
+      }
+      setPendingScannedPdf({ file, pdfPassword: opts.pdfPassword });
+      return;
+    }
+    toast("This layout isn't one we map automatically yet — reading it with AI.", { duration: 5000 });
+    const meta: LedgerFormatMeta = { ...route.meta, pdfPassword: opts.pdfPassword };
+    const grid = opts.grid ?? null;
+    // 1. AI names the columns; the rows come from the grid, kept only when
+    //    the running balances prove the mapping.
+    let filed = false;
+    if (grid) {
+      setIsReadingPdf(true);
+      const ai = await mapLedgerWithAi(file, grid, meta);
+      setIsReadingPdf(false);
+      filed = ai.filed;
+      if (ai.checked) {
+        await submitMapped(ai.checked, file.name, 'Columns mapped by AI and checked against the running balances');
+        return;
+      }
+    }
+    // 2. AI transcription (already filed as a format request by step 1).
+    const readMeta = filed ? { pdfPassword: opts.pdfPassword } : meta;
+    await readWithAi(file, readMeta, opts.sheet && grid
+      ? { sheetText: ledgerReaderText(grid) }
+      : { gridText: grid ? ledgerReaderText(grid) : undefined });
+  };
+
+  const readWithAi = async (file: File, meta: LedgerFormatMeta, texts: { sheetText?: string; gridText?: string } = {}) => {
+    try {
+      const result = await manager.upload(file, meta, texts);
+      toast.success(`Audit complete: ${result.observations.length} observation${result.observations.length === 1 ? '' : 's'} across ${result.accounts.length} accounts`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Upload failed');
+    }
+  };
+
+  /** A software rule (or a proven header guess) mapped the ledger:
+   *  surface filter stats and submit the extracted ledger to the audit.
+   *  successPrefix labels the audit-running toast with the software. */
+  const submitMapped = async (checked: LedgerMapCheck, filename: string, successPrefix?: string) => {
+    const { mapped: { rows: mapped, stats }, extracted } = checked;
+    if (!extracted) return; // routing only sends usable mappings
     const filteredCount = stats.totalGridRows - stats.transactions;
     if (filteredCount > 0) {
       const parts: string[] = [];
@@ -316,35 +250,11 @@ export function LedgerUploader({ manager }: Props) {
         toast(`From ${stats.totalGridRows.toLocaleString('en-IN')} grid rows: ${stats.transactions.toLocaleString('en-IN')} transactions — ${parts.join(', ')}.`, { duration: 6000 });
       }
     }
-    // Single-account exports (Tally / Finsys "Ledger Account : <NAME>"
-    // banner with ONE party) have no account-separator rows because
-    // they don't need them — the party name lives in the banner.
-    // Pull it out so accounts[0].name is meaningful instead of
-    // literal 'Default'. We scan the first 30 grid rows for the
-    // banner pattern; if absent (multi-account books, Busy ledgers
-    // with section headers), defaultAccountName stays undefined and
-    // mappedRowsToExtractedLedger uses the per-row r.account that
-    // applyMapping populated from the section headers.
-    const bannerText = grid.rows.slice(0, 30).flat().filter(Boolean).join(' ');
-    const partyMatch = /(?:ledger\s+account|account|statement\s+of\s+account|acc\s*[:.])\s*[:.]?\s*([A-Z][A-Z0-9 &.,'\-/()]{3,80})/i.exec(bannerText);
-    const partyFromBanner = partyMatch?.[1]?.trim().replace(/\s{2,}/g, ' ');
-    const extracted = mappedRowsToExtractedLedger(mapped, partyFromBanner);
-    // Tally / Busy party-books bundle many GL accounts (often 100s)
-    // in a single PDF separated by header rows. Surface the detected
-    // account count so the user can spot the "single Default account"
-    // failure mode before paying for an audit on a misparsed file.
-    // Only hard-fail when we ALSO couldn't read a party from the
-    // banner — single-account exports with a clear banner name are
-    // legitimate (Finsys / Tally ledger-account exports).
-    if (extracted.accounts.length === 1 && extracted.accounts[0].name === 'Default' && !partyFromBanner) {
-      toast.error('Could not detect any account headers (Tally-style "-Account Name" rows). The audit would treat all transactions as one account and produce wrong totals. Verify the PDF has account headers between blocks, or pre-split it.');
-      return;
-    }
     if (extracted.accounts.length === 1) {
       // Soft-warn so the user knows this is being audited as a
-      // single-account ledger (the only failure mode this hides is
-      // a multi-account book whose section headers we missed; if
-      // the user knows the file is single-party, they accept).
+      // single-account ledger (the only failure mode this hides is a
+      // multi-account book whose section headers we missed; if the
+      // user knows the file is single-party, they accept).
       toast(`Single-account ledger detected (${extracted.accounts[0].name}). Auditing as one account.`, { duration: 5000 });
     }
     const prefix = successPrefix ? `${successPrefix} — ` : '';
@@ -355,13 +265,6 @@ export function LedgerUploader({ manager }: Props) {
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Upload failed');
     }
-  };
-
-  const handleMappingConfirm = async (mapping: ColumnMapping) => {
-    if (!pendingGrid) return;
-    const { grid, filename } = pendingGrid;
-    setPendingGrid(null);
-    await submitMapping(grid, mapping, filename);
   };
 
   const currentStatus = manager.current?.job.status;
@@ -459,26 +362,6 @@ export function LedgerUploader({ manager }: Props) {
       <p className="text-xs text-gray-400 dark:text-gray-500 max-w-md text-center">
         Every account is graded against §40A(3), §269ST/SS/T, TDS scope, RCM cues, and reconciliation — observations cite the section so a CA can quote them directly.
       </p>
-      {pendingGrid && (
-        <ColumnMappingWizard
-          kind="ledger"
-          grid={pendingGrid.grid}
-          filename={pendingGrid.filename}
-          initialMapping={pendingGrid.presetMapping}
-          detectedSource={pendingGrid.detectedErp}
-          onConfirm={handleMappingConfirm}
-          onCancel={() => setPendingGrid(null)}
-          onUseVision={pendingGrid.file && pendingGrid.file.type === 'application/pdf' ? () => {
-            const file = pendingGrid.file!;
-            setPendingGrid(null);
-            void manager.upload(file).then(result => {
-              toast.success(`Audit complete: ${result.observations.length} observation${result.observations.length === 1 ? '' : 's'} across ${result.accounts.length} accounts`);
-            }).catch(e => {
-              toast.error(e instanceof Error ? e.message : 'Vision upload failed');
-            });
-          } : undefined}
-        />
-      )}
       {pendingPassword && (
         <PasswordPromptDialog
           filename={pendingPassword.file.name}
@@ -488,13 +371,10 @@ export function LedgerUploader({ manager }: Props) {
             const file = pendingPassword.file;
             try {
               const grid = await extractPdfGrid(file, password);
-              if (grid && grid.rows.length >= 3) {
-                setPendingPassword(null);
-                setPendingGrid({ grid, filename: file.name, file });
-                return;
-              }
               setPendingPassword(null);
-              toast.error('Could not read this PDF after unlocking.');
+              // Same routing as an unprotected PDF; the AI reader gets the
+              // password so it can open the file.
+              await followRoute(routeLedgerPdf(grid), file, { grid, pdfPassword: password });
             } catch (err) {
               if (err instanceof PdfPasswordError) {
                 setPendingPassword({ file, wrongPassword: true });
@@ -508,18 +388,13 @@ export function LedgerUploader({ manager }: Props) {
       )}
       {pendingScannedPdf && (
         <ScannedPdfConfirmDialog
-          filename={pendingScannedPdf.name}
+          filename={pendingScannedPdf.file.name}
           documentLabel="ledger"
           onCancel={() => setPendingScannedPdf(null)}
           onConfirm={async () => {
-            const file = pendingScannedPdf;
+            const { file, pdfPassword } = pendingScannedPdf;
             setPendingScannedPdf(null);
-            try {
-              const result = await manager.upload(file);
-              toast.success(`Audit complete: ${result.observations.length} observation${result.observations.length === 1 ? '' : 's'} across ${result.accounts.length} accounts`);
-            } catch (e) {
-              toast.error(e instanceof Error ? e.message : 'Upload failed');
-            }
+            await readWithAi(file, { pdfPassword });
           }}
         />
       )}

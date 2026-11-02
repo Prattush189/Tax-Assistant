@@ -52,10 +52,13 @@ import {
 import { ledgerComparisonRepo } from '../db/repositories/ledgerComparisonRepo.js';
 import { compareLedgersByBill } from '../lib/ledgerBillMatcher.js';
 import { callGeminiJson } from '../lib/geminiJson.js';
-import { claudeComplete, isClaudeActive, CLAUDE_MODEL, CLAUDE_MODEL_FAST, type ClaudeCompletion } from '../lib/claude.js';
+import { claudeComplete, isClaudeActive, CLAUDE_MODEL, CLAUDE_MODEL_FAST, CLAUDE_MODEL_BEST, type ClaudeCompletion } from '../lib/claude.js';
 import { isClaudeModel } from '../lib/claudePricing.js';
 import { billableOpenAiUsage } from '../lib/geminiChat.js';
 import { userRepo } from '../db/repositories/userRepo.js';
+import { formatRequestRepo } from '../db/repositories/formatRequestRepo.js';
+import { unlockPdf } from '../lib/claudeStatementReader.js';
+import { repairSidesFromBalances } from '../lib/ledgerSideRepair.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { getBillingUser } from '../lib/billing.js';
@@ -72,11 +75,22 @@ const MAX_FILE_BYTES = 50 * 1024 * 1024; // 50 MB
 // handler) rather than dying mid-run after the tokens are spent.
 const FREE_LEDGER_PAGE_LIMIT = 100;
 
-const ALLOWED_MIME_TYPES = ['application/pdf'] as const;
+// Spreadsheets arrive only alongside `pdfText` (the sheet as text, for
+// the AI reader) — the file itself is kept as the format-request sample.
+// Browsers label .csv as text/csv, application/vnd.ms-excel or nothing.
+const ALLOWED_MIME_TYPES = [
+  'application/pdf',
+  'text/csv',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/octet-stream',
+] as const;
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: MAX_FILE_BYTES },
+  // pdfText rides as a form field next to the file; a 300-page ledger's
+  // text runs to a few MB, past multer's 1 MB default.
+  limits: { fileSize: MAX_FILE_BYTES, fieldSize: 40 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     if ((ALLOWED_MIME_TYPES as readonly string[]).includes(file.mimetype)) {
       cb(null, true);
@@ -85,6 +99,48 @@ const upload = multer({
     }
   },
 });
+
+/** Why the uploader sent a digital ledger to the AI reader instead of
+ *  mapping it with an accounting-software rule. Filed in Format Support
+ *  Requests (with the file) so a rule can be built — there is no mapping
+ *  screen any more. Scans carry no reason: no rule can read a scan. */
+const AUTO_FORMAT_REASONS: Record<string, string> = {
+  'no-rule': 'digital ledger whose layout matches no accounting-software rule.',
+  'rule-mismatch': "an accounting-software rule matched, but its rows were unusable (no transactions, no account headers, or they disagreed with the ledger's running balances).",
+};
+
+/** How many of the AI-read rows' running balances follow from the
+ *  amounts, per account (balances restart at every account). Direction-
+ *  agnostic per account — Dr- and Cr-natured accounts run opposite ways,
+ *  and balances printed without Dr/Cr may cross zero. Diagnostic only:
+ *  many ledgers (most Tally books) print no running balance at all. */
+function ledgerBalanceAgreement(ledger: ExtractedLedger): { checkpoints: number; agreeing: number } {
+  let checkpoints = 0;
+  let agreeing = 0;
+  for (const a of ledger.accounts) {
+    let best = { checkpoints: 0, agreeing: 0 };
+    for (const sign of [1, -1]) {
+      let prev: number | null = null;
+      let acc = 0;
+      const tally = { checkpoints: 0, agreeing: 0 };
+      for (const t of a.transactions) {
+        acc += t.debit - t.credit;
+        if (t.balance == null || !Number.isFinite(t.balance)) continue;
+        if (prev != null) {
+          tally.checkpoints++;
+          const moved = sign * acc;
+          if (Math.abs(t.balance - prev - moved) < 1.01 || Math.abs(t.balance + prev - moved) < 1.01) tally.agreeing++;
+        }
+        prev = t.balance;
+        acc = 0;
+      }
+      if (tally.agreeing > best.agreeing || best.checkpoints === 0) best = tally;
+    }
+    checkpoints += best.checkpoints;
+    agreeing += best.agreeing;
+  }
+  return { checkpoints, agreeing };
+}
 
 // ── Types for the extract-pass JSON shape ────────────────────────────────
 interface ExtractedTransaction {
@@ -434,6 +490,10 @@ interface LedgerTsvChunkResult {
   periodTo: string | null;
   accounts: LedgerTsvAccount[];
   transactions: LedgerTsvTransaction[];
+  /** The account the output ended in (last ACCOUNT or TX line, in order)
+   *  — the next chunk's "(continued)" rows belong to it. A chunk can end
+   *  on a new account's head with its rows on the next page. */
+  endAccount: string | null;
   declaredCount: number;
   actualCount: number;
   inputTokens: number;
@@ -467,6 +527,7 @@ function parseLedgerTsvResponse(raw: string): Omit<LedgerTsvChunkResult, 'inputT
   const transactions: LedgerTsvTransaction[] = [];
   const droppedReasons: string[] = [];
   let declaredCount = -1;
+  let endAccount: string | null = null;
 
   for (const line of lines) {
     if (!line.trim()) continue;
@@ -496,6 +557,7 @@ function parseLedgerTsvResponse(raw: string): Omit<LedgerTsvChunkResult, 'inputT
         droppedReasons.push('account-no-name');
         continue;
       }
+      endAccount = name;
       accounts.push({
         name,
         accountType: cleanTsvCell(a[2] ?? '') || null,
@@ -548,6 +610,7 @@ function parseLedgerTsvResponse(raw: string): Omit<LedgerTsvChunkResult, 'inputT
         droppedReasons.push('tx-no-amount');
         continue;
       }
+      endAccount = accountName;
       transactions.push({
         accountName,
         date: cleanTsvCell(t[2] ?? '') || null,
@@ -567,6 +630,7 @@ function parseLedgerTsvResponse(raw: string): Omit<LedgerTsvChunkResult, 'inputT
     periodTo,
     accounts,
     transactions,
+    endAccount,
     declaredCount,
     actualCount: transactions.length,
     droppedReasons,
@@ -718,7 +782,18 @@ async function extractLedgerTsvOnce(
  * immediately — retrying the same params on the same model can't fix a
  * truncated response, but the fallback's doubled output ceiling can.
  */
-async function extractLedgerTsv(chunkText: string, maxTokens: number, recordAttempt: RecordAttempt = NOOP_RECORD, onFallback?: () => void): Promise<LedgerTsvChunkResult> {
+/** `claudeModel`: which Claude reads the chunk. `geminiRescue: false` —
+ *  a Claude answer that fails the row-count / truncation checks is thrown
+ *  back so the caller can split the chunk and let the same Claude retry
+ *  each half, instead of handing it to the weaker Gemini ladder. */
+async function extractLedgerTsv(
+  chunkText: string,
+  maxTokens: number,
+  recordAttempt: RecordAttempt = NOOP_RECORD,
+  onFallback?: () => void,
+  opts: { claudeModel?: string; geminiRescue?: boolean } = {},
+): Promise<LedgerTsvChunkResult> {
+  const claudeModel = opts.claudeModel ?? CLAUDE_MODEL_FAST;
   const MAX_PRIMARY_ATTEMPTS = 4;
   const MAX_FALLBACK_ATTEMPTS = 3;
   let lastErr: unknown;
@@ -746,10 +821,11 @@ async function extractLedgerTsv(chunkText: string, maxTokens: number, recordAtte
   // Gemini tiers — T1 runs with a doubled output ceiling.
   if (isClaudeActive()) {
     try {
-      return await extractLedgerTsvOnce(chunkText, CLAUDE_MODEL_FAST, maxTokens, 'none', recordAttempt);
+      return await extractLedgerTsvOnce(chunkText, claudeModel, maxTokens, 'none', recordAttempt);
     } catch (err) {
       lastErr = err;
-      console.warn(`[ledger-scrutiny] ${CLAUDE_MODEL_FAST} extract failed, falling back to Gemini: ${(err as Error).message?.slice(0, 140)}`);
+      if (opts.geminiRescue === false && /trailer|mismatch|truncat|length|no text/i.test((err as Error).message ?? '')) throw err;
+      console.warn(`[ledger-scrutiny] ${claudeModel} extract failed, falling back to Gemini: ${(err as Error).message?.slice(0, 140)}`);
     }
   }
 
@@ -819,9 +895,13 @@ async function extractLedgerTsvWithBisect(
   label: string,
   recordAttempt: RecordAttempt = NOOP_RECORD,
   onFallback?: () => void,
+  claudeModel?: string,
 ): Promise<LedgerTsvChunkResult[]> {
   try {
-    const r = await extractLedgerTsv(chunkText, maxTokens, recordAttempt, onFallback);
+    // A chunk that can still be split goes back to the same Claude in
+    // halves; only one that can't is offered to Gemini.
+    const canSplit = depth < maxDepth && chunkText.length >= 1500;
+    const r = await extractLedgerTsv(chunkText, maxTokens, recordAttempt, onFallback, { claudeModel, geminiRescue: !canSplit });
     return [r];
   } catch (err) {
     const msg = (err as Error).message ?? String(err);
@@ -845,14 +925,18 @@ async function extractLedgerTsvWithBisect(
     if (cut < chunkText.length * 0.2 || cut < 0) {
       cut = chunkText.indexOf('\n\n', mid);
     }
+    // No page break to cut on (one long sheet page): cut at a line break,
+    // never inside a row.
+    if (cut < 0) cut = chunkText.lastIndexOf('\n', mid);
+    if (cut <= 0) cut = chunkText.indexOf('\n', mid);
     if (cut < 0) cut = mid;
     const left = chunkText.slice(0, cut).trim();
     const right = chunkText.slice(cut).trim();
     if (!left || !right) throw err;
 
     const [leftRes, rightRes] = await Promise.all([
-      extractLedgerTsvWithBisect(left, maxTokens, depth + 1, maxDepth, `${label}.L`, recordAttempt, onFallback),
-      extractLedgerTsvWithBisect(right, maxTokens, depth + 1, maxDepth, `${label}.R`, recordAttempt, onFallback),
+      extractLedgerTsvWithBisect(left, maxTokens, depth + 1, maxDepth, `${label}.L`, recordAttempt, onFallback, claudeModel),
+      extractLedgerTsvWithBisect(right, maxTokens, depth + 1, maxDepth, `${label}.R`, recordAttempt, onFallback, claudeModel),
     ]);
     return [...leftRes, ...rightRes];
   }
@@ -932,27 +1016,47 @@ function mergeLedgerChunks(chunkResults: LedgerTsvChunkResult[]): ExtractedLedge
   const periodFrom = chunkResults.map(r => r.periodFrom).find(v => !!v) ?? null;
   const periodTo = chunkResults.map(r => r.periodTo).find(v => !!v) ?? null;
 
-  // Group transactions by lowercase account name. Preserve insertion order
-  // so the first time we see an account in a chunk fixes its display order.
+  // Group transactions by account name, ignoring case, spacing and edge
+  // punctuation (Marg prints "-HDFC BANK LTD." on the first page and
+  // "HDFC BANK LTD." after it — one account, not two). Preserve insertion
+  // order so the first time we see an account fixes its display order.
+  const keyOf = (name: string) => name.toLowerCase().replace(/^[\s\-–—:.,*]+|[\s\-–—:.,*]+$/g, '').replace(/\s+/g, ' ');
   const accountOrder: string[] = [];
   const accountMeta = new Map<string, { name: string; accountType: string | null; opening: number | null; closing: number | null }>();
   const txByAccount = new Map<string, ExtractedTransaction[]>();
 
   const ensureAccount = (name: string, accountType: string | null) => {
-    const key = name.toLowerCase();
+    const key = keyOf(name);
     if (!accountMeta.has(key)) {
       accountOrder.push(key);
-      accountMeta.set(key, { name, accountType, opening: null, closing: null });
+      accountMeta.set(key, { name: name.replace(/^[\s\-–—:*]+/, '').trim() || name, accountType, opening: null, closing: null });
       txByAccount.set(key, []);
     } else if (accountType && !accountMeta.get(key)!.accountType) {
       accountMeta.get(key)!.accountType = accountType;
     }
   };
 
+  // A chunk that starts part-way through an account can't see its head;
+  // the prompt has it name those rows "(continued)" (models still invent
+  // "UNKNOWN ACCOUNT (CONTD.)" and the like). They belong to the last
+  // account of the previous chunk — left as their own "account" they split
+  // one party's rows in two and both totals come out wrong.
+  const isContinuation = (name: string) => /^\(?\s*continued\s*\)?$|^(unknown|unnamed|unidentified)\b|\(\s*(contd|continued)\b/i.test(name.trim());
+  let lastKey: string | null = null;
   for (const chunk of chunkResults) {
+    const carry = lastKey;
+    const nameOf = (name: string) => (carry && isContinuation(name) ? accountMeta.get(carry)!.name : name);
     for (const a of chunk.accounts) {
-      ensureAccount(a.name, a.accountType);
-      const meta = accountMeta.get(a.name.toLowerCase())!;
+      const name = nameOf(a.name);
+      ensureAccount(name, a.accountType);
+      lastKey = keyOf(name);
+      const meta = accountMeta.get(lastKey)!;
+      // A continuation can end the account (its closing line), but its
+      // "opening" would be the page's carried balance — not the account's.
+      if (name !== a.name) {
+        if (a.closing !== null) meta.closing = a.closing;
+        continue;
+      }
       // Opening balance: take the FIRST non-null value seen across chunks
       // (the chunk that actually contained the opening balance line).
       if (meta.opening === null && a.opening !== null) meta.opening = a.opening;
@@ -962,8 +1066,10 @@ function mergeLedgerChunks(chunkResults: LedgerTsvChunkResult[]): ExtractedLedge
       if (a.closing !== null) meta.closing = a.closing;
     }
     for (const t of chunk.transactions) {
-      ensureAccount(t.accountName, null);
-      const key = t.accountName.toLowerCase();
+      const name = nameOf(t.accountName);
+      ensureAccount(name, null);
+      const key = keyOf(name);
+      lastKey = key;
       txByAccount.get(key)!.push({
         date: t.date,
         narration: t.narration,
@@ -973,6 +1079,11 @@ function mergeLedgerChunks(chunkResults: LedgerTsvChunkResult[]): ExtractedLedge
         balance: t.balance,
       });
     }
+    if (chunk.endAccount) {
+      const end = nameOf(chunk.endAccount);
+      ensureAccount(end, null);
+      lastKey = keyOf(end);
+    }
   }
 
   const accounts: ExtractedAccount[] = accountOrder.map((key) => {
@@ -980,11 +1091,25 @@ function mergeLedgerChunks(chunkResults: LedgerTsvChunkResult[]): ExtractedLedge
     const txs = txByAccount.get(key) ?? [];
     const totalDebit = txs.reduce((s, t) => s + (t.debit || 0), 0);
     const totalCredit = txs.reduce((s, t) => s + (t.credit || 0), 0);
+    // No closing printed: opening + Dr − Cr. A blank read as 0 floods the
+    // audit with phantom RECON_BREAKs. (Not the last running balance: when
+    // the rows include Tally's "By Closing Balance" contra entry, Dr = Cr
+    // and the true closing is 0 — the last balance would invent a break.)
+    // A "closing" that disagrees with the rows while the account's own
+    // last running balance agrees with them is a misread (an account split
+    // across pages gets the page's running balance as its closing) — the
+    // rows win. Without that proof the printed figure stands, so a real
+    // break still reaches the audit.
+    const opening = meta.opening ?? 0;
+    const computed = Math.round((opening + totalDebit - totalCredit) * 100) / 100;
+    const lastBalance = [...txs].reverse().find(t => t.balance != null)?.balance ?? null;
+    const provenByBalance = lastBalance != null && Math.abs(lastBalance - computed) < 1.01;
+    const closing = meta.closing == null || (provenByBalance && Math.abs(meta.closing - computed) >= 1.01) ? computed : meta.closing;
     return {
       name: meta.name,
       accountType: meta.accountType,
-      opening: meta.opening ?? 0,
-      closing: meta.closing ?? 0,
+      opening,
+      closing,
       totalDebit,
       totalCredit,
       transactions: txs,
@@ -1666,7 +1791,14 @@ router.post(
     const extractStartMs = Date.now();
     let scrutinyStartMs = extractStartMs;
 
-    const isPdfText = !req.file && typeof req.body?.pdfText === 'string' && req.body.pdfText.length > 0;
+    // pdfText may come as JSON, or as a multipart field next to the
+    // original file (PDF or spreadsheet), which is then kept only as the
+    // format-request sample — the text is what gets read.
+    const isPdfText = typeof req.body?.pdfText === 'string' && req.body.pdfText.length > 0;
+    if (req.file && !isPdfText && req.file.mimetype !== 'application/pdf') {
+      res.status(400).json({ error: 'A spreadsheet ledger must be sent with its sheet text (pdfText).' });
+      return;
+    }
     // Pre-extracted path: the frontend ran the column-mapping wizard on a
     // digital PDF and already produced an ExtractedLedger structure. We
     // skip Gemini extraction entirely and go straight to audit. Eliminates
@@ -1693,8 +1825,8 @@ router.post(
     // Suresh Sethi free account, which logged a 351K ledger_scrutiny
     // call on a 250K budget).
     const ledgerPreflightEstimate = (() => {
+      if (isPdfText) return estimateLedgerText(req.body.pdfText.length);
       if (req.file) return estimateGeminiVision(req.file.size);
-      if (typeof req.body?.pdfText === 'string') return estimateLedgerText(req.body.pdfText.length);
       if (isPreExtracted && typeof req.body?.preExtracted === 'string') {
         // Pre-extracted skips the extract pass; estimate scrutiny only.
         return estimateLedgerScrutinyOnly(req.body.preExtracted.length + 4_000);
@@ -1713,7 +1845,7 @@ router.post(
     let pdfText: string | null = null;
 
     let preExtractedJson: string | null = null;
-    if (req.file) {
+    if (req.file && !isPdfText) {
       filename = req.file.originalname;
       mimeType = req.file.mimetype;
       fileHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
@@ -1726,10 +1858,10 @@ router.post(
       fileHash = crypto.createHash('sha256').update(preExtractedJson).digest('hex');
     } else {
       pdfText = String(req.body.pdfText);
-      filename = typeof req.body?.filename === 'string' && req.body.filename.trim()
+      filename = req.file?.originalname ?? (typeof req.body?.filename === 'string' && req.body.filename.trim()
         ? String(req.body.filename)
-        : 'ledger.pdf';
-      mimeType = 'application/pdf';
+        : 'ledger.pdf');
+      mimeType = req.file?.mimetype ?? 'application/pdf';
       // Hash the text content — re-extracting the same digital ledger
       // produces byte-identical text from pdfjs, so the cache still works.
       fileHash = crypto.createHash('sha256').update(pdfText).digest('hex');
@@ -1821,8 +1953,22 @@ router.post(
     // creates a fresh job row but skips re-running the extract pass.
     const cached = ledgerScrutinyRepo.findByHashForUser(req.user.id, fileHash);
 
+    // A protected PDF comes with the password the user typed to unlock it
+    // in the browser (a digital one's text was already pulled out there).
+    // Remove it here so vision can read a scan and the filed sample opens.
+    // Never stored or logged; a failure leaves the file as uploaded.
+    const pdfPassword = typeof req.body?.pdfPassword === 'string' && req.body.pdfPassword ? req.body.pdfPassword as string : undefined;
+    if (req.file && pdfPassword && req.file.mimetype === 'application/pdf') {
+      try {
+        req.file.buffer = await unlockPdf(req.file.buffer, pdfPassword);
+        req.file.size = req.file.buffer.length;
+      } catch (err) {
+        console.warn(`[ledger-scrutiny] could not unlock password-protected PDF: ${(err as Error).message.slice(0, 200)}`);
+      }
+    }
+
     const job = ledgerScrutinyRepo.createJob(req.user.id, quota.billingUserId, {
-      name: filename.replace(/\.pdf$/i, '') || 'Ledger',
+      name: filename.replace(/\.(pdf|csv|xlsx?)$/i, '') || 'Ledger',
       partyName: cached?.party_name ?? null,
       gstin: cached?.gstin ?? null,
       periodFrom: cached?.period_from ?? null,
@@ -1832,6 +1978,31 @@ router.post(
       fileHash,
     });
     ledgerScrutinyRepo.setPagesTotal(job.id, req.user.id, ledgerPagesTotal);
+
+    // A digital ledger the uploader couldn't map with a software rule is
+    // read by AI. File it in Format Support Requests with the original
+    // file so a rule can be built — this replaces the mapping screen and
+    // the "Don't see your software? Ask us to add it" form. Only the first
+    // time this content is seen (a cached re-run reuses the extraction).
+    // Never blocks the run.
+    const formatReason = typeof req.body?.formatReason === 'string' ? req.body.formatReason : '';
+    if (req.file && !cached && AUTO_FORMAT_REASONS[formatReason]) {
+      try {
+        const detected = typeof req.body?.detectedSoftware === 'string' ? req.body.detectedSoftware.trim().slice(0, 100) : '';
+        const requestId = formatRequestRepo.create({
+          userId: req.user.id,
+          billingUserId: quota.billingUserId,
+          kind: 'ledger',
+          softwareName: detected || 'Unrecognised ledger format',
+          notes: `Auto-filed: ${AUTO_FORMAT_REASONS[formatReason]} It was read by the AI reader instead (ledger job ${job.id}).`
+            + (pdfPassword ? ' The upload was password-protected; the attached copy has the password removed.' : ''),
+          file: { name: req.file.originalname, mime: req.file.mimetype, size: req.file.size, buffer: req.file.buffer },
+        });
+        console.log(`[ledger-scrutiny] auto-filed format request ${requestId} (${formatReason}${detected ? `, ${detected}` : ''}) for ${req.file.originalname}`);
+      } catch (err) {
+        console.warn('[ledger-scrutiny] auto format request failed:', (err as Error).message);
+      }
+    }
 
     // Declared outside the try so the catch block can include them in the
     // error response — lets the user (and us in logs) see whether chunking
@@ -1881,14 +2052,25 @@ router.post(
         // `ledger_extract_failed` so we can keep tuning from data.
         const CHUNK_CONCURRENCY = 3;
 
-        const chunks = chunkLedgerText(pdfText, MAX_CHARS_PER_CHUNK, MAX_CHUNKS);
-        chunkCount = chunks.length;
+        // This path is the AI reader for ledgers no software rule maps —
+        // every row must come out right, so it reads with CLAUDE_MODEL_BEST
+        // (Opus: every row exact on 7 test ledgers, twice; Haiku and Sonnet
+        // dropped / flipped / misread rows on 3-5 of them). A digital PDF
+        // also sends its column grid (gridText), read first: explicit
+        // columns can't lose which side a lone amount is on. If its running
+        // balances don't reconcile, the PDF's plain text is read too and
+        // the reading whose balances agree more is kept. (A spreadsheet
+        // sends its text as both, so a failed read is simply re-read.)
+        const gridText = typeof req.body?.gridText === 'string' && req.body.gridText.trim() ? String(req.body.gridText) : null;
+        const sources = [...(gridText ? [{ tag: 'grid', text: gridText }] : []), { tag: 'text', text: pdfText }]
+          .map(s => ({ ...s, chunks: chunkLedgerText(s.text, MAX_CHARS_PER_CHUNK, MAX_CHUNKS) }));
+        chunkCount = sources[0].chunks.length;
         const dateCount = countLikelyDates(pdfText);
-        console.log(`[ledger-scrutiny] pdfText path: ${chunks.length} chunk(s), ~${dateCount} candidate dates`);
+        console.log(`[ledger-scrutiny] pdfText path: ${sources.map(s => `${s.tag} ${s.chunks.length} chunk(s)`).join(', ')}, ~${dateCount} candidate dates`);
         // Set extract-chunk total upfront so the frontend's progress
         // bar flips to "chunk 0 of N" immediately. Bumped per chunk
         // below alongside the page-billing counter.
-        try { ledgerScrutinyRepo.setExtractChunksTotal(job.id, req.user!.id, chunks.length); } catch (e) { console.error('[ledger-scrutiny] set extract chunks total failed', e); }
+        try { ledgerScrutinyRepo.setExtractChunksTotal(job.id, req.user!.id, chunkCount); } catch (e) { console.error('[ledger-scrutiny] set extract chunks total failed', e); }
 
         // Closure that fires for every Gemini attempt — successful or
         // not. Failed attempts get logged immediately at category
@@ -1929,110 +2111,136 @@ router.post(
         // Approximate pages per chunk for the credit accumulator. The
         // actual chunker packs by char budget, so chunks have variable
         // page counts; the average is close enough for partial-run
-        // billing on cancel.
-        const pagesPerChunk = Math.max(1, Math.ceil(ledgerPagesTotal / chunks.length));
-        const chunkResultLists = await mapWithConcurrency(
-          chunks,
-          CHUNK_CONCURRENCY,
-          async (chunk, idx) => {
-            const t0 = Date.now();
-            const label = `chunk ${idx + 1}/${chunks.length}`;
-            try {
-              // depth 0 → can recursively split up to depth 2 (4 sub-chunks).
-              const results = await extractLedgerTsvWithBisect(chunk, MAX_OUTPUT_TOKENS, 0, 2, label, recordLedgerAttempt, () => {
-                try { ledgerScrutinyRepo.markProviderFallback(job.id); } catch (e) { console.warn('[ledger-scrutiny] markProviderFallback failed:', (e as Error).message); }
-              });
-              const totalTx = results.reduce((s, r) => s + r.actualCount, 0);
-              const totalAcct = results.reduce((s, r) => s + r.accounts.length, 0);
-              const note = results.length > 1 ? ` (bisected into ${results.length})` : '';
-              console.log(`[ledger-scrutiny] ${label} ✓ ${totalAcct} accounts, ${totalTx} TX in ${Date.now() - t0}ms${note}`);
-              ledgerScrutinyRepo.bumpPagesProcessed(job.id, req.user!.id, pagesPerChunk);
-              try { ledgerScrutinyRepo.bumpExtractChunksDone(job.id, req.user!.id); } catch (e) { console.error('[ledger-scrutiny] bump extract chunks failed', e); }
-              return results;
-            } catch (e) {
-              const msg = (e as Error).message ?? String(e);
-              console.error(`[ledger-scrutiny] ${label} ✗ ${msg}`);
-              throw new Error(`Section ${idx + 1}/${chunks.length}: ${msg}`);
-            }
-          },
-        );
-        const chunkResults = chunkResultLists.flat();
-
-        extracted = mergeLedgerChunks(chunkResults);
-
-        // Deterministic balance repair: Gemini routinely drops the Tally
-        // "Dr/Cr Closing Balance" footer despite the prompt demanding it,
-        // which zeroes the closing and floods the audit with phantom
-        // RECON_BREAKs (one sample: 15 accounts at "closing Rs. 0" whose
-        // gap exactly equalled the dropped footer). Recover balances from
-        // the raw page text; each repair is applied only when it strictly
-        // improves the account's opening + Dr − Cr = closing tie-out.
-        try {
-          const rep = repairBalancesFromSource(extracted, pdfText);
-          if (rep.openingRepaired || rep.closingRepaired) {
-            console.log(`[ledger-scrutiny] balance repair: recovered ${rep.closingRepaired} closing / ${rep.openingRepaired} opening balance(s) from source text`);
-          }
-        } catch (e) {
-          console.warn('[ledger-scrutiny] balance repair failed:', (e as Error).message);
-        }
-
-        const totalTx = extracted.accounts.reduce((s, a) => s + a.transactions.length, 0);
-
-        // Cross-check: candidate-date count vs extracted transaction count.
-        // Ledger text has FAR more date-like markers than transaction rows
-        // (period headers on every page, voucher type lists, opening/closing
-        // balance dates, running-balance "As at" lines, page footers), so
-        // the bank-statement 50% threshold false-fails on dense Tally
-        // exports. Drop the floor to 25% — still catches wholesale chunk
-        // loss (one chunk silently dropped = ~50%+ shortfall on a 4-chunk
-        // run) without rejecting legitimate ledgers.
-        if (dateCount > 0 && totalTx < dateCount * 0.25) {
-          throw new Error(
-            `Transaction count sanity check failed: extracted ${totalTx} TX rows but found ~${dateCount} date-like markers in the ledger text. ` +
-            `Rather than persist a likely-incomplete extraction, we're bailing.`,
+        // billing on cancel. Counted on the first reading only.
+        const pagesPerChunk = Math.max(1, Math.ceil(ledgerPagesTotal / sources[0].chunks.length));
+        const readSource = async (src: typeof sources[number]) => {
+          const chunkResultLists = await mapWithConcurrency(
+            src.chunks,
+            CHUNK_CONCURRENCY,
+            async (chunk, idx) => {
+              const t0 = Date.now();
+              const label = `${sources.length > 1 ? `${src.tag} ` : ''}chunk ${idx + 1}/${src.chunks.length}`;
+              try {
+                // depth 0 → can recursively split up to depth 2 (4 sub-chunks).
+                const results = await extractLedgerTsvWithBisect(chunk, MAX_OUTPUT_TOKENS, 0, 2, label, recordLedgerAttempt, () => {
+                  try { ledgerScrutinyRepo.markProviderFallback(job.id); } catch (e) { console.warn('[ledger-scrutiny] markProviderFallback failed:', (e as Error).message); }
+                }, CLAUDE_MODEL_BEST);
+                const totalTx = results.reduce((s, r) => s + r.actualCount, 0);
+                const totalAcct = results.reduce((s, r) => s + r.accounts.length, 0);
+                const note = results.length > 1 ? ` (bisected into ${results.length})` : '';
+                console.log(`[ledger-scrutiny] ${label} ✓ ${totalAcct} accounts, ${totalTx} TX in ${Date.now() - t0}ms${note}`);
+                if (src === sources[0]) ledgerScrutinyRepo.bumpPagesProcessed(job.id, req.user!.id, pagesPerChunk);
+                try { ledgerScrutinyRepo.bumpExtractChunksDone(job.id, req.user!.id); } catch (e) { console.error('[ledger-scrutiny] bump extract chunks failed', e); }
+                return results;
+              } catch (e) {
+                const msg = (e as Error).message ?? String(e);
+                console.error(`[ledger-scrutiny] ${label} ✗ ${msg}`);
+                throw new Error(`Section ${idx + 1}/${src.chunks.length}: ${msg}`);
+              }
+            },
           );
-        }
+          const chunkResults = chunkResultLists.flat();
+          const merged = mergeLedgerChunks(chunkResults);
 
-        extracted = normalizeExtraction(extracted);
+          // Deterministic balance repair: Gemini routinely drops the Tally
+          // "Dr/Cr Closing Balance" footer despite the prompt demanding it,
+          // which zeroes the closing and floods the audit with phantom
+          // RECON_BREAKs (one sample: 15 accounts at "closing Rs. 0" whose
+          // gap exactly equalled the dropped footer). Recover balances from
+          // the raw page text; each repair is applied only when it strictly
+          // improves the account's opening + Dr − Cr = closing tie-out.
+          try {
+            const rep = repairBalancesFromSource(merged, pdfText);
+            if (rep.openingRepaired || rep.closingRepaired) {
+              console.log(`[ledger-scrutiny] balance repair (${src.tag}): recovered ${rep.closingRepaired} closing / ${rep.openingRepaired} opening balance(s) from source text`);
+            }
+          } catch (e) {
+            console.warn('[ledger-scrutiny] balance repair failed:', (e as Error).message);
+          }
+
+          const totalTx = merged.accounts.reduce((s, a) => s + a.transactions.length, 0);
+
+          // Cross-check: candidate-date count vs extracted transaction count.
+          // Ledger text has FAR more date-like markers than transaction rows
+          // (period headers on every page, voucher type lists, opening/closing
+          // balance dates, running-balance "As at" lines, page footers), so
+          // the bank-statement 50% threshold false-fails on dense Tally
+          // exports. Drop the floor to 25% — still catches wholesale chunk
+          // loss (one chunk silently dropped = ~50%+ shortfall on a 4-chunk
+          // run) without rejecting legitimate ledgers.
+          if (dateCount > 0 && totalTx < dateCount * 0.25) {
+            throw new Error(
+              `Transaction count sanity check failed: extracted ${totalTx} TX rows but found ~${dateCount} date-like markers in the ledger text. ` +
+              `Rather than persist a likely-incomplete extraction, we're bailing.`,
+            );
+          }
+          const ledger = normalizeExtraction(merged);
+          const flipped = repairSidesFromBalances(ledger);
+          if (flipped) console.log(`[ledger-scrutiny] ${src.tag} reading: ${flipped} debit/credit side(s) corrected from the running balance`);
+          return { tag: src.tag, ledger, chunkResults, agreement: ledgerBalanceAgreement(ledger) };
+        };
+
+        // Reconciles: too few running balances to judge, or ≥95% agree.
+        const reconciles = (a: { checkpoints: number; agreeing: number }) => a.checkpoints < 5 || a.agreeing >= a.checkpoints * 0.95;
+        const reads: Array<Awaited<ReturnType<typeof readSource>>> = [];
+        let firstErr: unknown = null;
+        try { reads.push(await readSource(sources[0])); } catch (e) { firstErr = e; }
+        if (sources.length > 1 && (reads.length === 0 || !reconciles(reads[0].agreement))) {
+          try { ledgerScrutinyRepo.setExtractChunksTotal(job.id, req.user!.id, chunkCount + sources[1].chunks.length); } catch { /* progress only */ }
+          try { reads.push(await readSource(sources[1])); } catch (e) { firstErr ??= e; }
+        }
+        if (reads.length === 0) throw firstErr;
+        // Most agreeing running balances wins; a tie goes to the first
+        // (grid) reading.
+        const kept = reads.reduce((best, r) => (r.agreement.agreeing > best.agreement.agreeing ? r : best));
+        console.log(`[ledger-scrutiny] ${CLAUDE_MODEL_BEST} reading(s): ${reads.map(r => `${r.tag} ${r.agreement.agreeing}/${r.agreement.checkpoints} balances agree`).join(', ')} → kept ${kept.tag}${reconciles(kept.agreement) ? '' : ' (does NOT reconcile)'}`);
+        extracted = kept.ledger;
+        const chunkResults = kept.chunkResults;
         rawJson = JSON.stringify(extracted);
 
         // Aggregate cost across all successful chunks. Price each
         // chunk by the model that actually produced it (T2 on the
         // primary path, T1 on the fallback) — generic flat-rating
         // would mis-attribute the T1 fallback runs by ~2.5×. Failed
-        // attempts
-        // are already logged separately via recordLedgerAttempt.
+        // attempts are already logged separately via
+        // recordLedgerAttempt. The reading that was set aside is real
+        // spend too: logged as failed (visible to admin, not charged to
+        // the user's budget — reading twice is our choice, not theirs).
         try {
           // One row per model: chunks can mix Claude and its Gemini
           // fallback, and weighted_tokens (the quota charge) is computed
           // from the row's model — a single row labelled with chunk 0's
           // model billed every chunk at that model's rate.
-          const byModel = new Map<string, { inputTok: number; outputTok: number; cost: number; tx: number }>();
-          for (const r of chunkResults) {
-            const m = r.modelUsed || GEMINI_CHAT_MODEL_T2;
-            const agg = byModel.get(m) ?? { inputTok: 0, outputTok: 0, cost: 0, tx: 0 };
-            agg.inputTok += r.inputTokens;
-            agg.outputTok += r.outputTokens;
-            agg.cost += costForModel(m, r.inputTokens, r.outputTokens);
-            agg.tx += r.actualCount;
-            byModel.set(m, agg);
-          }
-          for (const [modelUsed, agg] of byModel) usageRepo.logWithBilling(
-            ledgerClientIp,
-            req.user.id,
-            quota.billingUserId,
-            agg.inputTok,
-            agg.outputTok,
-            agg.cost,
-            false,
-            modelUsed,
-            false,
-            'ledger_extract',
-            agg.tx,
-            'success',
-            0,
-            Date.now() - extractStartMs,
-          );
+          const logReading = (results: LedgerTsvChunkResult[], status: 'success' | 'failed') => {
+            const byModel = new Map<string, { inputTok: number; outputTok: number; cost: number; tx: number }>();
+            for (const r of results) {
+              const m = r.modelUsed || GEMINI_CHAT_MODEL_T2;
+              const agg = byModel.get(m) ?? { inputTok: 0, outputTok: 0, cost: 0, tx: 0 };
+              agg.inputTok += r.inputTokens;
+              agg.outputTok += r.outputTokens;
+              agg.cost += costForModel(m, r.inputTokens, r.outputTokens);
+              agg.tx += r.actualCount;
+              byModel.set(m, agg);
+            }
+            for (const [modelUsed, agg] of byModel) usageRepo.logWithBilling(
+              ledgerClientIp,
+              req.user!.id,
+              quota.billingUserId,
+              agg.inputTok,
+              agg.outputTok,
+              agg.cost,
+              false,
+              modelUsed,
+              false,
+              'ledger_extract',
+              status === 'success' ? agg.tx : 0,
+              status,
+              0,
+              Date.now() - extractStartMs,
+            );
+          };
+          logReading(chunkResults, 'success');
+          for (const r of reads) if (r !== kept) logReading(r.chunkResults, 'failed');
         } catch (err) {
           console.error('[ledger-scrutiny] cost log failed', err);
         }
@@ -2055,6 +2263,8 @@ router.post(
           claude: 'smart',
         });
         extracted = normalizeExtraction(result.data);
+        const flipped = repairSidesFromBalances(extracted);
+        if (flipped) console.log(`[ledger-scrutiny] vision reading: ${flipped} debit/credit side(s) corrected from the running balance`);
         rawJson = JSON.stringify(extracted);
 
         try {
@@ -2104,7 +2314,8 @@ router.post(
 
       const accounts = ledgerScrutinyRepo.listAccounts(job.id);
       const totalTx = extracted.accounts.reduce((s, a) => s + a.transactions.length, 0);
-      console.log(`[ledger-scrutiny] extract done via ${extractPath}: ${accounts.length} accounts, ${totalTx} TX${chunkCount ? `, ${chunkCount} chunk(s)` : ''}`);
+      const agreement = ledgerBalanceAgreement(extracted);
+      console.log(`[ledger-scrutiny] extract done via ${extractPath}: ${accounts.length} accounts, ${totalTx} TX${chunkCount ? `, ${chunkCount} chunk(s)` : ''}; running balances ${agreement.agreeing}/${agreement.checkpoints} agree`);
 
       // ── Extract-only short-circuit ────────────────────────────────────
       // The compare-mode flow uses ?extractOnly=1 to get back the
@@ -2329,6 +2540,114 @@ router.post(
 );
 
 // POST /api/ledger-scrutiny/:id/scrutinize — SSE-streamed audit pass
+// POST /api/ledger-scrutiny/suggest-mapping — AI column mapping for a
+// ledger no software rule recognises. multipart: file (the upload, kept as
+// the format-request sample) + sample (JSON {header, rows, columnCount}:
+// the grid's header and first rows) + formatReason / detectedSoftware /
+// pdfPassword. Returns { roles, filed }.
+//
+// The model only names each column (date, debit, credit, balance…); the
+// browser then builds every row from the grid itself and keeps the result
+// only when the ledger's own running balances prove it — so no row can be
+// dropped or misread, unlike a model copying rows out (2026-10-30 bake-off:
+// mapping was exact on 5 of 7 ledgers with any model; the 2 it missed,
+// whose grid merges cells, failed the checks and went to transcription).
+const LEDGER_ROLES = ['date', 'narration', 'voucher', 'reference', 'debit', 'credit', 'amount', 'drCrMarker', 'balance', 'account', 'skip'] as const;
+const MAPPING_PROMPT = (header: string, sample: string, n: number) => [
+  'Below are the first rows of an Indian accounting ledger export (Tally, Busy, Marg or similar), already split into numbered columns. Some header words may be misaligned with the data under them, so judge each column by its DATA, using the header only as a hint.',
+  `Assign exactly one role to each of the ${n} columns, from: ${LEDGER_ROLES.join(', ')}.`,
+  'date = transaction date; narration = particulars/description; voucher = voucher type (Sales, Receipt…); reference = voucher/bill/cheque number; debit and credit = the two amount columns; amount = a single amount column (with drCrMarker for a separate Dr/Cr column, or a Dr/Cr suffix on the amount); balance = running balance; account = the GL account name on each row; skip = anything else (value date, page text, empty).',
+  'Reply with ONLY a JSON object: {"roles": [role for column 1, role for column 2, ...]}.',
+  '', `HEADER: ${header}`, sample,
+].join('\n');
+
+router.post(
+  '/suggest-mapping',
+  (req: Request, res: Response, next: NextFunction) => {
+    upload.single('file')(req, res, (err) => (err ? next(err) : next()));
+  },
+  async (req: AuthRequest, res: Response) => {
+    if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
+    const quota = enforceQuota(req, res);
+    if (!quota.ok) return;
+    if (!isClaudeActive()) { res.status(503).json({ error: 'AI column mapping is unavailable.' }); return; }
+    let sample: { header?: unknown[]; rows?: unknown[][]; columnCount?: number };
+    try { sample = JSON.parse(String(req.body?.sample ?? '')); } catch { res.status(400).json({ error: 'sample must be JSON' }); return; }
+    const n = Number(sample.columnCount);
+    if (!Number.isInteger(n) || n < 2 || n > 40 || !Array.isArray(sample.rows) || sample.rows.length === 0) {
+      res.status(400).json({ error: 'sample needs columnCount and rows' });
+      return;
+    }
+    const clean = (c: unknown) => String(c ?? '').replace(/\s+/g, ' ').trim().slice(0, 200);
+    const header = Array.from({ length: n }, (_, i) => `[${i + 1}] ${clean(sample.header?.[i]) || '(none)'}`).join(' | ');
+    const rows = sample.rows.slice(0, 45)
+      .map((r, i) => `row ${i + 1}: ` + Array.from({ length: n }, (_, j) => `[${j + 1}] ${clean(Array.isArray(r) ? r[j] : '')}`).join(' | '))
+      .join('\n');
+    const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
+
+    // File the format request first (with the file) — the layout is
+    // unknown whatever the mapping turns out to be. One per file (name +
+    // size) per user, so a re-upload doesn't file it again.
+    let filed = false;
+    const formatReason = typeof req.body?.formatReason === 'string' ? req.body.formatReason : '';
+    if (req.file && AUTO_FORMAT_REASONS[formatReason]) {
+      try {
+        const already = formatRequestRepo.listForUser(req.user.id)
+          .some(r => r.kind === 'ledger' && r.file_name === req.file!.originalname);
+        if (!already) {
+          const pdfPassword = typeof req.body?.pdfPassword === 'string' && req.body.pdfPassword ? req.body.pdfPassword as string : undefined;
+          if (pdfPassword && req.file.mimetype === 'application/pdf') {
+            try {
+              req.file.buffer = await unlockPdf(req.file.buffer, pdfPassword);
+              req.file.size = req.file.buffer.length;
+            } catch (err) {
+              console.warn(`[ledger-scrutiny] could not unlock password-protected PDF: ${(err as Error).message.slice(0, 200)}`);
+            }
+          }
+          const detected = typeof req.body?.detectedSoftware === 'string' ? req.body.detectedSoftware.trim().slice(0, 100) : '';
+          const id = formatRequestRepo.create({
+            userId: req.user.id,
+            billingUserId: quota.billingUserId,
+            kind: 'ledger',
+            softwareName: detected || 'Unrecognised ledger format',
+            notes: `Auto-filed: ${AUTO_FORMAT_REASONS[formatReason]} It was read by AI (column mapping, else transcription).`
+              + (pdfPassword ? ' The upload was password-protected; the attached copy has the password removed.' : ''),
+            file: { name: req.file.originalname, mime: req.file.mimetype, size: req.file.size, buffer: req.file.buffer },
+          });
+          console.log(`[ledger-scrutiny] auto-filed format request ${id} (${formatReason}${detected ? `, ${detected}` : ''}) for ${req.file.originalname}`);
+        }
+        filed = true;
+      } catch (err) {
+        console.warn('[ledger-scrutiny] auto format request failed:', (err as Error).message);
+      }
+    }
+
+    const t0 = Date.now();
+    try {
+      const r = await claudeComplete([{ role: 'user', content: MAPPING_PROMPT(header, rows, n) }],
+        { model: CLAUDE_MODEL_BEST, maxTokens: 4_000, effort: 'medium', timeoutMs: 120_000 });
+      try {
+        usageRepo.logWithBilling(clientIp, req.user.id, quota.billingUserId, r.inputTokens, r.outputTokens, costForModel(r.model, r.inputTokens, r.outputTokens), false, r.model, false, 'ledger_extract', 0, 'success', 0, Date.now() - t0);
+      } catch (e) { console.error('[ledger-scrutiny] mapping cost log failed', e); }
+      const roles = (JSON.parse(/\{[\s\S]*\}/.exec(r.text)?.[0] ?? '{}') as { roles?: unknown }).roles;
+      if (!Array.isArray(roles) || roles.length !== n || !roles.every(x => (LEDGER_ROLES as readonly unknown[]).includes(x))) {
+        console.warn(`[ledger-scrutiny] AI mapping unusable: ${r.text.slice(0, 200)}`);
+        res.status(422).json({ error: 'The AI column mapping was unusable.', filed });
+        return;
+      }
+      console.log(`[ledger-scrutiny] AI mapping (${r.model}, ${Date.now() - t0}ms): ${JSON.stringify(roles)}`);
+      res.json({ roles, filed });
+    } catch (err) {
+      const u = (err as { claudeUsage?: ClaudeCompletion }).claudeUsage;
+      if (u) {
+        try { usageRepo.logWithBilling(clientIp, req.user.id, quota.billingUserId, u.inputTokens, u.outputTokens, costForModel(u.model, u.inputTokens, u.outputTokens), false, u.model, false, 'ledger_extract', 0, 'failed', 0, 0); } catch { /* logged best-effort */ }
+      }
+      console.warn(`[ledger-scrutiny] AI mapping failed: ${(err as Error).message?.slice(0, 200)}`);
+      res.status(502).json({ error: 'AI column mapping failed.', filed });
+    }
+  },
+);
+
 router.post('/:id/scrutinize', async (req: AuthRequest, res: Response) => {
   if (!req.user) { res.status(401).json({ error: 'Auth required' }); return; }
   const scrutinyStartMs = Date.now();
