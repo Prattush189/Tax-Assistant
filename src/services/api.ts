@@ -1881,8 +1881,12 @@ export interface ClaudeConfig {
   enabled: boolean;
   configured: boolean;
   active: boolean;
+  /** Judgment work (scrutiny, notices, scanned ledgers). */
   model: string;
+  /** Mechanical work (statements, documents, mapping, CMA). */
   fastModel: string;
+  /** Ledgers no software rule maps (column mapping + row transcription). */
+  bestModel: string;
 }
 
 export async function adminFetchClaudeConfig(): Promise<ClaudeConfig> {

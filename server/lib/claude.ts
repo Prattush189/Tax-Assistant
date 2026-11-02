@@ -82,8 +82,8 @@ export function setClaudeEnabled(on: boolean): void {
   }
 }
 
-export function getClaudeConfig(): { enabled: boolean; configured: boolean; active: boolean; model: string; fastModel: string } {
-  return { enabled, configured: claudeConfigured, active: isClaudeActive(), model: CLAUDE_MODEL, fastModel: CLAUDE_MODEL_FAST };
+export function getClaudeConfig(): { enabled: boolean; configured: boolean; active: boolean; model: string; fastModel: string; bestModel: string } {
+  return { enabled, configured: claudeConfigured, active: isClaudeActive(), model: CLAUDE_MODEL, fastModel: CLAUDE_MODEL_FAST, bestModel: CLAUDE_MODEL_BEST };
 }
 
 // ── Calls ─────────────────────────────────────────────────────────────────

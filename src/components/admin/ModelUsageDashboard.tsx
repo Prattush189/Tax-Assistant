@@ -55,8 +55,8 @@ const MODEL_COLORS: Record<string, string> = {
 
 const MODEL_LABELS: Record<string, string> = {
   'claude-sonnet-5-5':             'Claude Sonnet 5.5 (scrutiny + notices)',
-  'claude-haiku-5-5':              'Claude Haiku 5.5 (extraction + mapping)',
-  'claude-opus-5-5':               'Claude Opus 5.5',
+  'claude-haiku-5-5':              'Claude Haiku 5.5 (statements, documents, mapping)',
+  'claude-opus-5-5':               'Claude Opus 5.5 (ledgers with no software rule)',
   'gemini-3.8-flash':              'Gemini 3.8 Flash (primary, all features)',
   'gemini-3.8-flash-flex':         'Gemini 3.8 Flash (primary, Flex)',
   'gemini-3.7-flash':              'Gemini 3.7 Flash (fallback, all features)',
@@ -74,6 +74,15 @@ const MODEL_LABELS: Record<string, string> = {
   'gemini-3.1-flash-lite-preview': 'Gemini 3.1 Flash-Lite (retired)',
   'gemini-2.5-flash':              'Gemini 2.5 Flash (retired)',
   'claude-haiku-4-5':              'Claude Haiku 4.5 (retired)',
+};
+
+// Claude list prices (USD per 1M tokens) and quota weights (unit =
+// $0.10/M). Mirrors server/lib/claudePricing.ts + modelWeights.ts — keep
+// them in step. A CLAUDE_MODEL* override not listed here shows no price.
+const CLAUDE_PRICES: Record<string, { name: string; price: string; weight: string }> = {
+  'claude-opus-5-5':   { name: 'Claude Opus 5.5',   price: '$4 in / $20 out per 1M',      weight: 'weight 40× / 200×' },
+  'claude-sonnet-5-5': { name: 'Claude Sonnet 5.5', price: '$2 in / $10 out per 1M',      weight: 'weight 20× / 100×' },
+  'claude-haiku-5-5':  { name: 'Claude Haiku 5.5',  price: '$0.10 in / $0.50 out per 1M', weight: 'weight 1× / 5×' },
 };
 
 interface ModelEntry {
@@ -217,13 +226,13 @@ export function ModelUsageDashboard() {
         </div>
       </div>
 
-      {/* Active model cascade. Same two-tier line-up across every AI
-          feature now — chat, notices, suggestions, bank-statement
-          analysis, ledger scrutiny, document upload, Form 16 import. */}
+      {/* Active model cascade: the Gemini ladder every AI feature can
+          fall back to, plus the Claude models that run first for the
+          features listed in the Claude box (free credits, admin switch). */}
       <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5">
         <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1">Model Cascade</h3>
         <p className="text-[11px] text-gray-500 dark:text-gray-400 mb-4">
-          Model ladder used by every AI feature: chat, notices, suggestions, bank-statement analysis, ledger scrutiny, document upload, Form 16 import. Primary + T1 run on the Flex service tier by default (~50% price); a Flex hiccup falls back to Standard, then to the next tier. Older cascades (gemini-2.5-flash, gemini-3-flash-preview, gemini-3.1-flash-lite-preview) are retired.
+          Gemini ladder used by every AI feature: chat, notices, suggestions, bank-statement analysis, ledger scrutiny, document upload, Form 16 import — as the first choice for chat, search and the bank-row classifier, and as the fallback wherever Claude runs first (box below). Primary + T1 run on the Flex service tier by default (~50% price); a Flex hiccup falls back to Standard, then to the next tier. Older cascades (gemini-2.5-flash, gemini-3-flash-preview, gemini-3.1-flash-lite-preview) are retired.
         </p>
         <div className="rounded-xl border-2 border-amber-400 bg-amber-50 dark:bg-amber-900/10 p-4">
           <div className="flex items-center gap-2 mb-3">
@@ -249,6 +258,49 @@ export function ModelUsageDashboard() {
             <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">Chat: <span className="font-medium">Deep</span> starts at 3.8 Flash, <span className="font-medium">Fast</span> at 3.7 Flash; Deep runs 3.8 (Flex) → 3.7 (Flex) → 3.8 (Std) → 3.7 (Std) → 3.1 Flash-Lite; Fast runs 3.7 (Flex→Std) → 3.1 Flash-Lite. 3.8 and 3.7 are priced identically, so T1 is an availability fallback, not a cheaper one. Weighted tokens count thinking tokens as output and bill cached prompt tokens at the cache rate. Search grounding: 2.5 family 1,500/day, 3.x family 5,000/month — limits below. <span className="font-medium">3.x promo pricing doubles on 1 Jan 2027.</span></p>
           </div>
         </div>
+
+        {/* Claude-first work (free API credits). Model ids come from the
+            server config so an env override shows what actually runs. */}
+        {claude && (
+          <div className="mt-4 rounded-xl border-2 border-orange-400 bg-orange-50 dark:bg-orange-900/10 p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Sparkles className="w-4 h-4 text-orange-500" />
+              <span className="text-xs font-bold uppercase text-orange-700 dark:text-orange-400">Claude first (free API credits)</span>
+              <span className={cn(
+                'text-[10px] font-bold px-1.5 py-0.5 rounded',
+                claude.active ? 'text-emerald-700 bg-emerald-100 dark:text-emerald-400 dark:bg-emerald-900/30'
+                  : 'text-gray-600 bg-gray-200 dark:text-gray-300 dark:bg-gray-700',
+              )}>
+                {claude.active ? 'ON' : !claude.configured ? 'NO API KEY — GEMINI ONLY' : 'OFF — GEMINI ONLY'}
+              </span>
+            </div>
+            <div className="space-y-2.5">
+              {[
+                { tier: 'LEDGERS · NO RULE', tint: 'text-red-600 bg-red-100 dark:bg-red-900/30', model: claude.bestModel,
+                  use: 'Ledgers no accounting-software rule maps: names the columns (kept only when the running balances prove it), else copies every row.' },
+                { tier: 'JUDGMENT', tint: 'text-orange-600 bg-orange-100 dark:bg-orange-900/30', model: claude.model,
+                  use: 'Ledger scrutiny audit, notice drafting when search is off, scanned ledgers (vision).' },
+                { tier: 'MECHANICAL', tint: 'text-amber-700 bg-amber-100 dark:bg-amber-900/30', model: claude.fastModel,
+                  use: 'Bank statements (scans and unknown formats, checked against the running balance), uploaded documents (notices, Form 16, attachments), financial mapping, CMA narrative.' },
+              ].map(row => {
+                const p = CLAUDE_PRICES[row.model];
+                return (
+                  <div key={row.tier}>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={cn('text-[10px] font-bold px-1.5 py-0.5 rounded', row.tint)}>{row.tier}</span>
+                      <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{p?.name ?? row.model}</span>
+                      {p && <span className="text-[10px] text-gray-500 dark:text-gray-400">{p.price} · {p.weight}</span>}
+                    </div>
+                    <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">{row.use}</p>
+                  </div>
+                );
+              })}
+              <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">
+                Any Claude failure falls back to the Gemini ladder above on key 1. Tax chat, deeds and rent agreements (Google Search) and the bank-row classifier stay on Gemini. Cache reads bill $0.20/M on Opus and Sonnet, $0.01/M on Haiku; Haiku bills a whole request at 5× once its prompt passes 100K tokens. Weights count toward users' token budgets like Gemini's. On/off switch: <span className="font-medium">Claude for books &amp; notices</span> below.
+              </p>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Rate limiters (Anthropic RPM etc.) */}
@@ -394,8 +446,9 @@ export function ModelUsageDashboard() {
                 Claude for books &amp; notices
               </h3>
               <p className="text-[11px] text-gray-500 dark:text-gray-400">
-                When on, ledger scrutiny and notice drafting (when search is off) use {claude.model}; ledger extraction,
-                financial mapping and CMA narrative use {claude.fastModel}. Any failure falls back to Gemini key 1.
+                When on, ledger scrutiny, notice drafting (when search is off) and scanned ledgers use {claude.model};
+                bank statements, uploaded documents, financial mapping and CMA narrative use {claude.fastModel};
+                ledgers no software rule maps use {claude.bestModel}. Any failure falls back to Gemini key 1.
                 Tax chat and deeds keep Google Search on Gemini.
               </p>
               {!claude.configured && (
