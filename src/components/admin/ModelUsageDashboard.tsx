@@ -30,8 +30,8 @@ function fmtTokens(n: number): string {
 // label instead of the raw string. Add new active models above the
 // retired block so they get a distinct colour.
 const MODEL_COLORS: Record<string, string> = {
-  'claude-sonnet-5-5':             'bg-orange-500',   // Scrutiny + notices (Claude-first)
-  'claude-haiku-5-5':              'bg-orange-300',   // Extraction + mapping (Claude-first)
+  'claude-sonnet-5-5':             'bg-orange-500',   // Scrutiny (Claude-first)
+  'claude-haiku-5-5':              'bg-orange-300',   // Notices, extraction + mapping (Claude-first)
   'claude-opus-5-5':               'bg-orange-600',
   'gemini-3.8-flash':              'bg-amber-500',    // Primary — active
   'gemini-3.8-flash-flex':         'bg-amber-400',    // Primary on Flex
@@ -54,8 +54,8 @@ const MODEL_COLORS: Record<string, string> = {
 };
 
 const MODEL_LABELS: Record<string, string> = {
-  'claude-sonnet-5-5':             'Claude Sonnet 5.5 (scrutiny + notices)',
-  'claude-haiku-5-5':              'Claude Haiku 5.5 (statements, documents, mapping)',
+  'claude-sonnet-5-5':             'Claude Sonnet 5.5 (ledger scrutiny)',
+  'claude-haiku-5-5':              'Claude Haiku 5.5 (notices, statements, documents, mapping)',
   'claude-opus-5-5':               'Claude Opus 5.5 (ledgers with no software rule)',
   'gemini-3.8-flash':              'Gemini 3.8 Flash (primary, all features)',
   'gemini-3.8-flash-flex':         'Gemini 3.8 Flash (primary, Flex)',
@@ -279,9 +279,9 @@ export function ModelUsageDashboard() {
                 { tier: 'LEDGERS · NO RULE', tint: 'text-red-600 bg-red-100 dark:bg-red-900/30', model: claude.bestModel,
                   use: 'Ledgers no accounting-software rule maps: names the columns (kept only when the running balances prove it), else copies every row.' },
                 { tier: 'JUDGMENT', tint: 'text-orange-600 bg-orange-100 dark:bg-orange-900/30', model: claude.model,
-                  use: 'Ledger scrutiny audit, notice drafting when search is off, scanned ledgers (vision).' },
+                  use: 'Ledger scrutiny audit, scanned ledgers (vision).' },
                 { tier: 'MECHANICAL', tint: 'text-amber-700 bg-amber-100 dark:bg-amber-900/30', model: claude.fastModel,
-                  use: 'Bank statements (scans and unknown formats, checked against the running balance), uploaded documents (notices, Form 16, attachments), financial mapping, CMA narrative.' },
+                  use: 'Notice replies and revisions (when search is off), bank statements (scans and unknown formats, checked against the running balance), uploaded documents (notices, Form 16, attachments), financial mapping, CMA narrative.' },
               ].map(row => {
                 const p = CLAUDE_PRICES[row.model];
                 return (
@@ -446,7 +446,7 @@ export function ModelUsageDashboard() {
                 Claude for books &amp; notices
               </h3>
               <p className="text-[11px] text-gray-500 dark:text-gray-400">
-                When on, ledger scrutiny, notice drafting (when search is off) and scanned ledgers use {claude.model};
+                When on, ledger scrutiny and scanned ledgers use {claude.model}; notice drafting (when search is off),
                 bank statements, uploaded documents, financial mapping and CMA narrative use {claude.fastModel};
                 ledgers no software rule maps use {claude.bestModel}. Any failure falls back to Gemini key 1.
                 Tax chat and deeds keep Google Search on Gemini.

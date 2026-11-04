@@ -19,10 +19,11 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import db from '../db/index.js';
 
-/** Judgment work: ledger scrutiny observations, notice / deed drafting. */
+/** Judgment work: ledger scrutiny observations, scanned ledgers. */
 export const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5-5';
-/** Mechanical work: ledger TSV transcription, row classification, CMA
- *  narrative. Bulk of the tokens, so it gets the cheap model. */
+/** Mechanical work: statement and document reads, financial mapping, CMA
+ *  narrative, and notice drafting (chatProvider's economy calls). Bulk of
+ *  the tokens, so it gets the cheap model. */
 export const CLAUDE_MODEL_FAST = process.env.CLAUDE_MODEL_FAST || 'claude-haiku-5-5';
 /** Reading a ledger no software rule maps (rows → TSV, column roles).
  *  Every row has to be right: in a 2026-10-30 bake-off on 7 ledgers Opus

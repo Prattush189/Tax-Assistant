@@ -28,7 +28,7 @@ import {
 } from './gemini.js';
 import { streamGeminiChat } from './geminiChat.js';
 import { selectTier, confirmUsed } from './searchQuota.js';
-import { claudeComplete, isClaudeActive, CLAUDE_MODEL } from './claude.js';
+import { claudeComplete, isClaudeActive, CLAUDE_MODEL, CLAUDE_MODEL_FAST } from './claude.js';
 import { withBreaker } from './circuitBreaker.js';
 
 /** Google-Search grounding for notice / deed / ledger drafting.
@@ -56,6 +56,7 @@ export interface ChatRequest {
    *  a truncation instead. */
   onFallback?: (input: { from: string; to: string }) => void;
   /** Economy ladder: start at 3.1 Flash-Lite with thinking OFF instead
+   *  (Haiku instead of Sonnet when Claude answers)
    *  of the 3.x primary with Deep thinking. 3.x bills thinking tokens
    *  as OUTPUT, and Deep reasoning on a long legal letter burns far
    *  more of them than the letter itself — which is what made notice
@@ -163,12 +164,18 @@ export const geminiChatProvider: ChatProvider = {
 
     // Claude first for anything that doesn't need Google Search (admin
     // switch in app_config). Searching calls stay on Gemini's free pool.
+    // Economy (notices) gets Haiku, as it gets Flash-Lite on Gemini. A
+    // test 143(1) reply (2026-11-04) weighed 430K quota tokens on Sonnet
+    // (7.1K in, 2.9K out at 20x / 100x) and 46K on Haiku (7.1K in, 7.8K
+    // out: Haiku thinks more at the same effort, but at 1x / 5x).
     if (!SEARCH_GROUNDING && isClaudeActive()) {
+      const claudeModel = req.economy ? CLAUDE_MODEL_FAST : CLAUDE_MODEL;
       const t0 = Date.now();
       try {
         const r = await withBreaker('claude', () => claudeComplete(
           [{ role: 'system', content: req.systemPrompt }, { role: 'user', content: req.userMessage }],
           {
+            model: claudeModel,
             maxTokens: req.maxTokens,
             effort: req.economy || req.thinking === 'low' ? 'low' : 'medium',
             onText: (t) => { emittedAnyText = true; onText(t); },
@@ -190,10 +197,10 @@ export const geminiChatProvider: ChatProvider = {
         if (emittedAnyText) throw err;
         const cu = (err as { claudeUsage?: { model: string; inputTokens: number; outputTokens: number; cachedInputTokens: number } }).claudeUsage;
         if (cu) wastedAttempts.push({ ...cu, costUsd: costForModel(cu.model, cu.inputTokens, cu.outputTokens, cu.cachedInputTokens) });
-        console.warn(`[chatProvider] ${CLAUDE_MODEL} failed after ${Date.now() - t0}ms, falling back to Gemini key 1:`, (err as Error).message?.slice(0, 160));
+        console.warn(`[chatProvider] ${claudeModel} failed after ${Date.now() - t0}ms, falling back to Gemini key 1:`, (err as Error).message?.slice(0, 160));
         pinGeminiKey1 = true;
         firstFallbackFired = true;
-        try { req.onFallback?.({ from: CLAUDE_MODEL, to: topRung }); }
+        try { req.onFallback?.({ from: claudeModel, to: topRung }); }
         catch (e) { console.warn('[chatProvider] onFallback hook threw:', (e as Error).message); }
       }
     }
