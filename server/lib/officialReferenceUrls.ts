@@ -54,11 +54,20 @@ export const OFFICIAL_REFERENCE_URLS: ReadonlyArray<ReferenceUrl> = [
     description: 'CBDT e-filing portal latest news — ITR utility releases, return-filing utilities, AY-specific announcements.',
     tags: ['chat', 'notice', 'income_tax'],
   },
+  // The old /Pages/acts/income-tax-act.aspx address now redirects to the
+  // home page (checked in a browser 2026-11-05); these two are the Acts.
+  {
+    key: 'incometax_act_1961',
+    label: 'Income-tax Act, 1961 (as amended)',
+    url: 'https://www.incometaxindia.gov.in/income-tax-act',
+    description: 'Bare Act text of the 1961 Act, as amended. Use to verify section numbers, sub-sections, and statutory quotations.',
+    tags: ['chat', 'notice', 'income_tax'],
+  },
   {
     key: 'incometax_act_2025',
-    label: 'Income Tax Act, 1961 / 2025 (recodification)',
-    url: 'https://www.incometaxindia.gov.in/Pages/acts/income-tax-act.aspx',
-    description: 'Bare Act text. Use to verify section numbers, sub-sections, and statutory quotations.',
+    label: 'Income-tax Act, 2025 (recodification)',
+    url: 'https://www.incometaxindia.gov.in/income-tax-act-202511',
+    description: 'Bare Act text of the 2025 recodification. Use for section numbers under the new Act.',
     tags: ['chat', 'notice', 'income_tax'],
   },
 

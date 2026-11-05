@@ -89,7 +89,18 @@ export function getClaudeConfig(): { enabled: boolean; configured: boolean; acti
 
 // ── Calls ─────────────────────────────────────────────────────────────────
 
+/** One page Claude's web search returned, with the passages Claude cited
+ *  from it: evidence for checking the links in its answer. */
+export interface ClaudeSearchSource {
+  url: string;
+  title: string;
+  citedText: string[];
+}
+
 export interface ClaudeCompletion {
+  /** The answer. With web search on, only the text after the last search
+   *  result: anything written before or between searches is commentary
+   *  ("Let me look up section 143..."), not part of the answer. */
   text: string;
   /** OpenAI-style: 'stop' | 'length' | 'refusal' | raw stop_reason. */
   finishReason: string;
@@ -99,6 +110,18 @@ export interface ClaudeCompletion {
   outputTokens: number;
   cachedInputTokens: number;
   model: string;
+  /** Billed separately from tokens (CLAUDE_WEB_SEARCH_USD each). */
+  webSearchRequests: number;
+  /** Every page the searches returned. Empty without web search. */
+  sources: ClaudeSearchSource[];
+}
+
+/** Let Claude search the web during the call, on these sites only. */
+export interface ClaudeWebSearch {
+  /** Most searches in one call (each is billed). */
+  maxUses: number;
+  /** Sites searched; subdomains included. */
+  allowedDomains: string[];
 }
 
 export interface ClaudeCallOptions {
@@ -110,6 +133,7 @@ export interface ClaudeCallOptions {
   effort?: 'low' | 'medium' | 'high';
   timeoutMs?: number;
   onText?: (text: string) => void;
+  webSearch?: ClaudeWebSearch;
 }
 
 const THINKING_HEADROOM = 8_192;
@@ -174,11 +198,38 @@ export async function claudeComplete(
     ...(system ? { system } : {}),
     messages: claudeMessages,
     output_config: { effort: opts.effort ?? 'low' },
+    // The basic search tool: the dynamic-filtering version is not listed
+    // for Haiku, and this one returned the same pages in a 2026-11-05 probe.
+    ...(opts.webSearch ? {
+      tools: [{
+        type: 'web_search_20250305' as const,
+        name: 'web_search' as const,
+        max_uses: opts.webSearch.maxUses,
+        allowed_domains: opts.webSearch.allowedDomains,
+      }],
+    } : {}),
   }, { timeout: opts.timeoutMs ?? 300_000 });
   if (opts.onText) stream.on('text', opts.onText);
 
   const msg = await stream.finalMessage();
-  const text = msg.content.map(b => (b.type === 'text' ? b.text : '')).join('');
+  let lastSearchResult = -1;
+  const sources = new Map<string, ClaudeSearchSource>();
+  msg.content.forEach((b, i) => {
+    if (b.type === 'web_search_tool_result') {
+      lastSearchResult = i;
+      // An error result is an object, a success a list of pages.
+      if (Array.isArray(b.content)) {
+        for (const r of b.content) {
+          if (!sources.has(r.url)) sources.set(r.url, { url: r.url, title: r.title ?? '', citedText: [] });
+        }
+      }
+    } else if (b.type === 'text') {
+      for (const c of b.citations ?? []) {
+        if (c.type === 'web_search_result_location') sources.get(c.url)?.citedText.push(c.cited_text);
+      }
+    }
+  });
+  const text = msg.content.slice(lastSearchResult + 1).map(b => (b.type === 'text' ? b.text : '')).join('');
   const cacheRead = msg.usage.cache_read_input_tokens ?? 0;
   const cacheWrite = msg.usage.cache_creation_input_tokens ?? 0;
   const result: ClaudeCompletion = {
@@ -190,6 +241,8 @@ export async function claudeComplete(
     outputTokens: msg.usage.output_tokens,
     cachedInputTokens: cacheRead,
     model,
+    webSearchRequests: msg.usage.server_tool_use?.web_search_requests ?? 0,
+    sources: [...sources.values()],
   };
   if (msg.stop_reason === 'refusal') {
     throw Object.assign(new Error(`Claude declined (${msg.stop_details?.category ?? 'no category'})`), { claudeUsage: result });

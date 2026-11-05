@@ -1,7 +1,9 @@
 import crypto from 'crypto';
 import { Router, Request, Response, NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
-import { pickChatProvider, DEFAULT_SEARCH_GROUNDING } from '../lib/chatProvider.js';
+import { pickChatProvider, type ChatUsage } from '../lib/chatProvider.js';
+import type { ClaudeWebSearch } from '../lib/claude.js';
+import { verifyNoticeLinks, linksIn } from '../lib/noticeLinkVerifier.js';
 import { referenceUrlsBlock } from '../lib/officialReferenceUrls.js';
 import { SseWriter } from '../lib/sseStream.js';
 import { sanitizeNoticeCitations } from '../lib/noticeCitationSanitizer.js';
@@ -65,6 +67,22 @@ const router = Router();
 
 const MAX_TOKENS = 8192;
 
+/** Verify every link in a finished draft against the pages the search
+ *  returned (or live), then drop what failed: unverified links lose the
+ *  URL and keep their text, case-law entries without a verified link go. */
+async function verifyAndSanitize(draft: string, usage: ChatUsage, label: string, preVerified: string[] = []) {
+  const links = await verifyNoticeLinks(draft, usage.sources, preVerified);
+  const failed = links.checks.filter(c => !c.ok);
+  if (links.checks.length) {
+    console.log(`[notices] ${label}: ${links.checks.length - failed.length}/${links.checks.length} link(s) verified${failed.length ? `; removed ${failed.map(c => `${c.url} (${c.reason})`).join('; ')}` : ''}`);
+  }
+  const sanitized = sanitizeNoticeCitations(draft, links.isVerified);
+  if (sanitized.report.droppedEntries) {
+    console.log(`[notices] ${label}: dropped ${sanitized.report.droppedEntries}/${sanitized.report.totalEntries} case-law citation(s) without a verified link`);
+  }
+  return sanitized;
+}
+
 function istDateString(): string {
   const today = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
   return `${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')}/${today.getFullYear()}`;
@@ -75,12 +93,34 @@ function istDateString(): string {
 // Markdown. The client renders this via react-markdown in the preview pane
 // and via a markdown-aware jsPDF renderer for download. The structure mirrors
 // how a practising senior advocate actually files a reply / rectification.
+// Notices search by default (2026-11-05) so a reply can link to the
+// judgments and provisions it relies on; every link is then verified
+// before the draft is saved (noticeLinkVerifier). NOTICE_SEARCH_GROUNDING=0
+// turns searching off.
+const NOTICE_SEARCH = process.env.NOTICE_SEARCH_GROUNDING !== '0';
+
+// Claude's web search for notices (Gemini's Google Search is the fallback
+// when Claude fails): official and judgment sites only, so every page the
+// model can cite is on a host the verifier accepts. 4 searches covers the
+// provisions in dispute plus a judgment or two at $0.01 each.
+const NOTICE_CLAUDE_SEARCH: ClaudeWebSearch = {
+  maxUses: 4,
+  allowedDomains: [
+    'incometaxindia.gov.in', 'incometax.gov.in', 'cbic.gov.in', 'cbic-gst.gov.in', 'gst.gov.in',
+    'gstcouncil.gov.in', 'egazette.gov.in', 'indiankanoon.org', 'itat.gov.in', 'sci.gov.in', 'livelaw.in',
+  ],
+};
+
 // Citation rules depend on whether the model actually has the search
 // tool. Telling it to search when it cannot makes 3.x thinking models
 // attempt a google_search call and return no text at all.
-const NOTICE_CITATION_RULES = DEFAULT_SEARCH_GROUNDING
+const NOTICE_CITATION_RULES = NOTICE_SEARCH
   ? `WEB-SEARCH-GROUNDED CITATIONS (mandatory)
-You have live Google Search grounding. Use it to verify every section number, sub-section quotation, rule citation, and case-law reference before including it in the letter. When a fact is ambiguous or recent (post-2023 amendment, FA 2025/2026 change, fresh notification), search first.
+You have a web search tool, limited to official and judgment sites and to a few searches per letter. Spend them on what the reply relies on: the provisions in dispute first, then any judgment you will cite. Use what you find to check section numbers, quoted text, rule and notification numbers and case citations before putting them in the letter.
+
+Every link is checked by machine after you finish. The page must exist, and it must name the parties (for a judgment) or the section, rule or notification number (for a statute) that you placed the link next to. A link that fails is removed, and a case-law entry left without a checked link is dropped. So link only pages your search returned, each next to the authority it is actually about.
+
+Write nothing before the letter: no remarks about searching or what you found. The reply starts with the summary table.
 
 ONLY treat the following as authoritative sources — prefer these in your search results and cite them inline in section 5 (Legal Submissions) and section 6 (Case Laws / Precedents) where appropriate:
 - incometax.gov.in, incometaxindia.gov.in, eportal.incometax.gov.in (CBDT, Income Tax Department)
@@ -486,18 +526,22 @@ router.post(
         systemPrompt: NOTICE_SYSTEM_PROMPT,
         userMessage: userPrompt,
         maxTokens: MAX_TOKENS,
-        // Notices run the economy ladder (2.5 Flash-Lite, no thinking).
-        // See ChatRequest.economy — 3.x Deep thinking was billing far more
-        // output tokens than the letter itself.
+        // Notices run the economy ladder: Haiku on Claude, 3.1 Flash-Lite
+        // with no thinking on Gemini. See ChatRequest.economy — 3.x Deep
+        // thinking was billing far more output tokens than the letter itself.
         economy: true,
         // Backup rungs only: Deep thinking there used ~6K of the 8K output
         // budget on a short test notice, leaving a long letter cut off.
         thinking: 'low',
+        searchGrounding: NOTICE_SEARCH,
+        claudeSearch: NOTICE_CLAUDE_SEARCH,
         onFallback: () => { sse.writeEvent({ providerFallback: true }); },
       },
       (text) => { fullResponse += text; sse.writeText(text); },
     );
     usageRepo.logWastedAttempts(clientIp, req.user!.id, billingUserId, 'notice', usage.wastedAttempts);
+    const streamed = fullResponse;
+    fullResponse = usage.finalText ?? fullResponse;
 
     let sanitizationReport = { changed: false, droppedEntries: 0, totalEntries: 0, keptEntries: 0, droppedUrls: 0 };
     if (fullResponse && usage.truncated) {
@@ -526,11 +570,8 @@ router.post(
       // the user will refresh / save / export) is now clean, and the
       // SSE 'done' event tells the frontend the canonical content
       // changed so it can re-fetch and replace the live view.
-      const sanitized = sanitizeNoticeCitations(fullResponse);
+      const sanitized = await verifyAndSanitize(fullResponse, usage, `notice ${noticeId}`);
       sanitizationReport = sanitized.report;
-      if (sanitized.report.changed) {
-        console.log(`[notices] sanitised notice ${noticeId}: dropped ${sanitized.report.droppedEntries}/${sanitized.report.totalEntries} citation(s) without an authoritative source URL`);
-      }
       fullResponse = sanitized.text;
 
       // updateContent flips status='generating' → 'generated' and clears
@@ -573,6 +614,7 @@ router.post(
       citationsSanitized: sanitizationReport.changed,
       citationsDropped: sanitizationReport.droppedEntries,
       urlsDropped: sanitizationReport.droppedUrls,
+      draftReplaced: fullResponse !== streamed,
     });
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
@@ -725,11 +767,16 @@ ${instruction}
         // Backup rungs only: Deep thinking there used ~6K of the 8K output
         // budget on a short test notice, leaving a long letter cut off.
         thinking: 'low',
+        // "Cite the Bombay HC ruling" is a typical revision, so search too.
+        searchGrounding: NOTICE_SEARCH,
+        claudeSearch: NOTICE_CLAUDE_SEARCH,
         onFallback: () => { sse.writeEvent({ providerFallback: true }); },
       },
       (text) => { fullResponse += text; sse.writeText(text); },
     );
     usageRepo.logWastedAttempts(clientIp, req.user.id, billingUserId, 'notice_enhance', usage.wastedAttempts);
+    const streamed = fullResponse;
+    fullResponse = usage.finalText ?? fullResponse;
 
     if (fullResponse.trim() && usage.truncated) {
       console.warn(`[notices] enhance ${notice.id}: output cut off (${usage.modelUsed}, out=${usage.outputTokens})`);
@@ -746,11 +793,10 @@ ${instruction}
       return;
     }
 
-    const sanitized = sanitizeNoticeCitations(fullResponse);
+    // Links already in the draft passed when it was saved (or the user put
+    // them there): a revision changes only what was asked.
+    const sanitized = await verifyAndSanitize(fullResponse, usage, `enhanced notice ${notice.id}`, linksIn(current));
     fullResponse = sanitized.text;
-    if (sanitized.report.changed) {
-      console.log(`[notices] sanitised enhanced notice ${notice.id}: dropped ${sanitized.report.droppedEntries}/${sanitized.report.totalEntries} unverifiable citation(s)`);
-    }
     noticeRepo.updateContent(notice.id, fullResponse);
 
     // usage.inputTokens already INCLUDES the cached portion (Gemini's
@@ -764,6 +810,7 @@ ${instruction}
       citationsSanitized: sanitized.report.changed,
       citationsDropped: sanitized.report.droppedEntries,
       urlsDropped: sanitized.report.droppedUrls,
+      draftReplaced: fullResponse !== streamed,
     });
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);

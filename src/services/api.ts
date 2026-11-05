@@ -741,6 +741,9 @@ export interface NoticeGenerateDoneMeta {
   citationsDropped?: number;
   /** Fabricated source URLs stripped from the saved letter. */
   urlsDropped?: number;
+  /** The saved letter differs from what streamed for another reason
+   *  (the model's remarks before searching were dropped): re-fetch it. */
+  draftReplaced?: boolean;
 }
 
 export async function generateNotice(
@@ -808,6 +811,7 @@ export async function generateNotice(
             citationsSanitized: parsed.citationsSanitized === true,
             citationsDropped: typeof parsed.citationsDropped === 'number' ? parsed.citationsDropped : undefined,
             urlsDropped: typeof parsed.urlsDropped === 'number' ? parsed.urlsDropped : undefined,
+            draftReplaced: parsed.draftReplaced === true,
           });
           return;
         }
@@ -875,6 +879,7 @@ export async function enhanceNotice(
             citationsSanitized: parsed.citationsSanitized === true,
             citationsDropped: typeof parsed.citationsDropped === 'number' ? parsed.citationsDropped : undefined,
             urlsDropped: typeof parsed.urlsDropped === 'number' ? parsed.urlsDropped : undefined,
+            draftReplaced: parsed.draftReplaced === true,
           });
           return;
         }

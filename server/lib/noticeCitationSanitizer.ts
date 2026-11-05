@@ -21,6 +21,10 @@
  *      (indiankanoon, itat.gov.in, sci.gov.in, livelaw.in, taxmann,
  *      taxsutra, cleartax.in/lawnetwork, *.nic.in, *.gov.in).
  *   4. Drop entries without such a URL. Renumber the survivors.
+ *      When the caller passes the links it verified (noticeLinkVerifier:
+ *      the page exists and names the parties), an entry needs a VERIFIED
+ *      link instead: a well-formed indiankanoon.org address with an
+ *      invented document number passes the host check but not this.
  *   5. If ALL entries were dropped — OR the section body is empty /
  *      a placeholder like "Not applicable at this stage" — strip the
  *      entire section (heading and body) so the final letter goes
@@ -33,7 +37,7 @@
 /** Hosts we trust as evidence that the citation is real. Anything
  *  outside this allowlist (random commentary blogs, dead links,
  *  example.com placeholders) is treated as "no URL". */
-const AUTHORITATIVE_HOST_PATTERN =
+export const AUTHORITATIVE_HOST_PATTERN =
   /https?:\/\/(?:[a-z0-9-]+\.)*(indiankanoon\.org|itat\.gov\.in|sci\.gov\.in|livelaw\.in|barandbench\.com|taxmann\.com|taxsutra\.com|cleartax\.in|incometax\.gov\.in|incometaxindia\.gov\.in|cbic\.gov\.in|cbic-gst\.gov\.in|gst\.gov\.in|mca\.gov\.in|sebi\.gov\.in|rbi\.org\.in|gov\.in|nic\.in)\b[^\s)\]]*/i;
 
 /** Section heading we operate on. Matched loosely — the model
@@ -159,36 +163,40 @@ const KNOWN_LIVE_URLS: ReadonlySet<string> = new Set(
   OFFICIAL_REFERENCE_URLS.map(r => normalizeUrl(r.url)),
 );
 
-function normalizeUrl(url: string): string {
-  return url.trim().toLowerCase().replace(/[).,;\]]+$/, '').replace(/\/+$/, '');
+/** Markdown allows `[Source](<https://...>)`, so angle brackets go too. */
+export function normalizeUrl(url: string): string {
+  return url.trim().replace(/^<|>$/g, '').toLowerCase().replace(/[).,;\]]+$/, '').replace(/\/+$/, '');
 }
 
-function isKnownLiveUrl(url: string): boolean {
+export function isKnownLiveUrl(url: string): boolean {
   return KNOWN_LIVE_URLS.has(normalizeUrl(url));
 }
 
 /** Remove unverifiable URLs from `text`, preserving surrounding prose.
  *  Handles markdown links, parenthesised URLs, and bare URLs. */
-export function stripUnverifiableUrls(text: string): { text: string; dropped: number } {
+export function stripUnverifiableUrls(
+  text: string,
+  isOk: (url: string) => boolean = isKnownLiveUrl,
+): { text: string; dropped: number } {
   let dropped = 0;
 
   // [label](url) -> label
   let out = text.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (full, label: string, url: string) => {
-    if (isKnownLiveUrl(url)) return full;
+    if (isOk(url)) return full;
     dropped++;
     return label;
   });
 
   // "... (https://...)" -> "..."   (the shape the model actually emits)
   out = out.replace(/\s*\((https?:\/\/[^)\s]+)\)/g, (full, url: string) => {
-    if (isKnownLiveUrl(url)) return full;
+    if (isOk(url)) return full;
     dropped++;
     return '';
   });
 
   // Any remaining bare URL.
   out = out.replace(/https?:\/\/[^\s)\]]+/g, (url: string) => {
-    if (isKnownLiveUrl(url)) return url;
+    if (isOk(url)) return url;
     dropped++;
     return '';
   });
@@ -205,7 +213,16 @@ export function stripUnverifiableUrls(text: string): { text: string; dropped: nu
   return { text: out, dropped };
 }
 
-export function sanitizeNoticeCitations(draft: string): SanitizerResult {
+/** `isVerified`: the links noticeLinkVerifier checked this draft for.
+ *  With it, a link survives anywhere in the letter only if it is on our
+ *  reference list or verified, and a case-law entry only with a verified
+ *  link. Without it the older rules apply (reference list outside case
+ *  law, any authoritative host inside). */
+export function sanitizeNoticeCitations(draft: string, isVerified?: (url: string) => boolean): SanitizerResult {
+  const linkOk = (url: string) => isKnownLiveUrl(url) || !!isVerified?.(url);
+  const hasSourceLink = (chunk: string) => isVerified
+    ? (chunk.match(/https?:\/\/[^\s)\]>]+/g) ?? []).some(u => AUTHORITATIVE_HOST_PATTERN.test(u) && linkOk(u))
+    : AUTHORITATIVE_HOST_PATTERN.test(chunk);
   // Always run a section-heading renumber at the end. Even if the
   // case-law section is left untouched here, the model sometimes
   // omits section 4 entirely and emits 1, 2, 3, 5, 6 — renumbering
@@ -218,6 +235,14 @@ export function sanitizeNoticeCitations(draft: string): SanitizerResult {
   // alone does not stop fabricated statutory links.
   const finalize = (text: string, report: Omit<SanitizerReport, 'droppedUrls'>): SanitizerResult => {
     const renumbered = renumberSectionHeadings(text);
+    if (isVerified) {
+      // Every link was checked, so the case-law section is no exception.
+      const r = stripUnverifiableUrls(renumbered, linkOk);
+      return {
+        text: r.text,
+        report: { ...report, droppedUrls: r.dropped, changed: report.changed || r.text !== text },
+      };
+    }
     const h = SECTION_HEADING_PATTERN.exec(renumbered);
     let urlSafe: string;
     let droppedUrls: number;
@@ -279,7 +304,9 @@ export function sanitizeNoticeCitations(draft: string): SanitizerResult {
   // section ourselves so the final letter doesn't carry dead weight.
   if (entryStarts.length === 0) {
     const isPlaceholder = trimmedBody.length === 0
-      || PLACEHOLDER_BODY_PATTERN.test(trimmedBody);
+      || PLACEHOLDER_BODY_PATTERN.test(trimmedBody)
+      // Free-form case law with no verified link to stand on.
+      || (!!isVerified && !hasSourceLink(trimmedBody));
     if (isPlaceholder) {
       return finalize(spliceSection(draft, sectionStart, sectionEnd), {
         totalEntries: 0,
@@ -313,7 +340,7 @@ export function sanitizeNoticeCitations(draft: string): SanitizerResult {
   const kept: string[] = [];
   let dropped = 0;
   for (const entry of entries) {
-    if (AUTHORITATIVE_HOST_PATTERN.test(entry)) {
+    if (hasSourceLink(entry)) {
       kept.push(entry);
     } else {
       dropped++;

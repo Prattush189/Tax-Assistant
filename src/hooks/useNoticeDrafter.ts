@@ -137,10 +137,12 @@ export function useNoticeDrafter() {
           // — the persisted draft has fewer citations. Re-fetch the
           // canonical content so the on-screen view matches what
           // will be exported / filed.
-          if ((meta?.citationsSanitized || (meta?.urlsDropped ?? 0) > 0) && noticeId) {
+          const referencesChanged = !!meta?.citationsSanitized || (meta?.urlsDropped ?? 0) > 0;
+          if ((referencesChanged || meta?.draftReplaced) && noticeId) {
             try {
               const fresh = await fetchNotice(noticeId);
               if (fresh.generated_content) setGeneratedContent(fresh.generated_content);
+              if (!referencesChanged) return loadNotices();
               // Report what ACTUALLY happened. Saying "cleaned up
               // citations" when the only change was a stripped dead
               // link left users hunting for a citation that was fine.
@@ -148,7 +150,7 @@ export function useNoticeDrafter() {
               const u = meta.urlsDropped ?? 0;
               const parts: string[] = [];
               if (n > 0) parts.push(`${n} case-law citation${n === 1 ? '' : 's'} we couldn't verify`);
-              if (u > 0) parts.push(`${u} source link${u === 1 ? '' : 's'} that didn't resolve to a known official page`);
+              if (u > 0) parts.push(`${u} source link${u === 1 ? '' : 's'} we couldn't verify against the page cited`);
               const msg = parts.length > 0
                 ? `Removed ${parts.join(' and ')}. The wording is intact — only the unverifiable reference${n + u === 1 ? ' was' : 's were'} dropped. Always double-check before filing.`
                 : `Cleaned up references to keep only verified ones. Always double-check before filing.`;
@@ -196,10 +198,12 @@ export function useNoticeDrafter() {
         },
         (msg) => { failed = true; setError(msg); setGeneratedContent(previous); },
         async (_noticeId, meta) => {
-          if ((meta?.citationsSanitized || (meta?.urlsDropped ?? 0) > 0) && currentNoticeId) {
+          const referencesChanged = !!meta?.citationsSanitized || (meta?.urlsDropped ?? 0) > 0;
+          if ((referencesChanged || meta?.draftReplaced) && currentNoticeId) {
             try {
               const fresh = await fetchNotice(currentNoticeId);
               if (fresh.generated_content) setGeneratedContent(fresh.generated_content);
+              if (!referencesChanged) return loadNotices();
               // Report what ACTUALLY happened. Saying "cleaned up
               // citations" when the only change was a stripped dead
               // link left users hunting for a citation that was fine.
@@ -207,7 +211,7 @@ export function useNoticeDrafter() {
               const u = meta.urlsDropped ?? 0;
               const parts: string[] = [];
               if (n > 0) parts.push(`${n} case-law citation${n === 1 ? '' : 's'} we couldn't verify`);
-              if (u > 0) parts.push(`${u} source link${u === 1 ? '' : 's'} that didn't resolve to a known official page`);
+              if (u > 0) parts.push(`${u} source link${u === 1 ? '' : 's'} we couldn't verify against the page cited`);
               const msg = parts.length > 0
                 ? `Removed ${parts.join(' and ')}. The wording is intact — only the unverifiable reference${n + u === 1 ? ' was' : 's were'} dropped. Always double-check before filing.`
                 : `Cleaned up references to keep only verified ones. Always double-check before filing.`;

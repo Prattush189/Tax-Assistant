@@ -19,6 +19,10 @@ const CLAUDE_RATES: Record<string, ClaudeRate> = {
   'claude-haiku-5-5':  { input: 0.10 / 1_000_000, output: 0.50 / 1_000_000,  cacheRead: 0.01 / 1_000_000 },
 };
 
+/** Claude's web search tool: $10 per 1,000 searches, on top of tokens
+ *  (the pages it returns bill as input tokens). */
+export const CLAUDE_WEB_SEARCH_USD = 10 / 1000;
+
 export function isClaudeModel(model: string | null | undefined): boolean {
   return !!model && model.startsWith('claude-');
 }
