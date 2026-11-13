@@ -10,8 +10,8 @@
 export const CREDIT_ESTIMATES_FALLBACK: Readonly<Record<string, number>> = {
   chat_fast: 1,
   chat_deep: 8,
-  notice_draft: 90,
+  notice_draft: 70,
   notice_pdf_read: 25,
-  bank_statement: 25,
-  ledger_scrutiny: 180,
+  bank_statement: 15,
+  ledger_scrutiny: 200,
 };

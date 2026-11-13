@@ -40,23 +40,25 @@ export function creditsToWeighted(credits: number): number {
  *
  *   chat_fast       3.1 Flash-Lite on Flex: ~4.2K in x 1.25 + ~0.4K out x 7.5  ~= 8K    -> 1
  *   chat_deep       3.8 Flash Standard:     ~4.2K in x 7.5  + ~1.2K out x 37.5 ~= 76K   -> 8
- *   notice_draft    Sonnet + search: ~30K in (prompt, tool, search results) x 20 + ~3K out x 100 ~= 900K -> 90
+ *   notice_draft    Sonnet + search tool: ~14K in x 20 + ~3.6K out x 100      ~= 650K  -> 70
  *   notice_pdf_read Sonnet vision: ~9.5K in x 20 + ~0.6K out x 100          ~= 250K  -> 25
- *   bank_statement  Sonnet classifier: ~9K in (2 batches + tool) x 20 + ~0.7K out x 100 ~= 250K -> 25
- *   ledger_scrutiny Sonnet: ~80K in (66K + tool per chunk) x 20 + ~2K out x 100 ~= 1.8M -> 180
+ *   bank_statement  Sonnet classifier: ~6K in (rows + tool) x 20 + ~0.3K out x 100 ~= 150K  -> 15
+ *   ledger_scrutiny Sonnet: ~5 groups x (~13K in x 20 + ~1.6K out x 100)    ~= 2.1M  -> 200
  *
- * Token counts: production averages (api_usage, Oct-Nov 2026) and the
- * 2026-11-12 VPS runs. These are shown to users as "about N credits" --
- * never as a promise. Keep src/lib/creditEstimates.ts in step (the
+ * Token counts: the 2026-11-13 Sonnet bake-off on the VPS (notices 59-70
+ * credits, 0 searches; classifier ~12 per 20-row batch; scrutiny 33-55
+ * per 6-account group, ~5 groups in an average production ledger);
+ * notice_pdf_read from production Haiku token counts. These are shown
+ * to users as "about N credits" -- never as a promise. Keep src/lib/creditEstimates.ts in step (the
  * client's fallback until the server's numbers load).
  */
 export const CREDIT_ESTIMATES: Readonly<Record<string, number>> = {
   chat_fast: 1,
   chat_deep: 8,
-  notice_draft: 90,
+  notice_draft: 70,
   notice_pdf_read: 25,
-  bank_statement: 25,
-  ledger_scrutiny: 180,
+  bank_statement: 15,
+  ledger_scrutiny: 200,
 };
 
 export interface CreditsSummary {
