@@ -453,6 +453,22 @@ function buildDenialFallbackDetail(heading: string, sourceUrl: string | null): s
   return lines.join('\n');
 }
 
+/** Income Tax Department / CBIC administration that reaches the same
+ *  listing pages but is not a tax update: recruitment rules, exams and
+ *  answer keys, skill tests, candidate and shortlist notices, vacancies,
+ *  deputation. The 13 Nov 2026 refresh had 7 of 37 like this ("Draft
+ *  Recruitment (Amendment) Rules of ITI", "Candidates selected in CBDT
+ *  through Stenographer Grade C & D, Examination", "Response Sheet/Answers
+ *  keys for Departmental Examination", "Cancellation of Skill Test ...",
+ *  "List of short-listed candidates of Young Professional Scheme").
+ *  Matched on the heading; deliberately narrow so tax notices that merely
+ *  mention a registration, verification or approval are kept. */
+const NON_TAX_ADMIN_NOTICE = /\brecruitment\b|\bcandidates?\b|\bexam(?:ination)?s?\b|\banswers?\s*keys?\b|\bresponse\s*sheets?\b|\bskill\s*test\b|\bstenographer\b|\byoung\s+professionals?\b|\bvacanc(?:y|ies)\b|\bdeputation\b|\bshort-?listed\b|\badmit\s*cards?\b|\bmerit\s+list\b|\bseniority\s+list\b/i;
+
+export function isNonTaxAdminNotice(heading: string): boolean {
+  return NON_TAX_ADMIN_NOTICE.test(heading ?? '');
+}
+
 function pickCategory(raw: string | undefined): NotificationCategory {
   const v = (raw ?? '').toUpperCase().trim();
   if (v === 'GST' || v === 'TDS' || v === 'INCOME_TAX') return v;
@@ -1065,11 +1081,18 @@ export async function fetchLatestNotifications(opts: { dryRun?: boolean; logUsag
   //       response drops the item — catches the case where the model
   //       invented a plausible-shaped PDF path on an official host.
   //       Concurrency-capped at 6 to be polite to gov.in hosts.
+  //   (d) Department admin notices (recruitment, exams, candidate
+  //       lists — see isNonTaxAdminNotice) are not tax updates: dropped
+  //       before any detail is generated for them.
+  const taxOnly = items.filter(it => !isNonTaxAdminNotice(it.heading));
+  if (taxOnly.length < items.length) {
+    console.log(`[notificationFetcher] dropped ${items.length - taxOnly.length} recruitment / exam notice(s): ${items.filter(it => isNonTaxAdminNotice(it.heading)).map(it => `"${it.heading.slice(0, 50)}"`).join(', ')}`);
+  }
   const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
   const cutoffMs = Date.now() - NINETY_DAYS_MS;
   const dateFiltered: TaxNotificationCreateInput[] = [];
   let droppedForAge = 0;
-  for (const it of items) {
+  for (const it of taxOnly) {
     if (it.notificationDate) {
       const t = Date.parse(it.notificationDate + 'T00:00:00+05:30');
       if (Number.isFinite(t) && t < cutoffMs) {
