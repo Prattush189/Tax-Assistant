@@ -26,6 +26,7 @@ import {
 import { usePreferences } from '../../hooks/usePreferences';
 import { useLaunchOffer } from '../../hooks/useLaunchOffer';
 import { offerFactor, offerLastDay } from '../../lib/launchOffer';
+import { CREDIT_ESTIMATES_FALLBACK as FALLBACK } from '../../lib/creditEstimates';
 import { cn } from '../../lib/utils';
 import toast from 'react-hot-toast';
 import { TeamSection } from './TeamSection';
@@ -132,9 +133,9 @@ function TokenBudgetBar({ tokens, credits, plan, trialDaysLeft, planExpiresAt }:
   // (lib/credits.ts) so they track the models each feature really runs
   // on. Bank/ledger are Pro+ only — Free users don't see that hint.
   const isPaid = plan === 'pro' || plan === 'enterprise';
-  const remainingNotices = Math.max(0, Math.floor(cr.remaining / est('notice_draft', 4)));
-  const remainingChats = Math.max(0, Math.floor(cr.remaining / est('chat_fast', 1)));
-  const remainingBankTxns = Math.max(0, Math.floor(cr.remaining / est('bank_statement', 3)));
+  const remainingNotices = Math.max(0, Math.floor(cr.remaining / est('notice_draft', FALLBACK.notice_draft)));
+  const remainingChats = Math.max(0, Math.floor(cr.remaining / est('chat_fast', FALLBACK.chat_fast)));
+  const remainingBankTxns = Math.max(0, Math.floor(cr.remaining / est('bank_statement', FALLBACK.bank_statement)));
 
   return (
     <div className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-5 border border-gray-200/60 dark:border-gray-700/60">

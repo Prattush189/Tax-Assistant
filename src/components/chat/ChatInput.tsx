@@ -4,6 +4,7 @@ import { cn } from '../../lib/utils';
 import { getReasoningLevel, setReasoningLevel, type ReasoningLevel } from '../../lib/chatReasoning';
 import { creditsLabel, offerFactor, offerLastDay } from '../../lib/launchOffer';
 import { useLaunchOffer } from '../../hooks/useLaunchOffer';
+import { CREDIT_ESTIMATES_FALLBACK } from '../../lib/creditEstimates';
 import { CHAT_ACCEPT, fileKind, fileKindLabel, FileKindIcon, unsupportedReason } from '../../lib/fileKind';
 import { UploadPhase } from '../../hooks/useFileUpload';
 import { DocumentContext } from '../../types';
@@ -305,8 +306,8 @@ export function ChatInput({
                 Internal comment: never surface the model in the UI. */}
             <div role="radiogroup" aria-label="Answer depth" className="ml-1 inline-flex items-center p-0.5 rounded-lg bg-gray-100 dark:bg-gray-800 text-xs font-medium">
               {([
-                { level: 'low' as const, label: 'Fast', Icon: Zap, tip: `Quick answers, about ${creditsLabel(1 * creditFactor)} per reply${offerNote}.` },
-                { level: 'high' as const, label: 'Deep', Icon: Brain, tip: `Thorough reasoning for notices and computations — slower, about ${creditsLabel(8 * creditFactor)} per reply${offerNote}.` },
+                { level: 'low' as const, label: 'Fast', Icon: Zap, tip: `Quick answers, about ${creditsLabel(CREDIT_ESTIMATES_FALLBACK.chat_fast * creditFactor)} per reply${offerNote}.` },
+                { level: 'high' as const, label: 'Deep', Icon: Brain, tip: `Thorough reasoning for notices and computations — slower, about ${creditsLabel(CREDIT_ESTIMATES_FALLBACK.chat_deep * creditFactor)} per reply${offerNote}.` },
               ]).map(({ level, label, Icon, tip }) => {
                 const on = (reasoning === 'high') === (level === 'high');
                 return (

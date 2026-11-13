@@ -12,6 +12,7 @@ import {
 } from '../../services/api';
 import { offerLastDay, offerFactor, creditsLabel } from '../../lib/launchOffer';
 import { useLaunchOffer } from '../../hooks/useLaunchOffer';
+import { CREDIT_ESTIMATES_FALLBACK } from '../../lib/creditEstimates';
 import { BillingDetailsDialog } from './BillingDetailsDialog';
 import { SwitchPlanWarningDialog } from './SwitchPlanWarningDialog';
 import {
@@ -281,9 +282,6 @@ function TrialBanner({ daysLeft, onUpgrade }: { daysLeft: number; onUpgrade: () 
 
 // ── Main PlanPage ─────────────────────────────────────────────────────────────
 
-const CREDIT_GUIDE_FALLBACK: Record<string, number> = {
-  chat_fast: 1, chat_deep: 8, notice_draft: 4, notice_pdf_read: 2, bank_statement: 3, ledger_scrutiny: 27,
-};
 
 // ── OfferBanner ───────────────────────────────────────────────────────────────
 
@@ -301,7 +299,7 @@ function OfferBanner({ offer }: { offer: LaunchOffer }) {
 }
 
 function CreditGuide({ estimates, offer }: { estimates?: Record<string, number>; offer: LaunchOffer | null }) {
-  const e = { ...CREDIT_GUIDE_FALLBACK, ...(estimates ?? {}) };
+  const e = { ...CREDIT_ESTIMATES_FALLBACK, ...(estimates ?? {}) };
   const factor = offerFactor(offer);
   const rows: Array<[number, string]> = [
     [e.chat_fast, 'chat message (Fast)'],
