@@ -175,7 +175,7 @@ const RULES: Rule[] = [
   // token requires an explicit fee word ("chg"/"charge"). Bare
   // "ATM WDR" previously matched here and every ATM withdrawal was
   // mis-booked as a Bank Charge.
-  { name: 'atm-charges-quarterly', pattern: /\batm charges\b|atm ann\.?chrg|atm ann chrg|atm wd[lr]\s*(?:chg|charge)|debit atm card|atm.* annual fee|atm\s*\/\s*imps transaction charges/i, category: 'Bank Charges', subcategory: 'ATM' },
+  { name: 'atm-charges-quarterly', pattern: /\batm charges\b|atm ann\.?chrg|atm ann chrg|atm wd[lr]\s*(?:chg|charge)|debit atm card|atm.* annual (?:fee|charges?)|atm\s*\/\s*imps transaction charges/i, category: 'Bank Charges', subcategory: 'ATM' },
 
   // Wire-transfer fees (NEFT/IMPS/RTGS) — anchor on the CHRGS/CHGS
   // prefix the bank uses for charges so we don't confuse with the
@@ -206,7 +206,8 @@ const RULES: Rule[] = [
   { name: 'cibil', pattern: /\bcibil\b/i, category: 'Bank Charges', subcategory: 'CIBIL' },
 
   // Cheque book
-  { name: 'cheque-book', pattern: /cheque book ch(?:gs|arges|aregs)/i, category: 'Bank Charges', subcategory: 'Cheque' },
+  // PNB abbreviates it "CHQ BK CH:51601".
+  { name: 'cheque-book', pattern: /cheque book ch(?:gs|arges|aregs)|\bchq\s*bk\s*ch\b/i, category: 'Bank Charges', subcategory: 'Cheque' },
 
   // Cash transaction charges (separate from cash deposit/withdrawal
   // counter ops themselves — those are Transfers if recorded as
@@ -295,8 +296,12 @@ const RULES: Rule[] = [
   // ─── Insurance ─────────────────────────────────────────────────
   // The xlsx hint distinguishes "INSPC" (inspection charge) from
   // "INS-" / "INS_" / "Insurance" (premium). Inspection rule above
-  // already absorbed INSPC; this catches the remainder.
-  { name: 'insurance', pattern: /\bins[-_]|\binsurance\b|_ins_renewal_|_property_ins_|premium.*paid/i, category: 'Insurance', subcategory: 'Premium' },
+  // already absorbed INSPC; this catches the remainder. Money IN from an
+  // insurer (refund, claim, maturity — e.g. "NEFT IN:...PNB METLIFE INDIA
+  // INSURANCE", a cancelled policy refunded in full) is not a premium
+  // paid: Insurance / Other on credits, Premium only on debits.
+  { name: 'insurance', pattern: /\bins[-_]|\binsurance\b|_ins_renewal_|_property_ins_|premium.*paid/i, category: 'Insurance', subcategory: 'Premium', direction: 'debit' },
+  { name: 'insurance-credit', pattern: /\bins[-_]|\binsurance\b|_ins_renewal_|_property_ins_/i, category: 'Insurance', subcategory: 'Other', direction: 'credit' },
 
   // ─── Telecom recharges (Mobile Charges) ────────────────────────
   // The xlsx lists BIL/BPAY/<TELCO> + PAYTM<TELCO> as known
@@ -352,6 +357,8 @@ const RULES: Rule[] = [
   // from the "Bank Interest (Cr)" anchor above which is the
   // bank-statement-specific Int.Pd line.
   { name: 'interest-income', pattern: /\bsb int\b|\bfd int\b|interest paid|fixed deposit interest/i, category: 'Interest Income', subcategory: 'Other', direction: 'credit' },
+  // PNB's quarterly savings interest: "INTT. From :-12-2020 to 28-02-2021".
+  { name: 'pnb-savings-interest', pattern: /^intt\.?\s*from/i, category: 'Interest Income', subcategory: 'Savings', direction: 'credit' },
   // Auto-sweep interest ("INT. ON SWCR ON-…") and FD redemption interest
   // ("FD REDEEM INTEREST -…"). Must fire BEFORE sweep-fd-transfer so the
   // interest portion is booked as income, not lumped into the contra
@@ -450,6 +457,16 @@ const RULES: Rule[] = [
   // "ATM WDL", "ATM CASH WITHDRAWAL". CAM = Cash Acceptor Machine but
   // ICICI also routes WDL (withdrawal) lines through the same CAM
   // prefix, so the WDL token is the tell.
+  // Withdrawal at the branch counter (PNB "Cash Withdrawal At Br : NURPUR
+  // BET", by cheque) — before the ATM rule, which would catch the words
+  // "cash withdrawal".
+  {
+    name: 'cash-withdrawal-branch',
+    pattern: /cash\s*withdrawal\s*at\s*br(?:anch)?\b/i,
+    category: 'Cash Withdrawal',
+    subcategory: 'Counter',
+    direction: 'debit',
+  },
   {
     name: 'cash-withdrawal-atm-cdm',
     pattern: /\bcam\b.*\bcash\s*wdl|\batm\b.*\bcash\s*(?:wdl|withdrawal)|cash\s*wdl|cash\s*withdrawal/i,

@@ -22,6 +22,17 @@ interface Case {
 }
 
 const CASES: Case[] = [
+  // ─── PNB savings account (scanned statement, 2026-11-13) ────
+  { narration: 'INTT. From :-12-2020 to 28-02-2021', type: 'credit', expect: { category: 'Interest Income', subcategory: 'Savings' } },
+  { narration: 'INTT.From-03-2021 to 31-05-2021', type: 'credit', expect: { category: 'Interest Income', subcategory: 'Savings' } },
+  { narration: 'INTT.From03-2022 to 31-05-2022', type: 'credit', expect: { category: 'Interest Income', subcategory: 'Savings' } },
+  { narration: 'ATM ANNUAL CHARGES FOR THE YEAR ENDED 2020-2021', type: 'debit', expect: { category: 'Bank Charges', subcategory: 'ATM' } },
+  // Money IN from an insurer is a refund / claim, not a premium paid.
+  { narration: 'NEFT IN:CITIN23423056238:PNB METLIFE INDIA INSURANCE CO LTD', type: 'credit', expect: { category: 'Insurance', subcategory: 'Other' } },
+  { narration: 'INS-PREMIUM LIC POLICY 12345', type: 'debit', expect: { category: 'Insurance', subcategory: 'Premium' } },
+  { narration: 'CHQ BK CH:51601', type: 'debit', expect: { category: 'Bank Charges', subcategory: 'Cheque' } },
+  { narration: 'Cash Withdrawal At Br : NURPUR BET', type: 'debit', expect: { category: 'Cash Withdrawal', subcategory: 'Counter' } },
+
   // ─── Bank Charges (xlsx anchor list) ────────────────────────
   { narration: 'ATM CHARGES QUARTERLY', type: 'debit', expect: { category: 'Bank Charges', subcategory: 'ATM' } },
   { narration: 'ATM ANN.CHRG INCL GST', type: 'debit', expect: { category: 'Bank Charges', subcategory: 'ATM' } },

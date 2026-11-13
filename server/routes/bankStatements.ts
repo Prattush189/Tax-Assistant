@@ -11,6 +11,7 @@ import { structureOcrTextIntoRows } from '../lib/paddleStructurer.js';
 import { parsePrintedTotals, grossTotalNote } from '../lib/bankGrossReconcile.js';
 import type { GeminiJsonResult } from '../lib/geminiJson.js';
 import { callBankEnrichment } from '../lib/bankEnrichmentClient.js';
+import { classifyRowsWithAi, BANK_AI_STATIC_PREFIX } from '../lib/bankAiClassifier.js';
 import { readStatementPdfWithClaude, readStatementTableWithClaude, unlockPdf, splitTable, checkAndRepairBalances, type ClaudeStatementRow } from '../lib/claudeStatementReader.js';
 import { formatRequestRepo } from '../db/repositories/formatRequestRepo.js';
 import { isClaudeActive } from '../lib/claude.js';
@@ -1941,7 +1942,43 @@ router.post(
             for (const id of visionLearnedHitIds) {
               learnedClassificationsRepo.recordHit(id);
             }
-            console.log(`[bank-statements] ${extractedFromOcr ? 'ocr' : 'vision'} classifier post-pass: ${visionTierCounts.learned} learned, ${visionTierCounts.anchor} anchor, ${visionTierCounts.unclassified} → Other (${visionTierCounts.conflicts} learned/anchor conflicts)`);
+            console.log(`[bank-statements] ${extractedFromOcr ? 'ocr' : 'vision'} classifier post-pass: ${visionTierCounts.learned} learned, ${visionTierCounts.anchor} anchor, ${visionTierCounts.unclassified} → AI (${visionTierCounts.conflicts} learned/anchor conflicts)`);
+            // AI tier for the rows the rules left as "Other" — the same
+            // classifier the CSV path runs. Until 2026-11-13 this path
+            // skipped it, so every unmatched row fell through to the
+            // direction catch-all below ("Business Income / Expenses —
+            // Uncategorised"): a scanned PNB savings account came out 76
+            // of 98 rows wrong. A failure here keeps "Other" and the
+            // catch-all, exactly as before.
+            const visionLeftovers = (extracted.transactions as VisionRow[]).filter(
+              r => r && typeof r.narration === 'string' && r.category === 'Other' && (r.type === 'credit' || r.type === 'debit'),
+            );
+            if (visionLeftovers.length > 0) {
+              const aiStart = Date.now();
+              try {
+                const ai = await classifyRowsWithAi(
+                  visionLeftovers.map(r => ({ narration: r.narration, type: r.type, amount: typeof r.amount === 'number' ? Math.abs(r.amount) : 0 })),
+                  {
+                    billingUserId: quota.billingUserId,
+                    onFallback: () => { try { bankStatementRepo.markProviderFallback(placeholder.id); } catch (e) { console.warn('[bank-statements] markProviderFallback failed:', (e as Error).message); } },
+                  },
+                );
+                let tagged = 0;
+                ai.decisions.forEach((d, i) => {
+                  if (d && d.category !== 'Other') {
+                    visionLeftovers[i].category = d.category;
+                    visionLeftovers[i].subcategory = d.subcategory;
+                    tagged++;
+                  }
+                });
+                // Billed with the statement: appended to the read's usages.
+                const locals = res.locals as Record<string, unknown>;
+                locals.geminiUsages = [...((locals.geminiUsages as unknown[] | undefined) ?? []), ...ai.usages];
+                console.log(`[bank-statements] ${extractedFromOcr ? 'ocr' : 'vision'} AI tier: ${tagged}/${visionLeftovers.length} rows tagged (${ai.sent} sent, ${ai.cached} from cache, ${ai.usages.length} call(s), ${Date.now() - aiStart}ms)`);
+              } catch (err) {
+                console.warn(`[bank-statements] ${extractedFromOcr ? 'ocr' : 'vision'} AI tier failed; ${visionLeftovers.length} rows stay on the direction catch-all:`, (err as Error).message?.slice(0, 200));
+              }
+            }
             // Now that category / subcategory are set, the consistency
             // pass can back-fill any obvious cross-row inconsistency
             // (same counterparty appearing with different categories).
@@ -2259,25 +2296,8 @@ router.post(
         // key is identical across every batch within a statement and
         // across every statement uploaded by the same user within the
         // cache TTL.
-        const STATIC_PREFIX = `You categorise Indian bank-statement rows the rule-based pre-pass could not auto-tag. Return ONE JSON array, no fences, no prose:
-
-[[category, subcategory_or_null], ...]
-
-Rules:
-- The array MUST be the same length and order as INPUT_ROWS. No skipping, no reordering.
-- category ∈ {${BANK_STATEMENT_CATEGORIES.map(c => `"${c}"`).join(',')}}.
-- DIRECTION DISCIPLINE (CRITICAL — wrong direction = wrong answer):
-   * type="credit" rows can ONLY be: Business Income, Salary, Rent Received, Interest Income, Bank Interest (Cr), Dividends, Cash Deposit, Transfers, Personal, Other.
-   * type="debit" rows can ONLY be: Business Expenses, Cash Withdrawal, Loan EMI, Bank Charges, Bank Interest (Dr), GST Payments, TDS, Taxes Paid, Investments, Insurance, Mobile Charges, Electricity Charges, Water Charges, Transfers, Personal, Other.
-   * NEVER tag a debit row as "Cash Deposit" or "Business Income". NEVER tag a credit row as "Cash Withdrawal" or "Business Expenses". The type column tells you the direction — read it first.
-- Upstream already handled bank charges, EMI, salary, GST, TDS, and well-known merchants. You see only UPI/NEFT/IMPS/RTGS to ambiguous counterparties, cheques, cash, local POS.
-- Any narration containing "cash" or "deposit" in any form → credit rows go to "Cash Deposit" (subcategory "Other"); debit rows go to "Cash Withdrawal" (subcategory "Other").
-- ENTERPRISES/TRADERS/PVT LTD/LIMITED/LLP/15-digit GSTIN → "Business Expenses" (debit) / "Business Income" (credit).
-- Clear personal name OR grocery/local-shop pattern → "Personal" with subcategory "Shopping".
-- Genuinely ambiguous → "Other" with null subcategory.
-
-INPUT_ROWS — TSV, one row per line, columns narration<TAB>type<TAB>amount:
-`;
+        // Shared with the scanned / vision path (lib/bankAiClassifier.ts).
+        const STATIC_PREFIX = BANK_AI_STATIC_PREFIX;
 
         // Build the dynamic tail — TSV serialization of the batch.
         // Tabs / newlines in narrations are scrubbed to spaces so the
