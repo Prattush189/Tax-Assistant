@@ -21,3 +21,23 @@ export function setReasoningLevel(v: ReasoningLevel): void {
     /* localStorage unavailable — fall back to the default each load */
   }
 }
+
+const DEEP_WARNING_KEY = 'chat-deep-warning-seen';
+
+/** Has this browser already been told what Deep costs? The warning shows
+ *  the first time the user switches to Deep, then never again. */
+export function hasSeenDeepWarning(): boolean {
+  try {
+    return localStorage.getItem(DEEP_WARNING_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function markDeepWarningSeen(): void {
+  try {
+    localStorage.setItem(DEEP_WARNING_KEY, '1');
+  } catch {
+    /* localStorage unavailable — the warning may show again next load */
+  }
+}

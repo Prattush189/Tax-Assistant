@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useLayoutEffect, useEffect } from 'react';
 import { ArrowUp, Paperclip, X, BookUser, BookOpen, Lock, BarChart3, Brain, Zap } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { getReasoningLevel, setReasoningLevel, type ReasoningLevel } from '../../lib/chatReasoning';
+import { getReasoningLevel, setReasoningLevel, hasSeenDeepWarning, markDeepWarningSeen, type ReasoningLevel } from '../../lib/chatReasoning';
 import { creditsLabel } from '../../lib/launchOffer';
 import { CREDIT_ESTIMATES_FALLBACK } from '../../lib/creditEstimates';
 import { CHAT_ACCEPT, fileKind, fileKindLabel, FileKindIcon, unsupportedReason } from '../../lib/fileKind';
@@ -49,6 +49,20 @@ export function ChatInput({
   // Reasoning level (Fast/Deep) — persisted; read by the send path.
   const [reasoning, setReasoning] = useState<ReasoningLevel>(() => getReasoningLevel());
   const pickReasoning = (next: ReasoningLevel) => {
+    // First switch to Deep: say what it costs (from the credit estimates,
+    // so the multiple follows them) and suggest Fast for long chats.
+    if (next === 'high' && reasoning !== 'high' && !hasSeenDeepWarning()) {
+      markDeepWarningSeen();
+      const times = Math.round(CREDIT_ESTIMATES_FALLBACK.chat_deep / CREDIT_ESTIMATES_FALLBACK.chat_fast);
+      toast(
+        <span className="text-sm">
+          <span className="font-semibold">Deep uses about {times}× the credits of Fast</span>{' '}
+          (about {creditsLabel(CREDIT_ESTIMATES_FALLBACK.chat_deep)} a reply instead of {creditsLabel(CREDIT_ESTIMATES_FALLBACK.chat_fast)}).
+          Switch back to Fast for longer chats.
+        </span>,
+        { icon: <Brain className="w-5 h-5 text-violet-500 shrink-0" />, duration: 10_000, id: 'deep-credit-warning' },
+      );
+    }
     setReasoning(next);
     setReasoningLevel(next);
   };
