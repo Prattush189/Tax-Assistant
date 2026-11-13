@@ -753,7 +753,7 @@ function pickApiKey(): string | null {
   return key ?? null;
 }
 
-/** Claude (Opus 5.5 with web search since 2026-11-12) answers first
+/** Claude (Sonnet 5.5 with web search since 2026-11-13) answers first
  *  while the admin switch is on, in consumeStream's result shape; null
  *  when it is off or fails, so the Gemini rungs take over. */
 async function claudeSearchText(system: string, userText: string, maxOutputTokens: number) {

@@ -1,18 +1,19 @@
 /**
- * Claude backend for every AI feature: tax chat, notices, deeds, ledger
- * scrutiny and reading, bank statements (reading and classifying),
- * document extraction, financial mapping, CMA narrative.
+ * Claude backend for every AI feature except tax chat (Gemini only,
+ * since 2026-11-13: an Opus answer cost ~185 credits against a 25-credit
+ * Free trial): notices, deeds, ledger scrutiny and reading, bank
+ * statements (reading and classifying), document extraction, financial
+ * mapping, CMA narrative, notification summaries.
  *
  * Routing rule, applied by the callers: when the admin switch is ON and
  * ANTHROPIC_API_KEY is set, Claude is tried first; if it fails before
  * producing output the call drops onto the existing Gemini ladder pinned
  * to Gemini key 1.
  *
- * Since 2026-11-12 every call runs on Opus 5.5 with web search and an
- * instruction to check current facts (the owner chose accuracy over
- * cost; users are charged Opus's real weight). Calls can pass their own
- * search settings (notices limit it to official and judgment sites) or
- * `webSearch: false`.
+ * Every call gets web search and an instruction to check current facts
+ * (since 2026-11-12). Calls can pass their own search settings (notices
+ * limit it to official and judgment sites) or `webSearch: false`. Users
+ * are charged the model's real weight (lib/modelWeights.ts).
  *
  * The switch lives in app_config ('claude_enabled'), defaults ON, and
  * is flipped from the admin Model Usage tab — no redeploy needed when
@@ -24,19 +25,22 @@ import type { ChatCompletionMessageParam } from 'openai/resources/chat/completio
 import db from '../db/index.js';
 import { costForClaude, CLAUDE_WEB_SEARCH_USD } from './claudePricing.js';
 
-// All three tiers are Opus 5.5 since 2026-11-12. They stay separate so a
-// tier can move back to a cheaper model by env alone (Sonnet 5.5 for
-// judgment, Haiku 5.5 for the mechanical reads were the earlier choice).
-/** Judgment work: ledger scrutiny observations, scanned ledgers, chat. */
-export const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-opus-5-5';
+// All three tiers are Sonnet 5.5 since 2026-11-13 (owner: "use sonnet
+// with search for now instead of opus"; Opus 5.5 ran 2026-11-12/13).
+// Opus is meant only for features where Gemini matches or beats Sonnet.
+// The tiers stay separate so any one can move by env alone.
+/** Judgment work: ledger scrutiny observations, scanned ledgers, deeds. */
+export const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5-5';
 /** Mechanical work: statement and document reads, financial mapping, CMA
  *  narrative, and notice drafting (chatProvider's economy calls). */
-export const CLAUDE_MODEL_FAST = process.env.CLAUDE_MODEL_FAST || 'claude-opus-5-5';
+export const CLAUDE_MODEL_FAST = process.env.CLAUDE_MODEL_FAST || 'claude-sonnet-5-5';
 /** Reading a ledger no software rule maps (rows → TSV, column roles).
- *  Every row has to be right: in a 2026-10-30 bake-off on 7 ledgers Opus
- *  copied every row exactly in two runs out of two, Sonnet and Haiku
- *  dropped, flipped or misread rows on 3-5 of them. */
-export const CLAUDE_MODEL_BEST = process.env.CLAUDE_MODEL_BEST || 'claude-opus-5-5';
+ *  Every row has to be right: in a 2026-10-30 bake-off on 7 ledgers only
+ *  Opus copied every row exactly (two runs out of two); Sonnet and Haiku
+ *  dropped, flipped or misread rows on 3-5 of them. Sonnet for now on
+ *  the owner's call; the balance checks and side repair still run.
+ *  CLAUDE_MODEL_BEST=claude-opus-5-5 restores Opus here. */
+export const CLAUDE_MODEL_BEST = process.env.CLAUDE_MODEL_BEST || 'claude-sonnet-5-5';
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? '';
 export const claudeConfigured = !!ANTHROPIC_API_KEY;

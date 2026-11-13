@@ -30,9 +30,9 @@ function fmtTokens(n: number): string {
 // label instead of the raw string. Add new active models above the
 // retired block so they get a distinct colour.
 const MODEL_COLORS: Record<string, string> = {
-  'claude-sonnet-5-5':             'bg-orange-500',   // Ledger scrutiny until 2026-11-12
+  'claude-sonnet-5-5':             'bg-orange-500',   // Every Claude feature since 2026-11-13
   'claude-haiku-5-5':              'bg-orange-300',   // Notices, readers until 2026-11-12
-  'claude-opus-5-5':               'bg-orange-600',   // Every AI feature (Claude-first)
+  'claude-opus-5-5':               'bg-orange-600',   // Every AI feature 2026-11-12/13
   'gemini-3.8-flash':              'bg-amber-500',    // Primary — active
   'gemini-3.8-flash-flex':         'bg-amber-400',    // Primary on Flex
   'gemini-3.7-flash':              'bg-violet-400',   // T1 — active fallback
@@ -54,9 +54,9 @@ const MODEL_COLORS: Record<string, string> = {
 };
 
 const MODEL_LABELS: Record<string, string> = {
-  'claude-sonnet-5-5':             'Claude Sonnet 5.5 (ledger scrutiny, to Nov 2026)',
+  'claude-sonnet-5-5':             'Claude Sonnet 5.5 (every Claude feature, web search)',
   'claude-haiku-5-5':              'Claude Haiku 5.5 (notices, readers, to Nov 2026)',
-  'claude-opus-5-5':               'Claude Opus 5.5 (every AI feature, web search)',
+  'claude-opus-5-5':               'Claude Opus 5.5 (all features, 12-13 Nov 2026)',
   'gemini-3.8-flash':              'Gemini 3.8 Flash (primary, all features)',
   'gemini-3.8-flash-flex':         'Gemini 3.8 Flash (primary, Flex)',
   'gemini-3.7-flash':              'Gemini 3.7 Flash (fallback, all features)',
@@ -232,7 +232,7 @@ export function ModelUsageDashboard() {
       <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5">
         <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1">Model Cascade</h3>
         <p className="text-[11px] text-gray-500 dark:text-gray-400 mb-4">
-          Gemini ladder used by every AI feature: chat, notices, suggestions, bank-statement analysis, ledger scrutiny, document upload, Form 16 import — as the fallback whenever Claude fails or is switched off (box below). Primary + T1 run on the Flex service tier by default (~50% price); a Flex hiccup falls back to Standard, then to the next tier. Older cascades (gemini-2.5-flash, gemini-3-flash-preview, gemini-3.1-flash-lite-preview) are retired.
+          Gemini ladder used by every AI feature: chat, notices, suggestions, bank-statement analysis, ledger scrutiny, document upload, Form 16 import — as the only model for tax chat, and as the fallback whenever Claude fails or is switched off (box below). Primary + T1 run on the Flex service tier by default (~50% price); a Flex hiccup falls back to Standard, then to the next tier. Older cascades (gemini-2.5-flash, gemini-3-flash-preview, gemini-3.1-flash-lite-preview) are retired.
         </p>
         <div className="rounded-xl border-2 border-amber-400 bg-amber-50 dark:bg-amber-900/10 p-4">
           <div className="flex items-center gap-2 mb-3">
@@ -265,7 +265,7 @@ export function ModelUsageDashboard() {
           <div className="mt-4 rounded-xl border-2 border-orange-400 bg-orange-50 dark:bg-orange-900/10 p-4">
             <div className="flex items-center gap-2 mb-3">
               <Sparkles className="w-4 h-4 text-orange-500" />
-              <span className="text-xs font-bold uppercase text-orange-700 dark:text-orange-400">Claude first: Opus 5.5 with web search</span>
+              <span className="text-xs font-bold uppercase text-orange-700 dark:text-orange-400">Claude first: Sonnet 5.5 with web search</span>
               <span className={cn(
                 'text-[10px] font-bold px-1.5 py-0.5 rounded',
                 claude.active ? 'text-emerald-700 bg-emerald-100 dark:text-emerald-400 dark:bg-emerald-900/30'
@@ -279,7 +279,7 @@ export function ModelUsageDashboard() {
                 { tier: 'LEDGERS · NO RULE', tint: 'text-red-600 bg-red-100 dark:bg-red-900/30', model: claude.bestModel,
                   use: 'Ledgers no accounting-software rule maps: names the columns (kept only when the running balances prove it), else copies every row.' },
                 { tier: 'JUDGMENT', tint: 'text-orange-600 bg-orange-100 dark:bg-orange-900/30', model: claude.model,
-                  use: 'Tax chat, deeds and rent agreements, ledger scrutiny audit, scanned ledgers (vision).' },
+                  use: 'Deeds and rent agreements, ledger scrutiny audit, scanned ledgers (vision).' },
                 { tier: 'MECHANICAL', tint: 'text-amber-700 bg-amber-100 dark:bg-amber-900/30', model: claude.fastModel,
                   use: 'Notice replies and revisions, bank statements (reading scans and unknown formats, classifying rows), uploaded documents (notices, Form 16, attachments), financial mapping, CMA narrative, style profiles, notification summaries.' },
               ].map(row => {
@@ -296,7 +296,7 @@ export function ModelUsageDashboard() {
                 );
               })}
               <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">
-                Every call can search the web (3 searches by default; notices up to 4, official and judgment sites only, every link verified) and is given today's date with an instruction to check current rates, sections and due dates; read-only tasks are told not to search. Searches cost $10 per 1,000 on top of tokens and are not charged to users' credits. Any Claude failure falls back to the Gemini ladder above on key 1. Cache reads bill $0.20/M on Opus. Weights count toward users' token budgets like Gemini's. On/off switch: <span className="font-medium">Claude for all AI features</span> below.
+                Every call can search the web (3 searches by default; notices up to 4, official and judgment sites only, every link verified) and is given today's date with an instruction to check current rates, sections and due dates; read-only tasks are told not to search. Searches cost $10 per 1,000 on top of tokens and are not charged to users' credits. Any Claude failure falls back to the Gemini ladder above on key 1. Tax chat stays on Gemini (an Opus answer cost ~185 credits). Cache reads bill $0.20/M on Sonnet and Opus. Weights count toward users' token budgets like Gemini's. On/off switch: <span className="font-medium">Claude for AI features (not chat)</span> below.
               </p>
             </div>
           </div>
@@ -443,13 +443,13 @@ export function ModelUsageDashboard() {
             <div>
               <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2 mb-1">
                 <Sparkles className="w-4 h-4 text-orange-500" />
-                Claude for all AI features
+                Claude for AI features (not chat)
               </h3>
               <p className="text-[11px] text-gray-500 dark:text-gray-400">
-                When on, every AI feature tries Claude first with web search: tax chat, deeds, ledger scrutiny and
-                scanned ledgers use {claude.model}; notices, bank statements, uploaded documents, financial mapping
+                When on, every AI feature except tax chat tries Claude first with web search: deeds, ledger scrutiny
+                and scanned ledgers use {claude.model}; notices, bank statements, uploaded documents, financial mapping
                 and CMA narrative use {claude.fastModel}; ledgers no software rule maps use {claude.bestModel}.
-                Any failure falls back to Gemini key 1. Off: everything runs on Gemini.
+                Any failure falls back to Gemini key 1. Tax chat always runs on Gemini. Off: everything runs on Gemini.
               </p>
               {!claude.configured && (
                 <p className="text-[11px] text-red-500 mt-1">ANTHROPIC_API_KEY is not set on the server — Gemini is used regardless.</p>
@@ -459,7 +459,7 @@ export function ModelUsageDashboard() {
               type="button"
               role="switch"
               aria-checked={claude.enabled}
-              aria-label="Use Claude for all AI features"
+              aria-label="Use Claude for AI features other than chat"
               onClick={toggleClaude}
               disabled={savingClaude}
               className={cn(

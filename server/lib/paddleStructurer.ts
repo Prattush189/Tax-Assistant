@@ -142,7 +142,7 @@ export async function structureOcrTextIntoRows(
       // drops rows (its known weakness on dense batches) or returns
       // bad JSON, the retry escalates to T1. Same tier-order pattern
       // as the vision path.
-      // Since 2026-11-12 Claude (Opus 5.5) takes the first pass while the
+      // Since 2026-11-12 Claude (Sonnet 5.5) takes the first pass while the
       // admin switch is on; Gemini T1 stays the retry.
       const firstModel = isClaudeActive() ? CLAUDE_MODEL_FAST : GEMINI_CHAT_MODEL_T2;
       let res: StructuredOcrResult | null = null;

@@ -61,8 +61,8 @@ export interface VisionFallbackOptions {
   looksValid?: (data: unknown) => boolean;
   /** Claude reads the document first while the admin switch is on:
    *  'fast' (the default) for notices, Form 16 and attachments; 'smart'
-   *  for dense tables like scanned ledgers (both Opus 5.5 since
-   *  2026-11-12); false to skip (bank statements, where Claude already
+   *  for dense tables like scanned ledgers (both Sonnet 5.5 since
+   *  2026-11-13); false to skip (bank statements, where Claude already
    *  ran earlier). Gemini
    *  T1 → T2 below stays as the rescue. 2026-10-29 test, judged blind
    *  against the documents: notices + attachments accuracy/completeness

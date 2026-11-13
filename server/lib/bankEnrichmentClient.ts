@@ -83,7 +83,7 @@ export async function callBankEnrichment<T>(
   const onFallback = opts.onFallback;
   let fallbackFired = false;
 
-  // Claude first (Opus 5.5 since 2026-11-12, admin-switchable); the
+  // Claude first (Sonnet 5.5 since 2026-11-13, admin-switchable); the
   // cached Gemini ladder below is the rescue.
   if (isClaudeActive()) {
     try {

@@ -49,7 +49,7 @@ export interface GeminiJsonOptions {
   retryParseFailures?: boolean;
   /** Claude answers first while the admin switch is on (every caller
    *  since 2026-11-12): 'fast' = CLAUDE_MODEL_FAST, 'smart' (the
-   *  default) = CLAUDE_MODEL — both Opus 5.5 today. false skips Claude.
+   *  default) = CLAUDE_MODEL — both Sonnet 5.5 today. false skips Claude.
    *  Any Claude failure drops onto the normal Gemini ladder, which runs
    *  on Gemini key 1 (the `gemini` client). */
   claude?: 'fast' | 'smart' | false;

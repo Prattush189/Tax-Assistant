@@ -4,23 +4,19 @@
  * to decide whether a request fits in the user's remaining WEIGHTED
  * budget BEFORE any tokens are spent.
  *
- * Returns are in WEIGHTED tokens (input × wIn + output × wOut for
- * the target model) so they can be compared directly against
- * weighted_tokens summed from api_usage. All callers below assume
- * the cheapest active path (Gemini T2: wIn=1, wOut=4). Vision paths
- * (estimateGeminiVision / estimateBankStatementVision / etc.) use
- * the same Gemini weights — the Anthropic / Sonnet provider was
- * removed from the project entirely.
+ * Returns are in WEIGHTED tokens so they can be compared directly
+ * against weighted_tokens summed from api_usage.
  *
- * COUPLING WARNING (2026-09). Every estimator here is anchored to the
- * T2 weights (3.1 Flash-Lite: wIn=2.5, wOut=15). That is correct ONLY
- * because the routes that gate on an estimate — bank statements and
- * ledger scrutiny — actually run on 3.1 Flash-Lite today. The 3.x
- * Flash rungs weigh 7.5x / 37.5x (Flex 3.75x / 18.75x), so if either
- * route is ever moved to a 3.x model these estimates under-shoot by up
- * to ~9x and the pre-flight gate stops protecting the user's budget.
- * If you change a gated route's model, re-anchor the estimator to that
- * model's weights (lib/modelWeights.ts) in the same commit.
+ * MODEL ANCHOR (2026-11-13). The raw token counts below were calibrated
+ * on Gemini 3.1 Flash-Lite; they are priced with computeWeightedTokens()
+ * for the model the gated route runs on RIGHT NOW (routeModel): Claude
+ * while the admin switch is on, Gemini T2 when it is off. So a model
+ * swap (env or code) re-prices the estimates automatically, and any
+ * charging rule in computeWeightedTokens applies to them too. Claude
+ * calls also carry the web-search tool definition (~2.8K input tokens
+ * per call), added per estimated call. Until 2026-11-13 these were
+ * hard-anchored to Flash-Lite weights (2.5x / 15x), which under-quoted
+ * the Claude routes by ~8x (Sonnet) to ~16x (Opus).
  *
  * Heuristics, not measurements. Goals:
  *   - Cheap (no model round-trip).
@@ -33,6 +29,30 @@
  * 10% covers the long tail (Hindi narrations, special chars, fixed
  * prompt overhead per chunk).
  */
+
+import { computeWeightedTokens } from './modelWeights.js';
+import { isClaudeActive, CLAUDE_MODEL, CLAUDE_MODEL_FAST } from './claude.js';
+import { GEMINI_MODEL } from './gemini.js';
+
+/** The model a gated route will run on: Claude while the admin switch is
+ *  on ('smart' = ledger scrutiny and scanned ledgers, 'fast' = statement
+ *  reads and classification), else Gemini T2. */
+function routeModel(tier: 'fast' | 'smart'): string {
+  if (!isClaudeActive()) return GEMINI_MODEL;
+  return tier === 'smart' ? CLAUDE_MODEL : CLAUDE_MODEL_FAST;
+}
+
+/** Claude's basic web-search tool definition, sent on every call
+ *  (measured ~2.7K input tokens on Opus 2026-11-12). */
+const CLAUDE_SEARCH_TOOL_TOKENS = 2_800;
+
+/** Price raw input/output tokens for the route's model. `calls` adds the
+ *  per-call search-tool overhead on Claude. */
+function weigh(tier: 'fast' | 'smart', inputTokens: number, outputTokens: number, calls = 1): number {
+  const model = routeModel(tier);
+  const toolTokens = model.startsWith('claude-') ? Math.max(1, calls) * CLAUDE_SEARCH_TOOL_TOKENS : 0;
+  return computeWeightedTokens(model, Math.ceil(inputTokens + toolTokens), Math.ceil(outputTokens));
+}
 
 const SAFETY_MARGIN = 1.10;
 // Heavier multiplier for routes that occasionally retry/bisect/
@@ -65,7 +85,7 @@ const TOKENS_PER_CHAR = 1 / 4;
 // of each band so the estimator leans conservative (overestimating is
 // safe — underestimating is what lets users blow past their cap).
 const BANK_RAW_TOKENS_PER_ROW = 95;            // observed 80-100; pick 95
-const LEDGER_SCRUTINY_RAW_TOKENS_PER_ROW = 75; // observed 60-80; pick 75
+// (Ledger scrutiny has its own input/output split, by estimateLedgerScrutinyOnly.)
 // Typical Tally / Busy / bank row width (date + voucher/ref + narration
 // + amount cols). 60-80 chars per row in real exports; 70 is a
 // reasonable middle for converting rawTextChars → rows.
@@ -79,35 +99,23 @@ const CHARS_PER_ROW = 70;
 const ROW_INPUT_FRAC = 0.30;
 const ROW_OUTPUT_FRAC = 0.70;
 
-// T2 (gemini-3.1-flash-lite) weights — the model the gated routes
-// (bank statements, ledger scrutiny) actually run on. Re-anchored
-// 2026-09 when 2.5 Flash-Lite (1x / 4x) was retired; see the coupling
-// warning in the header — these MUST track lib/modelWeights.ts.
-const T2_W_IN = 2.5;
-const T2_W_OUT = 15.0;
+// Rows per model call, for the per-call search-tool overhead: the
+// statement CSV classifier batches 40 rows; ledger scrutiny chunks are
+// capped at 8,000 characters (~110 rows).
+const ROWS_PER_CALL = 100;
 
-// Gemini vision weights (T2 anchor) — used by estimateGeminiVision()
-// for the scanned-PDF and image vision paths. Gemini bills image /
-// PDF document blocks at ~260 input tokens per page and emits the
-// structured JSON output at the T2 output rate. The whole vision
-// chain (extractVisionWithFallback: T1 → T2) is anchored to T2
-// weights for the estimator since T2 is the floor of what the
-// caller will actually be charged.
+// Vision raw tokens per page — calibrated on Gemini (it bills image /
+// PDF document blocks at ~260 input tokens per page); priced for the
+// route's model by weigh(). bank_statement_ocr estimates matched the
+// actuals within 1% on Gemini (Oct 2026).
 const GEMINI_VISION_TOKENS_PER_PAGE_INPUT = 260;
 const GEMINI_VISION_TOKENS_PER_PAGE_OUTPUT = 800;
 
 /**
- * Weighted-token estimate for a Gemini vision call (scanned-PDF /
- * image path). The vision chain runs T1 (Gemini 3.1 Flash-Lite
- * Preview) with T2 fallback; cost is anchored to T2 weights for
- * pre-flight quoting because that's the floor — the gate stays
- * generous on the actual T1 happy path.
- *
- * Previously named `estimateClaudeVision` and used Sonnet's 30×/150×
- * weights for the same routes. The Anthropic provider was removed
- * from the project (the 2026-05 prod key went inactive); recalibrated
- * to Gemini weights so the pre-flight quota gate no longer over-
- * quotes vision uploads by ~25–40×.
+ * Weighted-token estimate for a scanned-PDF / image read (bank-statement
+ * scans, scanned ledgers). The name is historical: the read runs on
+ * Claude first now (6-page chunks), Gemini as the rescue; weigh() prices
+ * it for whichever runs.
  */
 export function estimateGeminiVision(fileSizeBytes: number, opts: { pageCount?: number } = {}): number {
   if (fileSizeBytes <= 0) return 0;
@@ -115,15 +123,14 @@ export function estimateGeminiVision(fileSizeBytes: number, opts: { pageCount?: 
   const pages = opts.pageCount ?? Math.max(1, Math.ceil(fileSizeBytes / 1024 / KB_PER_PAGE));
   const inputTokens = pages * GEMINI_VISION_TOKENS_PER_PAGE_INPUT + 500; // + prompt overhead
   const outputTokens = pages * GEMINI_VISION_TOKENS_PER_PAGE_OUTPUT;
-  return Math.ceil((inputTokens * T2_W_IN + outputTokens * T2_W_OUT) * SAFETY_MARGIN);
+  return Math.ceil(weigh('fast', inputTokens, outputTokens, Math.ceil(pages / 6)) * SAFETY_MARGIN);
 }
 
 /** Weighted tokens for a chunk of plain text input (prompt + payload).
- *  Treated as input-only (no output produced from the input alone),
- *  so the weight collapses to T2 input × 1.0. */
+ *  Treated as input-only (no output produced from the input alone). */
 export function estimateFromChars(chars: number): number {
   if (chars <= 0) return 0;
-  return Math.ceil(chars * TOKENS_PER_CHAR * T2_W_IN * SAFETY_MARGIN);
+  return Math.ceil(weigh('fast', chars * TOKENS_PER_CHAR, 0) * SAFETY_MARGIN);
 }
 
 /**
@@ -149,7 +156,7 @@ export function estimateBankStatementText(rawTextChars: number): number {
   const rows = Math.max(1, Math.ceil(rawTextChars / CHARS_PER_ROW));
   const inputTokens = rows * BANK_RAW_TOKENS_PER_ROW * ROW_INPUT_FRAC;
   const outputTokens = rows * BANK_RAW_TOKENS_PER_ROW * ROW_OUTPUT_FRAC;
-  return Math.ceil((inputTokens * T2_W_IN + outputTokens * T2_W_OUT) * RETRY_HEAVY_MARGIN);
+  return Math.ceil(weigh('fast', inputTokens, outputTokens, Math.ceil(rows / ROWS_PER_CALL)) * RETRY_HEAVY_MARGIN);
 }
 
 /**
@@ -171,11 +178,7 @@ export function estimateBankStatementVision(fileSizeBytes: number): number {
   const batches = pages <= 4 ? 1 : Math.ceil(pages / PAGES_PER_BATCH);
   const inputTokens = pages * TOKENS_PER_PAGE + batches * 800;
   const outputTokens = Math.min(16_384 * batches, pages * 600);
-  // Vision runs on Gemini (T1 with T2 fallback). Anchored to T2
-  // weights here since that's the floor — the T1 happy path costs
-  // marginally more per token but the gate already includes a 1.5×
-  // retry margin that covers the difference.
-  return Math.ceil((inputTokens * T2_W_IN + outputTokens * T2_W_OUT) * RETRY_HEAVY_MARGIN);
+  return Math.ceil(weigh('fast', inputTokens, outputTokens, batches) * RETRY_HEAVY_MARGIN);
 }
 
 /**
@@ -185,22 +188,24 @@ export function estimateBankStatementVision(fileSizeBytes: number): number {
  * (both ledgers come pre-structured), and the resume-after-failure
  * path (raw_extracted is already on disk).
  *
- * Calibrated to LEDGER_SCRUTINY_RAW_TOKENS_PER_ROW (~75 raw tokens /
- * row, observed 60-80 in production). The previous char-ratio formula
- * under-estimated by ~3× — same root cause as the bank text path:
- * the audit output JSON includes observation messages, amounts, and
- * suggested actions that scale with the row count, not just the
- * input chars.
+ * Scrutiny is INPUT-heavy: the observations it writes are short. In
+ * production (Jul-Sep 2026, 9 runs) output was 1-4% of input (avg 66K
+ * in / 1.8K out); small ledgers used 33-56 input tokens per row. The old
+ * 30/70 input/output split of ~75 tokens/row (shared with the bank text
+ * path, where the model really does echo every row) priced ~50 output
+ * tokens per row, which at Claude's output weight (5x its input) would
+ * quote several times the real cost and block runs the user can afford.
  *
- * Anchored to T2 weights because that's where the scrutiny prompt
- * always runs.
+ * Priced for the scrutiny model ('smart' tier on Claude).
  */
+const LEDGER_SCRUTINY_INPUT_TOKENS_PER_ROW = 55;  // observed 33-56 on small ledgers, less on big ones
+const LEDGER_SCRUTINY_OUTPUT_TOKENS_PER_ROW = 4;  // observed ~1; kept high for long observation lists
 export function estimateLedgerScrutinyOnly(rawTextChars: number): number {
   if (rawTextChars <= 0) return 0;
   const rows = Math.max(1, Math.ceil(rawTextChars / CHARS_PER_ROW));
-  const inputTokens = rows * LEDGER_SCRUTINY_RAW_TOKENS_PER_ROW * ROW_INPUT_FRAC;
-  const outputTokens = rows * LEDGER_SCRUTINY_RAW_TOKENS_PER_ROW * ROW_OUTPUT_FRAC;
-  return Math.ceil((inputTokens * T2_W_IN + outputTokens * T2_W_OUT) * RETRY_HEAVY_MARGIN);
+  const inputTokens = rows * LEDGER_SCRUTINY_INPUT_TOKENS_PER_ROW;
+  const outputTokens = rows * LEDGER_SCRUTINY_OUTPUT_TOKENS_PER_ROW;
+  return Math.ceil(weigh('smart', inputTokens, outputTokens, Math.ceil(rows / ROWS_PER_CALL)) * RETRY_HEAVY_MARGIN);
 }
 
 /**
@@ -217,13 +222,13 @@ export function estimateLedgerText(rawTextChars: number): number {
 export function estimateLedgerVision(fileSizeBytes: number): number {
   if (fileSizeBytes <= 0) return 0;
   const visionEstimate = estimateBankStatementVision(fileSizeBytes);
-  // Scrutiny pass runs on T2 over structured output — text-cost shape.
+  // Scrutiny pass over structured output — text-cost shape.
   const KB_PER_PAGE = 200;
   const pages = Math.max(1, Math.ceil(fileSizeBytes / 1024 / KB_PER_PAGE));
   const SCRUTINY_TOKENS_PER_PAGE = 1_800;
   // Half input / half output as a rough split.
   const scrutinyInputTokens = pages * SCRUTINY_TOKENS_PER_PAGE * 0.5;
   const scrutinyOutputTokens = pages * SCRUTINY_TOKENS_PER_PAGE * 0.5;
-  const scrutinyWeighted = Math.ceil((scrutinyInputTokens * T2_W_IN + scrutinyOutputTokens * T2_W_OUT) * RETRY_HEAVY_MARGIN);
+  const scrutinyWeighted = Math.ceil(weigh('smart', scrutinyInputTokens, scrutinyOutputTokens, Math.ceil(pages / 4)) * RETRY_HEAVY_MARGIN);
   return visionEstimate + scrutinyWeighted;
 }

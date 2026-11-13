@@ -174,9 +174,9 @@ export const geminiChatProvider: ChatProvider = {
     const wastedAttempts: NonNullable<ChatUsage['wastedAttempts']> = [];
     let firstFallbackFired = false;
 
-    // Claude first for every call while the admin switch is on (Opus 5.5
+    // Claude first for every call while the admin switch is on (Sonnet 5.5
     // with web search since 2026-11-12; Gemini below is the rescue).
-    // Economy picks CLAUDE_MODEL_FAST, which is Opus too today.
+    // Economy picks CLAUDE_MODEL_FAST, which is Sonnet too today.
     if (isClaudeActive()) {
       const claudeModel = req.economy ? CLAUDE_MODEL_FAST : CLAUDE_MODEL;
       const t0 = Date.now();

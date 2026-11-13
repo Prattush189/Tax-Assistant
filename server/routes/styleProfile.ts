@@ -98,7 +98,7 @@ async function extractTextFromFile(file: Express.Multer.File): Promise<string> {
     return result.value;
   }
 
-  // PDF — Claude reads it first (Opus 5.5 since 2026-11-12, admin-
+  // PDF — Claude reads it first (Sonnet 5.5 since 2026-11-13, admin-
   // switchable); Gemini vision is the rescue.
   const base64 = file.buffer.toString('base64');
   const dataUrl = `data:application/pdf;base64,${base64}`;
