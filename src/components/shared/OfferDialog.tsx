@@ -5,7 +5,7 @@ import { fetchLaunchOffer, markLaunchOfferSeen } from '../../services/api';
 import { offerLastDay } from '../../lib/launchOffer';
 
 /**
- * One-time pop-up announcing the launch offer: every feature uses 75%
+ * One-time pop-up announcing the launch offer: every feature except chat uses 50%
  * fewer credits. Never names the model behind the app. Shows once per
  * user (the server records it as seen when closed), and only while the
  * offer is on. `enabled`: signed in, not embedded, not behind the trial
@@ -65,10 +65,10 @@ export function OfferDialog({ enabled }: { enabled: boolean }) {
               </div>
               <div className="flex-1 min-w-0">
                 <h3 id="offer-title" className="text-base font-semibold text-gray-900 dark:text-white mb-1">
-                  All features {offer.discountPct}% off
+                  {offer.discountPct}% off every feature except chat
                 </h3>
                 <p className="text-sm text-gray-600 dark:text-gray-300">
-                  Every feature uses {offer.discountPct}% fewer credits until {offerLastDay(offer.endsAt)}. It's applied automatically.
+                  Notice replies, documents, bank statements and ledger scrutiny use {offer.discountPct}% fewer credits until {offerLastDay(offer.endsAt)}, while the offer lasts. Chat is unchanged. It's applied automatically.
                 </p>
               </div>
             </div>

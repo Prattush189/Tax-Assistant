@@ -13,7 +13,7 @@
 const { billableGeminiUsage, billableOpenAiUsage } = await import('../server/lib/geminiChat.js');
 const { computeWeightedTokens, getWeightFor } = await import('../server/lib/modelWeights.js');
 // Normal prices: pin calls before the launch offer (12 Nov-12 Dec 2026),
-// which counts every call 25% (covered by smoke-launch-offer.mts).
+// which halves non-chat calls (covered by smoke-launch-offer.mts).
 const BASE = '2026-10-01 12:00:00';
 const { costForModel } = await import('../server/lib/gemini.js');
 

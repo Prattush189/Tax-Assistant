@@ -1009,14 +1009,17 @@ export async function fetchLatestNotifications(): Promise<{ items: TaxNotificati
   return authFetch('/api/notifications/latest');
 }
 
-/** The launch offer (every feature uses 75% fewer credits) and whether
+/** The launch offer (50% off every feature except chat) and whether
  *  this user has already closed its pop-up. */
 export interface LaunchOffer {
   active: boolean;
   discountPct: number;
-  /** Exclusive end, ISO with offset (IST midnight after the last day). */
+  /** Exclusive end, ISO (IST midnight after the last day, or earlier if
+   *  the offer ended early). */
   endsAt: string;
   seen: boolean;
+  /** Feature categories the discount does not apply to (['chat']). */
+  excludes?: string[];
 }
 
 export async function fetchLaunchOffer(): Promise<LaunchOffer> {
@@ -1923,6 +1926,12 @@ export interface ClaudeConfig {
   fastModel: string;
   /** Ledgers no software rule maps (column mapping + row transcription). */
   bestModel: string;
+  /** Claude runs only while the launch offer is live. */
+  offerActive?: boolean;
+  /** When the offer ends or ended (ISO): 13 Dec, or the early end. */
+  offerEndsAt?: string;
+  /** When Anthropic reported the credit balance used up (ISO), or null. */
+  creditsExhaustedAt?: string | null;
 }
 
 export async function adminFetchClaudeConfig(): Promise<ClaudeConfig> {

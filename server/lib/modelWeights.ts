@@ -23,7 +23,7 @@
  * costForModel(); that's an independent display.
  */
 
-import { launchOfferMultiplier } from './launchOffer.js';
+import { launchOfferApplies, LAUNCH_OFFER_FACTOR, CLAUDE_PRICED_AS } from './launchOffer.js';
 
 export interface ModelWeight {
   /** Per-input-token weight (multiplier into weighted_tokens). */
@@ -111,22 +111,26 @@ export function getWeightFor(model: string | null | undefined): ModelWeight {
  *  negative.
  *
  *  `at` is when the call happened (default: now; api_usage.created_at
- *  for stored rows). Every call inside the launch offer (launchOffer.ts)
- *  counts 25%, whichever model answered ("all features 75% off"). The
- *  discount goes by the row's time, so a recompute keeps it for rows
- *  inside the window and never grants it to rows outside. */
+ *  for stored rows) and `category` the api_usage category. Inside the
+ *  launch offer (launchOffer.ts), every call except tax chat is 50% off,
+ *  and a Claude call is priced as Gemini (CLAUDE_PRICED_AS) before the
+ *  discount: users pay half the Gemini price whichever model answered.
+ *  The discount goes by the row's time, so a recompute keeps it for rows
+ *  inside the window and never grants it to rows outside. A missing
+ *  category counts as a non-chat feature (the pre-flight estimators). */
 export function computeWeightedTokens(
   model: string | null | undefined,
   inputTokens: number,
   outputTokens: number,
   cachedInputTokens = 0,
   at?: Date | string,
+  category?: string | null,
 ): number {
-  const w = getWeightFor(model);
+  const offer = launchOfferApplies(category, at);
+  const w = getWeightFor(offer && model?.startsWith('claude-') ? CLAUDE_PRICED_AS : model);
   const cached = Math.max(0, Math.min(cachedInputTokens, inputTokens));
   const fresh = inputTokens - cached;
-  const offer = launchOfferMultiplier(at);
   // Round up — the column is INTEGER and rounding up is the
   // conservative direction for a quota.
-  return Math.ceil((fresh * w.wIn + cached * w.wCached + outputTokens * w.wOut) * offer);
+  return Math.ceil((fresh * w.wIn + cached * w.wCached + outputTokens * w.wOut) * (offer ? LAUNCH_OFFER_FACTOR : 1));
 }

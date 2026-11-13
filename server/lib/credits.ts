@@ -31,34 +31,34 @@ export function creditsToWeighted(credits: number): number {
 }
 
 /**
- * Typical cost of one action, in credits, at the FULL rate (a launch
- * offer's discount is applied by the client on top). Refresh when a
- * feature's model or prompt changes. Chat runs on Gemini; everything
- * else on Claude Sonnet 5.5 with web search since 2026-11-13 (weights
- * 20x in / 100x out; every call also carries the search tool, ~2.8K
- * input tokens, 5.9K for notices' dynamic tool):
+ * Typical cost of one action, in credits, at the NORMAL price: what it
+ * costs on Gemini, the models every feature runs on outside the launch
+ * offer. During the offer (launchOffer.ts) every feature except chat is
+ * 50% off, Claude doing the work but charged as Gemini, so these stay
+ * the reference and the client halves the non-chat ones. Refresh when a
+ * feature's Gemini model or prompt changes:
  *
- *   chat_fast       3.1 Flash-Lite on Flex: ~4.2K in x 1.25 + ~0.4K out x 7.5  ~= 8K    -> 1
- *   chat_deep       3.8 Flash Standard:     ~4.2K in x 7.5  + ~1.2K out x 37.5 ~= 76K   -> 8
- *   notice_draft    Sonnet + search tool: ~14K in x 20 + ~3.6K out x 100      ~= 650K  -> 70
- *   notice_pdf_read Sonnet vision: ~9.5K in x 20 + ~0.6K out x 100          ~= 250K  -> 25
- *   bank_statement  Sonnet classifier: ~6K in (rows + tool) x 20 + ~0.3K out x 100 ~= 150K  -> 15
- *   ledger_scrutiny Sonnet: ~5 groups x (~13K in x 20 + ~1.6K out x 100)    ~= 2.1M  -> 200
+ *   chat_fast       3.1 Flash-Lite on Flex: ~4.2K in x 1.25 + ~0.4K out x 7.5  ~= 8K   -> 1
+ *   chat_deep       3.8 Flash Standard:     ~4.2K in x 7.5  + ~1.2K out x 37.5 ~= 76K  -> 8
+ *   notice_draft    3.1 Flash-Lite (economy): ~6.5K x 2.5 + ~1.7K x 15         ~= 42K  -> 4
+ *   notice_pdf_read vision on 3.1 Flash-Lite: ~4K x 2.5 + ~0.85K x 15         ~= 23K  -> 2
+ *   bank_statement  3.1 Flash-Lite:         ~5.4K x 2.5 + ~1.1K x 15           ~= 30K  -> 3
+ *   ledger_scrutiny 3.1 Flash-Lite:         ~91K x 2.5 + ~2.5K x 15            ~= 265K -> 27
  *
- * Token counts: the 2026-11-13 Sonnet bake-off on the VPS (notices 59-70
- * credits, 0 searches; classifier ~12 per 20-row batch; scrutiny 33-55
- * per 6-account group, ~5 groups in an average production ledger);
- * notice_pdf_read from production Haiku token counts. These are shown
- * to users as "about N credits" -- never as a promise. Keep src/lib/creditEstimates.ts in step (the
- * client's fallback until the server's numbers load).
+ * (Sept 2026 production averages.) Measured inside the offer (2026-11-13
+ * Sonnet bake-off tokens, priced as Flash-Lite Flex then halved): notice
+ * ~2.2, document read ~0.8, ledger scrutiny ~7 credits.
+ * These are shown to users as "about N credits" -- never as a promise.
+ * Keep src/lib/creditEstimates.ts in step (the client's fallback until
+ * the server's numbers load).
  */
 export const CREDIT_ESTIMATES: Readonly<Record<string, number>> = {
   chat_fast: 1,
   chat_deep: 8,
-  notice_draft: 70,
-  notice_pdf_read: 25,
-  bank_statement: 15,
-  ledger_scrutiny: 200,
+  notice_draft: 4,
+  notice_pdf_read: 2,
+  bank_statement: 3,
+  ledger_scrutiny: 27,
 };
 
 export interface CreditsSummary {

@@ -5,16 +5,18 @@
  *                                     user already closed its pop-up?
  *   POST /api/offers/current/seen  — record that the pop-up was closed.
  *
- * Users are told "every feature uses 75% fewer credits"; the paths and
- * payload never name the model behind the app. The offer itself (25%
- * credits on every AI call, whichever model answers) is applied in
- * computeWeightedTokens; this route drives the one-time pop-up, the
- * plans-page banner and the offer prices in the chat box and Settings.
+ * Users are told "50% off every feature except chat"; the paths and
+ * payload never name the model behind the app. The offer itself (half
+ * the Gemini price on every non-chat call, whichever model answers) is
+ * applied in computeWeightedTokens; this route drives the one-time
+ * pop-up, the plans-page banner and the offer prices in Settings.
+ * `active` turns false on 13 Dec, or earlier if the Claude credits run
+ * out (launchOffer.ts setLaunchOfferEarlyEnd); `endsAt` follows.
  */
 
 import { Router, Response } from 'express';
 import db from '../db/index.js';
-import { LAUNCH_OFFER, launchOfferActive } from '../lib/launchOffer.js';
+import { LAUNCH_OFFER, launchOfferActive, launchOfferEndsAt } from '../lib/launchOffer.js';
 import { AuthRequest } from '../types.js';
 
 const router = Router();
@@ -27,7 +29,8 @@ router.get('/current', (req: AuthRequest, res: Response) => {
   res.json({
     active: launchOfferActive(),
     discountPct: LAUNCH_OFFER.discountPct,
-    endsAt: LAUNCH_OFFER.endsAt,
+    endsAt: launchOfferEndsAt(),
+    excludes: LAUNCH_OFFER.excludes,
     seen: !!seenStmt.get(req.user.id, LAUNCH_OFFER.id),
   });
 });

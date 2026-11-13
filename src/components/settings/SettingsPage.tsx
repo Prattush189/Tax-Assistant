@@ -25,7 +25,7 @@ import {
 } from '../../services/api';
 import { usePreferences } from '../../hooks/usePreferences';
 import { useLaunchOffer } from '../../hooks/useLaunchOffer';
-import { offerFactor, offerLastDay } from '../../lib/launchOffer';
+import { offerFactorFor, offerLastDay } from '../../lib/launchOffer';
 import { CREDIT_ESTIMATES_FALLBACK as FALLBACK } from '../../lib/creditEstimates';
 import { cn } from '../../lib/utils';
 import toast from 'react-hot-toast';
@@ -124,11 +124,10 @@ function TokenBudgetBar({ tokens, credits, plan, trialDaysLeft, planExpiresAt }:
   // Credits are the user-facing unit (1 credit = 10,000 weighted
   // tokens); fall back to deriving them if an older server omits them.
   const cr = credits ?? { used: Math.round(tokens.used / 10_000), budget: Math.round(tokens.budget / 10_000), remaining: Math.round(tokens.remaining / 10_000), estimates: {} };
-  // Launch offer: every feature uses 75% fewer credits, so the remaining
-  // credits cover 4x as much while it runs.
+  // Launch offer: every feature except chat uses 50% fewer credits, so
+  // the remaining credits cover twice as many notices and statements.
   const offer = useLaunchOffer();
-  const factor = offerFactor(offer);
-  const est = (k: string, dflt: number) => Math.max(1, cr.estimates[k] ?? dflt) * factor;
+  const est = (k: string, dflt: number) => Math.max(1, cr.estimates[k] ?? dflt) * offerFactorFor(offer, k);
   // Plan-aware conversion hints, from the server's per-action estimates
   // (lib/credits.ts) so they track the models each feature really runs
   // on. Bank/ledger are Pro+ only — Free users don't see that hint.
@@ -176,9 +175,9 @@ function TokenBudgetBar({ tokens, credits, plan, trialDaysLeft, planExpiresAt }:
             {' '}OR <span className="font-semibold text-gray-700 dark:text-gray-300">{remainingBankTxns.toLocaleString('en-IN')} bank statements</span>
           </>
         )}
-        {' '}OR <span className="font-semibold text-gray-700 dark:text-gray-300">{remainingChats.toLocaleString('en-IN')} chats</span>
-        {offer && <> at the {offer.discountPct}%-off price (until {offerLastDay(offer.endsAt)})</>}.
-        Mix and match.
+        {' '}OR <span className="font-semibold text-gray-700 dark:text-gray-300">{remainingChats.toLocaleString('en-IN')} chats</span>.
+        {offer && <> Notices{isPaid ? ' and bank statements' : ''} at the {offer.discountPct}%-off price until {offerLastDay(offer.endsAt)}.</>}
+        {' '}Mix and match.
       </p>
     </div>
   );

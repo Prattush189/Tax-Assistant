@@ -1,9 +1,12 @@
-// Launch offer ("all features 75% off"): every AI call inside the window
-// weighs 25%, whichever model answered (Claude or Gemini); outside it
-// 100%; IST created_at strings parse right at both edges.
+// Launch offer ("50% off every feature except chat", 12 Nov - 12 Dec 2026):
+// inside the window a non-chat call weighs half, and a Claude call is
+// priced as Gemini 3.1 Flash-Lite Flex before the discount; chat rows are
+// never discounted; outside the window everything is normal; the offer
+// can end early (Claude credits used up); IST strings parse at the edges.
 // Run: npx tsx scripts/smoke-launch-offer.mts
 const { computeWeightedTokens } = await import('../server/lib/modelWeights.js');
-const { launchOfferActive, launchOfferMultiplier, LAUNCH_OFFER } = await import('../server/lib/launchOffer.js');
+const { launchOfferActive, launchOfferApplies, launchOfferEndsAt, setLaunchOfferEarlyEnd, LAUNCH_OFFER, LAUNCH_OFFER_FACTOR, CLAUDE_PRICED_AS } =
+  await import('../server/lib/launchOffer.js');
 
 let fails = 0;
 const ok = (c: boolean, m: string) => { console.log((c ? 'PASS' : 'FAIL') + '  ' + m); if (!c) fails++; };
@@ -12,24 +15,29 @@ const INSIDE = '2026-11-20 10:00:00';   // api_usage.created_at shape (IST wall-
 const BEFORE = '2026-11-11 23:59:59';
 const AFTER = '2026-12-13 00:00:00';
 
-// A real Haiku notice row (7,051 in / 7,801 out): 46,056 at full weight.
-const full = computeWeightedTokens('claude-haiku-5-5', 7_051, 7_801, 0, BEFORE);
-ok(full === 46_056, `Haiku row before the offer = full weight (${full})`);
-ok(computeWeightedTokens('claude-haiku-5-5', 7_051, 7_801, 0, INSIDE) === 11_514, 'Haiku row inside the offer = 25% (11,514)');
-ok(computeWeightedTokens('claude-haiku-5-5', 7_051, 7_801, 0, AFTER) === 46_056, 'Haiku row after the offer = full weight');
+ok(LAUNCH_OFFER.discountPct === 50 && LAUNCH_OFFER_FACTOR === 0.5, 'offer is 50% off');
+ok(CLAUDE_PRICED_AS === 'gemini-3.1-flash-lite-flex', 'Claude priced as 3.1 Flash-Lite Flex inside the offer');
+ok(LAUNCH_OFFER.excludes.includes('chat'), 'chat is excluded');
 
-// Sonnet and Opus too; cached tokens discounted the same way.
-const sonnetFull = computeWeightedTokens('claude-sonnet-5-5', 7_051, 2_888, 1_000, BEFORE);
-const sonnetOffer = computeWeightedTokens('claude-sonnet-5-5', 7_051, 2_888, 1_000, INSIDE);
-ok(sonnetOffer === Math.ceil((6_051 * 20 + 1_000 * 2 + 2_888 * 100) * 0.25), `Sonnet with cache inside = 25% (${sonnetOffer} of ${sonnetFull})`);
-ok(computeWeightedTokens('claude-opus-5-5', 1_000, 1_000, 0, INSIDE) === 60_000, 'Opus inside = 25% of 240,000');
+// Claude notice row from the 2026-11-13 Sonnet bake-off (14,000 in / 3,600 out).
+// Outside: Sonnet's own weights (20 / 100) = 640,000.
+// Inside, non-chat: Flash-Lite Flex (1.25 / 7.5) = 44,500, halved = 22,250.
+ok(computeWeightedTokens('claude-sonnet-5-5', 14_000, 3_600, 0, BEFORE, 'notice') === 640_000, 'Sonnet notice before the offer = Sonnet weight (640,000 = 64 credits)');
+ok(computeWeightedTokens('claude-sonnet-5-5', 14_000, 3_600, 0, INSIDE, 'notice') === 22_250, 'Sonnet notice inside = Gemini price, halved (22,250 = 2.2 credits)');
+ok(computeWeightedTokens('claude-sonnet-5-5', 14_000, 3_600, 0, AFTER, 'notice') === 640_000, 'Sonnet notice after the offer = Sonnet weight');
+ok(computeWeightedTokens('claude-opus-5-5', 1_000, 1_000, 0, INSIDE, 'document') === Math.ceil((1_000 * 1.25 + 1_000 * 7.5) * 0.5), 'Opus inside is priced the same way (any Claude model)');
+ok(computeWeightedTokens('claude-sonnet-5-5', 10_000, 1_000, 4_000, INSIDE, 'ledger_scrutiny') === Math.ceil((6_000 * 1.25 + 4_000 * 0.3125 + 1_000 * 7.5) * 0.5), 'cached Claude tokens at the Flex cache rate, halved');
+// A missing category (pre-flight estimators) counts as a non-chat feature.
+ok(computeWeightedTokens('claude-sonnet-5-5', 14_000, 3_600, 0, INSIDE) === 22_250, 'no category inside = discounted like a feature');
 
-// Gemini too (primary or fallback): "all features" means every call.
-ok(computeWeightedTokens('gemini-3.8-flash', 4_200, 1_200, 0, BEFORE) === 76_500, 'Gemini 3.8 before the offer = full weight (76,500)');
-ok(computeWeightedTokens('gemini-3.8-flash', 4_200, 1_200, 0, INSIDE) === 19_125, 'Gemini 3.8 inside the offer = 25% (19,125)');
-ok(computeWeightedTokens('gemini-3.8-flash', 4_200, 1_200, 0, AFTER) === 76_500, 'Gemini 3.8 after the offer = full weight');
-ok(computeWeightedTokens(undefined, 100, 100, 0, INSIDE) === 125, 'unknown model inside the window = 25% (125 of 500)');
-ok(computeWeightedTokens(undefined, 100, 100, 0, AFTER) === 500, 'unknown model after the window = full weight');
+// Gemini fallback inside the offer: its own weights, halved.
+ok(computeWeightedTokens('gemini-3.1-flash-lite', 5_152, 1_104, 0, BEFORE, 'notice') === Math.ceil(5_152 * 2.5 + 1_104 * 15), 'Gemini notice before = full');
+ok(computeWeightedTokens('gemini-3.1-flash-lite', 5_152, 1_104, 0, INSIDE, 'notice') === Math.ceil((5_152 * 2.5 + 1_104 * 15) * 0.5), 'Gemini notice inside = half');
+
+// Chat is never discounted (Gemini only).
+ok(computeWeightedTokens('gemini-3.8-flash', 4_200, 1_200, 0, INSIDE, 'chat') === 76_500, 'chat inside the offer = full weight (76,500)');
+ok(computeWeightedTokens('gemini-3.1-flash-lite-flex', 4_200, 400, 0, INSIDE, 'chat') === Math.ceil(4_200 * 1.25 + 400 * 7.5), 'Fast chat inside = full weight');
+ok(!launchOfferApplies('chat', INSIDE) && launchOfferApplies('notice', INSIDE), 'applies to notice, not to chat');
 
 // Window edges in IST, as stored strings and as instants.
 ok(!launchOfferActive('2026-11-11 23:59:59'), 'IST 11 Nov 23:59:59 is before the offer');
@@ -39,29 +47,31 @@ ok(!launchOfferActive('2026-12-13 00:00:00'), 'IST 13 Dec 00:00:00 is after the 
 ok(launchOfferActive(new Date('2026-11-11T18:30:00Z')), 'UTC 11 Nov 18:30 = IST midnight 12 Nov: inside');
 ok(!launchOfferActive(new Date('2026-11-11T18:29:59Z')), 'UTC 11 Nov 18:29:59: before');
 ok(launchOfferActive('2026-12-12T18:29:59Z'), 'zoned ISO string honoured (UTC 12 Dec 18:29:59 inside)');
-ok(launchOfferMultiplier(INSIDE) === 0.25 && launchOfferMultiplier(AFTER) === 1, 'multiplier 0.25 inside, 1 outside');
-ok(LAUNCH_OFFER.discountPct === 75, 'offer is 75% off');
 
-// Default "now" follows the clock (this run's date decides the expected value).
-const nowInside = Date.now() >= Date.parse(LAUNCH_OFFER.startsAt) && Date.now() < Date.parse(LAUNCH_OFFER.endsAt);
-ok(launchOfferActive() === nowInside, `no time given uses now (offer ${nowInside ? 'on' : 'off'} today)`);
+// Early end (Claude credits used up): rows from then on are full price,
+// rows before it keep the discount (a recompute stays fair).
+setLaunchOfferEarlyEnd('2026-11-25 15:00:00');
+try {
+  ok(launchOfferEndsAt() === new Date('2026-11-25T15:00:00+05:30').toISOString(), 'early end moves endsAt');
+  ok(launchOfferActive('2026-11-25 14:59:59') && !launchOfferActive('2026-11-25 15:00:00'), 'offer ends at the early-end moment');
+  ok(computeWeightedTokens('gemini-3.1-flash-lite', 5_152, 1_104, 0, '2026-11-26 10:00:00', 'notice') === Math.ceil(5_152 * 2.5 + 1_104 * 15), 'Gemini row after an early end = full price');
+  ok(computeWeightedTokens('claude-sonnet-5-5', 14_000, 3_600, 0, '2026-11-20 10:00:00', 'notice') === 22_250, 'row before the early end keeps the discount');
+  setLaunchOfferEarlyEnd('2027-01-31 00:00:00');
+  ok(launchOfferEndsAt() === new Date(LAUNCH_OFFER.endsAt).toISOString(), 'an "early end" after 13 Dec cannot extend the offer');
+} finally {
+  setLaunchOfferEarlyEnd(null);
+}
+ok(launchOfferEndsAt() === new Date(LAUNCH_OFFER.endsAt).toISOString(), 'cleared early end restores 13 Dec');
 
-// The offer switches itself off with no redeploy: move the clock and new
-// rows (logged with no time, i.e. "now") weigh full again, and the check
-// the pop-up route makes (launchOfferActive()) turns false.
+// The offer switches itself off with no redeploy.
 const realNow = Date.now;
 const atClock = (iso: string) => { Date.now = () => Date.parse(iso); };
 try {
   atClock('2026-12-12T23:59:59+05:30');
-  ok(launchOfferActive() && computeWeightedTokens('claude-opus-5-5', 1_000, 1_000) === 60_000, 'clock on 12 Dec 23:59:59 IST: offer on, new Opus row 25%');
-  ok(computeWeightedTokens('gemini-3.8-flash', 4_200, 1_200) === 19_125, 'clock on 12 Dec 23:59:59 IST: new Gemini row 25%');
+  ok(launchOfferActive() && computeWeightedTokens('claude-sonnet-5-5', 14_000, 3_600, 0, undefined, 'notice') === 22_250, 'clock on 12 Dec 23:59:59 IST: offer on');
   atClock('2026-12-13T00:00:00+05:30');
   ok(!launchOfferActive(), 'clock on 13 Dec 00:00 IST: offer off (pop-up route reports active=false)');
-  ok(computeWeightedTokens('claude-opus-5-5', 1_000, 1_000) === 240_000, 'clock on 13 Dec 00:00 IST: new Opus row full weight');
-  ok(computeWeightedTokens('claude-haiku-5-5', 7_051, 7_801) === 46_056, 'clock on 13 Dec 00:00 IST: new Haiku row full weight');
-  ok(computeWeightedTokens('gemini-3.8-flash', 4_200, 1_200) === 76_500, 'clock on 13 Dec 00:00 IST: new Gemini row full weight');
-  atClock('2027-03-01T12:00:00+05:30');
-  ok(!launchOfferActive() && launchOfferMultiplier() === 1, 'months later: still off');
+  ok(computeWeightedTokens('gemini-3.1-flash-lite', 5_152, 1_104, 0, undefined, 'notice') === Math.ceil(5_152 * 2.5 + 1_104 * 15), 'clock on 13 Dec: new Gemini row full price');
 } finally {
   Date.now = realNow;
 }

@@ -296,7 +296,7 @@ export const usageRepo = {
     cachedInputTokens = 0,
   ): void {
     const cached = Math.max(0, Math.min(cachedInputTokens, inputTokens));
-    const weighted = computeWeightedTokens(model, inputTokens, outputTokens, cached);
+    const weighted = computeWeightedTokens(model, inputTokens, outputTokens, cached, undefined, category);
     stmts.logWithBilling.run(ip, userId, billingUserId, inputTokens, outputTokens, cost, isPlugin ? 1 : 0, model ?? null, searchUsed ? 1 : 0, category ?? null, inputUnits ?? 0, status ?? 'success', estimatedTokens ?? 0, weighted, durationMs ?? 0, cached);
   },
 
@@ -399,16 +399,16 @@ export const usageRepo = {
    */
   backfillWeightedTokens(): { updated: number } {
     const rows = db.prepare(`
-      SELECT id, model, input_tokens, output_tokens, cached_input_tokens, created_at
+      SELECT id, model, input_tokens, output_tokens, cached_input_tokens, created_at, category
       FROM api_usage
       WHERE weighted_tokens = 0
         AND (input_tokens > 0 OR output_tokens > 0)
-    `).all() as Array<{ id: number; model: string | null; input_tokens: number; output_tokens: number; cached_input_tokens: number | null; created_at: string }>;
+    `).all() as Array<{ id: number; model: string | null; input_tokens: number; output_tokens: number; cached_input_tokens: number | null; created_at: string; category: string | null }>;
     if (rows.length === 0) return { updated: 0 };
     const upd = db.prepare('UPDATE api_usage SET weighted_tokens = ? WHERE id = ?');
     const tx = db.transaction(() => {
       for (const r of rows) {
-        upd.run(computeWeightedTokens(r.model, r.input_tokens, r.output_tokens, r.cached_input_tokens ?? 0, r.created_at), r.id);
+        upd.run(computeWeightedTokens(r.model, r.input_tokens, r.output_tokens, r.cached_input_tokens ?? 0, r.created_at, r.category), r.id);
       }
     });
     tx();
@@ -442,18 +442,18 @@ export const usageRepo = {
     const where = "WHERE category IS NOT 'carryover'" + (opts.since ? ' AND created_at >= ?' : '');
     const args: unknown[] = opts.since ? [opts.since] : [];
     const rows = db.prepare(`
-      SELECT id, model, input_tokens, output_tokens, cached_input_tokens, weighted_tokens, created_at
+      SELECT id, model, input_tokens, output_tokens, cached_input_tokens, weighted_tokens, created_at, category
       FROM api_usage ${where}
     `).all(...args) as Array<{
       id: number; model: string | null; input_tokens: number; output_tokens: number;
-      cached_input_tokens: number | null; weighted_tokens: number; created_at: string;
+      cached_input_tokens: number | null; weighted_tokens: number; created_at: string; category: string | null;
     }>;
     const byModel: Record<string, { rows: number; changed: number; before: number; after: number }> = {};
     let changed = 0, before = 0, after = 0;
     const upd = db.prepare('UPDATE api_usage SET weighted_tokens = ? WHERE id = ?');
     const apply = () => {
       for (const r of rows) {
-        const w = computeWeightedTokens(r.model, r.input_tokens, r.output_tokens, r.cached_input_tokens ?? 0, r.created_at);
+        const w = computeWeightedTokens(r.model, r.input_tokens, r.output_tokens, r.cached_input_tokens ?? 0, r.created_at, r.category);
         const key = r.model ?? 'unknown';
         let m = byModel[key];
         if (!m) { m = { rows: 0, changed: 0, before: 0, after: 0 }; byModel[key] = m; }

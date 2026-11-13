@@ -271,7 +271,11 @@ export function ModelUsageDashboard() {
                 claude.active ? 'text-emerald-700 bg-emerald-100 dark:text-emerald-400 dark:bg-emerald-900/30'
                   : 'text-gray-600 bg-gray-200 dark:text-gray-300 dark:bg-gray-700',
               )}>
-                {claude.active ? 'ON' : !claude.configured ? 'NO API KEY — GEMINI ONLY' : 'OFF — GEMINI ONLY'}
+                {claude.active ? `ON UNTIL ${claude.offerEndsAt ? new Date(Date.parse(claude.offerEndsAt) - 1).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' }).toUpperCase() : 'OFFER END'}`
+                  : !claude.configured ? 'NO API KEY — GEMINI ONLY'
+                  : claude.creditsExhaustedAt ? `CREDITS USED UP ${new Date(claude.creditsExhaustedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' }).toUpperCase()} — GEMINI ONLY`
+                  : claude.offerActive === false ? 'OFFER ENDED — GEMINI ONLY'
+                  : 'OFF — GEMINI ONLY'}
               </span>
             </div>
             <div className="space-y-2.5">
@@ -296,7 +300,7 @@ export function ModelUsageDashboard() {
                 );
               })}
               <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">
-                Every call can search the web (3 searches by default; notices up to 4, official and judgment sites only, every link verified) and is given today's date with an instruction to check current rates, sections and due dates; read-only tasks are told not to search. Searches cost $10 per 1,000 on top of tokens and are not charged to users' credits. Any Claude failure falls back to the Gemini ladder above on key 1. Tax chat stays on Gemini (an Opus answer cost ~185 credits). Cache reads bill $0.20/M on Sonnet and Opus. Weights count toward users' token budgets like Gemini's. On/off switch: <span className="font-medium">Claude for AI features (not chat)</span> below.
+                Every call can search the web (3 searches by default; notices up to 4, official and judgment sites only, every link verified) and is given today's date with an instruction to check current rates, sections and due dates; read-only tasks are told not to search. Searches cost $10 per 1,000 on top of tokens and are not charged to users' credits. Any Claude failure falls back to the Gemini ladder above on key 1. Tax chat stays on Gemini (an Opus answer cost ~185 credits). Cache reads bill $0.20/M on Sonnet and Opus. Claude runs only during the launch offer (12 Nov – 12 Dec 2026): users pay half the Gemini price for every feature except chat (a Claude call is charged as Gemini 3.1 Flash-Lite Flex, then halved; Gemini fallbacks are halved too). If Anthropic reports the credit balance used up, the offer ends at once and everything is back on Gemini at normal prices. On/off switch: <span className="font-medium">Claude for AI features (not chat)</span> below.
               </p>
             </div>
           </div>
@@ -449,7 +453,8 @@ export function ModelUsageDashboard() {
                 When on, every AI feature except tax chat tries Claude first with web search: deeds, ledger scrutiny
                 and scanned ledgers use {claude.model}; notices, bank statements, uploaded documents, financial mapping
                 and CMA narrative use {claude.fastModel}; ledgers no software rule maps use {claude.bestModel}.
-                Any failure falls back to Gemini key 1. Tax chat always runs on Gemini. Off: everything runs on Gemini.
+                Any failure falls back to Gemini key 1. Tax chat always runs on Gemini. Off: everything runs on Gemini (the offer's 50% still applies until it ends).
+                Claude switches itself off when the offer ends or the Claude credits run out.
               </p>
               {!claude.configured && (
                 <p className="text-[11px] text-red-500 mt-1">ANTHROPIC_API_KEY is not set on the server — Gemini is used regardless.</p>
@@ -535,6 +540,14 @@ export function ModelUsageDashboard() {
               <div className={cn('w-2 h-2 rounded-full', key.active !== false ? 'bg-emerald-500' : 'bg-gray-400')} />
               <h4 className="text-xs font-semibold text-gray-700 dark:text-gray-300">{key.label ?? `API Key ${ki + 1}`}</h4>
               {key.active !== false && <span className="text-[9px] font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 px-1.5 py-0.5 rounded">ACTIVE</span>}
+              {key.outOfCreditUntil && (
+                <span
+                  className="text-[9px] font-semibold text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-900/20 px-1.5 py-0.5 rounded"
+                  title="Google reports this key's prepaid credit is used up. Its calls go to the other key; it is tried again after the time shown. Top it up in Google AI Studio billing."
+                >
+                  OUT OF CREDIT · skipped until {new Date(key.outOfCreditUntil).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              )}
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <QuotaCard

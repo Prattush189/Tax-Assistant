@@ -12,18 +12,22 @@
  *
  * Every call gets web search and an instruction to check current facts
  * (since 2026-11-12). Calls can pass their own search settings (notices
- * limit it to official and judgment sites) or `webSearch: false`. Users
- * are charged the model's real weight (lib/modelWeights.ts).
+ * limit it to official and judgment sites) or `webSearch: false`.
  *
- * The switch lives in app_config ('claude_enabled'), defaults ON, and
- * is flipped from the admin Model Usage tab — no redeploy needed when
- * the Claude credits run out.
+ * Claude runs only during the launch offer (launchOffer.ts: 12 Nov - 12
+ * Dec 2026), where users pay half the Gemini price for it. If Anthropic
+ * reports the credit balance used up, the offer ends at that moment
+ * (persisted in app_config 'claude_credits_exhausted_at') and every
+ * feature is back on Gemini at normal prices. The admin switch
+ * (app_config 'claude_enabled', default ON, Model Usage tab) can also
+ * turn Claude off sooner; the discount then still applies to Gemini.
  */
 
 import Anthropic from '@anthropic-ai/sdk';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import db from '../db/index.js';
 import { costForClaude, CLAUDE_WEB_SEARCH_USD } from './claudePricing.js';
+import { launchOfferActive, launchOfferEndsAt, setLaunchOfferEarlyEnd } from './launchOffer.js';
 
 // All three tiers are Sonnet 5.5 since 2026-11-13 (owner: "use sonnet
 // with search for now instead of opus"; Opus 5.5 ran 2026-11-12/13).
@@ -80,9 +84,25 @@ let enabled = (() => {
   }
 })();
 
-/** True when non-search work should try Claude first. */
+// When Anthropic reported the credit balance used up (ISO), or null. It
+// ends the launch offer early, and with it Claude (owner: "if they
+// finish ... we switch back to how things were ... and switch off 50%").
+let creditsExhaustedAt: string | null = (() => {
+  try {
+    const row = cfgGetStmt.get('claude_credits_exhausted_at') as { value: string } | undefined;
+    return row?.value || null;
+  } catch {
+    return null;
+  }
+})();
+if (creditsExhaustedAt) setLaunchOfferEarlyEnd(creditsExhaustedAt);
+
+/** True when work should try Claude first: key set, admin switch on, and
+ *  the launch offer live. Claude runs only for the offer (12 Nov - 12 Dec
+ *  2026, or until the credits run out); after it every feature is on
+ *  Gemini at normal prices, with no deploy. */
 export function isClaudeActive(): boolean {
-  return claudeConfigured && enabled;
+  return claudeConfigured && enabled && launchOfferActive();
 }
 
 export function setClaudeEnabled(on: boolean): void {
@@ -94,8 +114,36 @@ export function setClaudeEnabled(on: boolean): void {
   }
 }
 
-export function getClaudeConfig(): { enabled: boolean; configured: boolean; active: boolean; model: string; fastModel: string; bestModel: string } {
-  return { enabled, configured: claudeConfigured, active: isClaudeActive(), model: CLAUDE_MODEL, fastModel: CLAUDE_MODEL_FAST, bestModel: CLAUDE_MODEL_BEST };
+/** Anthropic's answer when the account has no credit left: HTTP 400
+ *  invalid_request_error "Your credit balance is too low to access the
+ *  Anthropic API..." (402 / billing_error on some accounts). Rate limits
+ *  and overloads are NOT this. */
+function isCreditExhaustedError(err: unknown): boolean {
+  const e = err as { status?: number; message?: string; error?: { error?: { type?: string; message?: string } } };
+  const type = e?.error?.error?.type ?? '';
+  const text = `${e?.message ?? ''} ${e?.error?.error?.message ?? ''}`;
+  return /credit balance is too low/i.test(text) || type === 'billing_error' || e?.status === 402;
+}
+
+/** Record that the Claude credits ran out: ends the offer (and Claude)
+ *  from now, persisted so a restart keeps it. */
+function markCreditsExhausted(): void {
+  if (creditsExhaustedAt) return;
+  creditsExhaustedAt = new Date().toISOString();
+  setLaunchOfferEarlyEnd(creditsExhaustedAt);
+  try { cfgSetStmt.run('claude_credits_exhausted_at', creditsExhaustedAt); }
+  catch (e) { console.warn('[claude] persist app_config[claude_credits_exhausted_at] failed:', (e as Error).message); }
+  console.error('[claude] Anthropic credit balance used up: launch offer ended and every feature is back on Gemini at normal prices.');
+}
+
+export function getClaudeConfig(): {
+  enabled: boolean; configured: boolean; active: boolean; model: string; fastModel: string; bestModel: string;
+  offerActive: boolean; offerEndsAt: string; creditsExhaustedAt: string | null;
+} {
+  return {
+    enabled, configured: claudeConfigured, active: isClaudeActive(), model: CLAUDE_MODEL, fastModel: CLAUDE_MODEL_FAST, bestModel: CLAUDE_MODEL_BEST,
+    offerActive: launchOfferActive(), offerEndsAt: launchOfferEndsAt(), creditsExhaustedAt,
+  };
 }
 
 // ── Calls ─────────────────────────────────────────────────────────────────
@@ -263,7 +311,13 @@ export async function claudeComplete(
       ...(tools ? { tools } : {}),
     }, { timeout: opts.timeoutMs ?? 300_000 });
     if (opts.onText) stream.on('text', opts.onText);
-    const msg = await stream.finalMessage();
+    let msg: Anthropic.Message;
+    try {
+      msg = await stream.finalMessage();
+    } catch (err) {
+      if (isCreditExhaustedError(err)) markCreditsExhausted();
+      throw err;
+    }
     content.push(...msg.content);
     const read = msg.usage.cache_read_input_tokens ?? 0;
     inputTokens += msg.usage.input_tokens + read + (msg.usage.cache_creation_input_tokens ?? 0);

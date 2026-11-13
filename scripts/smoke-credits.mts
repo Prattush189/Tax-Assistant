@@ -4,7 +4,7 @@ const { CREDIT_UNIT, toCredits, creditsCeil, creditsToWeighted, summarizeCredits
 const { PLAN_DEFAULTS } = await import('../server/lib/planLimits.js');
 const { computeWeightedTokens } = await import('../server/lib/modelWeights.js');
 // Normal prices: pin calls before the launch offer (12 Nov-12 Dec 2026),
-// which counts every call 25% (covered by smoke-launch-offer.mts).
+// which halves non-chat calls (covered by smoke-launch-offer.mts).
 const BASE = '2026-10-01 12:00:00';
 
 let fails = 0;

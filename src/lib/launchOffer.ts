@@ -1,7 +1,7 @@
 import { fetchLaunchOffer, type LaunchOffer } from '../services/api';
 
 /**
- * Launch offer helpers (every feature uses 75% fewer credits). Shared by
+ * Launch offer helpers (50% off every feature except chat). Shared by
  * the plans page, the chat box tooltips and the Settings credit hints so
  * they all show the same price. Never name the model behind the app in
  * anything built from these.
@@ -18,9 +18,18 @@ export function offerLive(offer: LaunchOffer | null | undefined): offer is Launc
   return !!offer && offer.active && Date.now() < Date.parse(offer.endsAt);
 }
 
-/** What a credit cost is multiplied by: 0.25 while the offer is on, else 1. */
+/** What a discounted credit cost is multiplied by: 0.5 while the offer
+ *  is on, else 1. Use offerFactorFor for a specific feature. */
 export function offerFactor(offer: LaunchOffer | null | undefined): number {
   return offerLive(offer) ? 1 - offer.discountPct / 100 : 1;
+}
+
+/** The factor for one feature, keyed like the credit estimates
+ *  (chat_fast, notice_draft, ...): 1 for chat, which the offer excludes,
+ *  else offerFactor. */
+export function offerFactorFor(offer: LaunchOffer | null | undefined, estimateKey: string): number {
+  const category = estimateKey.startsWith('chat') ? 'chat' : estimateKey;
+  return (offer?.excludes ?? ['chat']).includes(category) ? 1 : offerFactor(offer);
 }
 
 /** A credit cost after the discount: up to two decimals, no trailing zeros. */

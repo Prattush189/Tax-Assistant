@@ -10,7 +10,7 @@ import {
   type BillingDetails,
   type LaunchOffer,
 } from '../../services/api';
-import { offerLastDay, offerFactor, creditsLabel } from '../../lib/launchOffer';
+import { offerLastDay, offerFactorFor, creditsLabel } from '../../lib/launchOffer';
 import { useLaunchOffer } from '../../hooks/useLaunchOffer';
 import { CREDIT_ESTIMATES_FALLBACK } from '../../lib/creditEstimates';
 import { BillingDetailsDialog } from './BillingDetailsDialog';
@@ -291,8 +291,8 @@ function OfferBanner({ offer }: { offer: LaunchOffer }) {
     <div className="flex items-center gap-3 rounded-2xl px-5 py-4 mb-6 border bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800">
       <Sparkles className="w-5 h-5 shrink-0 text-orange-500" />
       <p className="text-sm text-orange-800 dark:text-orange-200">
-        <span className="font-semibold">All features {offer.discountPct}% off.</span>{' '}
-        Every feature uses {offer.discountPct}% fewer credits until {offerLastDay(offer.endsAt)}.
+        <span className="font-semibold">{offer.discountPct}% off every feature except chat.</span>{' '}
+        Notice replies, documents, bank statements and ledger scrutiny use {offer.discountPct}% fewer credits until {offerLastDay(offer.endsAt)}, while the offer lasts.
       </p>
     </div>
   );
@@ -300,23 +300,23 @@ function OfferBanner({ offer }: { offer: LaunchOffer }) {
 
 function CreditGuide({ estimates, offer }: { estimates?: Record<string, number>; offer: LaunchOffer | null }) {
   const e = { ...CREDIT_ESTIMATES_FALLBACK, ...(estimates ?? {}) };
-  const factor = offerFactor(offer);
-  const rows: Array<[number, string]> = [
-    [e.chat_fast, 'chat message (Fast)'],
-    [e.chat_deep, 'chat reply with Deep reasoning'],
-    [e.notice_draft, 'notice reply draft'],
-    [e.notice_pdf_read, 'notice PDF read for you'],
-    [e.bank_statement, 'bank statement analysed'],
-    [e.ledger_scrutiny, 'ledger scrutiny'],
+  const rows: Array<[number, string, number]> = [
+    [e.chat_fast, 'chat message (Fast)', offerFactorFor(offer, 'chat_fast')],
+    [e.chat_deep, 'chat reply with Deep reasoning', offerFactorFor(offer, 'chat_deep')],
+    [e.notice_draft, 'notice reply draft', offerFactorFor(offer, 'notice_draft')],
+    [e.notice_pdf_read, 'notice PDF read for you', offerFactorFor(offer, 'notice_pdf_read')],
+    [e.bank_statement, 'bank statement analysed', offerFactorFor(offer, 'bank_statement')],
+    [e.ledger_scrutiny, 'ledger scrutiny', offerFactorFor(offer, 'ledger_scrutiny')],
   ];
+  const anyOff = rows.some(r => r[2] < 1);
   return (
     <div className="mb-8 rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-5 py-4">
       <p className="text-sm font-semibold text-gray-800 dark:text-gray-100">What a credit buys</p>
       <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-        Every plan comes with AI credits — one pool across every feature. Typical costs{offer && factor < 1 ? `, now ${offer.discountPct}% off` : ''}:
+        Every plan comes with AI credits — one pool across every feature. Typical costs{offer && anyOff ? `, now ${offer.discountPct}% off everything except chat` : ''}:
       </p>
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-1.5">
-        {rows.map(([n, label]) => {
+        {rows.map(([n, label, factor]) => {
           const now = n * factor;
           return (
             <p key={label} className="text-sm text-gray-700 dark:text-gray-200">
@@ -353,7 +353,7 @@ export function PlanPage() {
   // gated when current and target are BOTH paid (free → paid never
   // hits this).
   const [pendingSwitch, setPendingSwitch] = useState<'pro' | 'enterprise' | null>(null);
-  // Launch offer (every feature 75% off) — banner + discounted credit costs.
+  // Launch offer (50% off every feature except chat) — banner + discounted credit costs.
   const offer = useLaunchOffer();
 
   useEffect(() => {
