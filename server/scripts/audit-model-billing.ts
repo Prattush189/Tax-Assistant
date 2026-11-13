@@ -50,13 +50,14 @@ for (const r of rows) {
 
 console.log('\n=== Row-level drift (weighted_tokens & cost) ===');
 const detail = db.prepare(`
-  SELECT id, model, input_tokens AS i, output_tokens AS o, weighted_tokens AS wt, cost
+  SELECT id, model, input_tokens AS i, output_tokens AS o, weighted_tokens AS wt, cost, created_at
     FROM api_usage
    WHERE (input_tokens > 0 OR output_tokens > 0)
-`).all() as Array<{ id: number; model: string | null; i: number; o: number; wt: number; cost: number }>;
+`).all() as Array<{ id: number; model: string | null; i: number; o: number; wt: number; cost: number; created_at: string }>;
 let wtDrift = 0, costDrift = 0;
 for (const r of detail) {
-  const expectWt = computeWeightedTokens(r.model, r.i, r.o);
+  // Row time matters: Claude rows inside the launch offer weigh 25%.
+  const expectWt = computeWeightedTokens(r.model, r.i, r.o, 0, r.created_at);
   if (r.wt > 0 && r.wt !== expectWt) wtDrift++;
   if (r.model) {
     const expectCost = costForModel(r.model, r.i, r.o);

@@ -3,6 +3,9 @@
 const { CREDIT_UNIT, toCredits, creditsCeil, creditsToWeighted, summarizeCredits, CREDIT_ESTIMATES } = await import('../server/lib/credits.js');
 const { PLAN_DEFAULTS } = await import('../server/lib/planLimits.js');
 const { computeWeightedTokens } = await import('../server/lib/modelWeights.js');
+// Normal prices: pin calls before the launch offer (12 Nov-12 Dec 2026),
+// which counts every call 25% (covered by smoke-launch-offer.mts).
+const BASE = '2026-10-01 12:00:00';
 
 let fails = 0;
 const ok = (c: boolean, m: string) => { console.log((c ? 'PASS' : 'FAIL') + '  ' + m); if (!c) fails++; };
@@ -20,11 +23,11 @@ ok(Object.keys(s.estimates).length >= 6, 'estimates exposed');
 
 // The promise the UI makes: a Fast chat message ("hi" on 3.1 Flash-Lite Flex)
 // costs about one credit with the ~4.2K-token prompt+history we send.
-const fastHi = computeWeightedTokens('gemini-3.1-flash-lite-flex', 4_200, 400, 0);
+const fastHi = computeWeightedTokens('gemini-3.1-flash-lite-flex', 4_200, 400, 0, BASE);
 ok(creditsCeil(fastHi) === CREDIT_ESTIMATES.chat_fast, 'Fast "hi" on 3.1 Lite Flex ~= ' + fastHi + ' weighted -> ' + creditsCeil(fastHi) + ' credit');
-const fastHiStd37 = computeWeightedTokens('gemini-3.7-flash', 4_200, 400, 0);
+const fastHiStd37 = computeWeightedTokens('gemini-3.7-flash', 4_200, 400, 0, BASE);
 ok(creditsCeil(fastHiStd37) >= 4, 'same "hi" on 3.7 Standard would be ' + creditsCeil(fastHiStd37) + ' credits (why Fast moved off it)');
-const deep = computeWeightedTokens('gemini-3.8-flash', 4_200, 1_200, 0);
+const deep = computeWeightedTokens('gemini-3.8-flash', 4_200, 1_200, 0, BASE);
 ok(Math.abs(creditsCeil(deep) - CREDIT_ESTIMATES.chat_deep) <= 1, 'Deep reply on 3.8 Standard ~= ' + creditsCeil(deep) + ' credits (estimate ' + CREDIT_ESTIMATES.chat_deep + ')');
 
 console.log(fails === 0 ? '\nALL PASSED' : '\n' + fails + ' FAILED');

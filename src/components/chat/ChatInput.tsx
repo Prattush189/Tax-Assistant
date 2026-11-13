@@ -2,6 +2,8 @@ import { useState, useRef, useCallback, useLayoutEffect, useEffect } from 'react
 import { ArrowUp, Paperclip, X, BookUser, BookOpen, Lock, BarChart3, Brain, Zap } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { getReasoningLevel, setReasoningLevel, type ReasoningLevel } from '../../lib/chatReasoning';
+import { creditsLabel, offerFactor, offerLastDay } from '../../lib/launchOffer';
+import { useLaunchOffer } from '../../hooks/useLaunchOffer';
 import { CHAT_ACCEPT, fileKind, fileKindLabel, FileKindIcon, unsupportedReason } from '../../lib/fileKind';
 import { UploadPhase } from '../../hooks/useFileUpload';
 import { DocumentContext } from '../../types';
@@ -46,6 +48,10 @@ export function ChatInput({
   const [showProfileDropdown, setShowProfileDropdown] = useState(false);
   // Reasoning level (Fast/Deep) — persisted; read by the send path.
   const [reasoning, setReasoning] = useState<ReasoningLevel>(() => getReasoningLevel());
+  // Launch offer: the Fast / Deep tooltips quote the offer price while it runs.
+  const offer = useLaunchOffer();
+  const creditFactor = offerFactor(offer);
+  const offerNote = offer ? ` (${offer.discountPct}% off until ${offerLastDay(offer.endsAt)})` : '';
   const pickReasoning = (next: ReasoningLevel) => {
     setReasoning(next);
     setReasoningLevel(next);
@@ -299,8 +305,8 @@ export function ChatInput({
                 Internal comment: never surface the model in the UI. */}
             <div role="radiogroup" aria-label="Answer depth" className="ml-1 inline-flex items-center p-0.5 rounded-lg bg-gray-100 dark:bg-gray-800 text-xs font-medium">
               {([
-                { level: 'low' as const, label: 'Fast', Icon: Zap, tip: 'Quick answers, about 1 credit per reply.' },
-                { level: 'high' as const, label: 'Deep', Icon: Brain, tip: 'Thorough reasoning for notices and computations — slower, about 8 credits per reply.' },
+                { level: 'low' as const, label: 'Fast', Icon: Zap, tip: `Quick answers, about ${creditsLabel(1 * creditFactor)} per reply${offerNote}.` },
+                { level: 'high' as const, label: 'Deep', Icon: Brain, tip: `Thorough reasoning for notices and computations — slower, about ${creditsLabel(8 * creditFactor)} per reply${offerNote}.` },
               ]).map(({ level, label, Icon, tip }) => {
                 const on = (reasoning === 'high') === (level === 'high');
                 return (

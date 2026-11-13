@@ -23,6 +23,8 @@
  * costForModel(); that's an independent display.
  */
 
+import { launchOfferMultiplier } from './launchOffer.js';
+
 export interface ModelWeight {
   /** Per-input-token weight (multiplier into weighted_tokens). */
   wIn: number;
@@ -106,17 +108,25 @@ export function getWeightFor(model: string | null | undefined): ModelWeight {
  *  `cachedInputTokens` is the portion of `inputTokens` served from
  *  context cache; it is weighted at the cache rate instead of full
  *  input. Clamped to inputTokens so a bad counter can never go
- *  negative. */
+ *  negative.
+ *
+ *  `at` is when the call happened (default: now; api_usage.created_at
+ *  for stored rows). Every call inside the launch offer (launchOffer.ts)
+ *  counts 25%, whichever model answered ("all features 75% off"). The
+ *  discount goes by the row's time, so a recompute keeps it for rows
+ *  inside the window and never grants it to rows outside. */
 export function computeWeightedTokens(
   model: string | null | undefined,
   inputTokens: number,
   outputTokens: number,
   cachedInputTokens = 0,
+  at?: Date | string,
 ): number {
   const w = getWeightFor(model);
   const cached = Math.max(0, Math.min(cachedInputTokens, inputTokens));
   const fresh = inputTokens - cached;
+  const offer = launchOfferMultiplier(at);
   // Round up — the column is INTEGER and rounding up is the
   // conservative direction for a quota.
-  return Math.ceil(fresh * w.wIn + cached * w.wCached + outputTokens * w.wOut);
+  return Math.ceil((fresh * w.wIn + cached * w.wCached + outputTokens * w.wOut) * offer);
 }

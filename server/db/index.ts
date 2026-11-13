@@ -1255,6 +1255,16 @@ db.exec(`CREATE TABLE IF NOT EXISTS tax_notifications (
 db.exec("CREATE INDEX IF NOT EXISTS idx_tax_notifications_fetched ON tax_notifications(fetched_at DESC)");
 db.exec("CREATE INDEX IF NOT EXISTS idx_tax_notifications_category ON tax_notifications(category, fetched_at DESC)");
 
+// One-time pop-ups a user has closed (e.g. the launch offer,
+// notice_id = LAUNCH_OFFER.id). Kept server-side so a pop-up shows once
+// per user, not once per browser.
+db.exec(`CREATE TABLE IF NOT EXISTS user_notices_seen (
+  user_id TEXT NOT NULL,
+  notice_id TEXT NOT NULL,
+  seen_at TEXT NOT NULL DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
+  PRIMARY KEY (user_id, notice_id)
+)`);
+
 // Ensure admin has enterprise plan
 db.prepare("UPDATE users SET plan = 'enterprise' WHERE email = ? AND role = 'admin'").run(ADMIN_EMAIL);
 

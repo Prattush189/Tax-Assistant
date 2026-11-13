@@ -1,4 +1,5 @@
 import { Message, UploadResponse } from '../types';
+import { scrubProviderName } from '../lib/utils';
 
 const TOKEN_KEY = 'tax_access_token';
 
@@ -41,6 +42,7 @@ export async function sendChatMessage(
   /** Id of the saved answer (done frame) — lets it be reported. */
   onSaved?: (messageId: number) => void,
 ): Promise<void> {
+  onError = scrubbedOnError(onError);
   const body: Record<string, unknown> = {
     message,
     chatId: chatId ?? undefined,
@@ -249,6 +251,12 @@ async function tryRefreshToken(): Promise<boolean> {
   }
 }
 
+/** Wrap a stream's error callback so no message it shows names the model
+ *  or vendor behind the app (stream errors can carry raw upstream text). */
+function scrubbedOnError<A extends unknown[]>(f: (msg: string, ...rest: A) => void): (msg: string, ...rest: A) => void {
+  return (msg, ...rest) => f(scrubProviderName(msg), ...rest);
+}
+
 async function authFetch(url: string, options: RequestInit = {}) {
   const doFetch = () => fetch(url, {
     ...options,
@@ -286,7 +294,9 @@ async function authFetch(url: string, options: RequestInit = {}) {
     // prefix is invisible to end users but lets the client tell a
     // pre-formatted message from a raw passthrough.
     const clean = msg.startsWith('[gemini-user]') ? msg.slice('[gemini-user]'.length).trim() : msg;
-    throw new Error(clean);
+    // `detail` can carry a raw upstream exception; never let it name the
+    // model or vendor behind the app.
+    throw new Error(scrubProviderName(clean));
   }
   // Surface provider-fallback so the UI can toast "Server busy, retrying…".
   // Set by routes whose LLM call fell from the primary to a backup model
@@ -753,6 +763,7 @@ export async function generateNotice(
   onDone?: (noticeId: string | null, meta?: NoticeGenerateDoneMeta) => void,
   file?: File,
 ): Promise<void> {
+  onError = scrubbedOnError(onError);
   // When a file is attached, we ship it as multipart so the notice route can
   // extract it server-side. This bypasses /api/upload, which means the upload
   // does NOT consume the user's chat-attachment monthly quota — only the
@@ -837,6 +848,7 @@ export async function enhanceNotice(
   onError: (msg: string) => void,
   onDone?: (noticeId: string | null, meta?: NoticeGenerateDoneMeta) => void,
 ): Promise<void> {
+  onError = scrubbedOnError(onError);
   const doFetch = () => fetch(`/api/notices/${id}/enhance`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
@@ -995,6 +1007,24 @@ export interface TaxNotificationListItem {
 
 export async function fetchLatestNotifications(): Promise<{ items: TaxNotificationListItem[] }> {
   return authFetch('/api/notifications/latest');
+}
+
+/** The launch offer (every feature uses 75% fewer credits) and whether
+ *  this user has already closed its pop-up. */
+export interface LaunchOffer {
+  active: boolean;
+  discountPct: number;
+  /** Exclusive end, ISO with offset (IST midnight after the last day). */
+  endsAt: string;
+  seen: boolean;
+}
+
+export async function fetchLaunchOffer(): Promise<LaunchOffer> {
+  return authFetch('/api/offers/current');
+}
+
+export async function markLaunchOfferSeen(): Promise<void> {
+  await authFetch('/api/offers/current/seen', { method: 'POST' });
 }
 
 export async function fetchNotificationDetail(id: string, chatId?: string): Promise<{
@@ -1380,6 +1410,7 @@ export async function generatePartnershipDeed(
   onError: (msg: string, kind?: 'quota' | 'generic') => void,
   onDone?: () => void,
 ): Promise<void> {
+  onError = scrubbedOnError(onError);
   const doFetch = () => fetch(`/api/partnership-deeds/drafts/${draftId}/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
@@ -3114,6 +3145,7 @@ export async function scrutinizeLedger(
   onDone?: (summary: { jobId: string; observationsCount: number }) => void,
   onProgress?: (p: LedgerScrutinyProgress) => void,
 ): Promise<void> {
+  onError = scrubbedOnError(onError);
   const doFetch = () => fetch(`/api/ledger-scrutiny/${jobId}/scrutinize`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },

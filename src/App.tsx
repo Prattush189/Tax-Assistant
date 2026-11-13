@@ -29,6 +29,7 @@ import { DashboardView } from './components/dashboard/DashboardView';
 import { AdminDashboard } from './components/admin/AdminDashboard';
 import { PlanPage } from './components/plan/PlanPage';
 import { TrialExpiredWall } from './components/plan/TrialExpiredWall';
+import { OfferDialog } from './components/shared/OfferDialog';
 import { SettingsPage } from './components/settings/SettingsPage';
 import { NoticeDrafterPage } from './components/notices/NoticeDrafterPage';
 import { ItrView } from './components/itr/ItrView';
@@ -296,6 +297,7 @@ function AppContent() {
           </AnimatePresence>
         </main>
       </TaxCalculatorProvider>
+      <OfferDialog enabled={!!user && !isPluginMode && !isTrialExpired} />
       {isSidebarOpen && !isPluginMode && (
         <div
           className="fixed inset-0 bg-gray-900/50 backdrop-blur-sm z-40 lg:hidden"

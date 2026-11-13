@@ -43,6 +43,7 @@ import ledgerScrutinyRouter from './routes/ledgerScrutiny.js';
 import invitationsRouter, { publicInvitationRouter } from './routes/invitations.js';
 import billingDetailsRouter from './routes/billingDetails.js';
 import documentDownloadRouter from './routes/documentDownload.js';
+import offersRouter from './routes/offers.js';
 import { authMiddleware, adminMiddleware, trialCheckMiddleware, phoneRequiredMiddleware } from './middleware/auth.js';
 import {
   chatLimiter,
@@ -180,6 +181,7 @@ app.use('/api', uploadRouter);
 app.use('/api/chats', chatsRouter);
 app.use('/api/notices', noticesLimiter, noticesRouter);
 app.use('/api/notifications', notificationsRouter);
+app.use('/api/offers', offersRouter);
 app.use('/api/suggestions', suggestionsLimiter, suggestionsRouter);
 app.use('/api/profiles', profilesRouter);
 app.use('/api/generic-profiles', genericProfilesRouter);

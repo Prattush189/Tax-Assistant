@@ -12,6 +12,9 @@
  */
 const { billableGeminiUsage, billableOpenAiUsage } = await import('../server/lib/geminiChat.js');
 const { computeWeightedTokens, getWeightFor } = await import('../server/lib/modelWeights.js');
+// Normal prices: pin calls before the launch offer (12 Nov-12 Dec 2026),
+// which counts every call 25% (covered by smoke-launch-offer.mts).
+const BASE = '2026-10-01 12:00:00';
 const { costForModel } = await import('../server/lib/gemini.js');
 
 let fails = 0;
@@ -52,15 +55,15 @@ const w31 = getWeightFor('gemini-3.1-flash-lite');
 ok(w31.wIn === 2.5 && w31.wOut === 15 && w31.wCached === 0.625, '3.1 Flash-Lite T2 weights 2.5 / 15 / cached 0.625');
 
 // ── 3. weighted tokens: the Deep-call scenario from (1) on 3.8 Flex ──
-const weighted = computeWeightedTokens('gemini-3.8-flash-flex', 1000, 1700, 800);
+const weighted = computeWeightedTokens('gemini-3.8-flash-flex', 1000, 1700, 800, BASE);
 // fresh 200*3.75 = 750; cached 800*0.375 = 300; output 1700*18.75 = 31875
 ok(weighted === 32925, 'weighted(3.8 flex, in 1000, out 1700, cached 800) = 32925 (' + weighted + ')');
-const oldWay = computeWeightedTokens('gemini-3.8-flash-flex', 1000, 200, 0);
+const oldWay = computeWeightedTokens('gemini-3.8-flash-flex', 1000, 200, 0, BASE);
 ok(oldWay === 7500, 'same call the OLD way (no thoughts, no cache split) = 7500 (' + oldWay + ')');
 console.log('      -> old accounting reported ' + (100 * oldWay / weighted).toFixed(0) + '% of the real weighted cost for this call');
-ok(computeWeightedTokens('gemini-2.5-flash-lite', 1000, 400) === 2600, 'weighted(2.5, 1000/400) = 2600');
-ok(computeWeightedTokens('gemini-3.8-flash', 100, 0, 500) === 75, 'cached clamped to input in weights (100*0.75 = 75)');
-ok(computeWeightedTokens(undefined, 100, 100) === 500, 'unknown model -> T2 fallback (100 + 400)');
+ok(computeWeightedTokens('gemini-2.5-flash-lite', 1000, 400, 0, BASE) === 2600, 'weighted(2.5, 1000/400) = 2600');
+ok(computeWeightedTokens('gemini-3.8-flash', 100, 0, 500, BASE) === 75, 'cached clamped to input in weights (100*0.75 = 75)');
+ok(computeWeightedTokens(undefined, 100, 100, 0, BASE) === 500, 'unknown model -> T2 fallback (100 + 400)');
 
 // ── 4. USD cost matches the sheet ──
 ok(near(costForModel('gemini-3.8-flash', M, 0), 0.75), '3.8 Std input $0.75/M');

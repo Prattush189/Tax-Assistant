@@ -8,7 +8,10 @@ import {
   createOrder,
   verifyOrderPayment,
   type BillingDetails,
+  type LaunchOffer,
 } from '../../services/api';
+import { offerLastDay, offerFactor, creditsLabel } from '../../lib/launchOffer';
+import { useLaunchOffer } from '../../hooks/useLaunchOffer';
 import { BillingDetailsDialog } from './BillingDetailsDialog';
 import { SwitchPlanWarningDialog } from './SwitchPlanWarningDialog';
 import {
@@ -282,8 +285,24 @@ const CREDIT_GUIDE_FALLBACK: Record<string, number> = {
   chat_fast: 1, chat_deep: 8, notice_draft: 4, notice_pdf_read: 2, bank_statement: 3, ledger_scrutiny: 27,
 };
 
-function CreditGuide({ estimates }: { estimates?: Record<string, number> }) {
+// ── OfferBanner ───────────────────────────────────────────────────────────────
+
+/** Launch offer on the plans page: same message as the one-time pop-up. */
+function OfferBanner({ offer }: { offer: LaunchOffer }) {
+  return (
+    <div className="flex items-center gap-3 rounded-2xl px-5 py-4 mb-6 border bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800">
+      <Sparkles className="w-5 h-5 shrink-0 text-orange-500" />
+      <p className="text-sm text-orange-800 dark:text-orange-200">
+        <span className="font-semibold">All features {offer.discountPct}% off.</span>{' '}
+        Every feature uses {offer.discountPct}% fewer credits until {offerLastDay(offer.endsAt)}.
+      </p>
+    </div>
+  );
+}
+
+function CreditGuide({ estimates, offer }: { estimates?: Record<string, number>; offer: LaunchOffer | null }) {
   const e = { ...CREDIT_GUIDE_FALLBACK, ...(estimates ?? {}) };
+  const factor = offerFactor(offer);
   const rows: Array<[number, string]> = [
     [e.chat_fast, 'chat message (Fast)'],
     [e.chat_deep, 'chat reply with Deep reasoning'],
@@ -296,15 +315,22 @@ function CreditGuide({ estimates }: { estimates?: Record<string, number> }) {
     <div className="mb-8 rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-5 py-4">
       <p className="text-sm font-semibold text-gray-800 dark:text-gray-100">What a credit buys</p>
       <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-        Every plan comes with AI credits — one pool across every feature. Typical costs:
+        Every plan comes with AI credits — one pool across every feature. Typical costs{offer && factor < 1 ? `, now ${offer.discountPct}% off` : ''}:
       </p>
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-1.5">
-        {rows.map(([n, label]) => (
-          <p key={label} className="text-sm text-gray-700 dark:text-gray-200">
-            <span className="font-bold tabular-nums text-[#0D9668] dark:text-[#2DD4A0]">{n} credit{n === 1 ? '' : 's'}</span>
-            <span className="text-gray-400"> = </span>1 {label}
-          </p>
-        ))}
+        {rows.map(([n, label]) => {
+          const now = n * factor;
+          return (
+            <p key={label} className="text-sm text-gray-700 dark:text-gray-200">
+              {factor < 1 && (
+                <><span aria-hidden="true" className="line-through tabular-nums text-gray-400 dark:text-gray-500">{n}</span>{' '}</>
+              )}
+              <span className="font-bold tabular-nums text-[#0D9668] dark:text-[#2DD4A0]">{creditsLabel(now)}</span>
+              {factor < 1 && <span className="sr-only"> (was {n})</span>}
+              <span className="text-gray-400"> = </span>1 {label}
+            </p>
+          );
+        })}
       </div>
       <p className="text-[11px] text-gray-400 mt-2">
         Free trial: 25 credits · Pro: 2,000 a year · Enterprise: 6,000 a year. Costs are typical, not fixed — a longer document or a deeper answer uses a little more.
@@ -329,6 +355,8 @@ export function PlanPage() {
   // gated when current and target are BOTH paid (free → paid never
   // hits this).
   const [pendingSwitch, setPendingSwitch] = useState<'pro' | 'enterprise' | null>(null);
+  // Launch offer (every feature 75% off) — banner + discounted credit costs.
+  const offer = useLaunchOffer();
 
   useEffect(() => {
     fetchUserUsage()
@@ -466,6 +494,8 @@ export function PlanPage() {
           </p>
         </div>
 
+        {offer && <OfferBanner offer={offer} />}
+
         {/* Trial Banner */}
         {showTrialBanner && (
           <TrialBanner daysLeft={trialDaysLeft!} onUpgrade={scrollToPlans} />
@@ -488,7 +518,7 @@ export function PlanPage() {
         {/* What a credit buys — fed by the server's per-action estimates
             (lib/credits.ts) so it tracks the models each feature really
             runs on; static fallback until usage has loaded. */}
-        <CreditGuide estimates={usage?.credits?.estimates} />
+        <CreditGuide estimates={usage?.credits?.estimates} offer={offer} />
 
         {/* Plan Cards */}
         <div id="plan-cards" className="grid md:grid-cols-3 gap-6 mb-10">

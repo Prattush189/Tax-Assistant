@@ -66,8 +66,10 @@ export function formatINRCompact(amount: number): string {
  *   - "gemini[-/space anything]" → "AI service"
  *   - "claude[-/space anything]" → "AI service"
  *   - "anthropic" → "AI service"
+ *   - "openai" → "AI service"
  *   - Model-prefix tokens like `gemini-2.5-flash-lite`,
- *     `gemini-3.1-flash-lite-preview`, `claude-sonnet-4-5` → "AI service"
+ *     `gemini-3.1-flash-lite-preview`, `claude-sonnet-4-5`, `gpt-5` → "AI service"
+ *   - Family names: "Claude Opus 5.5", "Opus 5.5", "sonnet-5-5" → "AI service"
  *   - `Upstream "<name>"` → `Upstream service` (defensive — older error
  *     messages may still phrase it this way)
  *
@@ -82,9 +84,13 @@ export function scrubProviderName(raw: string | null | undefined): string {
   // at the first space / punctuation that ends the model identifier.
   // Avoids the greedy-match bug where "Gemini gemini-2.5-flash-lite HTTP
   // 503" would eat past the model name into context.
-  out = out.replace(/\b(?:gemini|claude)[-.][\w.-]+/gi, 'AI service');
+  out = out.replace(/\b(?:gemini|claude|gpt)[-.][\w.-]+/gi, 'AI service');
+  // Brand + family name ("Claude Opus 5.5", "Gemini Flash-Lite").
+  out = out.replace(/\b(?:gemini|claude)\s+(?:opus|sonnet|haiku|fable|flash(?:-lite)?|pro)\b(?:\s+\d[\w.]*)?/gi, 'AI service');
+  // Family name with a version but no brand ("Opus 5.5", "sonnet-5-5").
+  out = out.replace(/\b(?:opus|sonnet|haiku|fable)[\s-]*\d[\w.-]*/gi, 'AI service');
   // Bare provider mentions (no model suffix).
-  out = out.replace(/\b(?:gemini|claude|anthropic)\b/gi, 'AI service');
+  out = out.replace(/\b(?:gemini|claude|anthropic|openai)\b/gi, 'AI service');
   // "Upstream "<name>"" idiom (legacy circuit-breaker error format).
   // After the bare-word replacement above the inner string is already
   // "AI service" — but the leading "Upstream" + quotes leak a brand-
