@@ -23,6 +23,7 @@ import { streamGeminiChat } from './geminiChat.js';
 import { GEMINI_API_KEYS, GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, costForModel } from './gemini.js';
 import { claudeComplete, isClaudeActive, CLAUDE_MODEL_FAST, RESEARCH_WEB_SEARCH } from './claude.js';
 import { withBreaker } from './circuitBreaker.js';
+import { isKeyIndexOutOfCredit } from './geminiKeyHealth.js';
 import { notificationsRepo, type NotificationCategory, type TaxNotificationCreateInput } from '../db/repositories/notificationsRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { fetchAllCbdtItems, type CbdtItem } from './cbdtScraper.js';
@@ -745,10 +746,11 @@ function isIsoDate(s: string | undefined): boolean {
  *  isolating this job -- ~47 grounded calls a day, the prime suspect
  *  for the unexplained part of the bill -- lets us read its spend
  *  straight off the console instead of inferring it. Falls back to
- *  key 1 only when key 2 is not configured. */
+ *  key 1 when key 2 is not configured or is out of prepaid credit
+ *  (lib/geminiKeyHealth.ts). */
 function pickApiKey(): string | null {
   const key2 = GEMINI_API_KEYS[1];
-  if (key2 && key2.length > 0) return key2;
+  if (key2 && key2.length > 0 && !isKeyIndexOutOfCredit(1)) return key2;
   const key = GEMINI_API_KEYS.find(k => k && k.length > 0);
   return key ?? null;
 }

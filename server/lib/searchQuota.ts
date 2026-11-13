@@ -26,6 +26,7 @@
 
 import { GEMINI_API_KEYS, GEMINI_CHAT_MODEL_PRIMARY, GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2 } from './gemini.js';
 import db from '../db/index.js';
+import { isKeyIndexOutOfCredit, outOfCreditUntilIso } from './geminiKeyHealth.js';
 
 export type ModelTier = 'gemini-3' | 'gemini-2.5';
 
@@ -216,6 +217,8 @@ export function selectTier(searchEnabled: boolean): TierSelection {
     const ki = (activeKeyIndex + i) % keys.length;
     const k = keys[ki];
     if (checkResets(k)) persist(ki);
+    // A key Google reports as out of prepaid credit fails every call.
+    if (isKeyIndexOutOfCredit(ki)) continue;
 
     if (k.t1Count < t1Limit) {
       return { tier: 'gemini-3', keyIndex: ki, keyLabel: k.label };
@@ -262,6 +265,8 @@ export function getQuotaStatus() {
       index: i,
       label: k.label,
       active: i === activeKeyIndex,
+      // Set while the key is skipped for having no prepaid credit left.
+      outOfCreditUntil: outOfCreditUntilIso(i),
       tier1: { model: `${GEMINI_CHAT_MODEL_PRIMARY} / ${GEMINI_CHAT_MODEL_T1} / ${GEMINI_CHAT_MODEL_T2}`, used: k.t1Count, limit: t1Limit, remaining: Math.max(0, t1Limit - k.t1Count), period: 'monthly' },
       tier2: { model: 'gemini-2.5 family (no active rung)', used: k.t2Count, limit: t2Limit, remaining: Math.max(0, t2Limit - k.t2Count), period: 'daily' },
     })),

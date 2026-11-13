@@ -53,6 +53,13 @@ export function formatGeminiUserError(status: number, rawBody: string | undefine
   return 'AI service is unavailable. Please try again shortly.';
 }
 
+/** True when Google says the key has no credit left (prepaid balance used
+ *  up: HTTP 402, or older 429 bodies naming prepayment credits). A plain
+ *  429 RESOURCE_EXHAUSTED is a rate limit and does NOT count. */
+export function isOutOfCreditResponse(status: number, rawBody: string | undefined): boolean {
+  return status === 402 || /prepayment credits|credits are depleted/i.test(rawBody ?? '');
+}
+
 /**
  * Wraps the message in a sentinel prefix the caller can use to detect
  * "this is already user-facing, don't double-wrap" if the error
@@ -63,7 +70,13 @@ export function formatGeminiUserError(status: number, rawBody: string | undefine
 export const GEMINI_USER_ERROR_PREFIX = '[gemini-user]';
 
 export function buildGeminiUserError(status: number, rawBody: string | undefined): Error {
-  return new Error(`${GEMINI_USER_ERROR_PREFIX} ${formatGeminiUserError(status, rawBody)}`);
+  // geminiStatus / outOfCredit let streamGeminiChat move a call off a key
+  // whose prepaid credit is used up (lib/geminiKeyHealth.ts). Not named
+  // `status`, so callers that branch on err.status behave as before.
+  return Object.assign(new Error(`${GEMINI_USER_ERROR_PREFIX} ${formatGeminiUserError(status, rawBody)}`), {
+    geminiStatus: status,
+    outOfCredit: isOutOfCreditResponse(status, rawBody),
+  });
 }
 
 /**

@@ -14,6 +14,7 @@
 
 import { getOrCreateCachedContent, invalidateCache } from './geminiCache.js';
 import { buildGeminiUserError } from './geminiUserError.js';
+import { usableGeminiKey, markKeyOutOfCredit } from './geminiKeyHealth.js';
 
 const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
 
@@ -93,8 +94,37 @@ interface GeminiContent {
  *
  * Maps from OpenAI-style messages (role: system/user/assistant) to
  * Gemini format (systemInstruction + contents with role: user/model).
+ *
+ * Out-of-credit keys (lib/geminiKeyHealth.ts): a key Google reports as
+ * out of prepaid credit is swapped for another configured key before the
+ * call, and a call that hits that error before streaming anything is
+ * marked and retried once on another key.
  */
 export async function* streamGeminiChat(
+  ...args: Parameters<typeof streamGeminiChatOnce>
+): AsyncGenerator<GeminiChatChunk> {
+  const call = [...args] as Parameters<typeof streamGeminiChatOnce>;
+  call[4] = usableGeminiKey(call[4]);
+  for (let attempt = 0; ; attempt++) {
+    let streamed = false;
+    try {
+      for await (const chunk of streamGeminiChatOnce(...call)) {
+        streamed = true;
+        yield chunk;
+      }
+      return;
+    } catch (err) {
+      if (streamed || attempt > 0 || !(err as { outOfCredit?: boolean }).outOfCredit) throw err;
+      markKeyOutOfCredit(call[4]);
+      const next = usableGeminiKey(call[4]);
+      if (next === call[4]) throw err;
+      console.warn(`[geminiChat] ${call[0]}: key out of credit, retrying on another Gemini key`);
+      call[4] = next;
+    }
+  }
+}
+
+async function* streamGeminiChatOnce(
   model: string,
   systemPrompt: string,
   history: Array<{ role: string; content: string }>,
