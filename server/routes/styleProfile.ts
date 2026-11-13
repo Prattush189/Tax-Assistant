@@ -9,8 +9,9 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import mammoth from 'mammoth';
-import { gemini, GEMINI_MODEL, GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST } from '../lib/gemini.js';
+import { gemini, GEMINI_MODEL, costForModel } from '../lib/gemini.js';
 import { callGeminiJson } from '../lib/geminiJson.js';
+import { claudeComplete, isClaudeActive, CLAUDE_MODEL_FAST } from '../lib/claude.js';
 import { styleProfileRepo } from '../db/repositories/styleProfileRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { getBillingUser } from '../lib/billing.js';
@@ -58,7 +59,7 @@ async function extractStyleFromText(
     { maxTokens: 2048 },
   );
   try {
-    const cost = result.inputTokens * GEMINI_T2_INPUT_COST + result.outputTokens * GEMINI_T2_OUTPUT_COST;
+    const cost = costForModel(result.modelUsed, result.inputTokens, result.outputTokens, result.cachedInputTokens ?? 0);
     usageRepo.logWithBilling(ctx.clientIp, ctx.userId, ctx.billingUserId, result.inputTokens, result.outputTokens, cost, false, result.modelUsed, false, 'style_profile', 0, 'success', 0, Date.now() - callStartMs);
   } catch (err) {
     console.error('[style-profile] Failed to log cost:', err);
@@ -97,9 +98,22 @@ async function extractTextFromFile(file: Express.Multer.File): Promise<string> {
     return result.value;
   }
 
-  // PDF — use Gemini vision (same pattern as upload.ts)
+  // PDF — Claude reads it first (Opus 5.5 since 2026-11-12, admin-
+  // switchable); Gemini vision is the rescue.
   const base64 = file.buffer.toString('base64');
   const dataUrl = `data:application/pdf;base64,${base64}`;
+  const instruction = 'Extract the full text content of this document. Return ONLY the raw text, no commentary or formatting.';
+  if (isClaudeActive()) {
+    try {
+      const r = await claudeComplete(
+        [{ role: 'user', content: [{ type: 'file', file: { file_data: dataUrl, filename: 'document.pdf' } }, { type: 'text', text: instruction }] as never }],
+        { model: CLAUDE_MODEL_FAST, maxTokens: 8192, effort: 'low' },
+      );
+      if (r.text.trim().length >= 50) return r.text;
+    } catch (err) {
+      console.warn(`[styleProfile] ${CLAUDE_MODEL_FAST} PDF read failed, falling back to Gemini: ${(err as Error).message?.slice(0, 160)}`);
+    }
+  }
   const response = await gemini.chat.completions.create({
     model: GEMINI_MODEL,
     max_tokens: 8192,
@@ -107,7 +121,7 @@ async function extractTextFromFile(file: Express.Multer.File): Promise<string> {
       role: 'user',
       content: [
         { type: 'image_url', image_url: { url: dataUrl } },
-        { type: 'text', text: 'Extract the full text content of this document. Return ONLY the raw text, no commentary or formatting.' },
+        { type: 'text', text: instruction },
       ],
     }],
   });

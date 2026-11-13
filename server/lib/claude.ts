@@ -1,14 +1,18 @@
 /**
- * Claude backend for the work that does NOT use web search: books
- * (ledger scrutiny, CMA narrative, financial mapping) and notice /
- * deed drafting when grounding is off.
+ * Claude backend for every AI feature: tax chat, notices, deeds, ledger
+ * scrutiny and reading, bank statements (reading and classifying),
+ * document extraction, financial mapping, CMA narrative.
  *
- * Routing rule, applied by the callers (chatProvider, callGeminiJson,
- * ledgerScrutiny): when the admin switch is ON and ANTHROPIC_API_KEY is
- * set, Claude is tried first; if it fails before producing output the
- * call drops onto the existing Gemini ladder pinned to Gemini key 1.
- * Anything that needs Google Search grounding never comes here — tax
- * chat and deeds/rent agreements stay on Gemini for the free search pool.
+ * Routing rule, applied by the callers: when the admin switch is ON and
+ * ANTHROPIC_API_KEY is set, Claude is tried first; if it fails before
+ * producing output the call drops onto the existing Gemini ladder pinned
+ * to Gemini key 1.
+ *
+ * Since 2026-11-12 every call runs on Opus 5.5 with web search and an
+ * instruction to check current facts (the owner chose accuracy over
+ * cost; users are charged Opus's real weight). Calls can pass their own
+ * search settings (notices limit it to official and judgment sites) or
+ * `webSearch: false`.
  *
  * The switch lives in app_config ('claude_enabled'), defaults ON, and
  * is flipped from the admin Model Usage tab — no redeploy needed when
@@ -18,13 +22,16 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import db from '../db/index.js';
+import { costForClaude, CLAUDE_WEB_SEARCH_USD } from './claudePricing.js';
 
-/** Judgment work: ledger scrutiny observations, scanned ledgers. */
-export const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5-5';
+// All three tiers are Opus 5.5 since 2026-11-12. They stay separate so a
+// tier can move back to a cheaper model by env alone (Sonnet 5.5 for
+// judgment, Haiku 5.5 for the mechanical reads were the earlier choice).
+/** Judgment work: ledger scrutiny observations, scanned ledgers, chat. */
+export const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-opus-5-5';
 /** Mechanical work: statement and document reads, financial mapping, CMA
- *  narrative, and notice drafting (chatProvider's economy calls). Bulk of
- *  the tokens, so it gets the cheap model. */
-export const CLAUDE_MODEL_FAST = process.env.CLAUDE_MODEL_FAST || 'claude-haiku-5-5';
+ *  narrative, and notice drafting (chatProvider's economy calls). */
+export const CLAUDE_MODEL_FAST = process.env.CLAUDE_MODEL_FAST || 'claude-opus-5-5';
 /** Reading a ledger no software rule maps (rows → TSV, column roles).
  *  Every row has to be right: in a 2026-10-30 bake-off on 7 ledgers Opus
  *  copied every row exactly in two runs out of two, Sonnet and Haiku
@@ -34,7 +41,7 @@ export const CLAUDE_MODEL_BEST = process.env.CLAUDE_MODEL_BEST || 'claude-opus-5
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? '';
 export const claudeConfigured = !!ANTHROPIC_API_KEY;
 if (!claudeConfigured) {
-  console.warn('[claude] ANTHROPIC_API_KEY is not set — books and notice drafting stay on Gemini.');
+  console.warn('[claude] ANTHROPIC_API_KEY is not set — every AI feature stays on Gemini.');
 }
 
 // One SDK retry only: a Claude failure has a ready fallback (Gemini),
@@ -114,14 +121,21 @@ export interface ClaudeCompletion {
   webSearchRequests: number;
   /** Every page the searches returned. Empty without web search. */
   sources: ClaudeSearchSource[];
+  /** USD: tokens at the model's rates plus the search fees. */
+  costUsd: number;
 }
 
-/** Let Claude search the web during the call, on these sites only. */
+/** Let Claude search the web during the call. */
 export interface ClaudeWebSearch {
   /** Most searches in one call (each is billed). */
   maxUses: number;
-  /** Sites searched; subdomains included. */
+  /** Sites searched, subdomains included. Empty = the whole web. */
   allowedDomains: string[];
+  /** The dynamic-filtering tool (Opus / Sonnet): it trims results before
+   *  they reach the context, but its definition costs ~5.9K input tokens
+   *  on every call against ~2.7K for the basic tool (measured on Opus
+   *  2026-11-12). Worth it only where searching is the norm. */
+  dynamic?: boolean;
 }
 
 export interface ClaudeCallOptions {
@@ -133,10 +147,38 @@ export interface ClaudeCallOptions {
   effort?: 'low' | 'medium' | 'high';
   timeoutMs?: number;
   onText?: (text: string) => void;
-  webSearch?: ClaudeWebSearch;
+  /** Defaults to DEFAULT_WEB_SEARCH; false turns searching off. */
+  webSearch?: ClaudeWebSearch | false;
 }
 
 const THINKING_HEADROOM = 8_192;
+
+/** Every call can search unless it says otherwise: the whole web, a few
+ *  searches, the cheaper basic tool. The current-facts note below decides
+ *  when a search is worth it. */
+const DEFAULT_WEB_SEARCH: ClaudeWebSearch = { maxUses: 3, allowedDomains: [] };
+/** For calls where searching is the norm (tax chat, drafting, the
+ *  notification fetcher). */
+export const RESEARCH_WEB_SEARCH: ClaudeWebSearch = { maxUses: 3, allowedDomains: [], dynamic: true };
+
+/** The server's tool loop stops after ~10 steps with `pause_turn`;
+ *  sending the turn back resumes it. */
+const MAX_PAUSE_RESUMES = 3;
+
+/** Appended to the system prompt of every searching call. The date is
+ *  what makes "current" mean something; the read-only carve-out keeps
+ *  statement and ledger transcription from burning searches. */
+function currentFactsNote(): string {
+  const today = new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'long', year: 'numeric' });
+  return `CURRENT FACTS
+Today is ${today} (India). You have a web search tool. When your answer depends on facts that change — tax rates, slabs, thresholds, due dates, section numbers (including the Income-tax Act, 2025 renumbering), forms, notifications, circulars or case law — search for the current position before relying on memory, prefer official sources (incometaxindia.gov.in, incometax.gov.in, cbic-gst.gov.in, gst.gov.in, egazette.gov.in, sci.gov.in, itat.gov.in, indiankanoon.org) and answer from what you find. When the task is only to read, copy, map or classify the document or data you were given, work from it and do not search.
+Write nothing before or between searches: your reply is only the final answer, in the format asked for.`;
+}
+
+/** Dynamic filtering exists for Opus and Sonnet only. */
+function searchToolType(model: string, dynamic = false): 'web_search_20260209' | 'web_search_20250305' {
+  return dynamic && /^claude-(opus|sonnet)-/.test(model) ? 'web_search_20260209' : 'web_search_20250305';
+}
 
 type ClaudeContent = Anthropic.TextBlockParam | Anthropic.ImageBlockParam | Anthropic.DocumentBlockParam;
 
@@ -192,31 +234,50 @@ export async function claudeComplete(
 ): Promise<ClaudeCompletion> {
   const { system, messages: claudeMessages } = toClaudeRequest(messages);
   const model = opts.model ?? CLAUDE_MODEL;
-  const stream = client.messages.stream({
-    model,
-    max_tokens: opts.maxTokens + THINKING_HEADROOM,
-    ...(system ? { system } : {}),
-    messages: claudeMessages,
-    output_config: { effort: opts.effort ?? 'low' },
-    // The basic search tool: the dynamic-filtering version is not listed
-    // for Haiku, and this one returned the same pages in a 2026-11-05 probe.
-    ...(opts.webSearch ? {
-      tools: [{
-        type: 'web_search_20250305' as const,
-        name: 'web_search' as const,
-        max_uses: opts.webSearch.maxUses,
-        allowed_domains: opts.webSearch.allowedDomains,
-      }],
-    } : {}),
-  }, { timeout: opts.timeoutMs ?? 300_000 });
-  if (opts.onText) stream.on('text', opts.onText);
+  const search = opts.webSearch === false ? null : (opts.webSearch ?? DEFAULT_WEB_SEARCH);
+  const fullSystem = search ? [system, currentFactsNote()].filter(Boolean).join('\n\n') : system;
+  const tools = search ? [{
+    type: searchToolType(model, search.dynamic),
+    name: 'web_search' as const,
+    max_uses: search.maxUses,
+    ...(search.allowedDomains.length ? { allowed_domains: search.allowedDomains } : {}),
+    user_location: { type: 'approximate' as const, country: 'IN', timezone: 'Asia/Kolkata' },
+  }] : undefined;
 
-  const msg = await stream.finalMessage();
-  let lastSearchResult = -1;
+  const content: Anthropic.ContentBlock[] = [];
+  let inputTokens = 0, outputTokens = 0, cacheRead = 0, webSearchRequests = 0;
+  let stopReason: Anthropic.Message['stop_reason'] = null;
+  let stopCategory: string | undefined;
+  for (let resume = 0; resume <= MAX_PAUSE_RESUMES; resume++) {
+    const stream = client.messages.stream({
+      model,
+      max_tokens: opts.maxTokens + THINKING_HEADROOM,
+      ...(fullSystem ? { system: fullSystem } : {}),
+      // A paused turn goes back as the assistant message so far.
+      messages: content.length ? [...claudeMessages, { role: 'assistant', content: content as Anthropic.ContentBlockParam[] }] : claudeMessages,
+      output_config: { effort: opts.effort ?? 'low' },
+      ...(tools ? { tools } : {}),
+    }, { timeout: opts.timeoutMs ?? 300_000 });
+    if (opts.onText) stream.on('text', opts.onText);
+    const msg = await stream.finalMessage();
+    content.push(...msg.content);
+    const read = msg.usage.cache_read_input_tokens ?? 0;
+    inputTokens += msg.usage.input_tokens + read + (msg.usage.cache_creation_input_tokens ?? 0);
+    outputTokens += msg.usage.output_tokens;
+    cacheRead += read;
+    webSearchRequests += msg.usage.server_tool_use?.web_search_requests ?? 0;
+    stopReason = msg.stop_reason;
+    stopCategory = msg.stop_details?.category ?? undefined;
+    if (stopReason !== 'pause_turn') break;
+  }
+
+  // Only the text after the last tool result is the answer (searches and
+  // the dynamic filter's code runs both end in a *_tool_result block).
+  let lastToolResult = -1;
   const sources = new Map<string, ClaudeSearchSource>();
-  msg.content.forEach((b, i) => {
+  content.forEach((b, i) => {
+    if (b.type.endsWith('tool_result')) lastToolResult = i;
     if (b.type === 'web_search_tool_result') {
-      lastSearchResult = i;
       // An error result is an object, a success a list of pages.
       if (Array.isArray(b.content)) {
         for (const r of b.content) {
@@ -229,26 +290,25 @@ export async function claudeComplete(
       }
     }
   });
-  const text = msg.content.slice(lastSearchResult + 1).map(b => (b.type === 'text' ? b.text : '')).join('');
-  const cacheRead = msg.usage.cache_read_input_tokens ?? 0;
-  const cacheWrite = msg.usage.cache_creation_input_tokens ?? 0;
+  const text = content.slice(lastToolResult + 1).map(b => (b.type === 'text' ? b.text : '')).join('');
   const result: ClaudeCompletion = {
     text,
-    finishReason: msg.stop_reason === 'end_turn' || msg.stop_reason === 'stop_sequence'
+    finishReason: stopReason === 'end_turn' || stopReason === 'stop_sequence'
       ? 'stop'
-      : msg.stop_reason === 'max_tokens' ? 'length' : String(msg.stop_reason),
-    inputTokens: msg.usage.input_tokens + cacheRead + cacheWrite,
-    outputTokens: msg.usage.output_tokens,
+      : stopReason === 'max_tokens' ? 'length' : String(stopReason),
+    inputTokens,
+    outputTokens,
     cachedInputTokens: cacheRead,
     model,
-    webSearchRequests: msg.usage.server_tool_use?.web_search_requests ?? 0,
+    webSearchRequests,
     sources: [...sources.values()],
+    costUsd: costForClaude(model, inputTokens, outputTokens, cacheRead) + webSearchRequests * CLAUDE_WEB_SEARCH_USD,
   };
-  if (msg.stop_reason === 'refusal') {
-    throw Object.assign(new Error(`Claude declined (${msg.stop_details?.category ?? 'no category'})`), { claudeUsage: result });
+  if (stopReason === 'refusal') {
+    throw Object.assign(new Error(`Claude declined (${stopCategory ?? 'no category'})`), { claudeUsage: result });
   }
   if (!text.trim()) {
-    throw Object.assign(new Error(`Claude returned no text (stop_reason=${msg.stop_reason})`), { claudeUsage: result });
+    throw Object.assign(new Error(`Claude returned no text (stop_reason=${stopReason})`), { claudeUsage: result });
   }
   return result;
 }

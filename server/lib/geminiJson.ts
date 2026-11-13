@@ -47,17 +47,20 @@ export interface GeminiJsonOptions {
   onFallback?: (input: { from: string; to: string }) => void;
   /** Retry when the model returns malformed/truncated JSON. */
   retryParseFailures?: boolean;
-  /** Try Claude first when the admin switch is on (books features):
-   *  'fast' = CLAUDE_MODEL_FAST (Haiku) for classification / short
-   *  fixed-format output, 'smart' = CLAUDE_MODEL (Sonnet). Any Claude
-   *  failure drops onto the normal Gemini ladder, which runs on Gemini
-   *  key 1 (the `gemini` client). */
-  claude?: 'fast' | 'smart';
+  /** Claude answers first while the admin switch is on (every caller
+   *  since 2026-11-12): 'fast' = CLAUDE_MODEL_FAST, 'smart' (the
+   *  default) = CLAUDE_MODEL — both Opus 5.5 today. false skips Claude.
+   *  Any Claude failure drops onto the normal Gemini ladder, which runs
+   *  on Gemini key 1 (the `gemini` client). */
+  claude?: 'fast' | 'smart' | false;
 }
 
 /** Parse JSON safely — strips markdown fences and attempts recovery on truncated strings. */
 export function safeParseJson<T = unknown>(raw: string): T | null {
-  let cleaned = raw
+  // A fenced block wins: Opus with web search tends to add a sourcing
+  // note after the closing fence, which the end-anchored strip missed.
+  const fenced = /```(?:json)?[ \t]*\n?([\s\S]*?)\n?```/.exec(raw);
+  let cleaned = (fenced ? fenced[1] : raw)
     .replace(/^```(?:json)?\n?/m, '')
     .replace(/\n?```\s*$/m, '')
     .trim();
@@ -234,10 +237,9 @@ export async function callGeminiJson<T = unknown>(
   const retryParseFailures = opts.retryParseFailures === true;
   let fallbackFired = false;
 
-  // Claude first (opt-in per call site, admin-switchable). One attempt:
-  // the SDK already retried transient errors once, and Gemini is right
-  // behind it.
-  if (opts.claude && isClaudeActive()) {
+  // Claude first (admin-switchable). One attempt: the SDK already
+  // retried transient errors once, and Gemini is right behind it.
+  if (opts.claude !== false && isClaudeActive()) {
     const claudeModel = opts.claude === 'fast' ? CLAUDE_MODEL_FAST : CLAUDE_MODEL;
     try {
       return await withBreaker('claude', () => callClaudeOnce<T>(messages, claudeModel, maxTokens, recordAttempt));

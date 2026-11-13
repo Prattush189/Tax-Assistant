@@ -3,6 +3,8 @@ import { Router, Response } from 'express';
 import { GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, GEMINI_CHAT_MODEL_PRIMARY, GEMINI_FLEX_CHAT, GEMINI_FLEX_SERVICE_TIER, GEMINI_API_KEYS, costForModel } from '../lib/gemini.js';
 import { confirmUsed, getActiveKeyIndex } from '../lib/searchQuota.js';
 import { streamGeminiChat } from '../lib/geminiChat.js';
+import { claudeComplete, isClaudeActive, CLAUDE_MODEL, RESEARCH_WEB_SEARCH, type ClaudeCompletion } from '../lib/claude.js';
+import { withBreaker } from '../lib/circuitBreaker.js';
 import { CiteMarkerStreamFilter, stripCiteMarkers } from '../lib/citeMarkerFilter.js';
 import { referenceUrlsBlock } from '../lib/officialReferenceUrls.js';
 import { chatRepo } from '../db/repositories/chatRepo.js';
@@ -449,6 +451,58 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
 
         let ranFlexWinner = false;
         let providerFallbackFired = false;
+        let claudeSearchCostUsd = 0;
+
+        // Claude first (Opus 5.5 with web search, admin-switchable); the
+        // Gemini ladder below is the rescue when Claude fails before
+        // writing anything. Claude's sources are the pages it cited.
+        if (isClaudeActive()) {
+          const claudeStartMs = Date.now();
+          let firstTokenMs = 0;
+          const citeFilter = new CiteMarkerStreamFilter();
+          try {
+            const r = await withBreaker('claude', () => claudeComplete(
+              [{ role: 'system', content: SYSTEM_INSTRUCTION }, ...historyPlain as ChatCompletionMessageParam[], { role: 'user', content: userContent }],
+              {
+                model: CLAUDE_MODEL,
+                maxTokens: MAX_TOKENS,
+                effort: deep ? 'medium' : 'low',
+                webSearch: RESEARCH_WEB_SEARCH,
+                onText: (t) => {
+                  if (!firstTokenMs) firstTokenMs = Date.now() - claudeStartMs;
+                  const out = citeFilter.push(t);
+                  if (out) { fullResponse += out; sse.writeText(out); }
+                },
+              },
+            ));
+            const tail = citeFilter.flush();
+            if (tail) { fullResponse += tail; sse.writeText(tail); }
+            usedModel = r.model;
+            rawResponse = r.text;
+            inputTok = r.inputTokens;
+            outputTok = r.outputTokens;
+            cachedTok = r.cachedInputTokens;
+            claudeSearchCostUsd = r.costUsd - costForModel(r.model, r.inputTokens, r.outputTokens, r.cachedInputTokens);
+            const cited = r.sources.filter(s => s.citedText.length);
+            sources = (cited.length ? cited : r.sources.slice(0, 5)).map(s => ({ title: s.title || s.url, url: s.url }));
+            stopReason = r.finishReason === 'length' ? 'max_tokens' : 'end_turn';
+            console.log(`[chat-timing] ${r.model} ${deep ? 'deep' : 'fast'} ttft=${firstTokenMs}ms total=${Date.now() - claudeStartMs}ms in=${inputTok} out=${outputTok} searches=${r.webSearchRequests}`);
+          } catch (err) {
+            if (fullResponse) {
+              primaryFailedMidStream = true;
+              stopReason = 'network_error';
+              console.warn(`[chat] ${CLAUDE_MODEL} failed after partial output; keeping partial:`, (err as Error).message?.slice(0, 120));
+            } else {
+              console.warn(`[chat] ${CLAUDE_MODEL} failed after ${Date.now() - claudeStartMs}ms, falling back to Gemini:`, (err as Error).message?.slice(0, 120));
+              // A refusal or empty answer was still billed: log it as wasted.
+              const cu = (err as { claudeUsage?: ClaudeCompletion }).claudeUsage;
+              if (cu) usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, cu.inputTokens, cu.outputTokens, cu.costUsd, false, cu.model, cu.webSearchRequests > 0, 'chat_failed', 0, 'failed', 0, 0, cu.cachedInputTokens);
+              providerFallbackFired = true;
+              sse.writeEvent({ providerFallback: true });
+            }
+          }
+        }
+
         for (let i = 0; i < ladder.length && fastApiKey && !fullResponse && !primaryFailedMidStream; i++) {
           const rung = ladder[i];
           usedModel = rung.model;
@@ -535,7 +589,7 @@ router.post('/chat', async (req: AuthRequest, res: Response) => {
           // for the cached system prompt) so it cannot drift from
           // lib/gemini.ts. outputTok already includes thinking tokens.
           const loggedModel = ranFlexWinner ? `${usedModel}-flex` : usedModel;
-          const cost = costForModel(loggedModel, inputTok, outputTok, cachedTok);
+          const cost = costForModel(loggedModel, inputTok, outputTok, cachedTok) + claudeSearchCostUsd;
           usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, inputTok, outputTok, cost, false, loggedModel || undefined, searchEnabled, 'chat', 0, 'success', 0, Date.now() - requestStartMs, cachedTok);
         } else {
           console.warn('[chat] skipping usage log — no tokens reported (likely partial/truncated stream)');

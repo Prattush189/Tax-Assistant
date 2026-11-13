@@ -9,7 +9,7 @@ import { extractVisionWithFallback } from '../lib/visionFallback.js';
 import { userRepo } from '../db/repositories/userRepo.js';
 import { featureUsageRepo } from '../db/repositories/featureUsageRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
-import { GEMINI_T2_INPUT_COST, GEMINI_T2_OUTPUT_COST } from '../lib/gemini.js';
+import { costForModel } from '../lib/gemini.js';
 import { getBillingUser } from '../lib/billing.js';
 import { getUsagePeriodStart } from '../lib/planLimits.js';
 import { AuthRequest } from '../types.js';
@@ -175,7 +175,7 @@ router.post(
       // "recent API calls" / cost-by-model dashboards alongside chat/notice.
       try {
         const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
-        const cost = result.inputTokens * GEMINI_T2_INPUT_COST + result.outputTokens * GEMINI_T2_OUTPUT_COST;
+        const cost = costForModel(result.modelUsed, result.inputTokens, result.outputTokens, result.cachedInputTokens ?? 0);
         usageRepo.logWithBilling(clientIp, req.user.id, billingUserId, result.inputTokens, result.outputTokens, cost, false, result.modelUsed, false, 'document', 0, 'success', 0, Date.now() - callStartMs);
         usageRepo.logWastedAttempts(clientIp, req.user.id, billingUserId, 'document', result.claudeWasted);
       } catch (logErr) {

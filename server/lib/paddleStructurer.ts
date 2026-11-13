@@ -22,6 +22,7 @@
 
 import { streamGeminiChat } from './geminiChat.js';
 import { GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, GEMINI_API_KEYS } from './gemini.js';
+import { claudeComplete, isClaudeActive, CLAUDE_MODEL_FAST } from './claude.js';
 
 export interface StructuredOcrRow {
   date: string | null;            // YYYY-MM-DD
@@ -141,12 +142,15 @@ export async function structureOcrTextIntoRows(
       // drops rows (its known weakness on dense batches) or returns
       // bad JSON, the retry escalates to T1. Same tier-order pattern
       // as the vision path.
+      // Since 2026-11-12 Claude (Opus 5.5) takes the first pass while the
+      // admin switch is on; Gemini T1 stays the retry.
+      const firstModel = isClaudeActive() ? CLAUDE_MODEL_FAST : GEMINI_CHAT_MODEL_T2;
       let res: StructuredOcrResult | null = null;
       try {
-        res = await structureChunk(chunk, estimate, apiKey, GEMINI_CHAT_MODEL_T2);
-        addUsage(GEMINI_CHAT_MODEL_T2, res.inputTokens, res.outputTokens);
+        res = await structureChunk(chunk, estimate, apiKey, firstModel);
+        addUsage(firstModel, res.inputTokens, res.outputTokens);
       } catch (e) {
-        console.warn(`[paddleStructurer] chunk ${idx + 1}/${chunks.length} (${pageRange}) failed on T2: ${(e as Error).message.slice(0, 200)} — retrying on T1`);
+        console.warn(`[paddleStructurer] chunk ${idx + 1}/${chunks.length} (${pageRange}) failed on ${firstModel}: ${(e as Error).message.slice(0, 200)} — retrying on T1`);
       }
       // One retry for either failure mode: a thrown error (bad JSON)
       // or a short yield. Short yields matter because a truncated
@@ -224,7 +228,12 @@ ${combinedText}`;
   let buffer = '';
   let inputTokens = 0;
   let outputTokens = 0;
-  for await (const part of streamGeminiChat(
+  if (model.startsWith('claude-')) {
+    const r = await claudeComplete([{ role: 'user', content: prompt }], { model, maxTokens: 16384, effort: 'low', timeoutMs: 600_000 });
+    buffer = r.text;
+    inputTokens = r.inputTokens;
+    outputTokens = r.outputTokens;
+  } else for await (const part of streamGeminiChat(
     model,
     '',
     [],

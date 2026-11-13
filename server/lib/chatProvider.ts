@@ -28,8 +28,7 @@ import {
 } from './gemini.js';
 import { streamGeminiChat } from './geminiChat.js';
 import { selectTier, confirmUsed } from './searchQuota.js';
-import { claudeComplete, isClaudeActive, CLAUDE_MODEL, CLAUDE_MODEL_FAST, type ClaudeCompletion, type ClaudeSearchSource, type ClaudeWebSearch } from './claude.js';
-import { CLAUDE_WEB_SEARCH_USD } from './claudePricing.js';
+import { claudeComplete, isClaudeActive, CLAUDE_MODEL, CLAUDE_MODEL_FAST, RESEARCH_WEB_SEARCH, type ClaudeCompletion, type ClaudeSearchSource, type ClaudeWebSearch } from './claude.js';
 import { withBreaker } from './circuitBreaker.js';
 
 /** Google-Search grounding for notice / deed / ledger drafting.
@@ -75,9 +74,10 @@ export interface ChatRequest {
    *  leave too little for the document itself — drafting from a fixed
    *  structure (deeds) should pass 'low'. */
   thinking?: 'low' | 'high';
-  /** Search on Claude's web search, limited to these sites, instead of
-   *  Gemini's Google Search. Only read when searchGrounding is on and the
-   *  Claude switch is on; without it a searching call stays on Gemini. */
+  /** Claude's search settings for this call (notices limit it to
+   *  official and judgment sites). Without it Claude searches the whole
+   *  web (RESEARCH_WEB_SEARCH); searchGrounding only steers the Gemini
+   *  fallback. */
   claudeSearch?: ClaudeWebSearch;
   /** Set false to skip the half-price Flex rungs. Flex queues, 503s
    *  under load and has dropped streams mid-document; use it only
@@ -174,17 +174,11 @@ export const geminiChatProvider: ChatProvider = {
     const wastedAttempts: NonNullable<ChatUsage['wastedAttempts']> = [];
     let firstFallbackFired = false;
 
-    // Claude first for anything that doesn't need Google Search (admin
-    // switch in app_config), and for searching calls that ask for Claude's
-    // own web search (claudeSearch). Other searching calls stay on
-    // Gemini's free pool. Economy (notices) gets Haiku, as it gets Flash-Lite on Gemini. A
-    // test 143(1) reply (2026-11-04) weighed 430K quota tokens on Sonnet
-    // (7.1K in, 2.9K out at 20x / 100x) and 46K on Haiku (7.1K in, 7.8K
-    // out: Haiku thinks more at the same effort, but at 1x / 5x).
-    if (isClaudeActive() && (!SEARCH_GROUNDING || req.claudeSearch)) {
+    // Claude first for every call while the admin switch is on (Opus 5.5
+    // with web search since 2026-11-12; Gemini below is the rescue).
+    // Economy picks CLAUDE_MODEL_FAST, which is Opus too today.
+    if (isClaudeActive()) {
       const claudeModel = req.economy ? CLAUDE_MODEL_FAST : CLAUDE_MODEL;
-      const claudeCost = (u: ClaudeCompletion) =>
-        costForModel(u.model, u.inputTokens, u.outputTokens, u.cachedInputTokens) + u.webSearchRequests * CLAUDE_WEB_SEARCH_USD;
       const t0 = Date.now();
       try {
         const r = await withBreaker('claude', () => claudeComplete(
@@ -194,7 +188,7 @@ export const geminiChatProvider: ChatProvider = {
             maxTokens: req.maxTokens,
             effort: req.economy || req.thinking === 'low' ? 'low' : 'medium',
             onText: (t) => { emittedAnyText = true; onText(t); },
-            webSearch: SEARCH_GROUNDING ? req.claudeSearch : undefined,
+            webSearch: req.claudeSearch ?? RESEARCH_WEB_SEARCH,
           },
         ));
         console.log(`[chatProvider-timing] ${r.model} total=${Date.now() - t0}ms in=${r.inputTokens} out=${r.outputTokens}${r.webSearchRequests ? ` searches=${r.webSearchRequests}` : ''}${r.finishReason !== 'stop' ? ` finish=${r.finishReason}` : ''}`);
@@ -203,7 +197,7 @@ export const geminiChatProvider: ChatProvider = {
           outputTokens: r.outputTokens,
           cacheReadTokens: r.cachedInputTokens,
           cacheCreationTokens: 0,
-          costUsd: claudeCost(r),
+          costUsd: r.costUsd,
           modelUsed: r.model,
           withSearch: r.webSearchRequests > 0,
           // pause_turn: the server-side search loop stopped before the answer.
@@ -215,7 +209,7 @@ export const geminiChatProvider: ChatProvider = {
         // Partial draft already streamed — retrying would duplicate it.
         if (emittedAnyText) throw err;
         const cu = (err as { claudeUsage?: ClaudeCompletion }).claudeUsage;
-        if (cu) wastedAttempts.push({ model: cu.model, inputTokens: cu.inputTokens, outputTokens: cu.outputTokens, cachedInputTokens: cu.cachedInputTokens, costUsd: claudeCost(cu) });
+        if (cu) wastedAttempts.push({ model: cu.model, inputTokens: cu.inputTokens, outputTokens: cu.outputTokens, cachedInputTokens: cu.cachedInputTokens, costUsd: cu.costUsd });
         console.warn(`[chatProvider] ${claudeModel} failed after ${Date.now() - t0}ms, falling back to Gemini key 1:`, (err as Error).message?.slice(0, 160));
         pinGeminiKey1 = true;
         firstFallbackFired = true;

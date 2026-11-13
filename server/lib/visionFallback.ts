@@ -60,9 +60,10 @@ export interface VisionFallbackOptions {
    *  T2 also fails the check, the error propagates. */
   looksValid?: (data: unknown) => boolean;
   /** Claude reads the document first while the admin switch is on:
-   *  'fast' (Haiku, the default) for notices, Form 16 and attachments;
-   *  'smart' (Sonnet) for dense tables like scanned ledgers; false to
-   *  skip (bank statements, where Claude already ran earlier). Gemini
+   *  'fast' (the default) for notices, Form 16 and attachments; 'smart'
+   *  for dense tables like scanned ledgers (both Opus 5.5 since
+   *  2026-11-12); false to skip (bank statements, where Claude already
+   *  ran earlier). Gemini
    *  T1 → T2 below stays as the rescue. 2026-10-29 test, judged blind
    *  against the documents: notices + attachments accuracy/completeness
    *  Gemini 8.6/5.3, Haiku 9.6/8.4, Sonnet 9.2/8.7; scanned ledgers

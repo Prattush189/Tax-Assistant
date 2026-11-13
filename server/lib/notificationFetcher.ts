@@ -21,6 +21,8 @@
 
 import { streamGeminiChat } from './geminiChat.js';
 import { GEMINI_API_KEYS, GEMINI_CHAT_MODEL_T1, GEMINI_CHAT_MODEL_T2, costForModel } from './gemini.js';
+import { claudeComplete, isClaudeActive, CLAUDE_MODEL_FAST, RESEARCH_WEB_SEARCH } from './claude.js';
+import { withBreaker } from './circuitBreaker.js';
 import { notificationsRepo, type NotificationCategory, type TaxNotificationCreateInput } from '../db/repositories/notificationsRepo.js';
 import { usageRepo } from '../db/repositories/usageRepo.js';
 import { fetchAllCbdtItems, type CbdtItem } from './cbdtScraper.js';
@@ -588,18 +590,24 @@ Output ONLY the JSON object.`;
 
     let buffer = '';
     let finishReason: string | undefined;
-    for await (const chunk of streamGeminiChat(
-      GEMINI_CHAT_MODEL_T1,
-      '', // no system instruction — single-turn fact extraction
-      [],
-      prompt,
-      apiKey,
-      512,
-      /* enableSearch */ true,
-      /* useCache */ false,
-    )) {
-      if (chunk.text) buffer += chunk.text;
-      if (chunk.done) finishReason = chunk.finishReason;
+    const viaClaude = await claudeSearchText('', prompt, 512);
+    if (viaClaude) {
+      buffer = viaClaude.text;
+      finishReason = viaClaude.finishReason;
+    } else {
+      for await (const chunk of streamGeminiChat(
+        GEMINI_CHAT_MODEL_T1,
+        '', // no system instruction — single-turn fact extraction
+        [],
+        prompt,
+        apiKey,
+        512,
+        /* enableSearch */ true,
+        /* useCache */ false,
+      )) {
+        if (chunk.text) buffer += chunk.text;
+        if (chunk.done) finishReason = chunk.finishReason;
+      }
     }
 
     if (!buffer.trim()) {
@@ -745,6 +753,31 @@ function pickApiKey(): string | null {
   return key ?? null;
 }
 
+/** Claude (Opus 5.5 with web search since 2026-11-12) answers first
+ *  while the admin switch is on, in consumeStream's result shape; null
+ *  when it is off or fails, so the Gemini rungs take over. */
+async function claudeSearchText(system: string, userText: string, maxOutputTokens: number) {
+  if (!isClaudeActive()) return null;
+  try {
+    const r = await withBreaker('claude', () => claudeComplete(
+      [...(system ? [{ role: 'system' as const, content: system }] : []), { role: 'user' as const, content: userText }],
+      { model: CLAUDE_MODEL_FAST, maxTokens: maxOutputTokens, effort: 'low', webSearch: RESEARCH_WEB_SEARCH },
+    ));
+    const cited = r.sources.filter(s => s.citedText.length);
+    return {
+      text: r.text,
+      inputTokens: r.inputTokens,
+      outputTokens: r.outputTokens,
+      sources: (cited.length ? cited : r.sources).map(s => ({ title: s.title || s.url, url: s.url })),
+      finishReason: r.finishReason === 'length' ? 'MAX_TOKENS' : 'STOP',
+      modelUsed: r.model,
+    };
+  } catch (err) {
+    console.warn(`[notificationFetcher] ${CLAUDE_MODEL_FAST} failed, falling back to Gemini: ${(err as Error).message?.slice(0, 160)}`);
+    return null;
+  }
+}
+
 /** Drain a streamGeminiChat generator into a single string + final
  *  usage / sources record. Mirrors what the chat route does internally
  *  but condensed for non-streaming consumers. */
@@ -799,6 +832,8 @@ function isRetryableUpstream(err: unknown): boolean {
  *  ran, so api_usage logging and cost computation use the correct
  *  pricing for the fallback path. */
 async function consumeStreamWithFallback(prompt: string, apiKey: string, maxOutputTokens: number) {
+  const viaClaude = await claudeSearchText(prompt, 'Begin.', maxOutputTokens);
+  if (viaClaude) return viaClaude;
   try {
     // 2026-09-07: the Lite rung (3.1 Flash-Lite) runs FIRST. Notification
     // detail is a summarise-one-page job; production showed 3.7 Flash

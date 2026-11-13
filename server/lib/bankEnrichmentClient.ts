@@ -33,6 +33,7 @@ import { safeParseJson, type GeminiJsonOptions, type GeminiJsonResult } from './
 import { withBreaker } from './circuitBreaker.js';
 import { getOrCreateCachedContent, invalidateCache } from './geminiCache.js';
 import { buildGeminiUserError } from './geminiUserError.js';
+import { claudeComplete, isClaudeActive, CLAUDE_MODEL_FAST, type ClaudeCompletion } from './claude.js';
 
 const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
@@ -81,6 +82,28 @@ export async function callBankEnrichment<T>(
   const recordAttempt = opts.recordAttempt;
   const onFallback = opts.onFallback;
   let fallbackFired = false;
+
+  // Claude first (Opus 5.5 since 2026-11-12, admin-switchable); the
+  // cached Gemini ladder below is the rescue.
+  if (isClaudeActive()) {
+    try {
+      const r = await withBreaker('claude', () => claudeComplete(
+        [{ role: 'user', content: `${staticPrefix}${dynamicTail}` }],
+        { model: CLAUDE_MODEL_FAST, maxTokens, effort: 'low' },
+      ));
+      const data = safeParseJson<T>(r.text);
+      if (data === null) throw Object.assign(new Error('Failed to parse AI response'), { claudeUsage: r });
+      recordAttempt?.({ failed: false, inputTokens: r.inputTokens, outputTokens: r.outputTokens, model: r.model });
+      return { data, inputTokens: r.inputTokens, outputTokens: r.outputTokens, cachedInputTokens: r.cachedInputTokens, modelUsed: r.model };
+    } catch (err) {
+      const u = (err as { claudeUsage?: ClaudeCompletion }).claudeUsage;
+      if (u) recordAttempt?.({ failed: true, inputTokens: u.inputTokens, outputTokens: u.outputTokens, model: u.model });
+      console.warn(`[bankEnrichment] ${CLAUDE_MODEL_FAST} failed, falling back to Gemini: ${(err as Error).message?.slice(0, 160)}`);
+      fallbackFired = true;
+      try { onFallback?.({ from: CLAUDE_MODEL_FAST, to: primary }); }
+      catch (e) { console.warn('[bankEnrichment] onFallback hook threw:', (e as Error).message); }
+    }
+  }
 
   const baseGenerationConfig = {
     maxOutputTokens: maxTokens,

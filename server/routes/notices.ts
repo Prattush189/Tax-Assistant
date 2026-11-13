@@ -105,6 +105,7 @@ const NOTICE_SEARCH = process.env.NOTICE_SEARCH_GROUNDING !== '0';
 // provisions in dispute plus a judgment or two at $0.01 each.
 const NOTICE_CLAUDE_SEARCH: ClaudeWebSearch = {
   maxUses: 4,
+  dynamic: true,
   allowedDomains: [
     'incometaxindia.gov.in', 'incometax.gov.in', 'cbic.gov.in', 'cbic-gst.gov.in', 'gst.gov.in',
     'gstcouncil.gov.in', 'egazette.gov.in', 'indiankanoon.org', 'itat.gov.in', 'sci.gov.in', 'livelaw.in',
