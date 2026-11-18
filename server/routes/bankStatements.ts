@@ -1846,10 +1846,16 @@ router.post(
           // counterparty, and the metadata backstop below never ran
           // (card showed "Bank Statement · Period not detected").
           if (!extracted || !Array.isArray(extracted.transactions) || extracted.transactions.length === 0) {
-            console.warn(`[bank-statements] extraction returned 0 transactions for ${filename} (${req.file.size} bytes, mime=${mimeType}). Likely too large/dense — recommend the text path or splitting the PDF.`);
-            res.status(422).json({
-              error: 'AI vision could not extract any transactions from this PDF. The file may be too large or dense for vision OCR — try the column-mapping flow (the PDF has selectable text) or split it into smaller chunks.',
-            });
+            console.warn(`[bank-statements] extraction returned 0 transactions for ${filename} (${req.file.size} bytes, mime=${mimeType}).`);
+            const zeroRowsMsg = 'No transactions could be read from this file. Check that it is the bank statement itself (not a cover page, letter or photo of one page), or upload the CSV / Excel export from net banking.';
+            // This return sits inside the try, so the catch's setError never
+            // runs: without this the placeholder stayed 'analyzing' until the
+            // 15-minute sweeper marked it "Timed out" (2026-11-17, a 1-page
+            // upload that read 0 rows in 15s). Leave a user's cancel alone.
+            if (bankStatementRepo.getStatus(placeholder.id, req.user.id) === 'analyzing') {
+              bankStatementRepo.setError(placeholder.id, req.user.id, zeroRowsMsg);
+            }
+            res.status(422).json({ error: zeroRowsMsg, statementId: placeholder.id });
             return;
           }
           // Metadata backstop. The vision prompt asks the model for
